@@ -1,8 +1,14 @@
-# WhoT
+# WhoT (Whos'that)
 
 Face database and review GUI for photo rolls. Faces detected at import
 (insightface) are stored with 512-d embeddings in a SQLite database; the GUI
-is used to review, name, accept, reject and annotate them.
+is used to review, name, accept, reject and annotate them. Image files are
+BLAKE3 hashed for identification, file paths are regarded as mutable.
+
+This is still in very early stage. Future functionality will inlude:
+  i) Scripts to recover person and face data from digiKam, Lightroom
+  ii) Script to export data to Lap asset management
+  iii) Scrip to export person tag group hierarchy to darktable sidecars.
 
 ## Components
 
@@ -36,7 +42,7 @@ mkdir -p ../insightface && python3 -m venv ../insightface/insight_env
 ## Import a roll
 
 ```sh
-../insightface/insight_env/bin/python scripts/import_roll.py <roll-dir>
+./scripts/import_roll.py <roll-dir>
 ```
 
 Flags: `--dry-run` (detect only, no writes), `--all` (also import faceless
@@ -53,8 +59,8 @@ npm run tauri build    # release bundles
 ```
 
 Main flows: rename an `UnknownN` group (accepts & names it, moving it into a
-group path), assign selected faces to an existing or new person, reject or
-re-accept faces, per-face descriptions, primary face, reference faces.
+group path, e.g. family|Smith, friends|college), assign selected faces to an existing or new person, reject or
+re-accept faces, per-face descriptions (beard|sun_glasses, baby, side), primary face, reference faces per-face descriptions.
 
 ## Tests
 
