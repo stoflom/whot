@@ -9,6 +9,7 @@ import {
 import * as api from "./api";
 import type { AppearanceGroup, Face, ImageRow, Refcrop, Snapshot } from "./api";
 import AssignDialog from "./components/AssignDialog";
+import FaceAssignDialog from "./components/FaceAssignDialog";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
 import FaceGrid, { type Section } from "./components/FaceGrid";
@@ -62,6 +63,11 @@ export default function App() {
   const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
+  const [faceAssign, setFaceAssign] = useState<{
+    faceId: number;
+    personId: number;
+    name: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -342,7 +348,10 @@ export default function App() {
     hoverId,
     onHover: setHoverId,
     onContextMenu: faceMenu,
-    onRenamePerson: (pid: number, n: string) => mutate(() => api.setPersonName(pid, n)),
+    onAssignName: (faceId: number, name: string) => {
+      const f = facesById.get(faceId);
+      if (f) setFaceAssign({ faceId, personId: f.person_id, name });
+    },
     onToggle: toggle,
     onOpen: (id: number) => {
       const f = facesById.get(id);
@@ -476,7 +485,7 @@ export default function App() {
           tgt.tagName === "SELECT" || tgt.isContentEditable)
       )
         return;
-      if (dialogFaceIds != null) return;
+      if (dialogFaceIds != null || faceAssign != null) return;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         stepPerson(-1);
@@ -487,7 +496,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stepPerson, dialogFaceIds]);
+  }, [stepPerson, dialogFaceIds, faceAssign]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -773,6 +782,26 @@ export default function App() {
             setSettingsOpen(false);
             await refresh().catch((e) => setError(String(e)));
           }}
+        />
+      )}
+      {faceAssign && (
+        <FaceAssignDialog
+          name={faceAssign.name}
+          groupCount={snap.faces.filter((f) => f.person_id === faceAssign.personId).length}
+          onSingle={() => {
+            const a = faceAssign;
+            setFaceAssign(null);
+            doAssign([a.faceId], a.name, "");
+          }}
+          onGroup={() => {
+            const a = faceAssign;
+            setFaceAssign(null);
+            const ids = snap.faces
+              .filter((f) => f.person_id === a.personId)
+              .map((f) => f.id);
+            doAssign(ids, a.name, personsById.get(a.personId)?.groups[0] ?? "");
+          }}
+          onCancel={() => setFaceAssign(null)}
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}

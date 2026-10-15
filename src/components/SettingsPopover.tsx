@@ -47,6 +47,7 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
             <li><b>←</b> / <b>→</b> — previous / next person (tree order)</li>
             <li><b>Esc</b> — close split, dialog or context menu</li>
             <li><b>Enter</b> — commit an edited field</li>
+            <li>face-card name — assign that person (asks: this face or whole group)</li>
             <li>double-click — rename a person · open a face's full image</li>
             <li>right-click — context menus on tiles and images</li>
           </ul>

@@ -13,9 +13,9 @@ interface Props {
   onOpen: (id: number) => void;
   /** right-click context menu (#32) */
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
-  /** person's name — the face-meta input renames the person (#29) */
+  /** person's name — the face-meta input assigns that person (#29) */
   personName?: string;
-  onRenamePerson: (personId: number, name: string) => void;
+  onAssignName: (faceId: number, name: string) => void;
   onDescription: (id: number, description: string) => void;
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
@@ -33,7 +33,7 @@ export default function FaceCard({
   onOpen,
   onContextMenu,
   personName,
-  onRenamePerson,
+  onAssignName,
   onDescription,
   onPrimary,
   onRefcrop,
@@ -51,7 +51,8 @@ export default function FaceCard({
   };
   const commitName = () => {
     const v = pname.trim();
-    if (v && v !== personName) onRenamePerson(face.person_id, v);
+    // assigning, not renaming: an existing person merges into (v1.7 §3)
+    if (v && v !== personName) onAssignName(face.id, v);
     else setPname(personName ?? "");
   };
 

@@ -22,7 +22,7 @@ interface GridProps {
   /** right-click menu on face tiles (#32) */
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
   persons: Map<number, Person>;
-  onRenamePerson: (personId: number, name: string) => void;
+  onAssignName: (faceId: number, name: string) => void;
   onToggle: (id: number) => void;
   onToggleMany: (ids: number[], on: boolean) => void;
   onDescription: (id: number, d: string) => void;
@@ -97,7 +97,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               onOpen={grid.onOpen}
               onContextMenu={grid.onContextMenu}
               personName={grid.persons.get(face.person_id)?.name}
-              onRenamePerson={grid.onRenamePerson}
+              onAssignName={grid.onAssignName}
               onToggle={grid.onToggle}
               onDescription={grid.onDescription}
               onPrimary={grid.onPrimary}
