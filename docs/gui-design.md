@@ -1,10 +1,20 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.3** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.3** (2026-10-15, description/appearance investigation #27, part 1):
+  §4.6 — reference faces are rebuilt **per appearance group**: one top-N
+  list per distinct `(person, faces.description)`, `seq` 1..n within the
+  group; manual pins move from the `pin:`-prefix hack to a dedicated
+  `person_refcrops.pinned` column (schema v1.5, DB drop & recreate —
+  `scripts/annotation_snapshot.py` exports/restores manual annotations
+  across the recreate). §4.4 — editing a description re-assigns the face's
+  `seq` within its new group and re-runs the refcrop recompute. §4.7 —
+  uniqueness follows. Importer matching keyed on person+description
+  (inheritance) is **not** part of this bump — pending #27 decision.
 - **1.2** (2026-10-15, UX enhancements #23–#26 — incremental controls on
   existing panes, no new workflow ⇒ minor): §3 — `show_rejected` toggle
   (persisted in `whotrc.json`, default `true`) hides rejected faces
@@ -168,24 +178,32 @@ Double-click opens the full image split (§3).
    (stay with their current person; used to confirm a `UnknownN` as-is or
    to recover a previously rejected face).
 4. **Description** ⇒ free text, spaces around `|` trimmed by the writer; the
-   derived face label becomes `person.name-description-seq`.
+   derived face label becomes `person.name-description-seq`. Editing a
+   description **re-assigns the face's `seq`** to `MAX(others)+1` within its
+   new `(person, description)` group (so §4.7 uniqueness survives the move)
+   and re-runs the person's refcrop recompute — the face has changed
+   appearance group.
 5. **Primary face** ⇒ `persons.primary_face_id` + `primary_pinned=1` when set
    by the user. After any mutation, a person whose primary is missing or no
    longer belongs to them gets the machine rule of `import_roll.py`
    (`assign_missing_primaries`: highest `confidence`, non-discarded face,
    `primary_pinned=0`).
-6. **Reference faces** ⇒ automatic: after any accept/reject/primary change,
-   the person's `person_refcrops` are recomputed as the **top `refcrop_n`
-   (default 5) confirmed faces by confidence**, excluding the primary face.
-   Manual promotion of any confirmed face is possible; manual rows carry the
-   description prefix `pin:` and survive recomputation (auto rows without the
-   prefix are deleted+rebuilt). `face_id` is UNIQUE per row (a face is a
-   refcrop of at most one person).
+6. **Reference faces** ⇒ automatic: after any accept/reject/primary/
+   description change, the person's `person_refcrops` are rebuilt **per
+   appearance group** — for each distinct `COALESCE(faces.description,'')`
+   of the person's confirmed faces, the **top `refcrop_n` (default 5) by
+   confidence within that group**, excluding the primary face, `seq` 1..n
+   inside the group (PK `(person_id, description, seq)`). Manual promotion
+   of any confirmed face is possible; pinned rows carry `pinned=1`, are
+   excluded from auto-selection and survive recomputation. `face_id` is
+   UNIQUE per row (a face is a refcrop of at most one person). The old
+   `pin:`-prefix convention is gone (schema v1.5).
 7. **Face `name` derivation** ⇒ `person.name[-description]-seq`; `seq` is
    per (person, description) as in the importer, computed as `MAX(seq)+1`
    (gap-proof, so labels stay unique within a person even after faces are
    moved out and back in — review F5). On a move, a face gets the next free
-   seq of its new person; renames/description edits only re-derive names.
+   seq of its new person; renames only re-derive names, description edits
+   re-derive names *and* re-assign seq within the new group (§4.4).
 8. **Sync** ⇒ every mutation runs in one SQLite transaction; the frontend
    then re-fetches `get_snapshot()` and re-renders tree, grid, detail pane,
    rule bar and rolls. Image BLOBs are fetched lazily per card and cached by
