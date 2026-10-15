@@ -121,6 +121,12 @@ fn set_person_note(state: State<AppState>, person_id: i64, note: String) -> Resu
     db::set_person_note(state.paths()?, person_id, &note).map_err(|e| e.to_string())
 }
 
+/// §4.13 (#35) — remove persons: reject + detach their faces, delete the row.
+#[tauri::command]
+fn remove_persons(state: State<AppState>, person_ids: Vec<i64>) -> Result<(), String> {
+    db::remove_persons(state.paths()?, &person_ids).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn add_refcrop(state: State<AppState>, person_id: i64, face_id: i64) -> Result<(), String> {
     db::add_refcrop(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
@@ -164,6 +170,7 @@ pub fn run() {
             set_person_name,
             set_person_group,
             set_person_note,
+            remove_persons,
             add_refcrop,
             remove_refcrop,
             get_settings,

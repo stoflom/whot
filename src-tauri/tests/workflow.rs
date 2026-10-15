@@ -192,7 +192,7 @@ fn assign_existing_keeps_group() {
     assert_eq!(alice.groups, vec!["family|test".to_string()],
                "existing person's group path must not be clobbered");
     let f3 = s.faces.iter().find(|f| f.id == 3).unwrap();
-    assert_eq!(f3.person_id, alice.id);
+    assert_eq!(f3.person_id, Some(alice.id));
     assert_eq!(f3.link_status, "confirmed");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
@@ -209,7 +209,7 @@ fn seq_unique_after_move_out_and_in() {
     db::assign_person(&p, &[3], "Dave", "").unwrap();       // move Unknown2's face in
     let s = db::snapshot(&p).unwrap();
     let names: Vec<String> = s.faces.iter()
-        .filter(|f| f.person_id == dave_id)
+        .filter(|f| f.person_id == Some(dave_id))
         .map(|f| f.name.clone())
         .collect();
     assert_eq!(names.len(), 3); // f1 (seq 1), f6 (seq 3), f3 (must get seq 4)
@@ -352,8 +352,8 @@ fn description_edit_reassigns_seq_and_regroups_refcrops() {
     let s = db::snapshot(&p).unwrap();
     let f1 = s.faces.iter().find(|f| f.id == 1).unwrap();
     let f2 = s.faces.iter().find(|f| f.id == 2).unwrap();
-    assert_eq!((f1.person_id, f1.seq), (1, 2));
-    assert_eq!((f2.person_id, f2.seq), (1, 1));
+    assert_eq!((f1.person_id, f1.seq), (Some(1), 2));
+    assert_eq!((f2.person_id, f2.seq), (Some(1), 1));
     assert_ne!(f1.name, f2.name, "labels must stay unique within the group");
     // refcrops must have followed the face into its new group
     let rc = db::get_refcrops(&p, 1).unwrap();
@@ -410,5 +410,38 @@ fn clusters_partitioned_by_appearance() {
     assert_eq!(beard.clusters.len(), 1, "cos .9 >= threshold ⇒ one cluster");
     assert_eq!(ids(none), vec![6]);
     assert_eq!(cl[0].description, "beard", "primary's appearance sorts first");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// §4.13/#35 — remove_persons: faces rejected + detached, person and its
+/// groups/refcrops deleted, other persons untouched, unowned faces are
+/// still addressable (assign moves them back into the fold).
+#[test]
+fn remove_persons_rejects_detaches_deletes() {
+    let p = fixture_paths("remove");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // person 1
+    db::add_refcrop(&p, 1, 2).unwrap();                        // pin → must cascade
+    db::set_link_status(&p, &[4, 5], "confirmed").unwrap();    // person 3 keeps its own
+    db::remove_persons(&p, &[1]).unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().all(|x| x.id != 1), "person 1 must be gone");
+    assert!(s.persons.iter().any(|x| x.id == 3), "other persons untouched");
+    for f in s.faces.iter().filter(|f| [1, 2, 6].contains(&f.id)) {
+        assert_eq!(f.link_status, "rejected", "face {} must be rejected", f.id);
+        assert_eq!(f.person_id, None, "face {} must be unowned", f.id);
+    }
+    // refcrops cascaded with the person
+    assert!(db::get_refcrops(&p, 1).unwrap().is_empty());
+    // a removed person's faces can be claimed again (un-reject via assign)
+    db::assign_person(&p, &[6], "Rescued", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let f6 = s.faces.iter().find(|f| f.id == 6).unwrap();
+    assert_eq!(f6.person_id, Some(s.persons.iter().find(|x| x.name == "Rescued").unwrap().id));
+    assert_eq!(f6.link_status, "confirmed");
+    // removing an unknown id errors, batch of several works
+    assert!(db::remove_persons(&p, &[]).is_err());
+    db::remove_persons(&p, &[2, 3]).unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().all(|x| x.id != 2 && x.id != 3));
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }

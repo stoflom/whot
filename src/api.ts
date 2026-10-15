@@ -19,7 +19,8 @@ export interface Person {
 export interface Face {
   id: number;
   image_id: number;
-  person_id: number;
+  /** null for faces whose person was removed (§4.13) — rejected, unowned */
+  person_id: number | null;
   x: number;
   y: number;
   w: number;
@@ -98,6 +99,9 @@ export const setPersonGroup = (personId: number, group: string) =>
   invoke("set_person_group", { personId, group });
 export const setPersonNote = (personId: number, note: string) =>
   invoke("set_person_note", { personId, note });
+/** §4.13 (#35) — reject + detach faces, delete the person(s); no undo */
+export const removePersons = (personIds: number[]) =>
+  invoke("remove_persons", { personIds });
 export const addRefcrop = (personId: number, faceId: number) =>
   invoke("add_refcrop", { personId, faceId });
 export const removeRefcrop = (personId: number, faceId: number) =>

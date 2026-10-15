@@ -228,7 +228,9 @@ pub struct Person {
 pub struct Face {
     pub id: i64,
     pub image_id: i64,
-    pub person_id: i64,
+    /// NULL for faces whose person was removed (§4.13) — they stay in the
+    /// DB as rejected, unowned records
+    pub person_id: Option<i64>,
     pub x: i64,
     pub y: i64,
     pub w: i64,
@@ -284,7 +286,7 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
                     COALESCE(SUM(link_status = 'provisional'), 0),
                     COALESCE(SUM(link_status = 'confirmed'), 0),
                     COALESCE(SUM(link_status = 'rejected'), 0)
-               FROM faces GROUP BY person_id",
+               FROM faces WHERE person_id IS NOT NULL GROUP BY person_id",
         )?;
         for row in st.query_map([], |r| {
             Ok((
@@ -597,7 +599,10 @@ fn affected_persons(
     }
     if !face_ids.is_empty() {
         let list = ids_list(face_ids);
-        let mut st = con.prepare(&format!("SELECT DISTINCT person_id FROM faces WHERE id IN ({list})"))?;
+        // person_id IS NOT NULL: removed persons leave unowned faces (§4.13)
+        let mut st = con.prepare(&format!(
+            "SELECT DISTINCT person_id FROM faces WHERE person_id IS NOT NULL AND id IN ({list})"
+        ))?;
         let rows = st.query_map([], |r| r.get::<_, i64>(0))?;
         for row in rows {
             set.insert(row?);
@@ -652,17 +657,17 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
 
-    let selected: Vec<(i64, i64)> = {
+    let selected: Vec<(i64, Option<i64>)> = {
         let list = ids_list(&ids);
         let mut st = tx.prepare(&format!("SELECT id, person_id FROM faces WHERE id IN ({list})"))?;
-        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?)))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         if rows.len() != ids.len() {
             bail!("some selected faces no longer exist");
         }
         rows
     };
-    let mut old_persons: HashSet<i64> = selected.iter().map(|(_, p)| *p).collect();
+    let mut old_persons: HashSet<i64> = selected.iter().filter_map(|(_, p)| *p).collect();
 
     // (target, owns_group): the group field only applies when we rename an
     // UnknownN in place or create the person — merging into an existing
@@ -714,7 +719,7 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     }
 
     for (face_id, person_id) in &selected {
-        if *person_id == target {
+        if *person_id == Some(target) {
             tx.execute(
                 "UPDATE faces SET link_status = 'confirmed' WHERE id = ?",
                 params![face_id],
@@ -785,12 +790,18 @@ pub fn set_face_description(paths: &Paths, face_id: i64, raw: &str) -> Result<()
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
     let desc = normalize_description(raw);
-    let (person_id, old_desc): (i64, Option<String>) = tx.query_row(
+    let (person_id, old_desc): (Option<i64>, Option<String>) = tx.query_row(
         "SELECT person_id, description FROM faces WHERE id = ?",
         params![face_id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     if desc != old_desc {
+        let Some(person_id) = person_id else {
+            // unowned face (removed person, §4.13): just record the tags
+            tx.execute("UPDATE faces SET description = ? WHERE id = ?", params![desc, face_id])?;
+            tx.commit()?;
+            return Ok(());
+        };
         // next free seq of the new group, counting the OTHER faces only (§4.7)
         let seq: i64 = tx.query_row(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
@@ -893,6 +904,44 @@ pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<()> 
         "UPDATE persons SET note = ? WHERE id = ?",
         params![if note.trim().is_empty() { None } else { Some(note.trim()) }, person_id],
     )?;
+    Ok(())
+}
+
+/// §4.13 (#35) — remove unwanted persons: every face becomes `rejected`,
+/// is detached (`person_id = NULL`), stale foreign primary pointers are
+/// cleared, then the person row is deleted (groups/refcrops cascade).
+/// Faces are never deleted — they stay as rejected, unowned records.
+/// One transaction for the whole batch; no undo.
+pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
+    let ids: HashSet<i64> = person_ids.iter().copied().collect();
+    if ids.is_empty() {
+        bail!("no persons selected");
+    }
+    let mut con = connect(paths)?;
+    let tx = con.transaction()?;
+    let mut removed = 0;
+    for pid in ids {
+        // defensive: no OTHER person may keep pointing at these faces
+        tx.execute(
+            "UPDATE persons SET primary_face_id = NULL, primary_pinned = 0
+              WHERE primary_face_id IN (SELECT id FROM faces WHERE person_id = ?)",
+            params![pid],
+        )?;
+        // rejected = out of review (§4.2); detach so the FK allows the delete
+        tx.execute(
+            "UPDATE faces SET link_status = 'rejected' WHERE person_id = ?",
+            params![pid],
+        )?;
+        tx.execute(
+            "UPDATE faces SET person_id = NULL WHERE person_id = ?",
+            params![pid],
+        )?;
+        removed += tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
+    }
+    if removed == 0 {
+        bail!("none of the selected persons exist any more");
+    }
+    tx.commit()?;
     Ok(())
 }
 
