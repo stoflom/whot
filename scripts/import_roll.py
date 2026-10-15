@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """import_roll.py — import a film-roll directory into data/faces.db.
 
-Pipeline (scripts-design.md):
+Pipeline (see docs/gui-design.md):
   scan -> BLAKE3 hash -> skip existing / detect+embed -> associate -> store
 
 Usage: import_roll.py [--dry-run] [--recursive] [--threshold F] ROLL_DIR
@@ -97,6 +97,12 @@ def load_env(path: Path) -> dict[str, str]:
                 for ref, rv in raw.items():
                     v = v.replace("${" + ref + "}", rv)
                 raw[k] = v
+    # refs not defined in the file (e.g. ${HOME}) fall back to the process
+    # environment; unresolvable refs stay literal (#15)
+    for k, v in raw.items():
+        if "${" in v:
+            raw[k] = re.sub(r"\$\{(\w+)\}",
+                            lambda m: os.environ.get(m.group(1), m.group(0)), v)
     return raw
 
 
@@ -352,8 +358,12 @@ def ensure_person(con: sqlite3.Connection, stub: PersonStub, unknowns: list[Pers
 
 
 def assign_seq(con: sqlite3.Connection, person_id: int) -> int:
-    """Next per-(person, description='') sequence — derived face name part (design 5)."""
-    row = con.execute("SELECT COUNT(*) FROM faces WHERE person_id = ? AND COALESCE(description,'') = ''",
+    """Next per-(person, description='') sequence — derived face name part (design 5).
+
+    MAX-based, not COUNT-based: faces moved out of a person by the GUI leave
+    gaps, and COUNT+1 would collide with an existing seq (#5).
+    """
+    row = con.execute("SELECT COALESCE(MAX(seq), 0) FROM faces WHERE person_id = ? AND COALESCE(description,'') = ''",
                       (person_id,)).fetchone()
     return row[0] + 1
 
@@ -414,10 +424,12 @@ def assign_missing_primaries(con: sqlite3.Connection) -> None:
         UPDATE persons SET primary_face_id = (
             SELECT f.id FROM faces f
              WHERE f.person_id = persons.id AND f.state != 'discarded'
+               AND f.link_status != 'rejected'
              ORDER BY f.confidence DESC, f.id LIMIT 1)
         WHERE primary_face_id IS NULL
           AND EXISTS (SELECT 1 FROM faces f
-                       WHERE f.person_id = persons.id AND f.state != 'discarded')
+                       WHERE f.person_id = persons.id AND f.state != 'discarded'
+                         AND f.link_status != 'rejected')
     """)
 
 
@@ -471,6 +483,9 @@ def main(argv: list[str] | None = None) -> int:
                 if not args.dry_run:      # dry-run must not write
                     con.execute("INSERT OR IGNORE INTO image_paths(image_id, path) VALUES (?, ?)",
                                 (existing[0], str(path)))
+                    # rescan touches the image: keep last_import_id truthful (#18)
+                    con.execute("UPDATE images SET last_import_id = ? WHERE id = ?",
+                                (import_id, existing[0]))
                     con.commit()
                 continue
             plan = plan_image(path, detector)
