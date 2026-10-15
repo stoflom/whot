@@ -1,7 +1,20 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
+
+**Change log**
+
+- **1.1** (2026-10-15, review-driven corrections F2/F7/F12/F14/F22):
+  §4.1 — a name that matches an existing person *merges* into that person
+  (no collision error) and their group path is left untouched; the group
+  field applies only to rename-in-place/new-person. §4.7 — next free seq is
+  `MAX(seq)+1` (gap-proof). §4.8 — manual refresh button + refetch on
+  window focus for imports made while the GUI is open. §5 — command
+  signatures corrected (`remove_refcrop(person_id, face_id)`,
+  `get_image_* → Option<String>`). §6 — file layout corrected (command
+  surface lives in `lib.rs`; `tests/`, `test/`, `docs/` added).
+- **1.0** initial GUI design.
 
 Tauri-based desktop app for reviewing, naming, accepting, rejecting and
 annotating faces imported by `scripts/import_roll.py` into `data/faces.db`.
@@ -108,7 +121,11 @@ primary), status badge (provisional/confirmed/rejected), reject button.
      selected faces to that person (create if needed), `confirmed`,
      `reassigned=1`. Faces **not** selected stay with their original person
      (e.g. `UnknownN`) for later assignment or rejection.
-   - Name must be unique (backend error surfaced in the UI on collision).
+   - Assigning to a name that matches an **existing person merges** the
+     selection into that person (names are not required to be unique for
+     assign); the target person's group path and note are **left untouched**
+     in that case. The group field only applies to the rename-in-place /
+     new-person branches (review F2/F22).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces).
 2. **Reject** ⇒ `link_status='rejected'`. Rejected faces: excluded from
@@ -132,13 +149,18 @@ primary), status badge (provisional/confirmed/rejected), reject button.
    prefix are deleted+rebuilt). `face_id` is UNIQUE per row (a face is a
    refcrop of at most one person).
 7. **Face `name` derivation** ⇒ `person.name[-description]-seq`; `seq` is
-   per (person, description) as in the importer. On a move, a face gets the
-   next free seq of its new person (so labels stay unique within a person);
-   renames/description edits only re-derive names.
+   per (person, description) as in the importer, computed as `MAX(seq)+1`
+   (gap-proof, so labels stay unique within a person even after faces are
+   moved out and back in — review F5). On a move, a face gets the next free
+   seq of its new person; renames/description edits only re-derive names.
 8. **Sync** ⇒ every mutation runs in one SQLite transaction; the frontend
    then re-fetches `get_snapshot()` and re-renders tree, grid, detail pane,
    rule bar and rolls. Image BLOBs are fetched lazily per card and cached by
    `face_id`/`image_id` (content never changes, cache never invalidated).
+   External changes (a roll imported while the GUI is open) become visible
+   via a **manual refresh button** in the top bar and an automatic re-fetch
+   when the window regains focus/visibility; focus-refetch errors are
+   ignored so they cannot stomp the current view (review F12).
 9. **Similarity grouping** (person view only) uses the same single-linkage
    cosine rule and default 0.40 threshold as the importer — it is a display
    aid for impostors, it does *not* re-cluster or reassign anything; the
@@ -156,7 +178,8 @@ primary), status badge (provisional/confirmed/rejected), reject button.
   roll_id, first_import_id}], imports: [{id, path, started_at}],
   settings {cluster_threshold, refcrop_n} }`
 - `get_face_preview(face_id) → String` (base64 JPEG from `faces.preview`)
-- `get_image_thumb(image_id) → String`, `get_image_preview(image_id) → String`
+- `get_image_thumb(image_id) → Option<String>`,
+  `get_image_preview(image_id) → Option<String>`
 - `get_refcrops(person_id) → [{seq, description, face_id, image: base64}]`
 
 **Mutations** (each ends with refcrops recompute + primary backfill for all
@@ -170,7 +193,7 @@ affected persons; all return an error string on constraint violation)
 - `set_person_name(person_id, name)` / `set_person_group(person_id, path)` /
   `set_person_note(person_id, note)`
 - `add_refcrop(person_id, face_id)` (manual, `pin:`) /
-  `remove_refcrop(person_id, seq)`
+  `remove_refcrop(person_id, face_id)`
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
 
 ## 6. File layout
@@ -185,8 +208,11 @@ whot/
     styles.css
   src-tauri/
     tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde, base64
-    src/main.rs  src/db.rs         # db.rs: queries + embeddings + refcrops
-    src/commands.rs               # #[tauri::command] surface (section 5)
+    src/main.rs  src/lib.rs        # lib.rs: #[tauri::command] surface (§5)
+    src/db.rs                      # db.rs: queries + embeddings + refcrops
+    tests/                         # Rust integration tests (self-built fixture DB)
+  test/                            # Python unit tests (import helpers)
+  docs/                            # design + review documents
   config/whotrc.json              # created at runtime
   data/faces.db                   # (existing)
 ```
