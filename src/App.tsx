@@ -7,7 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
-import type { AppearanceGroup, Face, ImageRow, Refcrop, Snapshot } from "./api";
+import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Snapshot } from "./api";
 import AssignDialog from "./components/AssignDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import FaceAssignDialog from "./components/FaceAssignDialog";
@@ -234,6 +234,32 @@ export default function App() {
     if (ids.length > 0) setConfirmRemove(ids);
   };
 
+  // group argument for rename-style assigns: an UnknownN must leave the
+  // 'Unknown' branch (F7) — the group isn't user-visible in these flows;
+  // otherwise the person keeps their current path
+  const renameGroup = (p: Person | undefined) =>
+    p && p.name.startsWith("Unknown") ? "" : (p?.groups[0] ?? "");
+
+  // rename-merge (v1.9/v1.11): EVERY GUI rename (tree, context menu,
+  // detail pane) routes through assign over all the person's faces — a
+  // colliding name merges; the 'person already exists' error is
+  // unreachable from the GUI
+  const renameOrMerge = (id: number, n: string) => {
+    if (!snap) return;
+    const name = n.trim();
+    const p = personsById.get(id);
+    if (!name || name === p?.name) return; // empty / no-op: never an error
+    const ids = snap.faces.filter((f) => f.person_id === id).map((f) => f.id);
+    if (ids.length === 0) {
+      // faceless person: rename, or merge-by-deletion when the name is taken
+      const taken = snap.persons.some((x) => x.id !== id && x.name === name);
+      if (taken) mutate(() => api.removePersons([id]), false);
+      else mutate(() => api.setPersonName(id, name));
+      return;
+    }
+    doAssign(ids, name, renameGroup(p));
+  };
+
   // #23 — show/hide rejected faces; faces hidden this way leave the
   // selection so they can never be bulk-acted on invisibly (§4.10)
   const toggleShowRejected = () => {
@@ -393,7 +419,7 @@ export default function App() {
       if (groupCount <= 1) {
         // single-face group: whole group == this face — short-circuit the
         // dialog, but keep the person's group path (rename-in-place, §1.10)
-        doAssign([faceId], name, personsById.get(f.person_id)?.groups[0] ?? "");
+        doAssign([faceId], name, renameGroup(personsById.get(f.person_id)));
         return;
       }
       setFaceAssign({ faceId, personId: f.person_id, name });
@@ -636,16 +662,7 @@ export default function App() {
             onSelect={handleTreeSelect}
             selectedIds={selPersons}
             onRemovePersons={doRemovePersons}
-            onRename={(id, n) => {
-              // tree renames route through assign over ALL the person's faces:
-              // a colliding name merges instead of erroring (design v1.9 §4.1)
-              const p = personsById.get(id);
-              const ids = snap.faces
-                .filter((f) => f.person_id === id)
-                .map((f) => f.id);
-              if (ids.length === 0) mutate(() => api.setPersonName(id, n));
-              else doAssign(ids, n, p?.groups[0] ?? "");
-            }}
+            onRename={renameOrMerge}
             onSelectPending={(id) => {
               const ids = snap.faces
                 .filter((f) => f.person_id === id && f.link_status === "provisional")
@@ -792,7 +809,7 @@ export default function App() {
             refcrops={refcrops}
             snapshot={snap}
             showRejected={showRejected}
-            onName={(id, n) => mutate(() => api.setPersonName(id, n))}
+            onName={renameOrMerge}
             onGroup={(id, g) => mutate(() => api.setPersonGroup(id, g))}
             onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}
             onRemovePerson={(id) => doRemovePersons([id])}
@@ -860,7 +877,7 @@ export default function App() {
             doAssign(
               ids,
               a.name,
-              a.personId != null ? (personsById.get(a.personId)?.groups[0] ?? "") : ""
+              renameGroup(a.personId != null ? personsById.get(a.personId) : undefined)
             );
           }}
           onCancel={() => setFaceAssign(null)}
