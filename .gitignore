@@ -1,0 +1,21 @@
+__pycache__/
+.env
+*.txt
+*.log
+*.db
+*.db-wal
+*.db-shm
+*.html
+!app/index.html
+session*.md
+node_modules/
+
+# pi session exports (any project directory)
+pi-session-*
+**/legacy_*/
+!docs/*.html
+
+# Rust build artifacts
+target/
+.vscode/
+!index.html

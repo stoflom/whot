@@ -1,0 +1,381 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import * as api from "./api";
+import type { ClusterFace, Face, ImageRow, Refcrop, Snapshot } from "./api";
+import AssignDialog from "./components/AssignDialog";
+import DetailPane from "./components/DetailPane";
+import FaceGrid, { type Section } from "./components/FaceGrid";
+import PersonTree from "./components/PersonTree";
+import RollsPane from "./components/RollsPane";
+import RuleBar from "./components/RuleBar";
+import SettingsPopover from "./components/SettingsPopover";
+import { useImagePreviewImg } from "./hooks";
+
+type View = "review" | "rolls" | "person";
+
+function ImagePreview({ id }: { id: number }) {
+  const url = useImagePreviewImg(id);
+  return url ? <img src={url} alt="" /> : <span className="dim">no preview</span>;
+}
+
+export default function App() {
+  const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [view, setView] = useState<View>("review");
+  const [personId, setPersonId] = useState<number | null>(null);
+  const [imageId, setImageId] = useState<number | null>(null);
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [clusters, setClusters] = useState<ClusterFace[][] | null>(null);
+  const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
+  const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setSnap(await api.getSnapshot());
+  }, []);
+
+  useEffect(() => {
+    refresh().catch((e) => setLoadError(String(e)));
+  }, [refresh]);
+
+  const facesById = useMemo(
+    () => new Map((snap?.faces ?? []).map((f) => [f.id, f])),
+    [snap]
+  );
+  const personsById = useMemo(
+    () => new Map((snap?.persons ?? []).map((p) => [p.id, p])),
+    [snap]
+  );
+  const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
+
+  // similarity clusters for the person view (recomputed on threshold/snap change)
+  useEffect(() => {
+    if (view === "person" && personId != null && snap) {
+      api
+        .personFaceClusters(personId, snap.settings.cluster_threshold)
+        .then(setClusters)
+        .catch((e) => setError(String(e)));
+    } else {
+      setClusters(null);
+    }
+  }, [view, personId, snap]);
+
+  // refcrops for the detail pane
+  useEffect(() => {
+    if (personId == null) {
+      setRefcrops([]);
+      return;
+    }
+    api.getRefcrops(personId).then(setRefcrops).catch(() => setRefcrops([]));
+  }, [personId, snap]);
+
+  const mutate = useCallback(
+    async (fn: () => Promise<unknown>, clearSel = false) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await fn();
+        await refresh();
+        if (clearSel) setSel(new Set());
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refresh]
+  );
+
+  // ------------------------------------------------------------ selection
+
+  const toggle = (id: number) =>
+    setSel((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const toggleMany = (ids: number[], on: boolean) =>
+    setSel((prev) => {
+      const n = new Set(prev);
+      ids.forEach((i) => (on ? n.add(i) : n.delete(i)));
+      return n;
+    });
+
+  // ------------------------------------------------------------ mutations
+
+  const doAssign = (ids: number[], name: string, group: string) =>
+    mutate(() => api.assignPerson(ids, name, group), true);
+  const doAccept = (ids: number[]) => mutate(() => api.acceptFaces(ids), true);
+  const doReject = (ids: number[]) => mutate(() => api.rejectFaces(ids), true);
+  const doDesc = (id: number, d: string) => mutate(() => api.setFaceDescription(id, d));
+  const doPrimary = (id: number) => {
+    const f = facesById.get(id);
+    if (f) mutate(() => api.setPrimaryFace(f.person_id, id));
+  };
+  const doRefcrop = (id: number) => {
+    const f = facesById.get(id);
+    if (f) mutate(() => api.addRefcrop(f.person_id, id));
+  };
+
+  // ------------------------------------------------------------ sections
+
+  const gridHandlers = {
+    faces: facesById,
+    sel,
+    onToggle: toggle,
+    onToggleMany: toggleMany,
+    onDescription: doDesc,
+    onPrimary: doPrimary,
+    onRefcrop: doRefcrop,
+    onReject: (id: number) => doReject([id]),
+    onAccept: (id: number) => doAccept([id]),
+    onAssign: (ids: number[], name: string, group: string) => doAssign(ids, name, group),
+  };
+
+  const sections = useMemo<Section[]>(() => {
+    if (!snap) return [];
+    if (imageId != null) {
+      const byPerson = new Map<number, Face[]>();
+      for (const f of snap.faces.filter((x) => x.image_id === imageId)) {
+        const arr = byPerson.get(f.person_id) ?? [];
+        arr.push(f);
+        byPerson.set(f.person_id, arr);
+      }
+      return [...byPerson.entries()].map(([pid, fl]) => {
+        const p = personsById.get(pid);
+        return {
+          key: `img-${pid}`,
+          title: p?.name ?? `person ${pid}`,
+          faceIds: fl.map((f) => f.id),
+          ruleDefaultName: p?.name,
+          ruleDefaultGroup: p?.groups[0] ?? "",
+        };
+      });
+    }
+    if (view === "person" && personId != null) {
+      const out: Section[] = [];
+      const pname = selectedPerson?.name ?? "";
+      const pgroup = selectedPerson?.groups[0] ?? "";
+      (clusters ?? []).forEach((cl, i) => {
+        if (cl.length === 0) return;
+        const minSim = Math.min(...cl.map((c) => c.sim));
+        out.push({
+          key: `cl-${i}`,
+          title: i === 0 ? `Group 1 — closest to primary` : `Group ${i + 1}`,
+          subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
+          faceIds: cl.map((c) => c.face_id),
+          ruleDefaultName: pname,
+          ruleDefaultGroup: pgroup,
+        });
+      });
+      const rej = snap.faces.filter(
+        (f) => f.person_id === personId && f.link_status === "rejected"
+      );
+      if (rej.length > 0)
+        out.push({ key: "rejected", title: "Rejected (undo to accept)", faceIds: rej.map((f) => f.id) });
+      return out;
+    }
+    // review: all provisional faces, grouped by importer person, UnknownN first
+    const byPerson = new Map<number, Face[]>();
+    for (const f of snap.faces.filter((x) => x.link_status === "provisional")) {
+      const arr = byPerson.get(f.person_id) ?? [];
+      arr.push(f);
+      byPerson.set(f.person_id, arr);
+    }
+    const order = [...snap.persons].sort((a, b) => {
+      const au = a.name.startsWith("Unknown");
+      const bu = b.name.startsWith("Unknown");
+      if (au !== bu) return au ? -1 : 1;
+      return a.id - b.id;
+    });
+    return order
+      .filter((p) => byPerson.has(p.id))
+      .map((p) => ({
+        key: `rev-${p.id}`,
+        title: p.name,
+        subtitle: p.counts.total > byPerson.get(p.id)!.length ? `${p.counts.total} faces total` : undefined,
+        faceIds: byPerson.get(p.id)!.map((f) => f.id),
+        ruleDefaultName: p.name,
+        ruleDefaultGroup: p.groups[0] ?? "",
+      }));
+  }, [snap, view, personId, imageId, clusters, personsById, selectedPerson]);
+
+  const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
+
+  // ------------------------------------------------------------ dialog prefill
+
+  const dialogPrefill = useMemo(() => {
+    if (!dialogFaceIds) return { name: "", group: "" };
+    const pids = new Set(dialogFaceIds.map((id) => facesById.get(id)?.person_id));
+    if (pids.size === 1) {
+      const p = personsById.get(pids.values().next().value as number);
+      if (p) return { name: p.name, group: p.groups[0] ?? "" };
+    }
+    return { name: "", group: "" };
+  }, [dialogFaceIds, facesById, personsById]);
+
+  if (loadError) {
+    return (
+      <div className="fatal">
+        <h2>Could not load database</h2>
+        <p>{loadError}</p>
+      </div>
+    );
+  }
+  if (!snap) {
+    return <div className="dim center-msg">loading…</div>;
+  }
+
+  const imgRow: ImageRow | undefined = imageId != null ? snap.images.find((i) => i.id === imageId) : undefined;
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <h1>WhoT <span className="dim">Face Manager</span></h1>
+        <nav>
+          <button
+            className={view === "review" ? "active" : ""}
+            onClick={() => {
+              setView("review");
+              setImageId(null);
+            }}
+          >
+            Review <span className="pill">{pendingCount}</span>
+          </button>
+          <button
+            className={view === "rolls" ? "active" : ""}
+            onClick={() => setView("rolls")}
+          >
+            Rolls
+          </button>
+          <button
+            className={view === "person" ? "active" : ""}
+            disabled={personId == null}
+            onClick={() => setImageId(null)}
+            title={personId == null ? "select a person in the tree" : ""}
+          >
+            Person
+          </button>
+        </nav>
+        <span className="topbar-right">
+          {busy && <span className="dim">working…</span>}
+          <button className="ghost" onClick={() => setSettingsOpen(true)} title="settings">
+            ⚙
+          </button>
+        </span>
+      </header>
+
+      <div className="main">
+        <aside className="left">
+          <PersonTree
+            persons={snap.persons}
+            selectedId={personId}
+            reviewCount={pendingCount}
+            onReview={() => {
+              setView("review");
+              setImageId(null);
+            }}
+            onSelect={(id) => {
+              setPersonId(id);
+              setView("person");
+              setImageId(null);
+            }}
+          />
+        </aside>
+
+        <main className="center">
+          {view === "rolls" && imageId == null ? (
+            <RollsPane
+              imports={snap.imports}
+              images={snap.images}
+              faces={snap.faces}
+              onOpenImage={(id) => setImageId(id)}
+            />
+          ) : view === "rolls" && imageId != null && imgRow ? (
+            <div className="image-detail">
+              <div className="image-detail-top">
+                <button className="secondary" onClick={() => setImageId(null)}>
+                  ← rolls
+                </button>
+                <div className="image-meta">
+                  <div>{imgRow.primary_path}</div>
+                  <div className="dim">
+                    {imgRow.width}×{imgRow.height} · {imgRow.state}
+                    {imgRow.rtype ? ` · ${imgRow.rtype}` : ""}
+                  </div>
+                </div>
+              </div>
+              <div className="image-preview">
+                <ImagePreview id={imgRow.id} />
+              </div>
+              <FaceGrid sections={sections} {...gridHandlers} primaryFaceId={null} />
+            </div>
+          ) : (
+            <FaceGrid
+              sections={sections}
+              {...gridHandlers}
+              primaryFaceId={view === "person" ? selectedPerson?.primary_face_id ?? null : null}
+            />
+          )}
+        </main>
+
+        <aside className="right">
+          <DetailPane
+            person={selectedPerson}
+            refcrops={refcrops}
+            snapshot={snap}
+            onName={(id, n) => mutate(() => api.setPersonName(id, n))}
+            onGroup={(id, g) => mutate(() => api.setPersonGroup(id, g))}
+            onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}
+            onSetPrimary={(fid) =>
+              personId != null && mutate(() => api.setPrimaryFace(personId, fid))
+            }
+            onRemoveRefcrop={(fid) =>
+              personId != null && mutate(() => api.removeRefcrop(personId, fid))
+            }
+          />
+        </aside>
+      </div>
+
+      <RuleBar
+        count={sel.size}
+        onAssign={() => setDialogFaceIds([...sel])}
+        onAccept={() => doAccept([...sel])}
+        onReject={() => doReject([...sel])}
+        onClear={() => setSel(new Set())}
+      />
+
+      {dialogFaceIds && (
+        <AssignDialog
+          count={dialogFaceIds.length}
+          defaultName={dialogPrefill.name}
+          defaultGroup={dialogPrefill.group}
+          onSubmit={(n, g) => {
+            const ids = dialogFaceIds;
+            setDialogFaceIds(null);
+            doAssign(ids, n, g);
+          }}
+          onCancel={() => setDialogFaceIds(null)}
+        />
+      )}
+      {settingsOpen && snap && (
+        <SettingsPopover
+          settings={snap.settings}
+          onClose={() => setSettingsOpen(false)}
+          onSave={async (s) => {
+            await api.setSettings(s).catch((e) => setError(String(e)));
+            setSettingsOpen(false);
+            await refresh().catch((e) => setError(String(e)));
+          }}
+        />
+      )}
+      {error && (
+        <div className="toast" onClick={() => setError(null)} title="click to dismiss">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
