@@ -18,14 +18,15 @@ const DEFAULT_REFCROP_N: i64 = 5;
 // ---------------------------------------------------------------- paths
 
 pub struct Paths {
-    pub root: PathBuf,
     pub db: PathBuf,
     pub config: PathBuf,
 }
 
 impl Paths {
-    /// Resolve project root (`.env` + `data/`), then FACES_DB / CONFIG_FILE
-    /// from .env — mirrors import_roll.py resolution. `WHOT_ROOT` overrides.
+    /// Resolve project root (`.env` or `data/` marker), then FACES_DB /
+    /// CONFIG_FILE from .env — mirrors import_roll.py resolution.
+    /// `WHOT_ROOT` overrides (documented in README; required for packaged
+    /// builds, where the cwd will not contain the repo checkout).
     pub fn resolve() -> Result<Paths> {
         let root = if let Ok(r) = std::env::var("WHOT_ROOT") {
             PathBuf::from(r)
@@ -33,11 +34,13 @@ impl Paths {
             let mut dir = std::env::current_dir()
                 .context("no current directory")?;
             loop {
-                if dir.join(".env").is_file() && dir.join("data").is_dir() {
+                // `.env` alone suffices — every key has a default, and a
+                // fresh clone has no data/ directory yet (F11)
+                if dir.join(".env").is_file() || dir.join("data").is_dir() {
                     break;
                 }
                 if !dir.pop() {
-                    bail!("could not locate project root (.env + data/) — set WHOT_ROOT");
+                    bail!("could not locate project root (.env or data/) — set WHOT_ROOT");
                 }
             }
             dir
@@ -49,7 +52,7 @@ impl Paths {
                 .map(|s| s.as_str())
                 .unwrap_or("config/whotrc.json"),
         );
-        Ok(Paths { root, db, config })
+        Ok(Paths { db, config })
     }
 }
 
@@ -76,15 +79,55 @@ pub fn parse_env(path: &Path) -> HashMap<String, String> {
                 }
             }
         }
+        // keys not defined in the file fall back to the process environment
+        // so `${HOME}`/`${USER}` resolve (F15); unknown refs stay literal
+        for val in raw.values_mut() {
+            if val.contains("${") {
+                *val = expand_process_env(val);
+            }
+        }
     }
     raw
 }
 
+/// Replace `${KEY}` with the process-environment value; unknown keys stay literal.
+fn expand_process_env(val: &str) -> String {
+    let mut out = String::with_capacity(val.len());
+    let mut rest = val;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        rest = &rest[start + 2..];
+        let Some(end) = rest.find('}') else {
+            out.push_str("${");
+            break;
+        };
+        let key = &rest[..end];
+        match std::env::var(key) {
+            Ok(v) => out.push_str(&v),
+            Err(_) => {
+                out.push_str("${");
+                out.push_str(key);
+                out.push('}');
+            }
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn connect(paths: &Paths) -> Result<Connection> {
+    if let Some(parent) = paths.db.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
+    }
     let con = Connection::open(&paths.db)
         .with_context(|| format!("cannot open {}", paths.db.display()))?;
     con.pragma_update(None, "journal_mode", "WAL")?;
     con.pragma_update(None, "foreign_keys", "ON")?;
+    // the importer runs in a separate process — don't fail instantly on lock
+    // contention (F16); matches python sqlite3's 5s default timeout
+    con.pragma_update(None, "busy_timeout", 5000)?;
     Ok(con)
 }
 
@@ -190,6 +233,42 @@ pub struct Snapshot {
 pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
     let con = connect(paths)?;
 
+    // grouped queries — one pass for all face counts, one for all group paths
+    // (F20: previously 2 extra queries per person)
+    let mut counts: HashMap<i64, PersonCounts> = HashMap::new();
+    {
+        let mut st = con.prepare(
+            "SELECT person_id, COUNT(*),
+                    COALESCE(SUM(link_status = 'provisional'), 0),
+                    COALESCE(SUM(link_status = 'confirmed'), 0),
+                    COALESCE(SUM(link_status = 'rejected'), 0)
+               FROM faces GROUP BY person_id",
+        )?;
+        for row in st.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                PersonCounts {
+                    total: r.get(1)?,
+                    provisional: r.get(2)?,
+                    confirmed: r.get(3)?,
+                    rejected: r.get(4)?,
+                },
+            ))
+        })? {
+            let (pid, c) = row?;
+            counts.insert(pid, c);
+        }
+    }
+    let mut groups: HashMap<i64, Vec<String>> = HashMap::new();
+    {
+        let mut st =
+            con.prepare("SELECT person_id, path FROM person_groups ORDER BY person_id, path")?;
+        for row in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (pid, path) = row?;
+            groups.entry(pid).or_default().push(path);
+        }
+    }
+
     let mut persons = Vec::new();
     {
         let mut st = con.prepare(
@@ -198,50 +277,24 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
               ORDER BY (p.name GLOB 'Unknown*') DESC, p.name COLLATE NOCASE, p.id",
         )?;
         let rows = st.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?,
-                r.get::<_, Option<i64>>(4)?,
-                r.get::<_, i64>(5)?,
-            ))
+            Ok(Person {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                state: r.get(2)?,
+                note: r.get(3)?,
+                primary_face_id: r.get(4)?,
+                primary_pinned: r.get(5)?,
+                groups: Vec::new(),
+                counts: PersonCounts { total: 0, provisional: 0, confirmed: 0, rejected: 0 },
+            })
         })?;
         for row in rows {
-            let (id, name, state, note, primary_face_id, primary_pinned) = row?;
-            let (total, provisional, confirmed, rejected) = con
-                .query_row(
-                    "SELECT COUNT(*),
-                            SUM(CASE WHEN link_status='provisional' THEN 1 ELSE 0 END),
-                            SUM(CASE WHEN link_status='confirmed' THEN 1 ELSE 0 END),
-                            SUM(CASE WHEN link_status='rejected' THEN 1 ELSE 0 END)
-                       FROM faces WHERE person_id = ?",
-                    params![id],
-                    |r| {
-                        Ok((
-                            r.get::<_, i64>(0)?,
-                            r.get::<_, Option<i64>>(1)?.unwrap_or(0),
-                            r.get::<_, Option<i64>>(2)?.unwrap_or(0),
-                            r.get::<_, Option<i64>>(3)?.unwrap_or(0),
-                        ))
-                    },
-                )
-                .unwrap_or((0, 0, 0, 0));
-            let mut groups: Vec<String> = con
-                .prepare("SELECT path FROM person_groups WHERE person_id = ? ORDER BY path")?
-                .query_map(params![id], |r| r.get(0))?
-                .collect::<std::result::Result<_, _>>()?;
-            groups.shrink_to_fit();
-            persons.push(Person {
-                id,
-                name,
-                state,
-                note,
-                primary_face_id,
-                primary_pinned,
-                groups,
-                counts: PersonCounts { total, provisional, confirmed, rejected },
-            });
+            let mut p = row?;
+            p.counts = counts
+                .remove(&p.id)
+                .unwrap_or(PersonCounts { total: 0, provisional: 0, confirmed: 0, rejected: 0 });
+            p.groups = groups.remove(&p.id).unwrap_or_default();
+            persons.push(p);
         }
     }
 
@@ -368,14 +421,16 @@ fn refresh_person_names(con: &Connection, person_id: i64) -> Result<()> {
 }
 
 /// §4.5 — machine primary: highest-confidence non-discarded, non-rejected face;
-/// unpin & clear stale primaries first. Mirrors import_roll.assign_missing_primaries.
+/// unpin & clear stale/ineligible primaries first (a rejected face must not
+/// stay primary — F3). Mirrors import_roll.assign_missing_primaries.
 fn backfill_primary(con: &Connection, person_id: i64) -> Result<()> {
     con.execute(
         "UPDATE persons SET primary_face_id = NULL, primary_pinned = 0
           WHERE id = ? AND primary_face_id IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM faces f
                              WHERE f.id = persons.primary_face_id
-                               AND f.person_id = ? AND f.state != 'discarded')",
+                               AND f.person_id = ? AND f.state != 'discarded'
+                               AND f.link_status != 'rejected')",
         params![person_id, person_id],
     )?;
     con.execute(
@@ -409,6 +464,8 @@ fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
         "SELECT f.id, f.name, f.description, f.preview FROM faces f
           WHERE f.person_id = ? AND f.link_status = 'confirmed' AND f.state != 'discarded'
             AND f.id IS NOT ?
+            AND NOT EXISTS (SELECT 1 FROM person_refcrops pr      -- pins survive recompute (F1)
+                             WHERE pr.face_id = f.id AND pr.description LIKE 'pin:%')
           ORDER BY f.confidence DESC, f.id LIMIT ?",
     )?;
     let rows = st
@@ -502,27 +559,34 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     if face_ids.is_empty() {
         bail!("no faces selected");
     }
+    // dedupe: a repeated id must not trip the existence check below (F19)
+    let mut ids: Vec<i64> = face_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
 
     let selected: Vec<(i64, i64)> = {
-        let list = ids_list(face_ids);
+        let list = ids_list(&ids);
         let mut st = tx.prepare(&format!("SELECT id, person_id FROM faces WHERE id IN ({list})"))?;
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        if rows.len() != face_ids.len() {
+        if rows.len() != ids.len() {
             bail!("some selected faces no longer exist");
         }
         rows
     };
     let mut old_persons: HashSet<i64> = selected.iter().map(|(_, p)| *p).collect();
 
-    let target: i64 = match tx
+    // (target, owns_group): the group field only applies when we rename an
+    // UnknownN in place or create the person — merging into an existing
+    // person must not clobber their group path (F2, design §4.1)
+    let (target, owns_group): (i64, bool) = match tx
         .query_row("SELECT id FROM persons WHERE name = ?", params![name], |r| r.get(0))
         .optional()?
     {
-        Some(id) => id,
+        Some(id) => (id, false),
         None => {
             let single_unknown = if old_persons.len() == 1 {
                 let pid = *old_persons.iter().next().unwrap();
@@ -540,26 +604,28 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
             match single_unknown {
                 Some(pid) => {
                     old_persons.remove(&pid);
-                    pid
+                    (pid, true)
                 }
                 None => {
                     tx.execute(
                         "INSERT INTO persons (name, state, created_at) VALUES (?, 'created', datetime('now'))",
                         params![name],
                     )?;
-                    tx.last_insert_rowid()
+                    (tx.last_insert_rowid(), true)
                 }
             }
         }
     };
 
     // group: one path per person; empty ⇒ Ungrouped (no rows)
-    tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![target])?;
-    if !group_path.is_empty() {
-        tx.execute(
-            "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?, ?)",
-            params![target, group_path],
-        )?;
+    if owns_group {
+        tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![target])?;
+        if !group_path.is_empty() {
+            tx.execute(
+                "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?, ?)",
+                params![target, group_path],
+            )?;
+        }
     }
 
     for (face_id, person_id) in &selected {
@@ -569,9 +635,11 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
                 params![face_id],
             )?;
         } else {
-            // importer-style seq: next free number for (person, description)
+            // gap-proof next free number: MAX+1, not COUNT+1 — moving faces
+            // out leaves seq gaps and COUNT+1 could collide with an existing
+            // seq, producing duplicate names (F5, design §4.7)
             let seq: i64 = tx.query_row(
-                "SELECT COUNT(*) + 1 FROM faces
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
                   WHERE person_id = ?
                     AND COALESCE(description, '') = COALESCE((SELECT description FROM faces WHERE id = ?), '')",
                 params![target, face_id],
@@ -685,7 +753,19 @@ pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<()> 
     if exists {
         bail!("a person named {name} already exists");
     }
+    let old_name: String =
+        tx.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
     tx.execute("UPDATE persons SET name = ? WHERE id = ?", params![name.trim(), person_id])?;
+    if old_name.starts_with("Unknown") {
+        // leaving the importer's Unknown cluster: drop the virtual-branch
+        // group path so the renamed person shows under Ungrouped or their own
+        // path (F7, mirrors assign_person's rename-in-place)
+        tx.execute(
+            "DELETE FROM person_groups WHERE person_id = ?
+              AND (path = 'Unknown' OR path LIKE 'Unknown|%')",
+            params![person_id],
+        )?;
+    }
     refresh_person_names(&tx, person_id)?;
     tx.commit()?;
     Ok(())
@@ -799,7 +879,7 @@ fn l2_vectors(con: &Connection, face_ids: &[i64]) -> Result<Vec<Vec<f32>>> {
     let rows = st.query_map(params![MODEL_TAG], |r| {
         let fid: i64 = r.get(0)?;
         let blob: Vec<u8> = r.get(1)?;
-        let v: Vec<f32> = blob.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+        let v: Vec<f32> = blob.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
         Ok((fid, v))
     })?;
     for row in rows {
@@ -933,114 +1013,3 @@ pub fn get_refcrops(paths: &Paths, person_id: i64) -> Result<Vec<Refcrop>> {
 }
 
 
-// ---------------------------------------------------------------- tests
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    fn temp_paths() -> Paths {
-        let root = std::env::temp_dir().join(format!("whot-test-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data/faces.db");
-        std::fs::copy(&src, root.join("faces.db")).unwrap();
-        Paths {
-            root: root.clone(),
-            db: root.join("faces.db"),
-            config: root.join("whotrc.json"),
-        }
-    }
-
-    #[test]
-    fn full_workflow() {
-        let p = temp_paths();
-        let s = snapshot(&p).unwrap();
-        assert!(!s.persons.is_empty() && !s.faces.is_empty());
-
-        // --- 1) rename a single-face person in place (skip if none exists)
-        if let Some(solo) = s.persons.iter().find(|x| x.counts.total == 1) {
-            let face = s.faces.iter().find(|f| f.person_id == solo.id).unwrap();
-            assign_person(&p, &[face.id], "Test Alice", "family|test").unwrap();
-            let s = snapshot(&p).unwrap();
-            let alice = s.persons.iter().find(|x| x.name == "Test Alice").unwrap();
-            assert_eq!(alice.groups, vec!["family|test".to_string()]);
-            assert_eq!(s.faces.iter().find(|f| f.id == face.id).unwrap().link_status, "confirmed");
-            assert_eq!(alice.primary_face_id, Some(face.id));
-
-            // --- 4) description normalisation + derived name
-            set_face_description(&p, face.id, "  beard | glasses ").unwrap();
-            let s = snapshot(&p).unwrap();
-            let f = s.faces.iter().find(|f| f.id == face.id).unwrap();
-            assert_eq!(f.description.as_deref(), Some("beard|glasses"));
-            assert!(f.name.starts_with("Test Alice-beard|glasses-"));
-        }
-
-        // --- 2) move one face from two different persons into a fresh person
-        let mut taken = vec![];
-        let mut picks: Vec<i64> = Vec::new();
-        for f in s.faces.iter() {
-            if picks.len() >= 2 { break; }
-            if f.link_status == "rejected" { continue; }
-            if !taken.contains(&f.person_id) && !picks.is_empty() {
-                picks.push(f.id);
-                taken.push(f.person_id);
-            } else if picks.is_empty() {
-                picks.push(f.id);
-                taken.push(f.person_id);
-            }
-        }
-        let (fa, fb) = (picks[0], picks[1]);
-        assign_person(&p, &[fa, fb], "Test Bob", "").unwrap();
-        let s = snapshot(&p).unwrap();
-        let bob = s.persons.iter().find(|x| x.name == "Test Bob").unwrap();
-        assert!(bob.groups.is_empty());
-        for fid in [fa, fb] {
-            let f = s.faces.iter().find(|f| f.id == fid).unwrap();
-            assert_eq!(f.person_id, bob.id);
-            assert_eq!(f.link_status, "confirmed");
-        }
-        let names: Vec<String> = s.faces.iter().filter(|f| f.person_id == bob.id)
-            .map(|f| f.name.clone()).collect();
-        let mut uniq = names.clone();
-        uniq.sort(); uniq.dedup();
-        assert_eq!(names.len(), uniq.len(), "names must be unique within a person: {names:?}");
-        assert!(names.iter().all(|n| n.starts_with("Test Bob-")));
-
-        // --- 5) pinned primary + refcrops exclude it; manual pin survives rebuild
-        set_primary_face(&p, bob.id, fb).unwrap();
-        add_refcrop(&p, bob.id, fa).unwrap();
-        let rc = get_refcrops(&p, bob.id).unwrap();
-        assert!(rc.iter().any(|r| r.face_id == fa && r.description.starts_with("pin:")));
-        assert!(rc.iter().all(|r| r.face_id != fb));
-
-        // --- 3) reject a face of a person that keeps others, then re-accept
-        let s = snapshot(&p).unwrap();
-        let victim = s.faces.iter()
-            .find(|f| f.person_id != bob.id
-                && s.persons.iter().find(|x| x.id == f.person_id).unwrap().counts.total >= 2)
-            .expect("test data needs a multi-face person").id;
-        set_link_status(&p, &[victim], "rejected").unwrap();
-        let s = snapshot(&p).unwrap();
-        assert_eq!(s.faces.iter().find(|f| f.id == victim).unwrap().link_status, "rejected");
-        set_link_status(&p, &[victim], "confirmed").unwrap();
-        let s = snapshot(&p).unwrap();
-        assert_eq!(s.faces.iter().find(|f| f.id == victim).unwrap().link_status, "confirmed");
-
-        // --- 6) clusters on the 2-face person
-        let bob = s.persons.iter().find(|x| x.name == "Test Bob").unwrap();
-        let cl = person_face_clusters(&p, bob.id, 0.4).unwrap();
-        assert!((1..=2).contains(&cl.len()));
-        assert_eq!(cl.iter().map(|c| c.len()).sum::<usize>(), 2);
-
-        // --- 7) name validation + no-op self rename
-        assert!(assign_person(&p, &[fa], "Unknown99", "").is_err());
-        assert!(set_person_name(&p, bob.id, "Test Bob").is_ok());
-
-        // --- 8) settings round-trip
-        set_settings(&p, Settings { cluster_threshold: 0.5, refcrop_n: 3 }).unwrap();
-        assert_eq!(get_settings(&p).unwrap().refcrop_n, 3);
-
-        std::fs::remove_dir_all(p.root).ok();
-    }
-}

@@ -1,0 +1,270 @@
+//! Integration tests over a self-built fixture DB (review F8).
+//!
+//! The database is created from `database/schema.sql` + deterministic seeded
+//! rows — no local `data/faces.db` needed, so the suite runs on a fresh clone
+//! and in CI.
+//!
+//! Fixture:
+//!   imports: 1 ('/tmp/roll1')
+//!   images:  1 'a.jpg', 2 'b.jpg', 3 'c.jpg'
+//!   persons: 1 Unknown1 (faces 1,2,6 — conf .90/.80/.60, 3 faces)
+//!            2 Unknown2 (face 3  — conf .70, single face)
+//!            3 Unknown3 (faces 4,5 — conf .95/.85)
+//!   embeddings (dim 4): cos(1,2)=.9, cos(1,6)=.8, cos(4,5)=.98, others 0
+
+use rusqlite::{params, Connection};
+use std::path::PathBuf;
+use whotapp_lib::db::{self, Paths, Settings};
+
+const SCHEMA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../database/schema.sql");
+const NOW: &str = "2026-10-15T00:00:00";
+
+fn fixture_paths(name: &str) -> Paths {
+    let root: PathBuf =
+        std::env::temp_dir().join(format!("whot-test-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let paths = Paths { db: root.join("faces.db"), config: root.join("whotrc.json") };
+    let con = Connection::open(&paths.db).unwrap();
+    con.execute_batch(&std::fs::read_to_string(SCHEMA).unwrap()).unwrap();
+    seed(&con);
+    paths
+}
+
+fn seed(con: &Connection) {
+    con.execute(
+        "INSERT INTO imports(id, path, started_at) VALUES (1, '/tmp/roll1', ?)",
+        params![NOW],
+    ).unwrap();
+    for (id, name) in [(1, "a.jpg"), (2, "b.jpg"), (3, "c.jpg")] {
+        con.execute(
+            "INSERT INTO images(id, content_hash, width, height, primary_path, state,
+                                orientation, type, created_at)
+             VALUES (?, ?, 100, 100, ?, 'scanned', 'landscape', 'processed', ?)",
+            params![id, format!("{id:0>64}"), name, NOW],
+        ).unwrap();
+    }
+    for (id, name) in [(1, "Unknown1"), (2, "Unknown2"), (3, "Unknown3")] {
+        con.execute(
+            "INSERT INTO persons(id, name, state, created_at) VALUES (?, ?, 'created', ?)",
+            params![id, name, NOW],
+        ).unwrap();
+        con.execute(
+            "INSERT INTO person_groups(person_id, path) VALUES (?, 'Unknown')",
+            params![id],
+        ).unwrap();
+    }
+    // (face id, image, person, seq, confidence, embedding)
+    let faces: [(i64, i64, i64, i64, f64, [f32; 4]); 6] = [
+        (1, 1, 1, 1, 0.90, [1.0, 0.0, 0.0, 0.0]),
+        (2, 1, 1, 2, 0.80, [0.9, 0.43589, 0.0, 0.0]),
+        (6, 1, 1, 3, 0.60, [0.8, 0.6, 0.0, 0.0]),
+        (3, 2, 2, 1, 0.70, [0.0, 1.0, 0.0, 0.0]),
+        (4, 3, 3, 1, 0.95, [0.0, 0.0, 1.0, 0.0]),
+        (5, 3, 3, 2, 0.85, [0.0, 0.0, 0.98058, 0.19612]),
+    ];
+    for (fid, img, pid, seq, conf, vec) in faces {
+        con.execute(
+            "INSERT INTO faces(id, image_id, x, y, w, h, person_id, name, seq, confidence,
+                               preview, detected_in_import_id, created_at)
+             VALUES (?, ?, ?, 0, 10, 10, ?, ?, ?, ?, ?, 1, ?)",
+            params![fid, img, (seq - 1) * 20, pid, format!("Unknown{pid}-{seq}"), seq,
+                    conf, vec![0u8; 8], NOW],
+        ).unwrap();
+        con.execute(
+            "INSERT INTO face_embeddings(face_id, model, dim, vector, created_at)
+             VALUES (?, 'insightface:buffalo_l', 4, ?, ?)",
+            params![fid, vec.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>(), NOW],
+        ).unwrap();
+    }
+}
+
+// ---------------------------------------------------------------- baseline
+
+#[test]
+fn full_workflow() {
+    let p = fixture_paths("full");
+
+    // snapshot sanity
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.persons.len(), 3);
+    assert_eq!(s.faces.len(), 6);
+    assert_eq!(s.images.len(), 3);
+    assert_eq!(s.imports.len(), 1);
+
+    // 1) rename the whole Unknown3 cluster in place
+    db::assign_person(&p, &[4, 5], "Carol", "family|test").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let carol = s.persons.iter().find(|x| x.name == "Carol").unwrap();
+    assert_eq!(carol.groups, vec!["family|test".to_string()]);
+    assert_eq!(carol.counts.confirmed, 2);
+    let prim = carol.primary_face_id.expect("primary backfilled");
+    assert!(prim == 4 || prim == 5);
+    // refcrops: the other confirmed face, primary excluded (§4.6)
+    let rc = db::get_refcrops(&p, carol.id).unwrap();
+    assert_eq!(rc.len(), 1);
+    assert_eq!(rc[0].face_id, if prim == 4 { 5 } else { 4 });
+
+    // 2) description normalisation + derived name (§4.4)
+    db::set_face_description(&p, 5, "  beard | glasses ").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let f5 = s.faces.iter().find(|f| f.id == 5).unwrap();
+    assert_eq!(f5.description.as_deref(), Some("beard|glasses"));
+    assert!(f5.name.starts_with("Carol-beard|glasses-"), "{}", f5.name);
+
+    // 3) reject / re-accept roundtrip (§4.2/§4.3)
+    db::set_link_status(&p, &[5], "rejected").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let f5 = s.faces.iter().find(|f| f.id == 5).unwrap();
+    assert_eq!(f5.link_status, "rejected");
+    assert!(s.persons.iter().find(|x| x.name == "Carol").unwrap().primary_face_id != Some(5));
+    db::set_link_status(&p, &[5], "confirmed").unwrap();
+
+    // 4) similarity clusters on Carol (cos(4,5)=0.98 ⇒ one cluster of two)
+    let cl = db::person_face_clusters(&p, carol.id, 0.5).unwrap();
+    assert_eq!(cl.len(), 1);
+    assert_eq!(cl[0].len(), 2);
+
+    // 5) name validation + no-op self rename
+    assert!(db::assign_person(&p, &[3], "Unknown99", "").is_err());
+    assert!(db::set_person_name(&p, carol.id, "Carol").is_ok());
+
+    // 6) settings round-trip
+    db::set_settings(&p, Settings { cluster_threshold: 0.5, refcrop_n: 3 }).unwrap();
+    assert_eq!(db::get_settings(&p).unwrap().refcrop_n, 3);
+
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+// ---------------------------------------------------------------- regressions
+
+/// F1 — manual pins must survive refcrop recomputation (design §4.6).
+/// The pinned face (conf .85) is *inside* the auto top-N, which is exactly
+/// the case where the old INSERT OR REPLACE evicted the pin row.
+#[test]
+fn pin_survives_recompute() {
+    let p = fixture_paths("pin");
+    db::set_link_status(&p, &[4, 5], "confirmed").unwrap();
+    db::set_primary_face(&p, 3, 4).unwrap();
+    db::add_refcrop(&p, 3, 5).unwrap();
+    // trigger two recomputes
+    db::set_link_status(&p, &[5], "rejected").unwrap();
+    db::set_link_status(&p, &[5], "confirmed").unwrap();
+    let rc = db::get_refcrops(&p, 3).unwrap();
+    let pin = rc.iter().find(|r| r.face_id == 5)
+        .expect("pinned face must survive recompute");
+    assert!(pin.description.starts_with("pin:"), "pin prefix lost: {}", pin.description);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// F3 — rejecting a person's primary face must trigger reassignment (§4.2).
+#[test]
+fn rejected_primary_reassigned() {
+    let p = fixture_paths("rejprim");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let u1 = s.persons.iter().find(|x| x.name == "Unknown1").unwrap();
+    assert_eq!(u1.primary_face_id, Some(1), "highest confidence (.90) wins");
+    db::set_link_status(&p, &[1], "rejected").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let u1 = s.persons.iter().find(|x| x.name == "Unknown1").unwrap();
+    assert_eq!(u1.primary_face_id, Some(2), "rejected face must not stay primary");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// F2 — merging into an existing person must keep that person's group (§4.1).
+#[test]
+fn assign_existing_keeps_group() {
+    let p = fixture_paths("group");
+    db::assign_person(&p, &[4, 5], "Alice", "family|test").unwrap();
+    // merge Unknown2's face into Alice with an EMPTY group argument
+    db::assign_person(&p, &[3], "Alice", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let alice = s.persons.iter().find(|x| x.name == "Alice").unwrap();
+    assert_eq!(alice.groups, vec!["family|test".to_string()],
+               "existing person's group path must not be clobbered");
+    let f3 = s.faces.iter().find(|f| f.id == 3).unwrap();
+    assert_eq!(f3.person_id, alice.id);
+    assert_eq!(f3.link_status, "confirmed");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// F5 — moving a middle-seq face out and another face in must not reuse a seq
+/// (design §4.7: labels stay unique within a person).
+#[test]
+fn seq_unique_after_move_out_and_in() {
+    let p = fixture_paths("seq");
+    db::assign_person(&p, &[1, 2, 6], "Dave", "").unwrap();  // Unknown1 → Dave (seqs 1,2,3)
+    let s = db::snapshot(&p).unwrap();
+    let dave_id = s.persons.iter().find(|x| x.name == "Dave").unwrap().id;
+    db::assign_person(&p, &[2], "Bob", "").unwrap();        // move seq-2 face out → gap {1,3}
+    db::assign_person(&p, &[3], "Dave", "").unwrap();       // move Unknown2's face in
+    let s = db::snapshot(&p).unwrap();
+    let names: Vec<String> = s.faces.iter()
+        .filter(|f| f.person_id == dave_id)
+        .map(|f| f.name.clone())
+        .collect();
+    assert_eq!(names.len(), 3); // f1 (seq 1), f6 (seq 3), f3 (must get seq 4)
+    let mut uniq = names.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert_eq!(names.len(), uniq.len(), "duplicate face names within person: {names:?}");
+    let f3 = s.faces.iter().find(|f| f.id == 3).unwrap();
+    assert_eq!(f3.seq, 4, "incoming face must get MAX(seq)+1 = 4, got {}", f3.seq);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// F7 — renaming an UnknownN via the detail pane must drop the 'Unknown'
+/// group path so the person leaves the Unknown tree branch.
+#[test]
+fn rename_unknown_clears_unknown_group() {
+    let p = fixture_paths("rename");
+    let s = db::snapshot(&p).unwrap();
+    let u2 = s.persons.iter().find(|x| x.name == "Unknown2").unwrap();
+    assert_eq!(u2.groups, vec!["Unknown".to_string()]);
+    db::set_person_name(&p, 2, "Erin").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let erin = s.persons.iter().find(|x| x.name == "Erin").unwrap();
+    assert!(erin.groups.is_empty(), "renamed person must leave the Unknown branch: {:?}", erin.groups);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// F19 — duplicated ids are deduped, not an error.
+#[test]
+fn duplicate_face_ids_accepted() {
+    let p = fixture_paths("dup");
+    db::assign_person(&p, &[3, 3], "Alice", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().any(|x| x.name == "Alice"));
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// F16 — the connection must set a busy timeout (importer runs concurrently).
+#[test]
+fn busy_timeout_set() {
+    let p = fixture_paths("busy");
+    let con = db::connect(&p).unwrap();
+    let t: i64 = con
+        .query_row("SELECT timeout FROM pragma_busy_timeout()", [], |r| r.get(0))
+        .unwrap();
+    assert!(t > 0, "busy_timeout not set");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// F15 — ${VAR} falls back to the process environment; unknown refs literal.
+#[test]
+fn env_process_fallback() {
+    let root = std::env::temp_dir().join(format!("whot-envtest-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join(".env"),
+        "A=${HOME}/pics\nB=${TOTALLY_UNSET_VAR_XYZ_123}/x\nC=${A}/deep\n",
+    ).unwrap();
+    let env = db::parse_env(&root.join(".env"));
+    let home = std::env::var("HOME").expect("HOME set in test environment");
+    assert_eq!(env["A"], format!("{home}/pics"), "process-env fallback must resolve $HOME");
+    assert_eq!(env["B"], "${TOTALLY_UNSET_VAR_XYZ_123}/x", "unknown refs stay literal");
+    assert_eq!(env["C"], format!("{home}/pics/deep"), "in-file refs still win");
+    std::fs::remove_dir_all(&root).ok();
+}

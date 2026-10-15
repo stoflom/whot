@@ -1,6 +1,6 @@
 //! WhoT Face Manager — Tauri command surface (docs/gui-design.md §5).
 
-mod db;
+pub mod db;
 
 use db::{Paths, Settings};
 
