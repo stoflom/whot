@@ -6,6 +6,8 @@ interface Props {
   person: Person | null;
   refcrops: Refcrop[];
   snapshot: Snapshot | null;
+  /** respect the show_rejected toggle in the overview totals (#28) */
+  showRejected: boolean;
   onName: (id: number, name: string) => void;
   onGroup: (id: number, group: string) => void;
   onNote: (id: number, note: string) => void;
@@ -124,13 +126,16 @@ function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, o
 }
 
 export default function DetailPane(props: Props) {
-  const { person, snapshot } = props;
+  const { person, snapshot, showRejected } = props;
   if (person) {
     return <PersonView {...props} person={person} />;
   }
   if (!snapshot) return <div className="dim">loading…</div>;
   const t = { total: 0, provisional: 0, confirmed: 0, rejected: 0 };
-  for (const f of snapshot.faces) {
+  const faces = showRejected
+    ? snapshot.faces
+    : snapshot.faces.filter((f) => f.link_status !== "rejected");
+  for (const f of faces) {
     t.total++;
     t[f.link_status as keyof typeof t]++;
   }
@@ -144,8 +149,12 @@ export default function DetailPane(props: Props) {
       </p>
       <p>
         {t.total} faces: <span className="c-prov">{t.provisional} new</span> ·{" "}
-        <span className="c-conf">{t.confirmed} confirmed</span> ·{" "}
-        <span className="c-rej">{t.rejected} rejected</span>
+        <span className="c-conf">{t.confirmed} confirmed</span>
+        {showRejected && (
+          <>
+            · <span className="c-rej">{t.rejected} rejected</span>
+          </>
+        )}
       </p>
       <p className="dim">
         Select a person in the tree, or work through the Review grid. After any change all panes

@@ -58,6 +58,20 @@ export default function App() {
     [snap]
   );
   const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
+  // #28: with show_rejected off, the left-pane counts (and the detail-pane
+  // counts derived from them) exclude rejected faces
+  const treePersons = useMemo(() => {
+    if (!snap) return [];
+    if (snap.settings.show_rejected) return snap.persons;
+    return snap.persons.map((p) => ({
+      ...p,
+      counts: { ...p.counts, total: p.counts.total - p.counts.rejected, rejected: 0 },
+    }));
+  }, [snap]);
+  const displayPerson = useMemo(
+    () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
+    [treePersons, personId]
+  );
   const showRejected = snap?.settings.show_rejected ?? true;
   const faceVisible = (f: Face) => showRejected || f.link_status !== "rejected";
 
@@ -352,7 +366,7 @@ export default function App() {
       <div className="main">
         <aside className="left">
           <PersonTree
-            persons={snap.persons}
+            persons={treePersons}
             selectedId={personId}
             reviewCount={pendingCount}
             onReview={() => {
@@ -450,9 +464,10 @@ export default function App() {
 
         <aside className="right">
           <DetailPane
-            person={selectedPerson}
+            person={displayPerson}
             refcrops={refcrops}
             snapshot={snap}
+            showRejected={showRejected}
             onName={(id, n) => mutate(() => api.setPersonName(id, n))}
             onGroup={(id, g) => mutate(() => api.setPersonGroup(id, g))}
             onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}
