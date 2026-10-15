@@ -25,3 +25,6 @@ dist/
 
 # local scratch area (annotation exports etc. — never commit)
 scratch/
+
+# runtime GUI settings (defaults apply when absent)
+config/whotrc.json
