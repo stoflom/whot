@@ -41,6 +41,16 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
             onChange={(e) => setRefcropN(parseInt(e.target.value) || 1)}
           />
         </label>
+        <div className="shortcuts">
+          <h4>Keyboard</h4>
+          <ul>
+            <li><b>←</b> / <b>→</b> — previous / next person (tree order)</li>
+            <li><b>Esc</b> — close split, dialog or context menu</li>
+            <li><b>Enter</b> — commit an edited field</li>
+            <li>double-click — rename a person · open a face's full image</li>
+            <li>right-click — context menus on tiles and images</li>
+          </ul>
+        </div>
         <div className="dialog-actions">
           <button className="secondary" onClick={onClose}>cancel</button>
           <button onClick={() => onSave({ ...settings, cluster_threshold: threshold, refcrop_n: refcropN })}>

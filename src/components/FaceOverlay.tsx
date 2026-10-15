@@ -18,9 +18,11 @@ interface Props {
   hoverId: number | null;
   onHover: (id: number | null) => void;
   onToggle: (id: number) => void;
-  /** right-click menu on the face rectangles; the bare image area keeps
-      the default webview menu (#32/#33) */
+  /** right-click menu on the face rectangles; the image area gets its own
+      functional menu (open in system viewer) because the webkit default
+      menu entries don't work in Tauri (#32/#33) */
   onFaceContextMenu?: (id: number, e: ReactMouseEvent) => void;
+  onImageContextMenu?: (e: ReactMouseEvent) => void;
 }
 
 export default function FaceOverlay({
@@ -33,11 +35,12 @@ export default function FaceOverlay({
   onHover,
   onToggle,
   onFaceContextMenu,
+  onImageContextMenu,
 }: Props) {
   const url = useImagePreviewImg(imageId);
   if (!url) return <span className="dim">no preview</span>;
   return (
-    <div className="annotated">
+    <div className="annotated" onContextMenu={onImageContextMenu}>
       <img src={url} alt="" />
       {width > 0 &&
         height > 0 &&

@@ -202,10 +202,12 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .face-card.status-rejected { opacity: 0.55; }
 
 .face-check { position: absolute; top: 6px; left: 6px; z-index: 2; cursor: pointer; }
-/* face tiles are portrait ovals so they never read as person tiles (#30) */
-.face-img { position: relative; aspect-ratio: 4 / 5; background: #000; }
-.face-img img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; }
-.face-img-loading { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--dim); border-radius: 50%; }
+/* face tiles: rounded squares with a large corner radius so they read
+   differently from person tiles (small circle avatars) without cropping
+   the face tight (#30 correction) */
+.face-img { position: relative; aspect-ratio: 1; background: #000; }
+.face-img img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 30%; }
+.face-img-loading { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--dim); border-radius: 30%; }
 .face-badge {
   position: absolute;
   bottom: 5px;
@@ -575,3 +577,17 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   z-index: 4;
 }
 .v-divider:hover { background: var(--accent); }
+
+/* face-card person-name input (#29 addition) */
+.face-person-name {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  font-size: 0.8rem;
+}
+
+/* keyboard shortcuts reference in the settings popover (#31) */
+.shortcuts { border-top: 1px solid var(--border); padding-top: 0.5rem; }
+.shortcuts h4 { margin: 0 0 0.3rem; font-size: 0.8rem; color: var(--dim); }
+.shortcuts ul { margin: 0; padding-left: 1.1rem; font-size: 0.78rem; }
+.shortcuts li { margin: 0.12rem 0; }

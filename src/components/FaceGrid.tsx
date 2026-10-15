@@ -1,5 +1,5 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
-import type { Face } from "../api";
+import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
 
 export interface Section {
@@ -21,6 +21,8 @@ interface GridProps {
   onOpen: (id: number) => void;
   /** right-click menu on face tiles (#32) */
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
+  persons: Map<number, Person>;
+  onRenamePerson: (personId: number, name: string) => void;
   onToggle: (id: number) => void;
   onToggleMany: (ids: number[], on: boolean) => void;
   onDescription: (id: number, d: string) => void;
@@ -50,7 +52,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
   };
 
   return (
-    <section className="face-section" data-skey={section.key}>
+    <section className="face-section">
       <div className="face-section-header">
         <label className="select-all" title="Select whole group">
           <input
@@ -94,6 +96,8 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               onHover={grid.onHover}
               onOpen={grid.onOpen}
               onContextMenu={grid.onContextMenu}
+              personName={grid.persons.get(face.person_id)?.name}
+              onRenamePerson={grid.onRenamePerson}
               onToggle={grid.onToggle}
               onDescription={grid.onDescription}
               onPrimary={grid.onPrimary}

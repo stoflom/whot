@@ -45,6 +45,20 @@ fn get_refcrops(state: State<AppState>, person_id: i64) -> Result<Vec<db::Refcro
     db::get_refcrops(state.paths()?, person_id).map_err(|e| e.to_string())
 }
 
+/// Full-image context menu (#33): write the BLOB to a temp file and open
+/// it with the system viewer — the webkit default menu entries don't work.
+#[tauri::command]
+fn open_image(state: State<AppState>, image_id: i64) -> Result<(), String> {
+    let paths = state.paths()?;
+    let bytes = db::image_preview_bytes(paths, image_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("image {image_id} has no preview"))?;
+    let path = std::env::temp_dir().join(format!("whot-image-{image_id}.jpg"));
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn person_face_clusters(
     state: State<AppState>,
@@ -140,6 +154,7 @@ pub fn run() {
             get_image_thumb,
             get_image_preview,
             get_refcrops,
+            open_image,
             person_face_clusters,
             assign_person,
             accept_faces,

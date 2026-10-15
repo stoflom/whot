@@ -104,6 +104,8 @@ export const removeRefcrop = (personId: number, faceId: number) =>
   invoke("remove_refcrop", { personId, faceId });
 export const getRefcrops = (personId: number) =>
   invoke<Refcrop[]>("get_refcrops", { personId });
+/** write the preview to a temp file and open it in the system viewer (#33) */
+export const openImage = (imageId: number) => invoke("open_image", { imageId });
 export const personFaceClusters = (personId: number, threshold: number) =>
   invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
 export const getSettings = () => invoke<Settings>("get_settings");

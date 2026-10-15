@@ -36,10 +36,42 @@ function buildTree(persons: Person[]): TreeNode {
   return root;
 }
 
+/** Person ids in the tree's visual (filtered) display order — the
+ * ‹ › / arrow-key person stepping walks this list (#31). */
+export function orderedVisiblePersonIds(persons: Person[], filter: string): number[] {
+  const tree = buildTree(persons);
+  const byId = new Map(persons.map((p) => [p.id, p]));
+  const f = filter.trim().toLowerCase();
+  const matches = (p: Person) =>
+    f === "" ||
+    p.name.toLowerCase().includes(f) ||
+    p.groups.some((g) => g.toLowerCase().includes(f));
+  const subtreeMatch = (node: TreeNode): boolean =>
+    node.personIds.some((id) => {
+      const p = byId.get(id);
+      return !!p && matches(p);
+    }) || node.children.some(subtreeMatch);
+  const out: number[] = [];
+  const walk = (node: TreeNode, isRoot: boolean) => {
+    if (!isRoot && !subtreeMatch(node)) return;
+    for (const id of node.personIds) {
+      const p = byId.get(id);
+      if (p && matches(p)) out.push(id);
+    }
+    for (const c of node.children) walk(c, false);
+  };
+  walk(tree, true);
+  return out;
+}
+
 interface Props {
   persons: Person[];
   selectedId: number | null;
   reviewCount: number;
+  /** filter text is owned by App — the toolbar person-stepping needs the
+      same visible order the tree renders (#31) */
+  filter: string;
+  onFilter: (v: string) => void;
   onReview: () => void;
   onSelect: (id: number) => void;
   /** inline rename of a person (#29) — set_person_name, errors surface as toast */
@@ -118,8 +150,7 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, onReview, onSelect, onRename, onSelectPending }: Props) {
-  const [filter, setFilter] = useState("");
+export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, onRename, onSelectPending }: Props) {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: number } | null>(null);
   const tree = useMemo(() => buildTree(persons), [persons]);
@@ -245,7 +276,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, onReview,
           className="tree-filter"
           placeholder="filter by name or group…"
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onChange={(e) => onFilter(e.target.value)}
         />
         <button
           className="ghost"

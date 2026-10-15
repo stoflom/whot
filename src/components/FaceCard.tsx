@@ -13,6 +13,9 @@ interface Props {
   onOpen: (id: number) => void;
   /** right-click context menu (#32) */
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
+  /** person's name — the face-meta input renames the person (#29) */
+  personName?: string;
+  onRenamePerson: (personId: number, name: string) => void;
   onDescription: (id: number, description: string) => void;
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
@@ -29,6 +32,8 @@ export default function FaceCard({
   onHover,
   onOpen,
   onContextMenu,
+  personName,
+  onRenamePerson,
   onDescription,
   onPrimary,
   onRefcrop,
@@ -38,9 +43,16 @@ export default function FaceCard({
   const img = useFaceImage(face.id);
   const [desc, setDesc] = useState(face.description ?? "");
   useEffect(() => setDesc(face.description ?? ""), [face.description]);
+  const [pname, setPname] = useState(personName ?? "");
+  useEffect(() => setPname(personName ?? ""), [personName]);
 
   const commit = () => {
     if (desc !== (face.description ?? "")) onDescription(face.id, desc);
+  };
+  const commitName = () => {
+    const v = pname.trim();
+    if (v && v !== personName) onRenamePerson(face.person_id, v);
+    else setPname(personName ?? "");
   };
 
   return (
@@ -71,7 +83,21 @@ export default function FaceCard({
         </span>
       </div>
       <div className="face-meta">
-        <span className="face-name">{face.name}</span>
+        <input
+          className="face-person-name"
+          value={pname}
+          placeholder="person name"
+          title={face.name}
+          onChange={(e) => setPname(e.target.value)}
+          onBlur={commitName}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              setPname(personName ?? "");
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+        />
         <span className="face-conf">{Math.round(face.confidence * 100)}%</span>
       </div>
       <input

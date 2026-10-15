@@ -433,6 +433,21 @@ pub fn image_blobs(paths: &Paths, image_id: i64) -> Result<Option<(String, Optio
     })
 }
 
+/// Raw preview bytes (thumbnail fallback) for the full-image context menu:
+/// written to a temp file and handed to the system viewer (#33).
+pub fn image_preview_bytes(paths: &Paths, image_id: i64) -> Result<Option<Vec<u8>>> {
+    let con = connect(paths)?;
+    let (preview, thumb): (Option<Vec<u8>>, Option<Vec<u8>>) = con
+        .query_row(
+            "SELECT preview, thumbnail FROM images WHERE id = ?",
+            params![image_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?
+        .context("image not found")?;
+    Ok(preview.or(thumb))
+}
+
 // ---------------------------------------------------------------- derived state
 
 /// Derived face label: `person.name[-description]-seq` (design §4.7).

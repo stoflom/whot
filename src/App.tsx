@@ -13,7 +13,7 @@ import ContextMenu, { type MenuGroup, type MenuState } from "./components/Contex
 import DetailPane from "./components/DetailPane";
 import FaceGrid, { type Section } from "./components/FaceGrid";
 import FaceOverlay from "./components/FaceOverlay";
-import PersonTree from "./components/PersonTree";
+import PersonTree, { orderedVisiblePersonIds } from "./components/PersonTree";
 import RollsPane from "./components/RollsPane";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
@@ -96,15 +96,18 @@ export default function App() {
     [snap]
   );
   const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
-  // #28: with show_rejected off, the left-pane counts (and the detail-pane
-  // counts derived from them) exclude rejected faces
+  // #28: with show_rejected off, a rejected face is not up for review —
+  // persons whose faces are ALL rejected disappear from the tree entirely
+  // (an UnknownN with a single rejected face vanishes; #28 clarification)
   const treePersons = useMemo(() => {
     if (!snap) return [];
     if (snap.settings.show_rejected) return snap.persons;
-    return snap.persons.map((p) => ({
-      ...p,
-      counts: { ...p.counts, total: p.counts.total - p.counts.rejected, rejected: 0 },
-    }));
+    return snap.persons
+      .filter((p) => p.counts.total - p.counts.rejected > 0)
+      .map((p) => ({
+        ...p,
+        counts: { ...p.counts, total: p.counts.total - p.counts.rejected, rejected: 0 },
+      }));
   }, [snap]);
   const displayPerson = useMemo(
     () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
@@ -269,6 +272,27 @@ export default function App() {
     ]);
   };
 
+  const imageAreaMenu = (e: ReactMouseEvent, imageId: number) => {
+    if (!snap) return;
+    const faces = snap.faces.filter(
+      (f) =>
+        f.image_id === imageId &&
+        (snap.settings.show_rejected || f.link_status !== "rejected")
+    );
+    openMenu(e, [
+      {
+        items: [
+          { label: "Open in system viewer", onClick: () => api.openImage(imageId) },
+          {
+            label: "Select all faces",
+            onClick: () => setSel(new Set(faces.map((f) => f.id))),
+            disabled: faces.length === 0,
+          },
+        ],
+      },
+    ]);
+  };
+
   const imageMenu = (image: ImageRow, e: ReactMouseEvent) => {
     if (!snap) return;
     const faces = snap.faces.filter(
@@ -313,10 +337,12 @@ export default function App() {
 
   const gridHandlers = {
     faces: facesById,
+    persons: personsById,
     sel,
     hoverId,
     onHover: setHoverId,
     onContextMenu: faceMenu,
+    onRenamePerson: (pid: number, n: string) => mutate(() => api.setPersonName(pid, n)),
     onToggle: toggle,
     onOpen: (id: number) => {
       const f = facesById.get(id);
@@ -416,26 +442,31 @@ export default function App() {
       }));
   }, [snap, view, personId, imageId, clusters, personsById, selectedPerson]);
 
-  // #31 — section stepping (‹ › / arrow keys): scroll-only, idx resets with
-  // the section list; the token guards against scrolling on plain refetches
-  const [nav, setNav] = useState({ idx: 0, token: 0 });
-  useEffect(() => setNav((n) => ({ idx: 0, token: n.token })), [sections]);
-  const stepSection = useCallback(
-    (dir: 1 | -1) =>
-      setNav((n) => ({
-        idx: Math.min(Math.max(n.idx + dir, 0), Math.max(sections.length - 1, 0)),
-        token: n.token + 1,
-      })),
-    [sections.length]
+  // #31 — person stepping: ‹ › and ← → walk the persons in the tree's
+  // current (filtered) display order; the shortcut set is listed in the
+  // settings popover
+  const [filter, setFilter] = useState("");
+  const stepIds = useMemo(
+    () => orderedVisiblePersonIds(treePersons, filter),
+    [treePersons, filter]
   );
-  useEffect(() => {
-    if (nav.token === 0) return;
-    const key = sections[nav.idx]?.key;
-    if (key == null) return;
-    document
-      .querySelector(`[data-skey="${key}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [nav, sections]);
+  const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
+  const stepPerson = useCallback(
+    (dir: 1 | -1) => {
+      const next =
+        stepIdx === -1
+          ? dir === 1
+            ? 0
+            : Math.max(stepIds.length - 1, 0)
+          : Math.min(Math.max(stepIdx + dir, 0), stepIds.length - 1);
+      const id = stepIds[next];
+      if (id == null) return;
+      setPersonId(id);
+      setView("person");
+      setImageId(null);
+    },
+    [stepIdx, stepIds]
+  );
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement | null;
@@ -448,15 +479,15 @@ export default function App() {
       if (dialogFaceIds != null) return;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        stepSection(-1);
+        stepPerson(-1);
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
-        stepSection(1);
+        stepPerson(1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stepSection, dialogFaceIds]);
+  }, [stepPerson, dialogFaceIds]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -541,6 +572,8 @@ export default function App() {
             persons={treePersons}
             selectedId={personId}
             reviewCount={pendingCount}
+            filter={filter}
+            onFilter={setFilter}
             onReview={() => {
               setView("review");
               setImageId(null);
@@ -571,20 +604,24 @@ export default function App() {
             <span className="toolbar-left">
               <button
                 className="ghost"
-                onClick={() => stepSection(-1)}
-                disabled={sections.length === 0 || nav.idx <= 0}
-                title="previous section (←)"
+                onClick={() => stepPerson(-1)}
+                disabled={stepIds.length === 0 || (stepIdx !== -1 && stepIdx <= 0)}
+                title="previous person (←)"
               >
                 ‹
               </button>
               <span className="nav-pos">
-                {sections.length > 0 ? `${Math.min(nav.idx, sections.length - 1) + 1}/${sections.length}` : "–"}
+                {stepIds.length > 0
+                  ? `${stepIdx === -1 ? "–" : stepIdx + 1}/${stepIds.length}`
+                  : "–"}
               </span>
               <button
                 className="ghost"
-                onClick={() => stepSection(1)}
-                disabled={sections.length === 0 || nav.idx >= sections.length - 1}
-                title="next section (→)"
+                onClick={() => stepPerson(1)}
+                disabled={
+                  stepIds.length === 0 || (stepIdx !== -1 && stepIdx >= stepIds.length - 1)
+                }
+                title="next person (→)"
               >
                 ›
               </button>
@@ -629,6 +666,7 @@ export default function App() {
                   onHover={setHoverId}
                   onToggle={toggle}
                   onFaceContextMenu={faceMenu}
+                  onImageContextMenu={(e) => imageAreaMenu(e, imgRow.id)}
                 />
               </div>
               <FaceGrid sections={sections} {...gridHandlers} primaryFaceId={null} />
@@ -672,6 +710,7 @@ export default function App() {
                   onHover={setHoverId}
                   onToggle={toggle}
                   onFaceContextMenu={faceMenu}
+                  onImageContextMenu={(e) => imageAreaMenu(e, splitRow.id)}
                 />
               </aside>
               </>
