@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
 
@@ -41,28 +41,65 @@ interface Props {
   reviewCount: number;
   onReview: () => void;
   onSelect: (id: number) => void;
+  /** inline rename of a person (#29) — set_person_name, errors surface as toast */
+  onRename: (id: number, name: string) => void;
 }
 
 function PersonRow({
   person,
   selected,
+  renaming,
   onSelect,
+  onStartRename,
+  onRename,
+  onRenameCancel,
 }: {
   person: Person;
   selected: boolean;
+  renaming: boolean;
   onSelect: () => void;
+  onStartRename: () => void;
+  onRename: (id: number, name: string) => void;
+  onRenameCancel: () => void;
 }) {
   const img = useFaceImage(person.primary_face_id);
+  const [name, setName] = useState(person.name);
+  useEffect(() => setName(person.name), [person.name, renaming]);
+  const commit = () => {
+    const v = name.trim();
+    if (v && v !== person.name) onRename(person.id, v);
+    onRenameCancel();
+  };
   return (
     <button
       className={`tree-person${selected ? " selected" : ""}`}
       onClick={onSelect}
-      title={person.groups.join(", ") || "Ungrouped"}
+      onDoubleClick={onStartRename}
+      title={`${person.groups.join(", ") || "Ungrouped"} — double-click to rename`}
     >
       <span className="tree-avatar">
         {img ? <img src={img} alt="" /> : person.name[0]}
       </span>
-      <span className="tree-name">{person.name}</span>
+      {renaming ? (
+        <input
+          className="tree-rename"
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              setName(person.name);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+        />
+      ) : (
+        <span className="tree-name">{person.name}</span>
+      )}
       {person.counts.provisional > 0 && (
         <span className="tree-count prov" title="provisional faces">
           {person.counts.provisional}
@@ -75,8 +112,9 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, onReview, onSelect }: Props) {
+export default function PersonTree({ persons, selectedId, reviewCount, onReview, onSelect, onRename }: Props) {
   const [filter, setFilter] = useState("");
+  const [renamingId, setRenamingId] = useState<number | null>(null);
   const tree = useMemo(() => buildTree(persons), [persons]);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -161,7 +199,11 @@ export default function PersonTree({ persons, selectedId, reviewCount, onReview,
                   key={p.id}
                   person={p}
                   selected={selectedId === p.id}
+                  renaming={renamingId === p.id}
                   onSelect={() => onSelect(p.id)}
+                  onStartRename={() => setRenamingId(p.id)}
+                  onRename={onRename}
+                  onRenameCancel={() => setRenamingId(null)}
                 />
               ))}
             </div>

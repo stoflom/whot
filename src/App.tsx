@@ -378,6 +378,7 @@ export default function App() {
               setView("person");
               setImageId(null);
             }}
+            onRename={(id, n) => mutate(() => api.setPersonName(id, n))}
           />
         </aside>
 

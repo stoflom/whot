@@ -515,3 +515,11 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   border-bottom: 1px dashed var(--border);
   padding-bottom: 0.15rem;
 }
+
+/* inline rename on tree rows (#29) */
+.tree-rename {
+  flex: 1;
+  min-width: 0;
+  font-size: inherit;
+  padding: 0 4px;
+}
