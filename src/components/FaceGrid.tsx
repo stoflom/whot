@@ -18,6 +18,7 @@ interface GridProps {
   primaryFaceId: number | null;
   hoverId: number | null;
   onHover: (id: number | null) => void;
+  onOpen: (id: number) => void;
   onToggle: (id: number) => void;
   onToggleMany: (ids: number[], on: boolean) => void;
   onDescription: (id: number, d: string) => void;
@@ -89,6 +90,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               hovered={grid.hoverId === id}
               isPrimary={grid.primaryFaceId === id}
               onHover={grid.onHover}
+              onOpen={grid.onOpen}
               onToggle={grid.onToggle}
               onDescription={grid.onDescription}
               onPrimary={grid.onPrimary}

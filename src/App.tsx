@@ -20,6 +20,7 @@ export default function App() {
   const [imageId, setImageId] = useState<number | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [hoverId, setHoverId] = useState<number | null>(null);
+  const [splitImageId, setSplitImageId] = useState<number | null>(null);
   const [clusters, setClusters] = useState<ClusterFace[][] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
@@ -80,6 +81,16 @@ export default function App() {
     }
     api.getRefcrops(personId).then(setRefcrops).catch(() => setRefcrops([]));
   }, [personId, snap]);
+
+  // #25 — Esc closes the double-click image split
+  useEffect(() => {
+    if (splitImageId == null || dialogFaceIds != null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSplitImageId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [splitImageId, dialogFaceIds]);
 
   const mutate = useCallback(
     async (fn: () => Promise<unknown>, clearSel = false) => {
@@ -163,6 +174,10 @@ export default function App() {
     hoverId,
     onHover: setHoverId,
     onToggle: toggle,
+    onOpen: (id: number) => {
+      const f = facesById.get(id);
+      if (f) setSplitImageId(f.image_id);
+    },
     onToggleMany: toggleMany,
     onDescription: doDesc,
     onPrimary: doPrimary,
@@ -273,6 +288,8 @@ export default function App() {
   }
 
   const imgRow: ImageRow | undefined = imageId != null ? snap.images.find((i) => i.id === imageId) : undefined;
+  const splitRow: ImageRow | undefined =
+    splitImageId != null ? snap.images.find((i) => i.id === splitImageId) : undefined;
 
   return (
     <div className="app">
@@ -346,6 +363,8 @@ export default function App() {
               show rejected
             </label>
           </div>
+          <div className={splitRow ? "center-split" : undefined}>
+            <div className="split-main">
           {view === "rolls" && imageId == null ? (
             <RollsPane
               imports={snap.imports}
@@ -388,6 +407,34 @@ export default function App() {
               primaryFaceId={view === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />
           )}
+            </div>
+            {splitRow && (
+              <aside className="split-side">
+                <div className="split-side-top">
+                  <span title={splitRow.primary_path}>
+                    {splitRow.primary_path.replace(/^.*\//, "") || splitRow.primary_path}
+                  </span>
+                  <button
+                    className="ghost"
+                    onClick={() => setSplitImageId(null)}
+                    title="close (Esc)"
+                  >
+                    ×
+                  </button>
+                </div>
+                <FaceOverlay
+                  imageId={splitRow.id}
+                  width={splitRow.width}
+                  height={splitRow.height}
+                  faces={snap.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f))}
+                  sel={sel}
+                  hoverId={hoverId}
+                  onHover={setHoverId}
+                  onToggle={toggle}
+                />
+              </aside>
+            )}
+          </div>
         </main>
 
         <aside className="right">

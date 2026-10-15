@@ -9,6 +9,8 @@ interface Props {
   isPrimary: boolean;
   onToggle: (id: number) => void;
   onHover: (id: number | null) => void;
+  /** double-click: open the full image (§3 card double-click) */
+  onOpen: (id: number) => void;
   onDescription: (id: number, description: string) => void;
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
@@ -23,6 +25,7 @@ export default function FaceCard({
   isPrimary,
   onToggle,
   onHover,
+  onOpen,
   onDescription,
   onPrimary,
   onRefcrop,
@@ -43,6 +46,7 @@ export default function FaceCard({
       title={face.name}
       onMouseEnter={() => onHover(face.id)}
       onMouseLeave={() => onHover(null)}
+      onDoubleClick={() => onOpen(face.id)}
     >
       <label className="face-check">
         <input
