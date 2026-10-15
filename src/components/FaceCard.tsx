@@ -55,6 +55,8 @@ export default function FaceCard({
     if (v && v !== personName) onAssignName(face.id, v);
     else setPname(personName ?? "");
   };
+  // unowned faces (removed person, §4.13): no primary/reference actions
+  const unowned = face.person_id == null;
 
   return (
     <div
@@ -115,6 +117,7 @@ export default function FaceCard({
         <button
           title={isPrimary ? "Primary face" : "Set as primary face"}
           className={isPrimary ? "on" : ""}
+          disabled={unowned || isPrimary}
           onClick={() => !isPrimary && onPrimary(face.id)}
         >
           ★
@@ -122,7 +125,7 @@ export default function FaceCard({
         <button
           title="Add as reference face"
           onClick={() => onRefcrop(face.id)}
-          disabled={face.link_status !== "confirmed"}
+          disabled={face.link_status !== "confirmed" || unowned}
         >
           ◈
         </button>

@@ -591,3 +591,9 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .shortcuts h4 { margin: 0 0 0.3rem; font-size: 0.8rem; color: var(--dim); }
 .shortcuts ul { margin: 0; padding-left: 1.1rem; font-size: 0.78rem; }
 .shortcuts li { margin: 0.12rem 0; }
+
+/* person multi-selection for bulk actions (#35) */
+.tree-person.multi-selected:not(.selected) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.dp-remove { margin: 0.5rem 0 0; }

@@ -13,6 +13,8 @@ interface Props {
   onNote: (id: number, note: string) => void;
   onSetPrimary: (faceId: number) => void;
   onRemoveRefcrop: (faceId: number) => void;
+  /** remove this person (§4.13, #35) */
+  onRemovePerson?: (id: number) => void;
 }
 
 function Editable({
@@ -67,7 +69,7 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
   return [...m.entries()];
 }
 
-function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop }: PersonViewProps) {
+function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
   return (
     <div className="dp-person" key={person.id}>
@@ -97,6 +99,13 @@ function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, o
         <span className="c-conf">{person.counts.confirmed} ✓</span>
         <span className="c-rej">{person.counts.rejected} ✗</span>
       </div>
+      <button
+        className="bad dp-remove"
+        title="Reject all this person's faces and remove them (no undo)"
+        onClick={() => onRemovePerson?.(person.id)}
+      >
+        Remove person
+      </button>
       <h3>
         Reference faces ({refcrops.length})
       </h3>

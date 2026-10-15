@@ -9,6 +9,7 @@ import {
 import * as api from "./api";
 import type { AppearanceGroup, Face, ImageRow, Refcrop, Snapshot } from "./api";
 import AssignDialog from "./components/AssignDialog";
+import ConfirmDialog from "./components/ConfirmDialog";
 import FaceAssignDialog from "./components/FaceAssignDialog";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
@@ -28,6 +29,8 @@ export default function App() {
   const [personId, setPersonId] = useState<number | null>(null);
   const [imageId, setImageId] = useState<number | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
+  const [selPersons, setSelPersons] = useState<Set<number>>(new Set());
+  const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
   const [hoverId, setHoverId] = useState<number | null>(null);
   const [splitImageId, setSplitImageId] = useState<number | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -65,7 +68,7 @@ export default function App() {
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
   const [faceAssign, setFaceAssign] = useState<{
     faceId: number;
-    personId: number;
+    personId: number | null; // null = unowned face (§4.13)
     name: string;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -195,11 +198,40 @@ export default function App() {
   const doDesc = (id: number, d: string) => mutate(() => api.setFaceDescription(id, d));
   const doPrimary = (id: number) => {
     const f = facesById.get(id);
-    if (f) mutate(() => api.setPrimaryFace(f.person_id, id));
+    if (f && f.person_id != null) mutate(() => api.setPrimaryFace(f.person_id!, id));
   };
   const doRefcrop = (id: number) => {
     const f = facesById.get(id);
-    if (f) mutate(() => api.addRefcrop(f.person_id, id));
+    if (f && f.person_id != null) mutate(() => api.addRefcrop(f.person_id!, id));
+  };
+
+  // #35 — tree selection: click selects, ctrl/cmd toggles, shift extends
+  // over the tree's visible order; the anchor row stays the person shown
+  const handleTreeSelect = (id: number, e?: ReactMouseEvent) => {
+    if (e?.ctrlKey || e?.metaKey) {
+      setSelPersons((prev) => {
+        const n = new Set(prev);
+        if (n.has(id)) n.delete(id);
+        else n.add(id);
+        return n;
+      });
+      setPersonId(id); // anchor follows the click; view unchanged
+    } else if (e?.shiftKey && personId != null) {
+      const a = stepIds.indexOf(personId);
+      const b = stepIds.indexOf(id);
+      if (a === -1 || b === -1) return;
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      setSelPersons(new Set(stepIds.slice(lo, hi + 1)));
+      setPersonId(id);
+    } else {
+      setSelPersons(new Set([id]));
+      setPersonId(id);
+      setView("person");
+      setImageId(null);
+    }
+  };
+  const doRemovePersons = (ids: number[]) => {
+    if (ids.length > 0) setConfirmRemove(ids);
   };
 
   // #23 — show/hide rejected faces; faces hidden this way leave the
@@ -265,11 +297,11 @@ export default function App() {
             disabled: f.link_status === "rejected",
             danger: true,
           },
-          { label: "Set as primary", onClick: () => doPrimary(id) },
+          { label: "Set as primary", onClick: () => doPrimary(id), disabled: f.person_id == null },
           {
             label: "Add as reference",
             onClick: () => doRefcrop(id),
-            disabled: f.link_status !== "confirmed",
+            disabled: f.link_status !== "confirmed" || f.person_id == null,
           },
           { label: "Assign to person…", onClick: () => setDialogFaceIds([id]) },
           { label: "Open full image", onClick: () => setSplitImageId(f.image_id) },
@@ -369,7 +401,7 @@ export default function App() {
   const sections = useMemo<Section[]>(() => {
     if (!snap) return [];
     if (imageId != null) {
-      const byPerson = new Map<number, Face[]>();
+      const byPerson = new Map<number | null, Face[]>();
       for (const f of snap.faces.filter(
         (x) =>
           x.image_id === imageId &&
@@ -380,10 +412,10 @@ export default function App() {
         byPerson.set(f.person_id, arr);
       }
       return [...byPerson.entries()].map(([pid, fl]) => {
-        const p = personsById.get(pid);
+        const p = pid != null ? personsById.get(pid) : undefined;
         return {
           key: `img-${pid}`,
-          title: p?.name ?? `person ${pid}`,
+          title: p?.name ?? "unassigned",
           faceIds: fl.map((f) => f.id),
           ruleDefaultName: p?.name,
           ruleDefaultGroup: p?.groups[0] ?? "",
@@ -427,7 +459,7 @@ export default function App() {
       return out;
     }
     // review: all provisional faces, grouped by importer person, UnknownN first
-    const byPerson = new Map<number, Face[]>();
+    const byPerson = new Map<number | null, Face[]>();
     for (const f of snap.faces.filter((x) => x.link_status === "provisional")) {
       const arr = byPerson.get(f.person_id) ?? [];
       arr.push(f);
@@ -485,7 +517,7 @@ export default function App() {
           tgt.tagName === "SELECT" || tgt.isContentEditable)
       )
         return;
-      if (dialogFaceIds != null || faceAssign != null) return;
+      if (dialogFaceIds != null || faceAssign != null || confirmRemove != null) return;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         stepPerson(-1);
@@ -496,7 +528,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stepPerson, dialogFaceIds, faceAssign]);
+  }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -587,11 +619,9 @@ export default function App() {
               setView("review");
               setImageId(null);
             }}
-            onSelect={(id) => {
-              setPersonId(id);
-              setView("person");
-              setImageId(null);
-            }}
+            onSelect={handleTreeSelect}
+            selectedIds={selPersons}
+            onRemovePersons={doRemovePersons}
             onRename={(id, n) => mutate(() => api.setPersonName(id, n))}
             onSelectPending={(id) => {
               const ids = snap.faces
@@ -742,6 +772,7 @@ export default function App() {
             onName={(id, n) => mutate(() => api.setPersonName(id, n))}
             onGroup={(id, g) => mutate(() => api.setPersonGroup(id, g))}
             onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}
+            onRemovePerson={(id) => doRemovePersons([id])}
             onSetPrimary={(fid) =>
               personId != null && mutate(() => api.setPrimaryFace(personId, fid))
             }
@@ -787,7 +818,11 @@ export default function App() {
       {faceAssign && (
         <FaceAssignDialog
           name={faceAssign.name}
-          groupCount={snap.faces.filter((f) => f.person_id === faceAssign.personId).length}
+          groupCount={
+            faceAssign.personId != null
+              ? snap.faces.filter((f) => f.person_id === faceAssign.personId).length
+              : null
+          }
           onSingle={() => {
             const a = faceAssign;
             setFaceAssign(null);
@@ -799,9 +834,45 @@ export default function App() {
             const ids = snap.faces
               .filter((f) => f.person_id === a.personId)
               .map((f) => f.id);
-            doAssign(ids, a.name, personsById.get(a.personId)?.groups[0] ?? "");
+            doAssign(
+              ids,
+              a.name,
+              a.personId != null ? (personsById.get(a.personId)?.groups[0] ?? "") : ""
+            );
           }}
           onCancel={() => setFaceAssign(null)}
+        />
+      )}
+      {confirmRemove && (
+        <ConfirmDialog
+          title={
+            confirmRemove.length > 1
+              ? `Remove ${confirmRemove.length} persons`
+              : "Remove person"
+          }
+          body={
+            `All faces of ${confirmRemove.length > 1 ? "these persons" : "this person"} ` +
+            `become rejected and ${confirmRemove.length > 1 ? "the persons are" : "the person is"} ` +
+            "deleted — the faces stay in the database as rejected, unowned records " +
+            "and can be claimed again. This cannot be undone."
+          }
+          confirmLabel="remove"
+          danger
+          onConfirm={() => {
+            const ids = confirmRemove;
+            setConfirmRemove(null);
+            setSelPersons((prev) => {
+              const n = new Set(prev);
+              for (const id of ids) n.delete(id);
+              return n;
+            });
+            if (personId != null && ids.includes(personId)) {
+              setPersonId(null);
+              setView("review");
+            }
+            mutate(() => api.removePersons(ids), true);
+          }}
+          onCancel={() => setConfirmRemove(null)}
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}

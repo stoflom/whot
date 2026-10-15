@@ -7,8 +7,9 @@ import { useEffect } from "react";
 
 interface Props {
   name: string;
-  /** face count of the current person (what "whole group" covers) */
-  groupCount: number;
+  /** face count of the current person (what "whole group" covers); null
+      for unowned faces (§4.13) — only "just this face" is offered then */
+  groupCount: number | null;
   onSingle: () => void;
   onGroup: () => void;
   onCancel: () => void;
@@ -32,10 +33,12 @@ export default function FaceAssignDialog({ name, groupCount, onSingle, onGroup, 
         </p>
         <div className="dialog-actions">
           <button className="secondary" onClick={onCancel}>cancel</button>
-          <button onClick={onSingle}>just this face</button>
-          <button className="ok" onClick={onGroup}>
-            whole group ({groupCount} {groupCount === 1 ? "face" : "faces"})
-          </button>
+          <button onClick={onSingle}>{groupCount == null ? "assign" : "just this face"}</button>
+          {groupCount != null && (
+            <button className="ok" onClick={onGroup}>
+              whole group ({groupCount} {groupCount === 1 ? "face" : "faces"})
+            </button>
+          )}
         </div>
       </div>
     </div>

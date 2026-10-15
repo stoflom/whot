@@ -73,16 +73,22 @@ interface Props {
   filter: string;
   onFilter: (v: string) => void;
   onReview: () => void;
-  onSelect: (id: number) => void;
+  onSelect: (id: number, e?: ReactMouseEvent) => void;
+  /** multi-selection for bulk actions (#35): ctrl/cmd-click toggles,
+      shift-click extends over the visible order */
+  selectedIds: Set<number>;
   /** inline rename of a person (#29) — set_person_name, errors surface as toast */
   onRename: (id: number, name: string) => void;
   /** select all pending faces of a person (context menu, #32) */
   onSelectPending?: (id: number) => void;
+  /** remove persons — row menu + branch bulk menus (§4.13, #35) */
+  onRemovePersons: (ids: number[]) => void;
 }
 
 function PersonRow({
   person,
   selected,
+  multi,
   renaming,
   onSelect,
   onStartRename,
@@ -92,8 +98,9 @@ function PersonRow({
 }: {
   person: Person;
   selected: boolean;
+  multi: boolean;
   renaming: boolean;
-  onSelect: () => void;
+  onSelect: (e: ReactMouseEvent) => void;
   onStartRename: () => void;
   onRename: (id: number, name: string) => void;
   onRenameCancel: () => void;
@@ -109,7 +116,7 @@ function PersonRow({
   };
   return (
     <button
-      className={`tree-person${selected ? " selected" : ""}`}
+      className={`tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}`}
       onClick={onSelect}
       onDoubleClick={onStartRename}
       onContextMenu={onContextMenu}
@@ -150,9 +157,10 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, onRename, onSelectPending }: Props) {
+export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons }: Props) {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: number } | null>(null);
+  const [branchMenu, setBranchMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null);
   const tree = useMemo(() => buildTree(persons), [persons]);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -192,6 +200,18 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   const rollUpAll = () => setCollapsed(new Set(collectBranchPaths(tree, "")));
   const rollDownAll = () => setCollapsed(new Set());
 
+  // structural (unfiltered) person ids of a branch — bulk remove (#35)
+  const collectSubtreeIds = (node: TreeNode): number[] => [
+    ...node.personIds,
+    ...node.children.flatMap(collectSubtreeIds),
+  ];
+  const menuTargets = menu
+    ? selectedIds.has(menu.id) && selectedIds.size > 1
+      ? [...selectedIds]
+      : [menu.id]
+    : [];
+  const branchIds = branchMenu ? collectSubtreeIds(branchMenu.node) : [];
+
   const renderNode = (node: TreeNode, depth: number, path: string) => {
     if (!subtreeMatch(node)) return null;
     const personsHere = node.personIds
@@ -214,6 +234,11 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           className="tree-node"
           style={{ paddingLeft: 8 + depth * 14 }}
           onClick={() => (collapsible ? toggle(path) : undefined)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setBranchMenu({ x: e.clientX, y: e.clientY, node });
+          }}
         >
           {collapsible ? (
             <span className="tree-arrow">{isCollapsed ? "▸" : "▾"}</span>
@@ -237,8 +262,9 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                   key={p.id}
                   person={p}
                   selected={selectedId === p.id}
+                  multi={selectedIds.has(p.id)}
                   renaming={renamingId === p.id}
-                  onSelect={() => onSelect(p.id)}
+                  onSelect={(e) => onSelect(p.id, e)}
                   onStartRename={() => setRenamingId(p.id)}
                   onRename={onRename}
                   onRenameCancel={() => setRenamingId(null)}
@@ -312,9 +338,45 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                   },
                 ],
               },
+              {
+                items: [
+                  {
+                    label:
+                      menuTargets.length > 1
+                        ? `Remove ${menuTargets.length} persons`
+                        : "Remove person",
+                    onClick: () => onRemovePersons(menuTargets),
+                    danger: true,
+                  },
+                ],
+              },
             ],
           }}
           onClose={() => setMenu(null)}
+        />
+      )}
+      {branchMenu && (
+        <ContextMenu
+          menu={{
+            x: branchMenu.x,
+            y: branchMenu.y,
+            groups: [
+              {
+                items: [
+                  {
+                    label:
+                      branchMenu.node.name === "Unknown"
+                        ? `Remove all unknown persons (${branchIds.length})`
+                        : `Remove all persons in this branch (${branchIds.length})`,
+                    onClick: () => onRemovePersons(branchIds),
+                    disabled: branchIds.length === 0,
+                    danger: true,
+                  },
+                ],
+              },
+            ],
+          }}
+          onClose={() => setBranchMenu(null)}
         />
       )}
     </div>

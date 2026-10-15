@@ -96,7 +96,9 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               onHover={grid.onHover}
               onOpen={grid.onOpen}
               onContextMenu={grid.onContextMenu}
-              personName={grid.persons.get(face.person_id)?.name}
+              personName={
+                face.person_id != null ? grid.persons.get(face.person_id)?.name : undefined
+              }
               onAssignName={grid.onAssignName}
               onToggle={grid.onToggle}
               onDescription={grid.onDescription}
