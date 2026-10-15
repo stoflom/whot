@@ -498,3 +498,8 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* tree roll up/down controls (#24) */
+.tree-tools { display: flex; align-items: center; gap: 2px; margin-bottom: 0.4rem; }
+.tree-tools .tree-filter { flex: 1; margin-bottom: 0; min-width: 0; }
+.tree-tools button { font-size: 0.9rem; padding: 0.1rem 0.45rem; flex: none; }

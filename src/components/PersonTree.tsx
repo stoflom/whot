@@ -100,6 +100,22 @@ export default function PersonTree({ persons, selectedId, reviewCount, onReview,
       return n;
     });
 
+  // structural paths of every branch (persons or sub-branches), mirroring
+  // the path scheme used by renderNode — for roll-up-all (#24)
+  const collectBranchPaths = (node: TreeNode, prefix: string): string[] => {
+    const out: string[] = [];
+    for (const c of node.children) {
+      const p = prefix ? `${prefix}/${c.name}` : c.name;
+      if (c.personIds.length > 0 || c.children.length > 0) {
+        out.push(p);
+        out.push(...collectBranchPaths(c, p));
+      }
+    }
+    return out;
+  };
+  const rollUpAll = () => setCollapsed(new Set(collectBranchPaths(tree, "")));
+  const rollDownAll = () => setCollapsed(new Set());
+
   const renderNode = (node: TreeNode, depth: number, path: string) => {
     if (!subtreeMatch(node)) return null;
     const personsHere = node.personIds
@@ -115,14 +131,15 @@ export default function PersonTree({ persons, selectedId, reviewCount, onReview,
       );
     }
     const isCollapsed = collapsed.has(path) && f === "";
+    const collapsible = node.children.length > 0 || node.personIds.length > 0;
     return (
       <div key={path}>
         <div
           className="tree-node"
           style={{ paddingLeft: 8 + depth * 14 }}
-          onClick={() => (children.length > 0 ? toggle(path) : undefined)}
+          onClick={() => (collapsible ? toggle(path) : undefined)}
         >
-          {children.length > 0 ? (
+          {collapsible ? (
             <span className="tree-arrow">{isCollapsed ? "▸" : "▾"}</span>
           ) : (
             <span className="tree-arrow" />
@@ -169,12 +186,25 @@ export default function PersonTree({ persons, selectedId, reviewCount, onReview,
 
   return (
     <div className="person-tree">
-      <input
-        className="tree-filter"
-        placeholder="filter by name or group…"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-      />
+      <div className="tree-tools">
+        <input
+          className="tree-filter"
+          placeholder="filter by name or group…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <button
+          className="ghost"
+          onClick={rollUpAll}
+          disabled={f !== ""}
+          title={f !== "" ? "clear the filter first" : "roll up all branches"}
+        >
+          ⌃
+        </button>
+        <button className="ghost" onClick={rollDownAll} title="roll down all branches">
+          ⌄
+        </button>
+      </div>
       <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}>
         ▦ Review — {reviewCount} pending
       </button>
