@@ -73,6 +73,11 @@ export interface ClusterFace {
   face_id: number;
   sim: number;
 }
+export interface AppearanceGroup {
+  /** appearance (distinct description); "" = none */
+  description: string;
+  clusters: ClusterFace[][];
+}
 
 // ---------------------------------------------------------------- commands
 
@@ -100,7 +105,7 @@ export const removeRefcrop = (personId: number, faceId: number) =>
 export const getRefcrops = (personId: number) =>
   invoke<Refcrop[]>("get_refcrops", { personId });
 export const personFaceClusters = (personId: number, threshold: number) =>
-  invoke<ClusterFace[][]>("person_face_clusters", { personId, threshold });
+  invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
 export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) => invoke("set_settings", { settings });
 

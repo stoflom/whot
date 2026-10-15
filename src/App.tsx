@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "./api";
-import type { ClusterFace, Face, ImageRow, Refcrop, Snapshot } from "./api";
+import type { AppearanceGroup, Face, ImageRow, Refcrop, Snapshot } from "./api";
 import AssignDialog from "./components/AssignDialog";
 import DetailPane from "./components/DetailPane";
 import FaceGrid, { type Section } from "./components/FaceGrid";
@@ -21,7 +21,7 @@ export default function App() {
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [hoverId, setHoverId] = useState<number | null>(null);
   const [splitImageId, setSplitImageId] = useState<number | null>(null);
-  const [clusters, setClusters] = useState<ClusterFace[][] | null>(null);
+  const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -215,16 +215,27 @@ export default function App() {
       const out: Section[] = [];
       const pname = selectedPerson?.name ?? "";
       const pgroup = selectedPerson?.groups[0] ?? "";
-      (clusters ?? []).forEach((cl, i) => {
-        if (cl.length === 0) return;
-        const minSim = Math.min(...cl.map((c) => c.sim));
-        out.push({
-          key: `cl-${i}`,
-          title: i === 0 ? `Group 1 — closest to primary` : `Group ${i + 1}`,
-          subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
-          faceIds: cl.map((c) => c.face_id),
-          ruleDefaultName: pname,
-          ruleDefaultGroup: pgroup,
+      const groups = clusters ?? [];
+      const multi = groups.length > 1;
+      let n = 0;
+      groups.forEach((g, gi) => {
+        g.clusters.forEach((cl, ci) => {
+          if (cl.length === 0) return;
+          n += 1;
+          const minSim = Math.min(...cl.map((c) => c.sim));
+          // appearance prefix only when the person has more than one (§4.9)
+          const prefix = multi && g.description ? `${g.description} — ` : "";
+          out.push({
+            key: `cl-${gi}-${ci}`,
+            title:
+              n === 1
+                ? `${prefix}Group 1 — closest to primary`
+                : `${prefix}Group ${n}`,
+            subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
+            faceIds: cl.map((c) => c.face_id),
+            ruleDefaultName: pname,
+            ruleDefaultGroup: pgroup,
+          });
         });
       });
       if (snap.settings.show_rejected) {

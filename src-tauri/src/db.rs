@@ -984,43 +984,59 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
     a.iter().zip(b).map(|(x, y)| (*x as f64) * (*y as f64)).sum()
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct ClusterFace {
     pub face_id: i64,
     /// cosine similarity to the person's reference (primary) face
     pub sim: f64,
 }
 
-/// §4.9 — display-side single-linkage grouping of one person's faces around
-/// the primary face. Rejected/discarded faces are excluded.
-pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Result<Vec<Vec<ClusterFace>>> {
+/// One appearance group (distinct `COALESCE(description,'')`) of a person,
+/// holding its similarity clusters (§4.9/§4.12).
+#[derive(Serialize, Clone, Debug)]
+pub struct AppearanceGroup {
+    /// appearance; "" = no description
+    pub description: String,
+    pub clusters: Vec<Vec<ClusterFace>>,
+}
+
+/// §4.9 — display-side grouping of one person's faces: partitioned by
+/// appearance (distinct description), then single-linkage around the
+/// primary face *within* each appearance. Rejected/discarded excluded.
+pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Result<Vec<AppearanceGroup>> {
     let con = connect(paths)?;
-    let faces: Vec<(i64, f64, bool)> = {
+    let faces: Vec<(i64, f64, bool, String)> = {
         let mut st = con.prepare(
-            "SELECT id, confidence, (id = (SELECT primary_face_id FROM persons WHERE id = ?)) AS is_primary
+            "SELECT id, confidence, (id = (SELECT primary_face_id FROM persons WHERE id = ?)) AS is_primary,
+                    COALESCE(description, '')
                FROM faces
               WHERE person_id = ? AND state != 'discarded' AND link_status != 'rejected'
               ORDER BY id",
         )?;
         st.query_map(params![person_id, person_id], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?, r.get::<_, i64>(2)? != 0))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, f64>(1)?,
+                r.get::<_, i64>(2)? != 0,
+                r.get::<_, String>(3)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?
     };
     if faces.is_empty() {
         return Ok(Vec::new());
     }
-    let primary = faces.iter().find(|(_, _, p)| *p).map(|(id, _, _)| *id)
-        .or_else(|| faces.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).map(|(id, _, _)| *id));
-    let ids: Vec<i64> = faces.iter().map(|(id, _, _)| *id).collect();
+    let primary = faces.iter().find(|(_, _, p, _)| *p).map(|(id, _, _, _)| *id)
+        .or_else(|| faces.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).map(|(id, _, _, _)| *id));
+    let ids: Vec<i64> = faces.iter().map(|(id, _, _, _)| *id).collect();
     let vectors = l2_vectors(&con, &ids)?;
 
     // reference = primary face's vector (fallback: highest-confidence face)
-    let ref_idx = faces.iter().position(|(id, _, _)| Some(*id) == primary).unwrap_or(0);
+    let ref_idx = faces.iter().position(|(id, _, _, _)| Some(*id) == primary).unwrap_or(0);
     let sims: Vec<f64> = faces
         .iter()
         .enumerate()
-        .map(|(i, &(id, _, _))| {
+        .map(|(i, &(id, _, _, _))| {
             if Some(id) == primary || vectors[i].is_empty() {
                 1.0
             } else {
@@ -1029,35 +1045,60 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
         })
         .collect();
 
-    // single-linkage: each face joins the first cluster with a member at ≥ threshold
-    let mut clusters: Vec<Vec<usize>> = Vec::new();
-    let order: Vec<usize> = (0..faces.len()).collect();
-    let mut order = order;
-    order.sort_by(|&a, &b| sims[b].partial_cmp(&sims[a]).unwrap());
-    for i in order {
-        let mut joined = false;
-        for cluster in clusters.iter_mut() {
-            if cluster.iter().any(|&j| cosine(&vectors[i], &vectors[j]) >= threshold) {
-                cluster.push(i);
-                joined = true;
-                break;
-            }
-        }
-        if !joined {
-            clusters.push(vec![i]);
+    // §4.12: partition by appearance, cluster inside each partition
+    let mut part_order: Vec<(String, Vec<usize>)> = Vec::new();
+    for (i, (_, _, _, desc)) in faces.iter().enumerate() {
+        match part_order.iter_mut().find(|(d, _)| d.as_str() == desc.as_str()) {
+            Some((_, members)) => members.push(i),
+            None => part_order.push((desc.clone(), vec![i])),
         }
     }
-    clusters.sort_by(|a, b| sims[b[0]].partial_cmp(&sims[a[0]]).unwrap_or(std::cmp::Ordering::Equal));
 
-    Ok(clusters
+    let mut grouped: Vec<(String, Vec<Vec<usize>>)> = Vec::new();
+    for (desc, members) in part_order {
+        // single-linkage: each face joins the first cluster with a member at ≥ threshold
+        let mut clusters: Vec<Vec<usize>> = Vec::new();
+        let mut order = members;
+        order.sort_by(|&a, &b| sims[b].partial_cmp(&sims[a]).unwrap());
+        for i in order {
+            let mut joined = false;
+            for cluster in clusters.iter_mut() {
+                if cluster.iter().any(|&j| cosine(&vectors[i], &vectors[j]) >= threshold) {
+                    cluster.push(i);
+                    joined = true;
+                    break;
+                }
+            }
+            if !joined {
+                clusters.push(vec![i]);
+            }
+        }
+        clusters.sort_by(|a, b| sims[b[0]].partial_cmp(&sims[a[0]]).unwrap_or(std::cmp::Ordering::Equal));
+        grouped.push((desc, clusters));
+    }
+    // most primary-like appearance first (the primary's own group tops:
+    // its head cluster contains the primary at sim 1.0)
+    grouped.sort_by(|a, b| {
+        let sa = a.1.first().and_then(|c| c.first()).map(|&i| sims[i]).unwrap_or(f64::MIN);
+        let sb = b.1.first().and_then(|c| c.first()).map(|&i| sims[i]).unwrap_or(f64::MIN);
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    Ok(grouped
         .into_iter()
-        .map(|c| {
-            c.into_iter()
-                .map(|i| ClusterFace {
-                    face_id: faces[i].0,
-                    sim: sims[i],
+        .map(|(description, clusters)| AppearanceGroup {
+            description,
+            clusters: clusters
+                .into_iter()
+                .map(|c| {
+                    c.into_iter()
+                        .map(|i| ClusterFace {
+                            face_id: faces[i].0,
+                            sim: sims[i],
+                        })
+                        .collect()
                 })
-                .collect()
+                .collect(),
         })
         .collect())
 }

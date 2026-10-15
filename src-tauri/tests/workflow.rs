@@ -120,10 +120,16 @@ fn full_workflow() {
     assert!(s.persons.iter().find(|x| x.name == "Carol").unwrap().primary_face_id != Some(5));
     db::set_link_status(&p, &[5], "confirmed").unwrap();
 
-    // 4) similarity clusters on Carol (cos(4,5)=0.98 ⇒ one cluster of two)
+    // 4) appearance-partitioned clusters on Carol: step 2 gave face 5 the
+    //    description 'beard|glasses' ⇒ two appearances, one face each (§4.9)
     let cl = db::person_face_clusters(&p, carol.id, 0.5).unwrap();
-    assert_eq!(cl.len(), 1);
-    assert_eq!(cl[0].len(), 2);
+    assert_eq!(cl.len(), 2, "descriptions partition the person view");
+    let mut descs: Vec<&str> = cl.iter().map(|g| g.description.as_str()).collect();
+    descs.sort();
+    assert_eq!(descs, vec!["", "beard|glasses"]);
+    assert!(cl.iter().all(|g| g.clusters.len() == 1 && g.clusters[0].len() == 1));
+    let total: usize = cl.iter().map(|g| g.clusters.iter().map(|c| c.len()).sum::<usize>()).sum();
+    assert_eq!(total, 2);
 
     // 5) name validation + no-op self rename
     assert!(db::assign_person(&p, &[3], "Unknown99", "").is_err());
@@ -380,4 +386,29 @@ fn schema_version_compatibility_gate() {
 
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
     std::fs::remove_dir_all(p2.db.parent().unwrap()).ok();
+}
+
+/// §4.9/§4.12 — the person view partitions faces by appearance and clusters
+/// by similarity *inside* each partition; the primary's appearance first.
+#[test]
+fn clusters_partitioned_by_appearance() {
+    let p = fixture_paths("appear");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // cos(1,2)=.9, cos(1,6)=.8
+    db::set_face_description(&p, 1, "beard").unwrap();          // primary = face 1
+    db::set_face_description(&p, 2, "beard").unwrap();
+    let cl = db::person_face_clusters(&p, 1, 0.4).unwrap();
+    // pooled, faces 1+2 would share a cluster; partitioned: beard={1,2}, ''={6}
+    assert_eq!(cl.len(), 2, "two appearance groups expected: {cl:?}");
+    let beard = cl.iter().find(|g| g.description == "beard").expect("beard group");
+    let none = cl.iter().find(|g| g.description.is_empty()).expect("no-description group");
+    let ids = |g: &db::AppearanceGroup| -> Vec<i64> {
+        let mut v: Vec<i64> = g.clusters.iter().flatten().map(|c| c.face_id).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(ids(beard), vec![1, 2], "same-appearance faces cluster together");
+    assert_eq!(beard.clusters.len(), 1, "cos .9 >= threshold ⇒ one cluster");
+    assert_eq!(ids(none), vec![6]);
+    assert_eq!(cl[0].description, "beard", "primary's appearance sorts first");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }

@@ -50,7 +50,7 @@ fn person_face_clusters(
     state: State<AppState>,
     person_id: i64,
     threshold: f64,
-) -> Result<Vec<Vec<db::ClusterFace>>, String> {
+) -> Result<Vec<db::AppearanceGroup>, String> {
     db::person_face_clusters(state.paths()?, person_id, threshold).map_err(|e| e.to_string())
 }
 
