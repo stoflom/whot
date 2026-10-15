@@ -52,6 +52,7 @@ export interface ImportRow {
 export interface Settings {
   cluster_threshold: number;
   refcrop_n: number;
+  show_rejected: boolean;
 }
 export interface Snapshot {
   persons: Person[];

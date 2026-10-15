@@ -61,6 +61,7 @@ export default function App() {
     [snap]
   );
   const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
+  const showRejected = snap?.settings.show_rejected ?? true;
 
   // similarity clusters for the person view (recomputed on threshold/snap change)
   useEffect(() => {
@@ -132,6 +133,31 @@ export default function App() {
     if (f) mutate(() => api.addRefcrop(f.person_id, id));
   };
 
+  // #23 — show/hide rejected faces; faces hidden this way leave the
+  // selection so they can never be bulk-acted on invisibly (§4.10)
+  const toggleShowRejected = () => {
+    if (!snap) return;
+    const next = !snap.settings.show_rejected;
+    if (!next) {
+      const hidden = new Set(
+        snap.faces.filter((f) => f.link_status === "rejected").map((f) => f.id)
+      );
+      setSel((prev) => {
+        let hit = false;
+        for (const id of prev)
+          if (hidden.has(id)) {
+            hit = true;
+            break;
+          }
+        if (!hit) return prev;
+        const n = new Set(prev);
+        for (const id of hidden) n.delete(id);
+        return n;
+      });
+    }
+    mutate(() => api.setSettings({ ...snap.settings, show_rejected: next }));
+  };
+
   // ------------------------------------------------------------ sections
 
   const gridHandlers = {
@@ -151,7 +177,11 @@ export default function App() {
     if (!snap) return [];
     if (imageId != null) {
       const byPerson = new Map<number, Face[]>();
-      for (const f of snap.faces.filter((x) => x.image_id === imageId)) {
+      for (const f of snap.faces.filter(
+        (x) =>
+          x.image_id === imageId &&
+          (snap.settings.show_rejected || x.link_status !== "rejected")
+      )) {
         const arr = byPerson.get(f.person_id) ?? [];
         arr.push(f);
         byPerson.set(f.person_id, arr);
@@ -183,11 +213,13 @@ export default function App() {
           ruleDefaultGroup: pgroup,
         });
       });
-      const rej = snap.faces.filter(
-        (f) => f.person_id === personId && f.link_status === "rejected"
-      );
-      if (rej.length > 0)
-        out.push({ key: "rejected", title: "Rejected (undo to accept)", faceIds: rej.map((f) => f.id) });
+      if (snap.settings.show_rejected) {
+        const rej = snap.faces.filter(
+          (f) => f.person_id === personId && f.link_status === "rejected"
+        );
+        if (rej.length > 0)
+          out.push({ key: "rejected", title: "Rejected (undo to accept)", faceIds: rej.map((f) => f.id) });
+      }
       return out;
     }
     // review: all provisional faces, grouped by importer person, UnknownN first
@@ -309,6 +341,12 @@ export default function App() {
         </aside>
 
         <main className="center">
+          <div className="center-toolbar">
+            <label title="Show/hide rejected faces in every view (#23)">
+              <input type="checkbox" checked={showRejected} onChange={toggleShowRejected} />
+              show rejected
+            </label>
+          </div>
           {view === "rolls" && imageId == null ? (
             <RollsPane
               imports={snap.imports}

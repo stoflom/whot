@@ -130,8 +130,9 @@ fn full_workflow() {
     assert!(db::set_person_name(&p, carol.id, "Carol").is_ok());
 
     // 6) settings round-trip
-    db::set_settings(&p, Settings { cluster_threshold: 0.5, refcrop_n: 3 }).unwrap();
+    db::set_settings(&p, Settings { cluster_threshold: 0.5, refcrop_n: 3, ..Settings::default() }).unwrap();
     assert_eq!(db::get_settings(&p).unwrap().refcrop_n, 3);
+    assert!(db::get_settings(&p).unwrap().show_rejected);
 
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
@@ -267,4 +268,23 @@ fn env_process_fallback() {
     assert_eq!(env["B"], "${TOTALLY_UNSET_VAR_XYZ_123}/x", "unknown refs stay literal");
     assert_eq!(env["C"], format!("{home}/pics/deep"), "in-file refs still win");
     std::fs::remove_dir_all(&root).ok();
+}
+
+/// #23 — show_rejected defaults to true when the key is absent and round-trips.
+#[test]
+fn settings_show_rejected_default_and_roundtrip() {
+    let p = fixture_paths("settings");
+    // legacy whotrc.json without the key
+    std::fs::write(&p.config, r#"{ "cluster_threshold": 0.5, "refcrop_n": 3 }"#).unwrap();
+    let s = db::get_settings(&p).unwrap();
+    assert!(s.show_rejected, "missing key must default to true");
+    assert_eq!(s.refcrop_n, 3);
+    let mut s2 = s;
+    s2.show_rejected = false;
+    db::set_settings(&p, s2).unwrap();
+    assert!(!db::get_settings(&p).unwrap().show_rejected, "must round-trip");
+    // no whotrc.json at all
+    std::fs::remove_file(&p.config).ok();
+    assert!(db::get_settings(&p).unwrap().show_rejected);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }

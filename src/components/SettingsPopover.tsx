@@ -43,7 +43,7 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
         </label>
         <div className="dialog-actions">
           <button className="secondary" onClick={onClose}>cancel</button>
-          <button onClick={() => onSave({ cluster_threshold: threshold, refcrop_n: refcropN })}>
+          <button onClick={() => onSave({ ...settings, cluster_threshold: threshold, refcrop_n: refcropN })}>
             save
           </button>
         </div>

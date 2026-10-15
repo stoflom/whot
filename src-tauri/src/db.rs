@@ -137,11 +137,23 @@ pub fn connect(paths: &Paths) -> Result<Connection> {
 pub struct Settings {
     pub cluster_threshold: f64,
     pub refcrop_n: i64,
+    /// Show rejected faces in the UI (§4.10). Defaults to true when the
+    /// key is absent from an existing whotrc.json.
+    #[serde(default = "default_show_rejected")]
+    pub show_rejected: bool,
+}
+
+fn default_show_rejected() -> bool {
+    true
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { cluster_threshold: DEFAULT_THRESHOLD, refcrop_n: DEFAULT_REFCROP_N }
+        Self {
+            cluster_threshold: DEFAULT_THRESHOLD,
+            refcrop_n: DEFAULT_REFCROP_N,
+            show_rejected: true,
+        }
     }
 }
 
