@@ -15,22 +15,33 @@ is used to review, name, accept, reject and annotate them.
 
 ## Setup
 
-- Python venv with `insightface` (see `INSIGHTFACE_PATH` in `.env`); the
-  buffalo_l model is downloaded on first run.
+- Python venv with `insightface` at `<INSIGHTFACE_PATH>/insight_env` — with
+  the shipped `.env` that means `../insightface/insight_env` relative to the
+  repo root; the buffalo_l model is downloaded on first run.
 - Node 22+, Rust (Tauri prerequisites: webkit2gtk-4.1, gtk3).
 - Paths (data, config, insightface, input directories) live in `.env` —
-  copy the committed template and adjust.
+  copy the committed `.env.sample` template and adjust. `${VAR}` references
+  resolve against other `.env` keys first, then the process environment
+  (`${HOME}`, `${USER}`, …).
+- The GUI resolves the project root by looking for `.env` or `data/` in the
+  current directory or its parents; set `WHOT_ROOT=/path/to/whot` to
+  override (needed for release bundles started outside the repo).
 
 ```sh
 npm install
-python3 -m venv insight_env   # or point INSIGHTFACE_PATH at an existing one
+mkdir -p ../insightface && python3 -m venv ../insightface/insight_env
+../insightface/insight_env/bin/pip install insightface onnxruntime opencv-python-headless rawpy blake3 numpy
 ```
 
 ## Import a roll
 
 ```sh
-.venv/bin/python scripts/import_roll.py <roll-dir> <label>
+../insightface/insight_env/bin/python scripts/import_roll.py <roll-dir>
 ```
+
+Flags: `--dry-run` (detect only, no writes), `--all` (also import faceless
+images), `--recursive`, `--cpu` (skip the MIGraphX GPU provider),
+`--threshold F` (cosine similarity, default 0.40).
 
 Every cluster becomes an `UnknownN` person; all faces start `provisional`.
 
@@ -48,9 +59,14 @@ re-accept faces, per-face descriptions, primary face, reference faces.
 ## Tests
 
 ```sh
-(cd src-tauri && cargo test --lib)   # Rust integration tests (use a temp copy of the DB)
-npx tsc --noEmit                     # TypeScript
+(cd src-tauri && cargo test)    # Rust integration tests (fixture DB built from database/schema.sql)
+npx tsc --noEmit                # TypeScript
+npm run lint                    # ESLint (incl. react-hooks rules)
+python3 -m unittest discover -s test   # importer unit tests (needs numpy only)
 ```
+
+Note: `cargo test` compiles the Tauri context, which embeds `dist/` — run
+`npm run build` once first on a fresh clone.
 
 ## Docs
 

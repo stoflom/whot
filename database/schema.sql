@@ -1,4 +1,4 @@
--- who app — faces.db schema (v1.4, per database/database-design.md)
+-- who app — faces.db schema (v1.4; behaviour rules: docs/gui-design.md §4)
 -- No migrations: drop and recreate.
 --   sqlite3 data/faces.db < database/schema.sql
 
