@@ -22,3 +22,6 @@ target/
 
 # Vite build output
 dist/
+
+# local scratch area (annotation exports etc. — never commit)
+scratch/
