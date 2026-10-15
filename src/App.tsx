@@ -381,8 +381,22 @@ export default function App() {
     onHover: setHoverId,
     onContextMenu: faceMenu,
     onAssignName: (faceId: number, name: string) => {
+      if (!snap) return;
       const f = facesById.get(faceId);
-      if (f) setFaceAssign({ faceId, personId: f.person_id, name });
+      if (!f) return;
+      if (f.person_id == null) {
+        // unowned face (§4.13): nothing to disambiguate — assign directly
+        doAssign([faceId], name, "");
+        return;
+      }
+      const groupCount = snap.faces.filter((x) => x.person_id === f.person_id).length;
+      if (groupCount <= 1) {
+        // single-face group: whole group == this face — short-circuit the
+        // dialog, but keep the person's group path (rename-in-place, §1.10)
+        doAssign([faceId], name, personsById.get(f.person_id)?.groups[0] ?? "");
+        return;
+      }
+      setFaceAssign({ faceId, personId: f.person_id, name });
     },
     onToggle: toggle,
     onOpen: (id: number) => {
