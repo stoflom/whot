@@ -54,7 +54,7 @@ interface PersonViewProps extends Omit<Props, "snapshot"> {
 }
 
 function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop }: PersonViewProps) {
-  const primaryImg = person.primary_face_id ? useFaceImage(person.primary_face_id) : null;
+  const primaryImg = useFaceImage(person.primary_face_id);
   return (
     <div className="dp-person" key={person.id}>
       <div className="dp-avatar" onClick={() => person.primary_face_id && onSetPrimary(person.primary_face_id)}>

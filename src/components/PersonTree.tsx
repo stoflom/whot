@@ -52,7 +52,7 @@ function PersonRow({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const img = person.primary_face_id ? useFaceImage(person.primary_face_id) : null;
+  const img = useFaceImage(person.primary_face_id);
   return (
     <button
       className={`tree-person${selected ? " selected" : ""}`}

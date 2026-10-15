@@ -39,6 +39,19 @@ export default function App() {
     refresh().catch((e) => setLoadError(String(e)));
   }, [refresh]);
 
+  // F12: pick up imports/mutations done while the window is in the background
+  useEffect(() => {
+    const reload = () => {
+      if (document.visibilityState !== "hidden") refresh().catch(() => {});
+    };
+    window.addEventListener("focus", reload);
+    document.addEventListener("visibilitychange", reload);
+    return () => {
+      window.removeEventListener("focus", reload);
+      document.removeEventListener("visibilitychange", reload);
+    };
+  }, [refresh]);
+
   const facesById = useMemo(
     () => new Map((snap?.faces ?? []).map((f) => [f.id, f])),
     [snap]
@@ -253,7 +266,10 @@ export default function App() {
           <button
             className={view === "person" ? "active" : ""}
             disabled={personId == null}
-            onClick={() => setImageId(null)}
+            onClick={() => {
+              setView("person");
+              setImageId(null);
+            }}
             title={personId == null ? "select a person in the tree" : ""}
           >
             Person
@@ -261,6 +277,13 @@ export default function App() {
         </nav>
         <span className="topbar-right">
           {busy && <span className="dim">working…</span>}
+          <button
+            className="ghost"
+            onClick={() => refresh().catch((e) => setError(String(e)))}
+            title="refresh"
+          >
+            ↻
+          </button>
           <button className="ghost" onClick={() => setSettingsOpen(true)} title="settings">
             ⚙
           </button>
