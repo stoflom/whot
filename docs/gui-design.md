@@ -1,10 +1,19 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.2** (2026-10-15, UX enhancements #23–#26 — incremental controls on
+  existing panes, no new workflow ⇒ minor): §3 — `show_rejected` toggle
+  (persisted in `whotrc.json`, default `true`) hides rejected faces
+  everywhere they surface; person-tree branches roll up/down individually
+  and all at once (⌃/⌄ beside the filter); every full-image view draws
+  interactive, name-labelled face rectangles; double-clicking a face card
+  opens the full image in a vertical split of the center pane. §2/§5 —
+  `settings` gains `show_rejected`. §4.10–§4.11 — the corresponding
+  behaviour rules. §6 — `FaceOverlay.tsx` added.
 - **1.1** (2026-10-15, review-driven corrections F2/F7/F12/F14/F22):
   §4.1 — a name that matches an existing person *merges* into that person
   (no collision error) and their group path is left untouched; the group
@@ -57,7 +66,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 `CONFIG_FILE` in `.env`):
 
 ```json
-{ "cluster_threshold": 0.40, "refcrop_n": 5 }
+{ "cluster_threshold": 0.40, "refcrop_n": 5, "show_rejected": true }
 ```
 
 ## 3. Layout
@@ -83,6 +92,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
   rejected). One filter box matches **person name and/or group path**
   (case-insensitive substring); tree stays hierarchical below the match.
+  Branches **roll up/down** by clicking their header (any branch holding
+  persons or sub-branches, arrows reflect state) and all at once via
+  **⌃ roll-up / ⌄ roll-down** controls beside the filter. The collapsed set
+  is display-only: filtering auto-expands matching paths while a filter is
+  active without mutating it, and the previous roll-up state applies again
+  when the filter is cleared. Rolled-up branch counts always include the
+  hidden descendants.
 - **Center pane — two modes** (tabs):
   - **Review** (default): all faces that are `provisional` (i.e. still to be
     decided on), **grouped by their importer person** (`UnknownN` clusters).
@@ -91,7 +107,23 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     assigns the group's currently selected faces (default: whole group).
   - **Rolls**: imports (roll path + date) as expandable sections; image
     thumbnails per roll; clicking an image opens its faces (same face cards,
-    same operations) plus the image preview.
+    same operations) plus the image preview **annotated with its detected
+    face rectangles** (see below).
+- **Rejected visibility** (§4.10): a `show_rejected` toggle in the center
+  pane's toolbar hides rejected faces wherever they surface — the person
+  view's `Rejected` section, rejected cards in image grids, and rejected
+  rectangles in full-image views.
+- **Full-image views** (§4.11): every full-size image — the Rolls image
+  detail and the card double-click split — always draws one **active,
+  name-labelled rectangle** per visible face of that image, colour-coded by
+  `link_status`; hover highlights the rectangle and its card (bidirectional),
+  click toggles the face's selection.
+- **Card double-click — image split**: double-clicking a face card splits
+  the center pane vertically (current grid left, annotated full image right;
+  in Rolls image detail the image replaces nothing — same overlay). Closable
+  via ×/Esc; selection and current view survive; double-clicking another
+  card swaps the image. Single-click selection is unaffected (the two
+  clicks of a double-click cancel each other out).
 - **Person view**: clicking a person in the tree shows *that person's* faces
   in the center pane, **grouped by similarity to the primary face**
   (single-linkage, `cluster_threshold`, section shows min similarity) so
@@ -107,6 +139,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 Face card: preview image, derived `name`, confidence %, description input
 (`|`-separated tags, edited inline, committed on blur/Enter), star (set as
 primary), status badge (provisional/confirmed/rejected), reject button.
+Double-click opens the full image split (§3).
 
 ## 4. Behaviour rules (decided)
 
@@ -165,6 +198,19 @@ primary), status badge (provisional/confirmed/rejected), reject button.
    cosine rule and default 0.40 threshold as the importer — it is a display
    aid for impostors, it does *not* re-cluster or reassign anything; the
    importer's grouping is authoritative (no redundant global re-clustering).
+10. **Rejected-face visibility** ⇒ the `show_rejected` setting (default
+    `true`, persisted in `whotrc.json`). When off: the person view's
+    `Rejected` section and rejected cards/rectangles in image grids and
+    full-image views are hidden, and any *selected* rejected faces are
+    deselected at toggle time — hidden faces can never be bulk-acted on.
+    `link_status` itself is unchanged; the toggle is pure display (§3).
+11. **Full-image annotation** ⇒ every full-size image draws one rectangle
+    per visible face from `faces.x/y/w/h` against the canonical
+    `images.width/height` coordinate space, percentage-scaled so it stays
+    correct at any rendered size. Rectangles are active: hover highlights
+    rectangle + card (shared hover state), click toggles selection; colours
+    follow `link_status` (warn/ok/bad). `no-face` images and hidden faces
+    (§4.10) draw no rectangles.
 
 ## 5. Tauri commands (Rust)
 
@@ -176,7 +222,7 @@ primary), status badge (provisional/confirmed/rejected), reject button.
   confidence, link_status, state, import_id, created_at}],
   images: [{id, primary_path, width, height, orientation, type, state,
   roll_id, first_import_id}], imports: [{id, path, started_at}],
-  settings {cluster_threshold, refcrop_n} }`
+  settings {cluster_threshold, refcrop_n, show_rejected} }`
 - `get_face_preview(face_id) → String` (base64 JPEG from `faces.preview`)
 - `get_image_thumb(image_id) → Option<String>`,
   `get_image_preview(image_id) → Option<String>`
@@ -205,6 +251,7 @@ whot/
     main.tsx  App.tsx  api.ts      # api.ts = typed tauri invoke wrapper
     components/  PersonTree.tsx  FaceCard.tsx  FaceGrid.tsx
                  RuleBar.tsx  DetailPane.tsx  RollsPane.tsx  AssignDialog.tsx
+                 FaceOverlay.tsx   # active rectangles on full-size images
     styles.css
   src-tauri/
     tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde, base64
