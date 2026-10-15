@@ -1,10 +1,16 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.9** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.10** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.10** (2026-10-15, #29 refinement): the face-card assign dialog is
+  **skipped when it cannot disambiguate** — if the face's person has only
+  one face (whole group == just this face) or the face is unowned (§4.13),
+  the assignment applies directly; the single-face case still preserves
+  the person's group path (rename-in-place semantics). The dialog only
+  appears when "whole group" genuinely covers more than the one face.
 - **1.9** (2026-10-15, GUI-feedback on #29/#35): §4.1 — **renaming a
   person in the tree routes through `assign_person`** over all of the
   person's faces: a colliding name **merges** into the existing person
@@ -216,7 +222,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   small dialog asks whether to apply it to **just this face** or the
   **whole group** of the face's current person (§4.1 move/rename-in-place,
   group path preserved for the current person on a whole-group rename).
-  The full derived label stays in the tooltip; the detail pane's rename
+  The dialog is **skipped when it cannot disambiguate** (§1.10): a
+  single-face person or an unowned face assigns directly. The full
+  derived label stays in the tooltip; the detail pane's rename
   keeps the uniqueness rule.
 - **Inline rename** (#29): double-clicking a person row in the tree turns
   its name into an entry field (Enter/blur commits via `set_person_name`,
