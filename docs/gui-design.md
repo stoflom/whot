@@ -1,10 +1,18 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.8** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.9** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.9** (2026-10-15, GUI-feedback on #29/#35): §4.1 — **renaming a
+  person in the tree routes through `assign_person`** over all of the
+  person's faces: a colliding name **merges** into the existing person
+  instead of erroring (the `set_person_name` uniqueness rule remains only
+  for the detail pane and for faceless persons). §4.13 housekeeping — a
+  person left with **zero faces** by an assignment is deleted (stale
+  shell; groups/refcrops cascade), so merges no longer leave the wrongly
+  named person behind in the tree.
 - **1.8** (2026-10-15, #35 — removing unwanted persons): §4.13 —
   `remove_person(s)`: all faces of the person(s) become `rejected`, are
   detached (`person_id = NULL`), the person row is deleted (groups and
@@ -279,7 +287,11 @@ Double-click opens the full image split (§3).
      selection into that person (names are not required to be unique for
      assign); the target person's group path and note are **left untouched**
      in that case. The group field only applies to the rename-in-place /
-     new-person branches (review F2/F22).
+     new-person branches (review F2/F22). The same holds for a **tree
+     rename**: it is routed through `assign_person` over *all* the person's
+     faces, so a misspelling corrected to an existing name merges instead
+     of erroring. A person left with **zero faces** by an assignment is
+     deleted (stale shell — §4.13 housekeeping).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
      are per `(person, description)` — see §4.12.
