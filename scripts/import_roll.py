@@ -241,21 +241,29 @@ class PersonStub:
     name: str
     is_known: bool                          # False = UnknownN (created by imports)
     vectors: list[np.ndarray] = field(default_factory=list)
+    description: str = ""                   # appearance group of these vectors (§4.12)
 
 
 def load_known_corpus(con: sqlite3.Connection) -> list[PersonStub]:
-    """Confirmed-face vectors per person — the matching corpus (design 3.8, OQ-3)."""
+    """Confirmed-face vectors keyed per (person, appearance group) — the
+    matching corpus (design 3.8, OQ-3; §4.12). The groups *partition* the
+    person's pooled vectors, so the winning person and match/no-match are
+    unchanged; what changes is that the winning stub carries its
+    description for inheritance at insert time. Row order is pinned with
+    ORDER BY faces.id for deterministic tie-breaks."""
     rows = con.execute("""
-        SELECT f.person_id, p.name, e.vector
+        SELECT f.person_id, p.name, e.vector, COALESCE(f.description, '')
           FROM faces f
           JOIN persons p ON p.id = f.person_id
           JOIN face_embeddings e ON e.face_id = f.id AND e.model = ?
          WHERE f.link_status = 'confirmed' AND p.name NOT LIKE 'Unknown%'
+         ORDER BY f.id
     """, (MODEL_TAG,)).fetchall()
-    people: dict[int, PersonStub] = {}
-    for pid, name, vec in rows:
-        people.setdefault(pid, PersonStub(pid, name, True)).vectors.append(_vec(vec))
-    return list(people.values())
+    groups: dict[tuple[int, str], PersonStub] = {}
+    for pid, name, vec, desc in rows:
+        stub = groups.setdefault((pid, desc), PersonStub(pid, name, True, description=desc))
+        stub.vectors.append(_vec(vec))
+    return list(groups.values())
 
 
 def _vec(blob: bytes) -> np.ndarray:
@@ -263,18 +271,21 @@ def _vec(blob: bytes) -> np.ndarray:
 
 
 def load_unknown_corpus(con: sqlite3.Connection) -> list[PersonStub]:
-    """Vectors of existing UnknownN persons — new faces may match them (design 3.2)."""
+    """Existing UnknownN vectors, keyed per (person, appearance group) (§4.12)
+    — new faces may match them."""
     rows = con.execute("""
-        SELECT f.person_id, p.name, e.vector
+        SELECT f.person_id, p.name, e.vector, COALESCE(f.description, '')
           FROM faces f
           JOIN persons p ON p.id = f.person_id
           JOIN face_embeddings e ON e.face_id = f.id AND e.model = ?
          WHERE p.name LIKE 'Unknown%' AND f.link_status != 'rejected'
+         ORDER BY f.id
     """, (MODEL_TAG,)).fetchall()
-    people: dict[int, PersonStub] = {}
-    for pid, name, vec in rows:
-        people.setdefault(pid, PersonStub(pid, name, False)).vectors.append(_vec(vec))
-    return list(people.values())
+    groups: dict[tuple[int, str], PersonStub] = {}
+    for pid, name, vec, desc in rows:
+        stub = groups.setdefault((pid, desc), PersonStub(pid, name, False, description=desc))
+        stub.vectors.append(_vec(vec))
+    return list(groups.values())
 
 
 def load_unknown_numbering_names(con: sqlite3.Connection) -> list[str]:
@@ -378,14 +389,12 @@ def ensure_person(con: sqlite3.Connection, stub: PersonStub, unknowns: list[Pers
     return stub.person_id
 
 
-def assign_seq(con: sqlite3.Connection, person_id: int) -> int:
-    """Next per-(person, description='') sequence — derived face name part (design 5).
-
-    MAX-based, not COUNT-based: faces moved out of a person by the GUI leave
-    gaps, and COUNT+1 would collide with an existing seq (#5).
-    """
-    row = con.execute("SELECT COALESCE(MAX(seq), 0) FROM faces WHERE person_id = ? AND COALESCE(description,'') = ''",
-                      (person_id,)).fetchone()
+def assign_seq(con: sqlite3.Connection, person_id: int, description: str = "") -> int:
+    """Next seq for one (person, description) group — derived face name part
+    (design 5, §4.12): MAX-based and scoped to the appearance group."""
+    row = con.execute(
+        "SELECT COALESCE(MAX(seq), 0) FROM faces WHERE person_id = ? AND COALESCE(description,'') = COALESCE(?, '')",
+        (person_id, description)).fetchone()
     return row[0] + 1
 
 
@@ -401,13 +410,16 @@ def store_image(con: sqlite3.Connection, plan: ImportPlan, pairs, unknowns, impo
     con.execute("INSERT OR IGNORE INTO image_paths(image_id, path) VALUES (?, ?)", (image_id, plan.path))
     for det, stub in pairs:
         person_id = ensure_person(con, stub, unknowns)
-        seq = assign_seq(con, person_id)
-        name = f"{stub.name}-{seq}"
+        # §4.12: inherit the winning appearance group; seq & label follow it
+        desc = stub.description or None
+        seq = assign_seq(con, person_id, stub.description)
+        name = f"{stub.name}-{desc}-{seq}" if desc else f"{stub.name}-{seq}"
         cur = con.execute("""
             INSERT INTO faces(image_id, x, y, w, h, person_id, link_status, state, origin,
-                              name, seq, confidence, preview, detected_in_import_id, created_at)
-            VALUES (?,?,?,? ,?,?, 'provisional', 'detected', 'insightface', ?,?,?,?, ?,?)
-        """, (image_id, *det.box, person_id, name, seq, det.det_score, det.crop_jpeg, import_id, now))
+                              description, name, seq, confidence, preview, detected_in_import_id, created_at)
+            VALUES (?,?,?,?,?,?, 'provisional', 'detected', 'insightface', ?,?,?,?,?,?,?)
+        """, (image_id, *det.box, person_id, desc, name, seq, det.det_score,
+               det.crop_jpeg, import_id, now))
         con.execute("INSERT INTO face_embeddings(face_id, model, dim, vector, created_at) "
                     "VALUES (?,?,?,?,?)",
                     (cur.lastrowid, MODEL_TAG, det.embedding.size,
