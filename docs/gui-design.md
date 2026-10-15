@@ -1,10 +1,17 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.6** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.7** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.7** (2026-10-15, #29 correction): the face-card name input is an
+  **assign** action, not a rename — typing an existing person's name
+  merges into it (never a "person already exists" error); on commit (Enter
+  or blur) a small dialog asks whether the assignment applies to **just
+  this face** or the **whole group** of its current person (all its faces,
+  keeping the current group path on rename-in-place). The detail pane's
+  rename keeps `set_person_name`'s uniqueness rule.
 - **1.6** (2026-10-15, GUI-feedback round on 1.5): §3 — **‹ › / ← → step
   persons** in the tree's visual order (not sections; #31 re-scoped) and
   the shortcut set is documented (settings popover lists it); face tiles
@@ -181,9 +188,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   with a large corner radius**, so a face tile never reads as a person
   tile (whose avatar is a small circle) without cropping the face tight.
 - **Face-card name input** (#29): the name in a face card's `face-meta`
-  row is a text input like the description field below it; the value is
-  the *person's* name and committing renames the person (all that
-  person's labels re-derive); the full derived label stays in the tooltip.
+  row is a text input like the description field below it; committing it
+  **assigns that person** — an existing person is merged into, a new one is
+  created (`assign_person` semantics, never a collision error) — and a
+  small dialog asks whether to apply it to **just this face** or the
+  **whole group** of the face's current person (§4.1 move/rename-in-place,
+  group path preserved for the current person on a whole-group rename).
+  The full derived label stays in the tooltip; the detail pane's rename
+  keeps the uniqueness rule.
 - **Inline rename** (#29): double-clicking a person row in the tree turns
   its name into an entry field (Enter/blur commits via `set_person_name`,
   Esc cancels — same pattern as the detail-pane fields; validation errors
