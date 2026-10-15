@@ -185,3 +185,30 @@ class AssociateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------- schema gate
+
+class SchemaCheckTest(unittest.TestCase):
+    def _con(self, version: str | None) -> sqlite3.Connection:
+        con = sqlite3.connect(":memory:")
+        con.execute("CREATE TABLE schema_version (version TEXT, updated_at TEXT)")
+        if version is not None:
+            con.execute(
+                "INSERT INTO schema_version VALUES (?, datetime('now'))", (version,)
+            )
+        return con
+
+    def test_matching_version_passes(self):
+        ir.check_schema(self._con(ir.SCHEMA_VERSION), Path(":memory:"))  # no raise
+
+    def test_mismatched_version_exits(self):
+        with self.assertRaises(SystemExit):
+            ir.check_schema(self._con("1.4"), Path(":memory:"))
+
+    def test_missing_marker_exits(self):
+        con = sqlite3.connect(":memory:")  # no schema_version table at all
+        with self.assertRaises(SystemExit):
+            ir.check_schema(con, Path(":memory:"))
+        with self.assertRaises(SystemExit):
+            ir.check_schema(self._con(None), Path(":memory:"))  # empty table

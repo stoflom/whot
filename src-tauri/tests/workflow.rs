@@ -356,3 +356,28 @@ fn description_edit_reassigns_seq_and_regroups_refcrops() {
     assert_eq!(by(""), vec![6], "face 6 stays in the no-description group");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+/// v1.5 — schema_version compatibility gate: matching passes, mismatched
+/// version and missing marker are both refused with a clear message.
+#[test]
+fn schema_version_compatibility_gate() {
+    let p = fixture_paths("schemaver");
+    db::connect(&p).unwrap(); // matching schema passes
+    {
+        let con = Connection::open(&p.db).unwrap();
+        con.execute("UPDATE schema_version SET version = '1.4'", []).unwrap();
+    }
+    let err = db::connect(&p).unwrap_err();
+    assert!(err.to_string().contains("does not match"), "{err}");
+
+    let p2 = fixture_paths("schemaver2");
+    {
+        let con = Connection::open(&p2.db).unwrap();
+        con.execute_batch("DROP TABLE schema_version").unwrap();
+    }
+    let err = db::connect(&p2).unwrap_err();
+    assert!(err.to_string().contains("schema_version"), "{err}");
+
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+    std::fs::remove_dir_all(p2.db.parent().unwrap()).ok();
+}

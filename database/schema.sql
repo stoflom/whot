@@ -1,5 +1,8 @@
 -- who app — faces.db schema (v1.5; behaviour rules: docs/gui-design.md §4)
--- No migrations: drop and recreate.
+-- No migrations: drop and recreate. The schema_version table lets the app,
+-- the importer and the annotation tools verify they are talking to the
+-- matching schema (SCHEMA_VERSION in src-tauri/src/db.rs and
+-- scripts/import_roll.py must equal the value inserted below).
 --   sqlite3 data/faces.db < database/schema.sql
 
 PRAGMA journal_mode = WAL;
@@ -116,3 +119,10 @@ CREATE TABLE person_refcrops (
   crop        BLOB NOT NULL,
   PRIMARY KEY (person_id, description, seq)
 );
+
+-- Single-row schema marker (exact-match check; no migrations by policy).
+CREATE TABLE schema_version (
+  version    TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO schema_version(version, updated_at) VALUES ('1.5', datetime('now'));

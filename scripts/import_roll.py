@@ -23,6 +23,8 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_TAG = "insightface:buffalo_l"
+# must match database/schema.sql's schema_version row and db.rs SCHEMA_VERSION
+SCHEMA_VERSION = "1.5"
 
 
 # ---------------------------------------------------------------- insightface venv
@@ -104,6 +106,25 @@ def load_env(path: Path) -> dict[str, str]:
             raw[k] = re.sub(r"\$\{(\w+)\}",
                             lambda m: os.environ.get(m.group(1), m.group(0)), v)
     return raw
+
+
+def check_schema(con: sqlite3.Connection, db_path: Path) -> None:
+    """Compatibility gate: refuse a DB whose schema_version doesn't match
+    this script (exact match — no migrations by policy)."""
+    try:
+        row = con.execute("SELECT version FROM schema_version").fetchone()
+    except sqlite3.Error:
+        sys.exit(
+            f"{db_path} has no schema_version marker — not a WhoT v{SCHEMA_VERSION} database.\n"
+            f"Create it with: sqlite3 {db_path} < database/schema.sql"
+        )
+    if row is None or row[0] != SCHEMA_VERSION:
+        got = row[0] if row else "empty schema_version table"
+        sys.exit(
+            f"{db_path} schema v{got} does not match this script (v{SCHEMA_VERSION}).\n"
+            f"Preserve annotations first if wanted: scripts/annotation_snapshot.py export,\n"
+            f"then recreate: sqlite3 {db_path} < database/schema.sql"
+        )
 
 
 # ---------------------------------------------------------------- data model
@@ -458,6 +479,7 @@ def main(argv: list[str] | None = None) -> int:
 
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA foreign_keys = ON")
+    check_schema(con, db_path)   # refuse a mismatched schema up-front
     detector = Detector(cpu=args.cpu)   # dry-run still detects; it only suppresses writes
     unknowns = load_unknown_corpus(con)   # existing UnknownN are matchable (design 3.2)
     corpus = load_known_corpus(con)

@@ -12,6 +12,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub const MODEL_TAG: &str = "insightface:buffalo_l";
+/// Must match `schema_version.version` in database/schema.sql — exact
+/// match, no migrations by policy: mismatched DBs are refused up-front
+/// with recreate instructions instead of failing on the first query.
+pub const SCHEMA_VERSION: &str = "1.5";
 const DEFAULT_THRESHOLD: f64 = 0.40;
 const DEFAULT_REFCROP_N: i64 = 5;
 
@@ -128,7 +132,33 @@ pub fn connect(paths: &Paths) -> Result<Connection> {
     // the importer runs in a separate process — don't fail instantly on lock
     // contention (F16); matches python sqlite3's 5s default timeout
     con.pragma_update(None, "busy_timeout", 5000)?;
+    check_schema(&con, &paths.db)?;
     Ok(con)
+}
+
+/// Compatibility gate: every connection must see the schema this build
+/// expects (v1.5 introduces the marker itself).
+fn check_schema(con: &Connection, db: &Path) -> Result<()> {
+    let v: String = con
+        .query_row("SELECT version FROM schema_version", [], |r| r.get(0))
+        .with_context(|| {
+            format!(
+                "{} has no schema_version marker — not a WhoT v{SCHEMA_VERSION} database;\n\
+                 create it with: sqlite3 {} < database/schema.sql",
+                db.display(),
+                db.display()
+            )
+        })?;
+    if v != SCHEMA_VERSION {
+        bail!(
+            "database schema v{v} does not match this build (v{SCHEMA_VERSION}) — \
+             no migrations by policy. Preserve annotations first if wanted:\n\
+             scripts/annotation_snapshot.py export, then recreate with:\n\
+             sqlite3 {} < database/schema.sql",
+            db.display()
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------- settings

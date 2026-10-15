@@ -72,6 +72,12 @@ App root = repository root (`package.json`, `src/`, `src-tauri/`).
 DB path resolved like `import_roll.py`: parse `.env` (`FACES_DB`, default
 `data/faces.db`), relative to project root.
 
+The database carries a single-row `schema_version` table (currently `'1.5'`).
+The GUI (`db::connect`) and `import_roll.py` verify it on every connection
+and **refuse a missing or mismatched version** with recreate instructions —
+exact match, no migrations (AGENTS.md). `scripts/annotation_snapshot.py`
+preserves manual annotations across such a drop & recreate.
+
 GUI settings live in `config/whotrc.json` (created on first need; path from
 `CONFIG_FILE` in `.env`):
 
