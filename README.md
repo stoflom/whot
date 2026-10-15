@@ -72,4 +72,3 @@ Note: `cargo test` compiles the Tauri context, which embeds `dist/` — run
 
 - `AGENTS.md` — agent conventions (branching, versioning, testing)
 - `docs/gui-design.md` — GUI design document (versioned)
-- `docs/project-review.md` — full project review, findings F1–F22 (versioned)
