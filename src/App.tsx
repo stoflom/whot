@@ -286,6 +286,48 @@ export default function App() {
       }));
   }, [snap, view, personId, imageId, clusters, personsById, selectedPerson]);
 
+  // #31 — section stepping (‹ › / arrow keys): scroll-only, idx resets with
+  // the section list; the token guards against scrolling on plain refetches
+  const [nav, setNav] = useState({ idx: 0, token: 0 });
+  useEffect(() => setNav((n) => ({ idx: 0, token: n.token })), [sections]);
+  const stepSection = useCallback(
+    (dir: 1 | -1) =>
+      setNav((n) => ({
+        idx: Math.min(Math.max(n.idx + dir, 0), Math.max(sections.length - 1, 0)),
+        token: n.token + 1,
+      })),
+    [sections.length]
+  );
+  useEffect(() => {
+    if (nav.token === 0) return;
+    const key = sections[nav.idx]?.key;
+    if (key == null) return;
+    document
+      .querySelector(`[data-skey="${key}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [nav, sections]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tgt = e.target as HTMLElement | null;
+      if (
+        tgt &&
+        (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" ||
+          tgt.tagName === "SELECT" || tgt.isContentEditable)
+      )
+        return;
+      if (dialogFaceIds != null) return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        stepSection(-1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        stepSection(1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stepSection, dialogFaceIds]);
+
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
   // ------------------------------------------------------------ dialog prefill
@@ -384,6 +426,27 @@ export default function App() {
 
         <main className="center">
           <div className="center-toolbar">
+            <span className="toolbar-left">
+              <button
+                className="ghost"
+                onClick={() => stepSection(-1)}
+                disabled={sections.length === 0 || nav.idx <= 0}
+                title="previous section (←)"
+              >
+                ‹
+              </button>
+              <span className="nav-pos">
+                {sections.length > 0 ? `${Math.min(nav.idx, sections.length - 1) + 1}/${sections.length}` : "–"}
+              </span>
+              <button
+                className="ghost"
+                onClick={() => stepSection(1)}
+                disabled={sections.length === 0 || nav.idx >= sections.length - 1}
+                title="next section (→)"
+              >
+                ›
+              </button>
+            </span>
             <label title="Show/hide rejected faces in every view (#23)">
               <input type="checkbox" checked={showRejected} onChange={toggleShowRejected} />
               show rejected

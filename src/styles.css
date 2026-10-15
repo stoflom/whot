@@ -403,12 +403,15 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   top: 0;
   z-index: 3;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   padding: 0.15rem 0 0.35rem;
   margin-bottom: 0.35rem;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
+.toolbar-left { display: flex; align-items: center; gap: 2px; }
+.nav-pos { font-size: 0.75rem; color: var(--dim); min-width: 2.6em; text-align: center; }
 .center-toolbar label {
   display: flex;
   align-items: center;
