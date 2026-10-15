@@ -53,6 +53,18 @@ interface PersonViewProps extends Omit<Props, "snapshot"> {
   person: Person;
 }
 
+// one reference group per appearance (person_refcrops.description = §4.6);
+// get_refcrops orders by (description, seq), so groups and rows stay sorted
+function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
+  const m = new Map<string, Refcrop[]>();
+  for (const rc of rcs) {
+    const arr = m.get(rc.description) ?? [];
+    arr.push(rc);
+    m.set(rc.description, arr);
+  }
+  return [...m.entries()];
+}
+
 function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
   return (
@@ -87,16 +99,22 @@ function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, o
         Reference faces ({refcrops.length})
       </h3>
       <div className="dp-refcrops">
-        {refcrops.map((rc) => (
-          <div className="refcrop" key={rc.face_id} title={rc.filename}>
-            <img src={rc.image} alt="" />
-            <span className="refcrop-desc">
-              {rc.description.startsWith("pin:") ? "📌 " : ""}
-              {rc.description}
-            </span>
-            <button className="refcrop-x" title="Remove reference face" onClick={() => onRemoveRefcrop(rc.face_id)}>
-              ×
-            </button>
+        {groupRefcrops(refcrops).map(([group, rows]) => (
+          <div className="refcrop-group" key={group !== "" ? group : "none"}>
+            <div className="refcrop-group-title">
+              {group !== "" ? group : "no description"} ({rows.length})
+            </div>
+            {rows.map((rc) => (
+              <div className="refcrop" key={rc.face_id} title={rc.filename}>
+                <img src={rc.image} alt="" />
+                <span className="refcrop-desc">
+                  {rc.pinned ? "📌 " : ""}#{rc.seq}
+                </span>
+                <button className="refcrop-x" title="Remove reference face" onClick={() => onRemoveRefcrop(rc.face_id)}>
+                  ×
+                </button>
+              </div>
+            ))}
           </div>
         ))}
         {refcrops.length === 0 && <span className="dim">no reference faces yet (confirm faces first)</span>}

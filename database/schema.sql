@@ -1,4 +1,4 @@
--- who app — faces.db schema (v1.4; behaviour rules: docs/gui-design.md §4)
+-- who app — faces.db schema (v1.5; behaviour rules: docs/gui-design.md §4)
 -- No migrations: drop and recreate.
 --   sqlite3 data/faces.db < database/schema.sql
 
@@ -109,8 +109,9 @@ CREATE TABLE person_groups (
 CREATE TABLE person_refcrops (
   person_id   INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
   face_id     INTEGER NOT NULL UNIQUE REFERENCES faces(id) ON DELETE CASCADE,
-  description TEXT NOT NULL,
-  seq         INTEGER NOT NULL,
+  description TEXT NOT NULL DEFAULT '',  -- appearance group: the face's description ('' = none)
+  pinned      INTEGER NOT NULL DEFAULT 0, -- 1 = manual pin: excluded from auto top-N, survives recompute (§4.6)
+  seq         INTEGER NOT NULL,           -- 1..n within (person, description)
   filename    TEXT NOT NULL,                 -- face.name + "-" + seq + ".jpg"
   crop        BLOB NOT NULL,
   PRIMARY KEY (person_id, description, seq)

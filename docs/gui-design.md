@@ -256,7 +256,7 @@ affected persons; all return an error string on constraint violation)
 - `set_primary_face(person_id, face_id)` — §4.5
 - `set_person_name(person_id, name)` / `set_person_group(person_id, path)` /
   `set_person_note(person_id, note)`
-- `add_refcrop(person_id, face_id)` (manual, `pin:`) /
+- `add_refcrop(person_id, face_id)` (manual, pinned) /
   `remove_refcrop(person_id, face_id)`
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
 

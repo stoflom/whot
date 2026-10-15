@@ -503,3 +503,14 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .tree-tools { display: flex; align-items: center; gap: 2px; margin-bottom: 0.4rem; }
 .tree-tools .tree-filter { flex: 1; margin-bottom: 0; min-width: 0; }
 .tree-tools button { font-size: 0.9rem; padding: 0.1rem 0.45rem; flex: none; }
+
+/* reference groups per appearance (v1.3 §4.6) */
+.refcrop-group { display: flex; flex-direction: column; gap: 0.4rem; }
+.refcrop-group-title {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-bottom: 1px dashed var(--border);
+  padding-bottom: 0.15rem;
+}

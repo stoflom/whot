@@ -154,7 +154,8 @@ fn pin_survives_recompute() {
     let rc = db::get_refcrops(&p, 3).unwrap();
     let pin = rc.iter().find(|r| r.face_id == 5)
         .expect("pinned face must survive recompute");
-    assert!(pin.description.starts_with("pin:"), "pin prefix lost: {}", pin.description);
+    assert!(pin.pinned, "pin flag lost");
+    assert_eq!(pin.description, "", "pinned row must keep its appearance group");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
@@ -286,5 +287,72 @@ fn settings_show_rejected_default_and_roundtrip() {
     // no whotrc.json at all
     std::fs::remove_file(&p.config).ok();
     assert!(db::get_settings(&p).unwrap().show_rejected);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// v1.5 — refcrops are rebuilt per appearance group: one top-N list per
+/// distinct (person, description), seq 1..n inside each group (§4.6).
+#[test]
+fn refcrops_per_description_group() {
+    let p = fixture_paths("refgroups");
+    db::set_settings(&p, Settings { refcrop_n: 1, ..Settings::default() }).unwrap();
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // Unknown1: .90/.80/.60
+    db::set_face_description(&p, 1, "beard").unwrap();
+    db::set_face_description(&p, 2, "beard").unwrap();
+    // primary = face 1 (highest confidence), excluded from refcrops
+    let rc = db::get_refcrops(&p, 1).unwrap();
+    assert_eq!(rc.len(), 2, "one auto row per appearance group, got {rc:?}");
+    let beard = rc.iter().find(|r| r.description == "beard").expect("beard group");
+    let none = rc.iter().find(|r| r.description.is_empty()).expect("no-description group");
+    assert_eq!(beard.face_id, 2, "beard group: best non-primary beard face");
+    assert_eq!(beard.seq, 1, "seq restarts inside the group");
+    assert_eq!(none.face_id, 6, "face 6 has no description -> own group");
+    assert_eq!(none.seq, 1, "seq restarts inside the group");
+    assert!(rc.iter().all(|r| !r.pinned));
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// v1.5 — pinning a face inside a group: survives recompute, occupies its
+/// seq slot (auto rows of that group skip it), no duplicate rows.
+#[test]
+fn pin_occupies_group_seq_slot() {
+    let p = fixture_paths("pinseat");
+    db::set_settings(&p, Settings { refcrop_n: 2, ..Settings::default() }).unwrap();
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // auto rows: f2=1, f6=2
+    db::add_refcrop(&p, 1, 2).unwrap(); // upgrade f2's auto row -> pinned at seq 1
+    db::set_link_status(&p, &[6], "rejected").unwrap(); // trigger recompute
+    db::set_link_status(&p, &[6], "confirmed").unwrap();
+    let rc = db::get_refcrops(&p, 1).unwrap();
+    let f2: Vec<_> = rc.iter().filter(|r| r.face_id == 2).collect();
+    assert_eq!(f2.len(), 1, "pinned face must not be duplicated: {rc:?}");
+    assert!(f2[0].pinned);
+    assert_eq!(f2[0].seq, 1, "upgrade keeps the row's seq slot");
+    // face 1 is primary; face 2 is pinned at seq 1; the auto row for face 6
+    // must skip that slot and take seq 2
+    let f6 = rc.iter().find(|r| r.face_id == 6).expect("auto row for face 6");
+    assert_eq!(f6.seq, 2, "auto row must skip the pinned seq slot");
+    assert!(!f6.pinned);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// §4.4/#27 — editing a description re-assigns seq within the new group
+/// (unique labels) and rebuilds that person's refcrops into the groups.
+#[test]
+fn description_edit_reassigns_seq_and_regroups_refcrops() {
+    let p = fixture_paths("descedit");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // seqs 1,2,3
+    db::set_face_description(&p, 2, "beard").unwrap(); // -> group beard, seq 1
+    db::set_face_description(&p, 1, "beard").unwrap(); // -> group beard, seq 2 (after face 2)
+    let s = db::snapshot(&p).unwrap();
+    let f1 = s.faces.iter().find(|f| f.id == 1).unwrap();
+    let f2 = s.faces.iter().find(|f| f.id == 2).unwrap();
+    assert_eq!((f1.person_id, f1.seq), (1, 2));
+    assert_eq!((f2.person_id, f2.seq), (1, 1));
+    assert_ne!(f1.name, f2.name, "labels must stay unique within the group");
+    // refcrops must have followed the face into its new group
+    let rc = db::get_refcrops(&p, 1).unwrap();
+    let by = |g: &str| rc.iter().filter(|r| r.description == g).map(|r| r.face_id).collect::<Vec<_>>();
+    assert_eq!(by("beard"), vec![2], "face 1 is primary, face 2 is the beard refcrop");
+    assert_eq!(by(""), vec![6], "face 6 stays in the no-description group");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }

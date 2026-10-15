@@ -459,13 +459,27 @@ fn backfill_primary(con: &Connection, person_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// §4.6 — refcrops: keep manual (`pin:`) rows, rebuild auto rows as the top
-/// `refcrop_n` confirmed faces by confidence, excluding the primary face.
+/// §4.6 — refcrops: one top-N group per distinct (person, description).
+/// Pinned rows (`pinned = 1`) are excluded from auto-selection, survive the
+/// rebuild, and their seq slots are skipped by that group's auto rows.
 fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
     con.execute(
-        "DELETE FROM person_refcrops WHERE person_id = ? AND description NOT LIKE 'pin:%'",
+        "DELETE FROM person_refcrops WHERE person_id = ? AND pinned = 0",
         params![person_id],
     )?;
+    // seq slots still occupied by surviving pins, per appearance group
+    let mut pinned: HashMap<String, HashSet<i64>> = HashMap::new();
+    {
+        let mut st =
+            con.prepare("SELECT description, seq FROM person_refcrops WHERE person_id = ?")?;
+        let rows = st.query_map(params![person_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (group, seq) = row?;
+            pinned.entry(group).or_default().insert(seq);
+        }
+    }
     let primary: Option<i64> = con
         .query_row("SELECT primary_face_id FROM persons WHERE id = ?", params![person_id], |r| {
             r.get(0)
@@ -473,12 +487,17 @@ fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
         .optional()?
         .flatten();
     let mut st = con.prepare(
-        "SELECT f.id, f.name, f.description, f.preview FROM faces f
-          WHERE f.person_id = ? AND f.link_status = 'confirmed' AND f.state != 'discarded'
-            AND f.id IS NOT ?
-            AND NOT EXISTS (SELECT 1 FROM person_refcrops pr      -- pins survive recompute (F1)
-                             WHERE pr.face_id = f.id AND pr.description LIKE 'pin:%')
-          ORDER BY f.confidence DESC, f.id LIMIT ?",
+        "SELECT face_id, name, description, preview, rn FROM (
+             SELECT f.id AS face_id, f.name, f.description, f.preview,
+                    ROW_NUMBER() OVER (PARTITION BY COALESCE(f.description, '')
+                                       ORDER BY f.confidence DESC, f.id) AS rn
+               FROM faces f
+              WHERE f.person_id = ? AND f.link_status = 'confirmed'
+                AND f.state != 'discarded'
+                AND f.id IS NOT ?
+                AND NOT EXISTS (SELECT 1 FROM person_refcrops pr    -- pins survive (F1)
+                                 WHERE pr.face_id = f.id AND pr.pinned = 1)
+          ) WHERE rn <= ? ORDER BY rn",
     )?;
     let rows = st
         .query_map(params![person_id, primary, n], |r| {
@@ -487,17 +506,26 @@ fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
                 r.get::<_, String>(1)?,
                 r.get::<_, Option<String>>(2)?,
                 r.get::<_, Vec<u8>>(3)?,
+                r.get::<_, i64>(4)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    for (seq, (face_id, name, description, crop)) in rows.into_iter().enumerate() {
-        let seq = (seq as i64) + 1;
-        let desc = description.filter(|d| !d.is_empty()).unwrap_or_else(|| "auto".into());
+    // rn-order within each group; skip seq slots held by pins of that group
+    let mut next: HashMap<String, i64> = HashMap::new();
+    for (face_id, name, description, crop, rn) in rows {
+        let group = description.filter(|d| !d.is_empty()).unwrap_or_default();
+        let cursor = next.get(&group).copied().unwrap_or(1);
+        let mut seq = rn.max(cursor);
+        while pinned.get(&group).is_some_and(|s| s.contains(&seq)) {
+            seq += 1;
+        }
+        next.insert(group.clone(), seq + 1);
         let filename = format!("{name}-{seq}.jpg");
         con.execute(
-            "INSERT OR REPLACE INTO person_refcrops (person_id, face_id, description, seq, filename, crop)
-             VALUES (?, ?, ?, ?, ?, ?)",
-            params![person_id, face_id, desc, seq, filename, crop],
+            "INSERT OR REPLACE INTO person_refcrops
+               (person_id, face_id, description, pinned, seq, filename, crop)
+             VALUES (?, ?, ?, 0, ?, ?, ?)",
+            params![person_id, face_id, group, seq, filename, crop],
         )?;
     }
     Ok(())
@@ -704,23 +732,39 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
     Ok(())
 }
 
-/// §4.4 — set face description (normalised) and re-derive the face label.
+/// §4.4 — set face description (normalised): re-assign seq within the NEW
+/// (person, description) group, re-derive the label, and rebuild the
+/// person's refcrops — the face has changed appearance group (§4.6).
 pub fn set_face_description(paths: &Paths, face_id: i64, raw: &str) -> Result<()> {
     let mut con = connect(paths)?;
+    let settings = get_settings(paths)?;
     let tx = con.transaction()?;
     let desc = normalize_description(raw);
-    let (person_id, seq): (i64, i64) = tx.query_row(
-        "SELECT person_id, seq FROM faces WHERE id = ?",
+    let (person_id, old_desc): (i64, Option<String>) = tx.query_row(
+        "SELECT person_id, description FROM faces WHERE id = ?",
         params![face_id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    tx.execute("UPDATE faces SET description = ? WHERE id = ?", params![desc, face_id])?;
-    let person_name: String =
-        tx.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
-    tx.execute(
-        "UPDATE faces SET name = ? WHERE id = ?",
-        params![face_name(&person_name, desc.as_deref(), seq), face_id],
-    )?;
+    if desc != old_desc {
+        // next free seq of the new group, counting the OTHER faces only (§4.7)
+        let seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
+              WHERE person_id = ? AND id != ? AND COALESCE(description, '') = COALESCE(?, '')",
+            params![person_id, face_id, desc],
+            |r| r.get(0),
+        )?;
+        tx.execute(
+            "UPDATE faces SET description = ?, seq = ? WHERE id = ?",
+            params![desc, seq, face_id],
+        )?;
+        let person_name: String =
+            tx.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
+        tx.execute(
+            "UPDATE faces SET name = ? WHERE id = ?",
+            params![face_name(&person_name, desc.as_deref(), seq), face_id],
+        )?;
+        recompute_person(&tx, person_id, &settings)?;
+    }
     tx.commit()?;
     Ok(())
 }
@@ -833,35 +877,37 @@ pub fn add_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<()> {
     if other.is_some() {
         bail!("face is already a reference face of another person");
     }
-    let pin_desc = format!("pin:{}", desc.filter(|d| !d.is_empty()).unwrap_or_default());
-    let existing: Option<String> = tx
+    let group = desc.filter(|d| !d.is_empty()).unwrap_or_default();
+    let existing: Option<i64> = tx
         .query_row(
-            "SELECT description FROM person_refcrops WHERE person_id = ? AND face_id = ?",
+            "SELECT pinned FROM person_refcrops WHERE person_id = ? AND face_id = ?",
             params![person_id, face_id],
             |r| r.get(0),
         )
         .optional()?;
     match existing {
-        Some(d) if d.starts_with("pin:") => {} // already pinned — no-op
+        Some(1) => {} // already pinned — no-op
         Some(_) => {
-            // upgrade an auto row to a pin (keeps its seq/filename/crop)
+            // upgrade an auto row to a pin in place (keeps its seq/filename/crop)
             tx.execute(
-                "UPDATE person_refcrops SET description = ? WHERE person_id = ? AND face_id = ?",
-                params![pin_desc, person_id, face_id],
+                "UPDATE person_refcrops SET pinned = 1, description = ?
+                  WHERE person_id = ? AND face_id = ?",
+                params![group, person_id, face_id],
             )?;
         }
         None => {
+            // next free seq within this appearance group (§4.6)
             let seq: i64 = tx.query_row(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM person_refcrops WHERE person_id = ? AND description = ?",
-                params![person_id, pin_desc],
+                params![person_id, group],
                 |r| r.get(0),
             )?;
             let filename = format!("{name}-{seq}.jpg");
             let crop = crop.context("face has no preview")?;
             tx.execute(
-                "INSERT INTO person_refcrops (person_id, face_id, description, seq, filename, crop)
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                params![person_id, face_id, pin_desc, seq, filename, crop],
+                "INSERT INTO person_refcrops (person_id, face_id, description, pinned, seq, filename, crop)
+                 VALUES (?, ?, ?, 1, ?, ?, ?)",
+                params![person_id, face_id, group, seq, filename, crop],
             )?;
         }
     }
@@ -986,11 +1032,13 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
         .collect())
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct Refcrop {
     pub face_id: i64,
     pub seq: i64,
+    /// appearance group (the face's description; "" = none)
     pub description: String,
+    pub pinned: bool,
     pub filename: String,
     pub image: String,
 }
@@ -998,25 +1046,27 @@ pub struct Refcrop {
 pub fn get_refcrops(paths: &Paths, person_id: i64) -> Result<Vec<Refcrop>> {
     let con = connect(paths)?;
     let mut st = con.prepare(
-        "SELECT face_id, seq, description, filename, crop
-           FROM person_refcrops WHERE person_id = ? ORDER BY seq, description",
+        "SELECT face_id, seq, description, pinned, filename, crop
+           FROM person_refcrops WHERE person_id = ? ORDER BY description, seq",
     )?;
     let rows = st.query_map(params![person_id], |r| {
         Ok((
             r.get::<_, i64>(0)?,
             r.get::<_, i64>(1)?,
             r.get::<_, String>(2)?,
-            r.get::<_, String>(3)?,
-            r.get::<_, Vec<u8>>(4)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, Vec<u8>>(5)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (face_id, seq, description, filename, crop) = row?;
+        let (face_id, seq, description, pinned, filename, crop) = row?;
         out.push(Refcrop {
             face_id,
             seq,
             description,
+            pinned: pinned != 0,
             filename,
             image: jpeg_data_url(&crop),
         });

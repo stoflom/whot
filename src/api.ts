@@ -65,6 +65,7 @@ export interface Refcrop {
   face_id: number;
   seq: number;
   description: string;
+  pinned: boolean;
   filename: string;
   image: string;
 }
