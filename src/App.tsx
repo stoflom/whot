@@ -622,7 +622,16 @@ export default function App() {
             onSelect={handleTreeSelect}
             selectedIds={selPersons}
             onRemovePersons={doRemovePersons}
-            onRename={(id, n) => mutate(() => api.setPersonName(id, n))}
+            onRename={(id, n) => {
+              // tree renames route through assign over ALL the person's faces:
+              // a colliding name merges instead of erroring (design v1.9 §4.1)
+              const p = personsById.get(id);
+              const ids = snap.faces
+                .filter((f) => f.person_id === id)
+                .map((f) => f.id);
+              if (ids.length === 0) mutate(() => api.setPersonName(id, n));
+              else doAssign(ids, n, p?.groups[0] ?? "");
+            }}
             onSelectPending={(id) => {
               const ids = snap.faces
                 .filter((f) => f.person_id === id && f.link_status === "provisional")

@@ -445,3 +445,44 @@ fn remove_persons_rejects_detaches_deletes() {
     assert!(s.persons.iter().all(|x| x.id != 2 && x.id != 3));
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+/// design v1.9 §4.1 — a person left with zero faces by an assignment is
+/// deleted: merges and whole-group renames leave no stale shell behind.
+#[test]
+fn stale_empty_persons_are_deleted() {
+    let p = fixture_paths("shell");
+    // Unknown2 (id 2) owns exactly one face (3): renaming it in place keeps
+    // the person (now Alice) — no shell involved
+    db::assign_person(&p, &[3], "Alice", "family|x").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let alice = s.persons.iter().find(|x| x.name == "Alice").unwrap();
+    assert_eq!(alice.id, 2, "rename-in-place keeps the person row");
+    assert_eq!(alice.groups, vec!["family|x".to_string()]);
+    // merging other persons' faces into Alice empties those persons -> shells
+    db::assign_person(&p, &[4, 5], "Alice", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().all(|x| x.id != 3), "Unknown3 shell must be deleted");
+    let alice = s.persons.iter().find(|x| x.name == "Alice").unwrap();
+    assert_eq!(alice.counts.total, 3);
+    assert_eq!(alice.groups, vec!["family|x".to_string()], "merge must not clobber the group");
+    // renaming an UnknownN keeps its row (rename-in-place)…
+    db::assign_person(&p, &[1, 2, 6], "Bob", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let bob = s.persons.iter().find(|x| x.name == "Bob").unwrap();
+    assert_eq!(bob.id, 1, "Unknown1 renamed in place, not moved");
+    // …but merging Bob's faces into an EXISTING person empties his row -> shell
+    db::assign_person(&p, &[1, 2, 6], "Alice", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().all(|x| x.id != 1), "emptied Bob must be deleted");
+    let alice = s.persons.iter().find(|x| x.name == "Alice").unwrap();
+    assert_eq!(alice.counts.total, 6);
+    // tree-rename semantics: assign ALL of Alice's faces to a corrected name
+    // (new name ⇒ move to a fresh person; the emptied Alice shell must go)
+    let ids: Vec<i64> = s.faces.iter().filter(|f| f.person_id == Some(alice.id)).map(|f| f.id).collect();
+    db::assign_person(&p, &ids, "Alicia", "family|x").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().all(|x| x.name != "Alice"), "old shell must be gone");
+    let alicia = s.persons.iter().find(|x| x.name == "Alicia").unwrap();
+    assert_eq!(alicia.counts.total, 6);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
