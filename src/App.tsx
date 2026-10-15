@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -29,6 +30,35 @@ export default function App() {
   const [hoverId, setHoverId] = useState<number | null>(null);
   const [splitImageId, setSplitImageId] = useState<number | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // #34 — pane sizes (session state); defaults match the stylesheet
+  const [paneSizes, setPaneSizes] = useState({ left: 250, right: 290, split: 45 });
+  const dragRef = useRef<{ edge: "left" | "right" | "split"; startX: number; start: number } | null>(
+    null
+  );
+  const startDrag = (edge: "left" | "right" | "split") => (e: ReactMouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { edge, startX: e.clientX, start: paneSizes[edge] };
+    const move = (ev: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const dx = ev.clientX - d.startX;
+      setPaneSizes((s) => {
+        if (d.edge === "left") return { ...s, left: Math.min(Math.max(d.start + dx, 160), 480) };
+        if (d.edge === "right") return { ...s, right: Math.min(Math.max(d.start - dx, 200), 560) };
+        return {
+          ...s,
+          split: Math.min(Math.max(d.start + (dx / window.innerWidth) * 100, 20), 80),
+        };
+      });
+    };
+    const up = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
   const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
@@ -506,7 +536,7 @@ export default function App() {
       </header>
 
       <div className="main">
-        <aside className="left">
+        <aside className="left" style={{ width: paneSizes.left }}>
           <PersonTree
             persons={treePersons}
             selectedId={personId}
@@ -529,6 +559,12 @@ export default function App() {
             }}
           />
         </aside>
+        <div
+          className="v-divider"
+          onMouseDown={startDrag("left")}
+          onDoubleClick={() => setPaneSizes((s) => ({ ...s, left: 250 }))}
+          title="drag to resize, double-click to reset"
+        />
 
         <main className="center">
           <div className="center-toolbar">
@@ -606,7 +642,14 @@ export default function App() {
           )}
             </div>
             {splitRow && (
-              <aside className="split-side">
+              <>
+                <div
+                  className="v-divider"
+                  onMouseDown={startDrag("split")}
+                  onDoubleClick={() => setPaneSizes((s) => ({ ...s, split: 45 }))}
+                  title="drag to resize, double-click to reset"
+                />
+                <aside className="split-side" style={{ flex: `0 0 ${paneSizes.split}%` }}>
                 <div className="split-side-top">
                   <span title={splitRow.primary_path}>
                     {splitRow.primary_path.replace(/^.*\//, "") || splitRow.primary_path}
@@ -631,11 +674,18 @@ export default function App() {
                   onFaceContextMenu={faceMenu}
                 />
               </aside>
+              </>
             )}
           </div>
         </main>
 
-        <aside className="right">
+        <div
+          className="v-divider"
+          onMouseDown={startDrag("right")}
+          onDoubleClick={() => setPaneSizes((s) => ({ ...s, right: 290 }))}
+          title="drag to resize, double-click to reset"
+        />
+        <aside className="right" style={{ width: paneSizes.right }}>
           <DetailPane
             person={displayPerson}
             refcrops={refcrops}

@@ -564,3 +564,14 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .ctx-item.danger { color: var(--bad); }
+
+/* draggable pane dividers (#34) */
+.v-divider {
+  flex: none;
+  width: 5px;
+  margin: 0 -2px;
+  cursor: col-resize;
+  background: var(--border);
+  z-index: 4;
+}
+.v-divider:hover { background: var(--accent); }
