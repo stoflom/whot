@@ -1,10 +1,24 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.7** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.8** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.8** (2026-10-15, #35 — removing unwanted persons): §4.13 —
+  `remove_person(s)`: all faces of the person(s) become `rejected`, are
+  detached (`person_id = NULL`), the person row is deleted (groups and
+  refcrops cascade); one transaction, no undo, no schema change — the
+  faces remain in the DB as rejected/unowned records. §3 — **Remove
+  person** in the person-tile context menu and in the reference-set
+  (detail) pane; tree rows support **multi-select** (click / ctrl-click
+  toggles / shift-click extends over the visible order) feeding bulk
+  actions (context menu shows *Remove N persons*); **branch context
+  menus** on tree nodes (*remove all unknown persons* on the Unknown
+  root, *remove all persons in this branch* elsewhere); the image-detail
+  grid titles unowned faces "unassigned". §7 — the v1 non-goal
+  "deleting persons/faces" is lifted for **persons** (faces are never
+  deleted, only rejected).
 - **1.7** (2026-10-15, #29 correction): the face-card name input is an
   **assign** action, not a rename — typing an existing person's name
   merges into it (never a "person already exists" error); on commit (Enter
@@ -210,7 +224,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   right-click menu with grouped entries — *selection* (select/deselect/
   select-all/clear) and *actions* (accept/reject, primary, reference,
   assign, open image …) — reusing the same commands and selection state.
-  **Full images get their own context menu** (#33 correction): the webkit
+  **Tree rows** additionally support **multi-select** (click sets the
+  selection, ctrl/cmd-click toggles, shift-click extends over the tree's
+  visible order; the anchor row stays the person shown) and offer
+  **Remove person / Remove N persons** (§4.13); **branch headers** have
+  their own menu — *remove all unknown persons* on the `Unknown` root,
+  *remove all persons in this branch* on any group branch (counts shown,
+  confirm dialog required). The reference-set pane exposes **Remove
+  person** as a button. **Full images get their own context menu** (#33
+  correction): the webkit
   default menu appears but its entries ("open image in new window", …)
   are not functional inside Tauri, so image areas intercept
   `contextmenu` too and offer a working **open in system viewer** (the
@@ -337,6 +359,18 @@ Double-click opens the full image split (§3).
     label derives accordingly — imported matches arrive already labelled
     with the appearance they matched. Faces with no match above threshold
     still cluster into new `UnknownN` persons (accepted status quo).
+13. **Removing a person** (#35) ⇒ `remove_persons(person_ids)`, one
+    transaction per call: every face of each person becomes
+    `link_status='rejected'`, is detached (`person_id = NULL`) and the
+    person row is deleted — `person_groups` and `person_refcrops` cascade,
+    any *other* person's stale primary pointer at these faces is cleared
+    first. **No undo** (the faces themselves are never deleted; they stay
+    in the DB as rejected, unowned records and can be re-claimed via a
+    section rule). With `show_rejected` off the removed persons vanish
+    immediately; the image-detail grid titles unowned faces
+    "unassigned". Available from the person-tile context menu (also for a
+    multi-selection), the reference-set pane and — batched — from tree
+    branch menus (§3).
 
 ## 5. Tauri commands (Rust)
 
@@ -372,6 +406,7 @@ affected persons; all return an error string on constraint violation)
   `set_person_note(person_id, note)`
 - `add_refcrop(person_id, face_id)` (manual, pinned) /
   `remove_refcrop(person_id, face_id)`
+- `remove_persons(person_ids)` — §4.13 (reject + detach + delete, no undo)
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
 
 ## 6. File layout
@@ -402,5 +437,6 @@ whot/
 - prod: `npm run tauri build` → `src-tauri/target/release/bundle/`
 
 Non-goals (v1): moving faces between *known* persons by drag & drop,
-deleting persons/faces, editing embeddings, multi-group membership UI
+deleting faces (persons *can* be removed — §4.13; their faces become
+rejected, unowned records), editing embeddings, multi-group membership UI
 (one group path per person), i18n.
