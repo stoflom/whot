@@ -56,3 +56,4 @@ npx tsc --noEmit                     # TypeScript
 
 - `AGENTS.md` — agent conventions (branching, versioning, testing)
 - `docs/gui-design.md` — GUI design document (versioned)
+- `docs/project-review.md` — full project review, findings F1–F22 (versioned)
