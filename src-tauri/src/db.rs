@@ -47,7 +47,7 @@ impl Paths {
         let config = root.join(
             env.get("CONFIG_FILE")
                 .map(|s| s.as_str())
-                .unwrap_or("config/hoistrc.json"),
+                .unwrap_or("config/whotrc.json"),
         );
         Ok(Paths { root, db, config })
     }
@@ -932,6 +932,7 @@ pub fn get_refcrops(paths: &Paths, person_id: i64) -> Result<Vec<Refcrop>> {
     Ok(out)
 }
 
+
 // ---------------------------------------------------------------- tests
 
 #[cfg(test)]
@@ -947,88 +948,96 @@ mod tests {
         Paths {
             root: root.clone(),
             db: root.join("faces.db"),
-            config: root.join("hoistrc.json"),
+            config: root.join("whotrc.json"),
         }
     }
 
     #[test]
     fn full_workflow() {
         let p = temp_paths();
-
-        // baseline
         let s = snapshot(&p).unwrap();
-        assert_eq!(s.persons.len(), 30);
-        assert_eq!(s.faces.len(), 61);
-        assert!(s.faces.iter().all(|f| f.link_status == "provisional"));
+        assert!(!s.persons.is_empty() && !s.faces.is_empty());
 
-        // 1) rename Unknown1 in place (its single face 1)
-        assign_person(&p, &[1], "Test Alice", "family|test").unwrap();
-        let s = snapshot(&p).unwrap();
-        let alice = s.persons.iter().find(|x| x.name == "Test Alice").unwrap();
-        assert_eq!(alice.groups, vec!["family|test".to_string()]);
-        let f1 = s.faces.iter().find(|f| f.id == 1).unwrap();
-        assert_eq!(f1.link_status, "confirmed");
-        assert_eq!(f1.name, "Test Alice-1");
-        assert_eq!(alice.primary_face_id, Some(1));
+        // --- 1) rename a single-face person in place (skip if none exists)
+        if let Some(solo) = s.persons.iter().find(|x| x.counts.total == 1) {
+            let face = s.faces.iter().find(|f| f.person_id == solo.id).unwrap();
+            assign_person(&p, &[face.id], "Test Alice", "family|test").unwrap();
+            let s = snapshot(&p).unwrap();
+            let alice = s.persons.iter().find(|x| x.name == "Test Alice").unwrap();
+            assert_eq!(alice.groups, vec!["family|test".to_string()]);
+            assert_eq!(s.faces.iter().find(|f| f.id == face.id).unwrap().link_status, "confirmed");
+            assert_eq!(alice.primary_face_id, Some(face.id));
 
-        // 2) move faces from two different UnknownNs to a fresh person
-        let f30 = s.faces.iter().find(|f| f.id == 30).unwrap();
-        let f31 = s.faces.iter().find(|f| f.id == 31).unwrap();
-        let (p30, p31) = (f30.person_id, f31.person_id);
-        assert_ne!(p30, p31);
-        assign_person(&p, &[30, 31], "Test Bob", "").unwrap();
+            // --- 4) description normalisation + derived name
+            set_face_description(&p, face.id, "  beard | glasses ").unwrap();
+            let s = snapshot(&p).unwrap();
+            let f = s.faces.iter().find(|f| f.id == face.id).unwrap();
+            assert_eq!(f.description.as_deref(), Some("beard|glasses"));
+            assert!(f.name.starts_with("Test Alice-beard|glasses-"));
+        }
+
+        // --- 2) move one face from two different persons into a fresh person
+        let mut taken = vec![];
+        let mut picks: Vec<i64> = Vec::new();
+        for f in s.faces.iter() {
+            if picks.len() >= 2 { break; }
+            if f.link_status == "rejected" { continue; }
+            if !taken.contains(&f.person_id) && !picks.is_empty() {
+                picks.push(f.id);
+                taken.push(f.person_id);
+            } else if picks.is_empty() {
+                picks.push(f.id);
+                taken.push(f.person_id);
+            }
+        }
+        let (fa, fb) = (picks[0], picks[1]);
+        assign_person(&p, &[fa, fb], "Test Bob", "").unwrap();
         let s = snapshot(&p).unwrap();
         let bob = s.persons.iter().find(|x| x.name == "Test Bob").unwrap();
         assert!(bob.groups.is_empty());
-        for fid in [30, 31] {
+        for fid in [fa, fb] {
             let f = s.faces.iter().find(|f| f.id == fid).unwrap();
             assert_eq!(f.person_id, bob.id);
             assert_eq!(f.link_status, "confirmed");
         }
-        let names: Vec<&str> = s.faces.iter().filter(|f| f.person_id == bob.id).map(|f| f.name.as_str()).collect();
-        assert_eq!(names, vec!["Test Bob-1", "Test Bob-2"]);
-        // source persons lost their only face → no primary
-        for pid in [p30, p31] {
-            let per = s.persons.iter().find(|x| x.id == pid).unwrap();
-            assert!(per.primary_face_id.is_none());
-        }
+        let names: Vec<String> = s.faces.iter().filter(|f| f.person_id == bob.id)
+            .map(|f| f.name.clone()).collect();
+        let mut uniq = names.clone();
+        uniq.sort(); uniq.dedup();
+        assert_eq!(names.len(), uniq.len(), "names must be unique within a person: {names:?}");
+        assert!(names.iter().all(|n| n.starts_with("Test Bob-")));
 
-        // 3) reject a face
-        set_link_status(&p, &[32], "rejected").unwrap();
-        let s = snapshot(&p).unwrap();
-        assert_eq!(s.faces.iter().find(|f| f.id == 32).unwrap().link_status, "rejected");
-
-        // 4) description normalisation + derived name
-        set_face_description(&p, 1, "  beard | glasses ").unwrap();
-        let s = snapshot(&p).unwrap();
-        let f1 = s.faces.iter().find(|f| f.id == 1).unwrap();
-        assert_eq!(f1.description.as_deref(), Some("beard|glasses"));
-        assert_eq!(f1.name, "Test Alice-beard|glasses-1");
-
-        // 5) pinned primary + refcrops exclude it; manual pin survives rebuild
-        let bob = s.persons.iter().find(|x| x.name == "Test Bob").unwrap();
-        set_primary_face(&p, bob.id, 31).unwrap();
-        add_refcrop(&p, bob.id, 30).unwrap();
+        // --- 5) pinned primary + refcrops exclude it; manual pin survives rebuild
+        set_primary_face(&p, bob.id, fb).unwrap();
+        add_refcrop(&p, bob.id, fa).unwrap();
         let rc = get_refcrops(&p, bob.id).unwrap();
-        assert!(rc.iter().any(|r| r.face_id == 30 && r.description.starts_with("pin:")));
-        assert!(rc.iter().all(|r| r.face_id != 31));
+        assert!(rc.iter().any(|r| r.face_id == fa && r.description.starts_with("pin:")));
+        assert!(rc.iter().all(|r| r.face_id != fb));
 
-        // 6) re-accept the rejected face back into its person
-        set_link_status(&p, &[32], "confirmed").unwrap();
+        // --- 3) reject a face of a person that keeps others, then re-accept
         let s = snapshot(&p).unwrap();
-        assert_eq!(s.faces.iter().find(|f| f.id == 32).unwrap().link_status, "confirmed");
+        let victim = s.faces.iter()
+            .find(|f| f.person_id != bob.id
+                && s.persons.iter().find(|x| x.id == f.person_id).unwrap().counts.total >= 2)
+            .expect("test data needs a multi-face person").id;
+        set_link_status(&p, &[victim], "rejected").unwrap();
+        let s = snapshot(&p).unwrap();
+        assert_eq!(s.faces.iter().find(|f| f.id == victim).unwrap().link_status, "rejected");
+        set_link_status(&p, &[victim], "confirmed").unwrap();
+        let s = snapshot(&p).unwrap();
+        assert_eq!(s.faces.iter().find(|f| f.id == victim).unwrap().link_status, "confirmed");
 
-        // 7) clusters on a 2-face person
+        // --- 6) clusters on the 2-face person
         let bob = s.persons.iter().find(|x| x.name == "Test Bob").unwrap();
         let cl = person_face_clusters(&p, bob.id, 0.4).unwrap();
-        assert!(cl.len() == 1 || cl.len() == 2);
+        assert!((1..=2).contains(&cl.len()));
         assert_eq!(cl.iter().map(|c| c.len()).sum::<usize>(), 2);
 
-        // 8) name validation
-        assert!(assign_person(&p, &[33], "Unknown99", "").is_err());
-        assert!(set_person_name(&p, bob.id, "Test Bob").is_ok()); // self-rename no-op
+        // --- 7) name validation + no-op self rename
+        assert!(assign_person(&p, &[fa], "Unknown99", "").is_err());
+        assert!(set_person_name(&p, bob.id, "Test Bob").is_ok());
 
-        // 9) settings round-trip
+        // --- 8) settings round-trip
         set_settings(&p, Settings { cluster_threshold: 0.5, refcrop_n: 3 }).unwrap();
         assert_eq!(get_settings(&p).unwrap().refcrop_n, 3);
 

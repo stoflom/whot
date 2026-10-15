@@ -1,4 +1,7 @@
-# WhoT Face Manager — GUI Design (final)
+# WhoT Face Manager — GUI Design
+
+**Version: 1.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+change/correction)
 
 Tauri-based desktop app for reviewing, naming, accepting, rejecting and
 annotating faces imported by `scripts/import_roll.py` into `data/faces.db`.
@@ -37,7 +40,8 @@ App root = repository root (`package.json`, `src/`, `src-tauri/`).
 DB path resolved like `import_roll.py`: parse `.env` (`FACES_DB`, default
 `data/faces.db`), relative to project root.
 
-GUI settings live in `config/hoistrc.json` (created on first need):
+GUI settings live in `config/whotrc.json` (created on first need; path from
+`CONFIG_FILE` in `.env`):
 
 ```json
 { "cluster_threshold": 0.40, "refcrop_n": 5 }
@@ -167,7 +171,7 @@ affected persons; all return an error string on constraint violation)
   `set_person_note(person_id, note)`
 - `add_refcrop(person_id, face_id)` (manual, `pin:`) /
   `remove_refcrop(person_id, seq)`
-- `get_settings()` / `set_settings(json)` — `config/hoistrc.json`
+- `get_settings()` / `set_settings(json)` — `config/whotrc.json`
 
 ## 6. File layout
 
@@ -183,7 +187,7 @@ whot/
     tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde, base64
     src/main.rs  src/db.rs         # db.rs: queries + embeddings + refcrops
     src/commands.rs               # #[tauri::command] surface (section 5)
-  config/hoistrc.json             # created at runtime
+  config/whotrc.json              # created at runtime
   data/faces.db                   # (existing)
 ```
 
