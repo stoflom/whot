@@ -526,3 +526,41 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   font-size: inherit;
   padding: 0 4px;
 }
+
+/* tile context menus (#32) */
+.ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 210px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ctx-title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  padding: 4px 8px 1px;
+}
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.83rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.ctx-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.ctx-item.danger { color: var(--bad); }

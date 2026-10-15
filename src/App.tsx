@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import * as api from "./api";
 import type { AppearanceGroup, Face, ImageRow, Refcrop, Snapshot } from "./api";
 import AssignDialog from "./components/AssignDialog";
+import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
 import FaceGrid, { type Section } from "./components/FaceGrid";
 import FaceOverlay from "./components/FaceOverlay";
@@ -21,6 +28,7 @@ export default function App() {
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [hoverId, setHoverId] = useState<number | null>(null);
   const [splitImageId, setSplitImageId] = useState<number | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
@@ -180,6 +188,97 @@ export default function App() {
     mutate(() => api.setSettings({ ...snap.settings, show_rejected: next }));
   };
 
+  // #32 — tile context menus; full images keep the default webview menu (#33)
+  const openMenu = useCallback((e: ReactMouseEvent, groups: MenuGroup[]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, groups });
+  }, []);
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  const faceMenu = (id: number, e: ReactMouseEvent) => {
+    const f = facesById.get(id);
+    if (!f) return;
+    const section = sections.find((s) => s.faceIds.includes(id));
+    openMenu(e, [
+      {
+        title: "Selection",
+        items: [
+          { label: sel.has(id) ? "Deselect" : "Select", onClick: () => toggle(id) },
+          {
+            label: "Select whole section",
+            onClick: () => section && toggleMany(section.faceIds, true),
+            disabled: !section,
+          },
+          { label: "Clear selection", onClick: () => setSel(new Set()), disabled: sel.size === 0 },
+        ],
+      },
+      {
+        title: "Face",
+        items: [
+          {
+            label: f.link_status === "rejected" ? "Un-reject (accept)" : "Accept",
+            onClick: () => doAccept([id]),
+          },
+          {
+            label: "Reject",
+            onClick: () => doReject([id]),
+            disabled: f.link_status === "rejected",
+            danger: true,
+          },
+          { label: "Set as primary", onClick: () => doPrimary(id) },
+          {
+            label: "Add as reference",
+            onClick: () => doRefcrop(id),
+            disabled: f.link_status !== "confirmed",
+          },
+          { label: "Assign to person…", onClick: () => setDialogFaceIds([id]) },
+          { label: "Open full image", onClick: () => setSplitImageId(f.image_id) },
+        ],
+      },
+    ]);
+  };
+
+  const imageMenu = (image: ImageRow, e: ReactMouseEvent) => {
+    if (!snap) return;
+    const faces = snap.faces.filter(
+      (f) =>
+        f.image_id === image.id &&
+        (snap.settings.show_rejected || f.link_status !== "rejected")
+    );
+    const pending = faces.filter((f) => f.link_status === "provisional").map((f) => f.id);
+    openMenu(e, [
+      {
+        items: [
+          {
+            label: "Open image",
+            onClick: () => {
+              setView("rolls");
+              setImageId(image.id);
+            },
+          },
+          { label: "Open beside (split)", onClick: () => setSplitImageId(image.id) },
+        ],
+      },
+      {
+        title: "Faces of this image",
+        items: [
+          {
+            label: "Select all",
+            onClick: () => setSel(new Set(faces.map((f) => f.id))),
+            disabled: faces.length === 0,
+          },
+          { label: "Clear selection", onClick: () => setSel(new Set()), disabled: sel.size === 0 },
+          {
+            label: "Accept all pending",
+            onClick: () => doAccept(pending),
+            disabled: pending.length === 0,
+          },
+        ],
+      },
+    ]);
+  };
+
   // ------------------------------------------------------------ sections
 
   const gridHandlers = {
@@ -187,6 +286,7 @@ export default function App() {
     sel,
     hoverId,
     onHover: setHoverId,
+    onContextMenu: faceMenu,
     onToggle: toggle,
     onOpen: (id: number) => {
       const f = facesById.get(id);
@@ -421,6 +521,12 @@ export default function App() {
               setImageId(null);
             }}
             onRename={(id, n) => mutate(() => api.setPersonName(id, n))}
+            onSelectPending={(id) => {
+              const ids = snap.faces
+                .filter((f) => f.person_id === id && f.link_status === "provisional")
+                .map((f) => f.id);
+              toggleMany(ids, true);
+            }}
           />
         </aside>
 
@@ -460,6 +566,7 @@ export default function App() {
               images={snap.images}
               faces={snap.faces}
               onOpenImage={(id) => setImageId(id)}
+              onContextMenuImage={imageMenu}
             />
           ) : view === "rolls" && imageId != null && imgRow ? (
             <div className="image-detail">
@@ -485,6 +592,7 @@ export default function App() {
                   hoverId={hoverId}
                   onHover={setHoverId}
                   onToggle={toggle}
+                  onFaceContextMenu={faceMenu}
                 />
               </div>
               <FaceGrid sections={sections} {...gridHandlers} primaryFaceId={null} />
@@ -520,6 +628,7 @@ export default function App() {
                   hoverId={hoverId}
                   onHover={setHoverId}
                   onToggle={toggle}
+                  onFaceContextMenu={faceMenu}
                 />
               </aside>
             )}
@@ -577,6 +686,7 @@ export default function App() {
           }}
         />
       )}
+      {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
       {error && (
         <div className="toast" onClick={() => setError(null)} title="click to dismiss">
           {error}

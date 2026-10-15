@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
+import ContextMenu from "./ContextMenu";
 
 interface TreeNode {
   name: string;
@@ -43,6 +44,8 @@ interface Props {
   onSelect: (id: number) => void;
   /** inline rename of a person (#29) — set_person_name, errors surface as toast */
   onRename: (id: number, name: string) => void;
+  /** select all pending faces of a person (context menu, #32) */
+  onSelectPending?: (id: number) => void;
 }
 
 function PersonRow({
@@ -53,6 +56,7 @@ function PersonRow({
   onStartRename,
   onRename,
   onRenameCancel,
+  onContextMenu,
 }: {
   person: Person;
   selected: boolean;
@@ -61,6 +65,7 @@ function PersonRow({
   onStartRename: () => void;
   onRename: (id: number, name: string) => void;
   onRenameCancel: () => void;
+  onContextMenu: (e: ReactMouseEvent) => void;
 }) {
   const img = useFaceImage(person.primary_face_id);
   const [name, setName] = useState(person.name);
@@ -75,6 +80,7 @@ function PersonRow({
       className={`tree-person${selected ? " selected" : ""}`}
       onClick={onSelect}
       onDoubleClick={onStartRename}
+      onContextMenu={onContextMenu}
       title={`${person.groups.join(", ") || "Ungrouped"} — double-click to rename`}
     >
       <span className="tree-avatar">
@@ -112,9 +118,10 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, onReview, onSelect, onRename }: Props) {
+export default function PersonTree({ persons, selectedId, reviewCount, onReview, onSelect, onRename, onSelectPending }: Props) {
   const [filter, setFilter] = useState("");
   const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; id: number } | null>(null);
   const tree = useMemo(() => buildTree(persons), [persons]);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -204,6 +211,11 @@ export default function PersonTree({ persons, selectedId, reviewCount, onReview,
                   onStartRename={() => setRenamingId(p.id)}
                   onRename={onRename}
                   onRenameCancel={() => setRenamingId(null)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMenu({ x: e.clientX, y: e.clientY, id: p.id });
+                  }}
                 />
               ))}
             </div>
@@ -251,6 +263,29 @@ export default function PersonTree({ persons, selectedId, reviewCount, onReview,
         ▦ Review — {reviewCount} pending
       </button>
       {renderNode(tree, 0, "")}
+      {menu && (
+        <ContextMenu
+          menu={{
+            x: menu.x,
+            y: menu.y,
+            groups: [
+              {
+                items: [
+                  { label: "Open person", onClick: () => onSelect(menu.id) },
+                  { label: "Rename…", onClick: () => setRenamingId(menu.id) },
+                  {
+                    label: "Select their pending faces",
+                    onClick: () => onSelectPending?.(menu.id),
+                    disabled:
+                      (persons.find((p) => p.id === menu.id)?.counts.provisional ?? 0) === 0,
+                  },
+                ],
+              },
+            ],
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }

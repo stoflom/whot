@@ -1,3 +1,4 @@
+import type { MouseEvent as ReactMouseEvent } from "react";
 import type { Face } from "../api";
 import { useImagePreviewImg } from "../hooks";
 
@@ -17,6 +18,9 @@ interface Props {
   hoverId: number | null;
   onHover: (id: number | null) => void;
   onToggle: (id: number) => void;
+  /** right-click menu on the face rectangles; the bare image area keeps
+      the default webview menu (#32/#33) */
+  onFaceContextMenu?: (id: number, e: ReactMouseEvent) => void;
 }
 
 export default function FaceOverlay({
@@ -28,6 +32,7 @@ export default function FaceOverlay({
   hoverId,
   onHover,
   onToggle,
+  onFaceContextMenu,
 }: Props) {
   const url = useImagePreviewImg(imageId);
   if (!url) return <span className="dim">no preview</span>;
@@ -58,6 +63,7 @@ export default function FaceOverlay({
             }}
             onMouseEnter={() => onHover(f.id)}
             onMouseLeave={() => onHover(null)}
+            onContextMenu={(e) => onFaceContextMenu?.(f.id, e)}
           >
             <span className="face-rect-label">{f.name}</span>
           </button>

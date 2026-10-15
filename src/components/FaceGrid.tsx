@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face } from "../api";
 import FaceCard from "./FaceCard";
 
@@ -19,6 +19,8 @@ interface GridProps {
   hoverId: number | null;
   onHover: (id: number | null) => void;
   onOpen: (id: number) => void;
+  /** right-click menu on face tiles (#32) */
+  onContextMenu: (id: number, e: ReactMouseEvent) => void;
   onToggle: (id: number) => void;
   onToggleMany: (ids: number[], on: boolean) => void;
   onDescription: (id: number, d: string) => void;
@@ -91,6 +93,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               isPrimary={grid.primaryFaceId === id}
               onHover={grid.onHover}
               onOpen={grid.onOpen}
+              onContextMenu={grid.onContextMenu}
               onToggle={grid.onToggle}
               onDescription={grid.onDescription}
               onPrimary={grid.onPrimary}

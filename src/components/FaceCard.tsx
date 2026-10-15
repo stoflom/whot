@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face } from "../api";
 import { useFaceImage } from "../hooks";
 
@@ -11,6 +11,8 @@ interface Props {
   onHover: (id: number | null) => void;
   /** double-click: open the full image (§3 card double-click) */
   onOpen: (id: number) => void;
+  /** right-click context menu (#32) */
+  onContextMenu: (id: number, e: ReactMouseEvent) => void;
   onDescription: (id: number, description: string) => void;
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
@@ -26,6 +28,7 @@ export default function FaceCard({
   onToggle,
   onHover,
   onOpen,
+  onContextMenu,
   onDescription,
   onPrimary,
   onRefcrop,
@@ -47,6 +50,7 @@ export default function FaceCard({
       onMouseEnter={() => onHover(face.id)}
       onMouseLeave={() => onHover(null)}
       onDoubleClick={() => onOpen(face.id)}
+      onContextMenu={(e) => onContextMenu(face.id, e)}
     >
       <label className="face-check">
         <input

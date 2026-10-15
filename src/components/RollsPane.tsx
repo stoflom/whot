@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face, ImportRow, ImageRow } from "../api";
 import { useImageThumbImg } from "../hooks";
 
@@ -7,24 +7,31 @@ interface Props {
   images: ImageRow[];
   faces: Face[];
   onOpenImage: (id: number) => void;
+  /** right-click menu on image tiles (#32) */
+  onContextMenuImage: (image: ImageRow, e: ReactMouseEvent) => void;
 }
 
-function ImageThumb({ image, onOpen }: { image: ImageRow; onOpen: () => void }) {
+function ImageThumb({ image, onOpen, onContextMenu }: {
+  image: ImageRow;
+  onOpen: () => void;
+  onContextMenu: (e: ReactMouseEvent) => void;
+}) {
   const img = useImageThumbImg(image.id);
   return (
-    <button className="img-thumb" onClick={onOpen} title={image.primary_path}>
+    <button className="img-thumb" onClick={onOpen} onContextMenu={onContextMenu} title={image.primary_path}>
       {img ? <img src={img} alt="" /> : <span className="dim">…</span>}
       {image.state === "no-face" && <span className="no-face">no face</span>}
     </button>
   );
 }
 
-function RollSection({ imp, images, faces, initialOpen, onOpenImage }: {
+function RollSection({ imp, images, faces, initialOpen, onOpenImage, onContextMenuImage }: {
   imp: ImportRow;
   images: ImageRow[];
   faces: Face[];
   initialOpen: boolean;
   onOpenImage: (id: number) => void;
+  onContextMenuImage: (image: ImageRow, e: ReactMouseEvent) => void;
 }) {
   const [open, setOpen] = useState(initialOpen);
   const pending = faces.filter((f) => f.import_id === imp.id && f.link_status === "provisional").length;
@@ -45,7 +52,12 @@ function RollSection({ imp, images, faces, initialOpen, onOpenImage }: {
       {open && (
         <div className="img-grid">
           {images.map((img) => (
-            <ImageThumb key={img.id} image={img} onOpen={() => onOpenImage(img.id)} />
+            <ImageThumb
+              key={img.id}
+              image={img}
+              onOpen={() => onOpenImage(img.id)}
+              onContextMenu={(e) => onContextMenuImage(img, e)}
+            />
           ))}
         </div>
       )}
@@ -53,7 +65,7 @@ function RollSection({ imp, images, faces, initialOpen, onOpenImage }: {
   );
 }
 
-export default function RollsPane({ imports, images, faces, onOpenImage }: Props) {
+export default function RollsPane({ imports, images, faces, onOpenImage, onContextMenuImage }: Props) {
   if (imports.length === 0) return <div className="empty">no rolls imported yet</div>;
   return (
     <div className="rolls">
@@ -65,6 +77,7 @@ export default function RollsPane({ imports, images, faces, onOpenImage }: Props
           images={images.filter((x) => x.first_import_id === imp.id)}
           faces={faces}
           onOpenImage={onOpenImage}
+          onContextMenuImage={onContextMenuImage}
         />
       ))}
     </div>
