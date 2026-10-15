@@ -5,8 +5,10 @@ import { useFaceImage } from "../hooks";
 interface Props {
   face: Face;
   selected: boolean;
+  hovered: boolean;
   isPrimary: boolean;
   onToggle: (id: number) => void;
+  onHover: (id: number | null) => void;
   onDescription: (id: number, description: string) => void;
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
@@ -17,8 +19,10 @@ interface Props {
 export default function FaceCard({
   face,
   selected,
+  hovered,
   isPrimary,
   onToggle,
+  onHover,
   onDescription,
   onPrimary,
   onRefcrop,
@@ -35,8 +39,10 @@ export default function FaceCard({
 
   return (
     <div
-      className={`face-card status-${face.link_status}${selected ? " selected" : ""}`}
+      className={`face-card status-${face.link_status}${selected ? " selected" : ""}${hovered ? " hovered" : ""}`}
       title={face.name}
+      onMouseEnter={() => onHover(face.id)}
+      onMouseLeave={() => onHover(null)}
     >
       <label className="face-check">
         <input

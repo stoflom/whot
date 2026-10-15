@@ -4,18 +4,13 @@ import type { ClusterFace, Face, ImageRow, Refcrop, Snapshot } from "./api";
 import AssignDialog from "./components/AssignDialog";
 import DetailPane from "./components/DetailPane";
 import FaceGrid, { type Section } from "./components/FaceGrid";
+import FaceOverlay from "./components/FaceOverlay";
 import PersonTree from "./components/PersonTree";
 import RollsPane from "./components/RollsPane";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
-import { useImagePreviewImg } from "./hooks";
 
 type View = "review" | "rolls" | "person";
-
-function ImagePreview({ id }: { id: number }) {
-  const url = useImagePreviewImg(id);
-  return url ? <img src={url} alt="" /> : <span className="dim">no preview</span>;
-}
 
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -24,6 +19,7 @@ export default function App() {
   const [personId, setPersonId] = useState<number | null>(null);
   const [imageId, setImageId] = useState<number | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
+  const [hoverId, setHoverId] = useState<number | null>(null);
   const [clusters, setClusters] = useState<ClusterFace[][] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
@@ -62,6 +58,7 @@ export default function App() {
   );
   const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
   const showRejected = snap?.settings.show_rejected ?? true;
+  const faceVisible = (f: Face) => showRejected || f.link_status !== "rejected";
 
   // similarity clusters for the person view (recomputed on threshold/snap change)
   useEffect(() => {
@@ -163,6 +160,8 @@ export default function App() {
   const gridHandlers = {
     faces: facesById,
     sel,
+    hoverId,
+    onHover: setHoverId,
     onToggle: toggle,
     onToggleMany: toggleMany,
     onDescription: doDesc,
@@ -369,7 +368,16 @@ export default function App() {
                 </div>
               </div>
               <div className="image-preview">
-                <ImagePreview id={imgRow.id} />
+                <FaceOverlay
+                  imageId={imgRow.id}
+                  width={imgRow.width}
+                  height={imgRow.height}
+                  faces={snap.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f))}
+                  sel={sel}
+                  hoverId={hoverId}
+                  onHover={setHoverId}
+                  onToggle={toggle}
+                />
               </div>
               <FaceGrid sections={sections} {...gridHandlers} primaryFaceId={null} />
             </div>
