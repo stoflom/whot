@@ -19,3 +19,6 @@ pi-session-*
 target/
 .vscode/
 !index.html
+
+# Vite build output
+dist/
