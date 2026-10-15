@@ -1,10 +1,20 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.10** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.11** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.11** (2026-10-15, #29 final follow-up): **"person already exists" is
+  unreachable from the GUI.** Every rename entry point — tree row,
+  context menu, detail pane — routes through one rename-merge helper
+  over *all* the person's faces (`assign_person` merge semantics); a
+  faceless person renamed to an existing name merges by deletion (empty
+  set), an empty input is a no-op, and renaming an `UnknownN` in these
+  non-visible-group flows clears its `Unknown` group (F7 preserved). The
+  face-card whole-group flow clears the `Unknown` group the same way.
+  `set_person_name` keeps its uniqueness rule as a backend/API invariant
+  only.
 - **1.10** (2026-10-15, #29 refinement): the face-card assign dialog is
   **skipped when it cannot disambiguate** — if the face's person has only
   one face (whole group == just this face) or the face is unowned (§4.13),
@@ -299,7 +309,13 @@ Double-click opens the full image split (§3).
      rename**: it is routed through `assign_person` over *all* the person's
      faces, so a misspelling corrected to an existing name merges instead
      of erroring. A person left with **zero faces** by an assignment is
-     deleted (stale shell — §4.13 housekeeping).
+     deleted (stale shell — §4.13 housekeeping). This applies to **every
+     GUI rename** (tree, context menu, detail pane) via one rename-merge
+     helper: the `set_person_name` collision error can never surface in
+     the GUI; a *faceless* person renamed to an existing name merges by
+     deletion, an empty input is a no-op, and renaming an `UnknownN` in
+     these flows clears its `Unknown` group (F7 — the group argument is
+     not user-visible there).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
      are per `(person, description)` — see §4.12.
