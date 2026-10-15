@@ -1,10 +1,20 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.4** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.5** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.5** (2026-10-15, UX batch #28–#34): §3 — face tiles are **portrait
+  ovals** so they read differently from person tiles (#30); with
+  `show_rejected` off the left-pane counts and the right-pane overview
+  exclude rejected faces as well (§4.10, #28); double-clicking a person
+  tree row **renames inline** (#29); the center toolbar gains **‹ ›
+  section stepping** plus `←`/`→` keys (#31); face/person/image tiles get
+  **right-click context menus** with grouped selection/action entries (#32)
+  while full images keep the default webview menu (#33); pane dividers
+  are **draggable** (double-click resets, session-persisted) and grids
+  reflow (#34).
 - **1.4** (2026-10-15, #27 decisions — A / S3-yes / S4-yes / status-quo-yes):
   §4.12 — **import-time appearance inheritance**: the importer's corpus is
   keyed by `(person, COALESCE(description,''))`; the matched face inherits
@@ -137,8 +147,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     face rectangles** (see below).
 - **Rejected visibility** (§4.10): a `show_rejected` toggle in the center
   pane's toolbar hides rejected faces wherever they surface — the person
-  view's `Rejected` section, rejected cards in image grids, and rejected
-  rectangles in full-image views.
+  view's `Rejected` section, rejected cards in image grids, rejected
+  rectangles in full-image views, **the left-pane person counts and the
+  right-pane overview totals** (#28).
 - **Full-image views** (§4.11): every full-size image — the Rolls image
   detail and the card double-click split — always draws one **active,
   name-labelled rectangle** per visible face of that image, colour-coded by
@@ -150,6 +161,26 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   via ×/Esc; selection and current view survive; double-clicking another
   card swaps the image. Single-click selection is unaffected (the two
   clicks of a double-click cancel each other out).
+- **Face vs person tiles** (#30): face crops render as **portrait ovals**
+  (4:5, elliptical mask) so a face tile never reads as a person tile (whose
+  avatar is a small circle).
+- **Inline rename** (#29): double-clicking a person row in the tree turns
+  its name into an entry field (Enter/blur commits via `set_person_name`,
+  Esc cancels — same pattern as the detail-pane fields; validation errors
+  surface as toast).
+- **Section stepping** (#31): ‹ › buttons in the center toolbar step the
+  viewport through the current view's sections (disabled at the ends);
+  `←`/`→` do the same unless an input has focus.
+- **Context menus** (#32): face cards, person rows and image thumbs show a
+  right-click menu with grouped entries — *selection* (select/deselect/
+  select-all/clear) and *actions* (accept/reject, primary, reference,
+  assign, open image …) — reusing the same commands and selection state.
+  **Full images keep the default webview menu** (#33): only tiles and face
+  rectangles intercept `contextmenu`, never the image area itself.
+- **Resizable panes** (#34): the left/right pane dividers and the #25 split
+  divider are draggable with clamps and double-click reset (session state);
+  the face/image grids already reflow via `auto-fill` and follow the pane
+  sizes.
 - **Person view**: clicking a person in the tree shows *that person's* faces
   in the center pane, **partitioned by appearance** (distinct description)
   and then **grouped by similarity to the primary face** within each
@@ -244,9 +275,11 @@ Double-click opens the full image split (§3).
 10. **Rejected-face visibility** ⇒ the `show_rejected` setting (default
     `true`, persisted in `whotrc.json`). When off: the person view's
     `Rejected` section and rejected cards/rectangles in image grids and
-    full-image views are hidden, and any *selected* rejected faces are
-    deselected at toggle time — hidden faces can never be bulk-acted on.
-    `link_status` itself is unchanged; the toggle is pure display (§3).
+    full-image views are hidden, the **left-pane person counts and the
+    right-pane overview exclude rejected faces** (#28), and any *selected*
+    rejected faces are deselected at toggle time — hidden faces can never
+    be bulk-acted on. `link_status` itself is unchanged; the toggle is
+    pure display (§3).
 11. **Full-image annotation** ⇒ every full-size image draws one rectangle
     per visible face from `faces.x/y/w/h` against the canonical
     `images.width/height` coordinate space, percentage-scaled so it stays
