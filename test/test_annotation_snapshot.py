@@ -135,6 +135,14 @@ class RoundTripTest(unittest.TestCase):
             "SELECT description, pinned, seq FROM person_refcrops WHERE person_id = ?",
             (alice[0],)).fetchone()
         self.assertEqual(pin, ("glasses", 1, 1), "pin restored with its group")
+        # #37: Unknown1 lost all three faces to Alice -> shell deleted;
+        # Unknown2 keeps its face and survives
+        self.assertEqual(
+            con.execute("SELECT count(*) FROM persons WHERE id = 1").fetchone()[0], 0,
+            "emptied UnknownN shell must be deleted")
+        self.assertEqual(
+            con.execute("SELECT count(*) FROM persons WHERE id = 2").fetchone()[0], 1,
+            "person keeping a face must survive")
         con.close()
 
     def test_legacy_pre15_export(self):
@@ -176,6 +184,55 @@ class RoundTripTest(unittest.TestCase):
         data = ansi.do_export(self.old)
         again = json.loads(json.dumps(data))
         self.assertEqual(data, again)
+
+    def test_restore_housekeeping_primary_refcrops_shells(self):
+        """#37 — restore writes faces directly, so it must also do the
+        derived-state maintenance: machine primary, auto refcrops, and
+        deletion of the UnknownN shells the moves emptied."""
+        data = {
+            "format": 1, "source_schema": "1.5", "exported_at": NOW,
+            "persons": [{"name": "Bob", "state": "created", "note": None,
+                         "groups": ["family|test"],
+                         "primary": None, "primary_pinned": 0}],
+            # take face 1 (conf .90) from Unknown1 and face 4 (conf .60)
+            # from Unknown2 — the latter move empties Unknown2
+            "faces": [
+                {"hash": HASH, "x": 10, "y": 10, "w": 20, "h": 20,
+                 "person": "Bob", "link_status": "confirmed", "description": None,
+                 "seq": 1},
+                {"hash": HASH, "x": 5, "y": 60, "w": 20, "h": 20,
+                 "person": "Bob", "link_status": "confirmed", "description": None,
+                 "seq": 2},
+            ],
+            "pins": [], "skipped_unknown_pins": 0,
+        }
+        stats = ansi.do_restore(data, self.new)
+        self.assertEqual(stats["unmatched_faces"], 0)
+        self.assertEqual(stats["shells_deleted"], 1, "emptied Unknown2 shell")
+        con = sqlite3.connect(self.new)
+        self.assertIsNone(con.execute(
+            "SELECT id FROM persons WHERE name LIKE 'Unknown%' "
+            "AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)"
+        ).fetchone(), "no faceless UnknownN shell may remain")
+        bob = con.execute("SELECT id FROM persons WHERE name = 'Bob'").fetchone()
+        self.assertIsNotNone(bob)
+        prim = con.execute(
+            "SELECT primary_face_id, primary_pinned FROM persons WHERE id = ?",
+            (bob[0],)).fetchone()
+        self.assertEqual(prim, (1, 0), "machine primary = highest-confidence face")
+        rc = con.execute(
+            "SELECT face_id, description, seq, pinned, filename FROM person_refcrops "
+            "WHERE person_id = ? ORDER BY seq", (bob[0],)).fetchall()
+        self.assertEqual(len(rc), 1, "only the non-primary confirmed face qualifies")
+        self.assertEqual(rc[0][0], 4, "face 4 is Bob's non-primary confirmed face")
+        self.assertEqual(rc[0][1], "")
+        self.assertEqual(rc[0][2], 1)
+        self.assertEqual(rc[0][3], 0)
+        self.assertEqual(rc[0][4], "Bob-2-1.jpg", "<face name>-<seq>.jpg like db.rs")
+        self.assertIsNotNone(con.execute(
+            "SELECT id FROM persons WHERE name = 'Unknown1'").fetchone(),
+            "Unknown1 keeps its remaining faces and survives")
+        con.close()
 
 
 if __name__ == "__main__":

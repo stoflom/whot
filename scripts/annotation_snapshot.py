@@ -92,6 +92,74 @@ def derive_name(person: str, desc: str | None, seq: int) -> str:
     return f"{person}-{desc}-{seq}" if desc else f"{person}-{seq}"
 
 
+def restore_refcrop_n() -> int:
+    """refcrop_n from whotrc.json when present (default 5, like db.rs)."""
+    try:
+        env = load_env(PROJECT_ROOT / ".env")
+        cfg = json.loads((PROJECT_ROOT / env.get("CONFIG_FILE", "config/whotrc.json")).read_text())
+        return max(1, int(cfg.get("refcrop_n", 5)))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return 5
+
+
+def backfill_primary(con: sqlite3.Connection, pid: int) -> None:
+    """Machine primary, mirroring db.rs backfill_primary: the highest-confidence
+    confirmed, non-discarded face; only when the person has none."""
+    con.execute(
+        "UPDATE persons SET primary_face_id = ("
+        "  SELECT f.id FROM faces f"
+        "  WHERE f.person_id = persons.id"
+        "    AND f.state != 'discarded' AND f.link_status != 'rejected'"
+        "  ORDER BY f.confidence DESC, f.id LIMIT 1)"
+        " WHERE id = ? AND primary_face_id IS NULL"
+        "   AND EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id"
+        "               AND f.state != 'discarded' AND f.link_status != 'rejected')",
+        (pid,))
+
+
+def recompute_refcrops(con: sqlite3.Connection, pid: int, n: int) -> int:
+    """Rebuild the person's auto refcrops, mirroring db.rs recompute_refcrops:
+    top-n per description group by confidence, excluding the primary face and
+    pinned faces; pinned rows keep their seq slots. Returns the row count."""
+    con.execute("DELETE FROM person_refcrops WHERE person_id = ? AND pinned = 0", (pid,))
+    primary = con.execute(
+        "SELECT primary_face_id FROM persons WHERE id = ?", (pid,)).fetchone()[0]
+    pinned: dict[str, set[int]] = {}
+    for group, seq in con.execute(
+            "SELECT description, seq FROM person_refcrops WHERE person_id = ?", (pid,)):
+        pinned.setdefault(group, set()).add(seq)
+    rows = con.execute(
+        "SELECT face_id, name, description, preview, rn FROM ("
+        "  SELECT f.id AS face_id, f.name, COALESCE(f.description, '') AS description,"
+        "         f.preview,"
+        "         ROW_NUMBER() OVER (PARTITION BY COALESCE(f.description, '')"
+        "                            ORDER BY f.confidence DESC, f.id) AS rn"
+        "  FROM faces f"
+        "  WHERE f.person_id = ? AND f.state != 'discarded' AND f.link_status = 'confirmed'"
+        "    AND f.id IS NOT ?"
+        "    AND NOT EXISTS (SELECT 1 FROM person_refcrops pr"
+        "                    WHERE pr.face_id = f.id AND pr.pinned = 1)"
+        "  ) WHERE rn <= ? ORDER BY rn",
+        (pid, primary, n)).fetchall()
+    next_seq: dict[str, int] = {}
+    count = 0
+    for face_id, name, group, crop, rn in rows:
+        if crop is None:
+            continue  # a preview-less face cannot become a refcrop (#39)
+        cursor = next_seq.get(group, 1)
+        seq = max(rn, cursor)
+        while seq in pinned.get(group, ()):  # pinned rows keep their slots
+            seq += 1
+        next_seq[group] = seq + 1
+        con.execute(
+            "INSERT OR REPLACE INTO person_refcrops"
+            " (person_id, face_id, description, pinned, seq, filename, crop)"
+            " VALUES (?, ?, ?, 0, ?, ?, ?)",
+            (pid, face_id, group, seq, f"{name}-{seq}.jpg", crop))
+        count += 1
+    return count
+
+
 def iou(a: tuple, b: tuple) -> float:
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
@@ -225,7 +293,8 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
         return (rec["hash"], rec["x"], rec["y"], rec["w"], rec["h"])
 
     stats = {"persons": 0, "faces": 0, "unmatched_faces": 0,
-             "moved_faces": 0, "primary": 0, "pins": 0, "unmatched_pins": 0}
+             "moved_faces": 0, "primary": 0, "pins": 0, "unmatched_pins": 0,
+             "shells_deleted": 0, "refcrops": 0}
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
     try:
         restored: dict[str, int] = {}
@@ -303,6 +372,21 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
                 "VALUES (?, ?, ?, 1, ?, ?, ?)",
                 (pid, fid, group, seq, f"{face_name}-{seq}.jpg", crop[0]))
             stats["pins"] += 1
+
+        # v1.12 housekeeping (#37): the restore moves faces directly, so run
+        # the derived-state maintenance the GUI would otherwise do on the
+        # first mutation — machine primary + refcrops for each restored
+        # person (after the pins, so pinned rows keep their seq slots), then
+        # delete the UnknownN shells the restore emptied.
+        n = restore_refcrop_n()
+        for pid in restored.values():
+            backfill_primary(con, pid)
+        for pid in restored.values():
+            stats["refcrops"] += recompute_refcrops(con, pid, n)
+        cur = con.execute(
+            "DELETE FROM persons WHERE name LIKE 'Unknown%' "
+            "AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)")
+        stats["shells_deleted"] = cur.rowcount
 
         con.commit()
     except BaseException:
