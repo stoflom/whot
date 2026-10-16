@@ -92,6 +92,11 @@ def derive_name(person: str, desc: str | None, seq: int) -> str:
     return f"{person}-{desc}-{seq}" if desc else f"{person}-{seq}"
 
 
+def normalize_group_path(path: str) -> str:
+    """#42 — trim segments, drop empties; '' = ungrouped (mirrors db.rs)."""
+    return "|".join(s.strip() for s in path.split("|") if s.strip())
+
+
 def restore_refcrop_n() -> int:
     """refcrop_n from whotrc.json when present (default 5, like db.rs)."""
     try:
@@ -309,8 +314,10 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
                     (p["name"], p["state"] or "created", now)).lastrowid
             con.execute("DELETE FROM person_groups WHERE person_id = ?", (pid,))
             for g in p["groups"]:
-                con.execute("INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, ?)",
-                            (pid, g))
+                g = normalize_group_path(g)  # #42: normalize on the write side
+                if g:
+                    con.execute("INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, ?)",
+                                (pid, g))
             if p["note"] is not None:
                 con.execute("UPDATE persons SET note = ? WHERE id = ?", (p["note"], pid))
             restored[p["name"]] = pid

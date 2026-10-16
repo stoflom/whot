@@ -652,7 +652,7 @@ fn validate_person_name(name: &str) -> Result<()> {
 pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &str) -> Result<()> {
     validate_person_name(name)?;
     let name = name.trim().to_string();
-    let group_path = group_path.trim().to_string();
+    let group_path = normalize_group_path(group_path); // #42
     if face_ids.is_empty() {
         bail!("no faces selected");
     }
@@ -926,10 +926,22 @@ pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<()> 
     Ok(())
 }
 
+/// #42 — normalise a group path on the write side: trim each segment and
+/// drop empty ones; the empty result means ungrouped (no person_groups row).
+/// Without this, 'a | b' and 'a||b' would render as distinct, partly-empty
+/// tree branches depending on where they were typed.
+fn normalize_group_path(path: &str) -> String {
+    path.split('|')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 pub fn set_person_group(paths: &Paths, person_id: i64, path: &str) -> Result<()> {
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
-    let path = path.trim().to_string();
+    let path = normalize_group_path(path);
     tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![person_id])?;
     if !path.is_empty() {
         tx.execute(

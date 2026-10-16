@@ -494,6 +494,30 @@ fn corrupt_embedding_blob_is_reported() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #42 — group paths are normalised on the write side: segments trimmed,
+/// empties dropped, whitespace-only path ⇒ ungrouped.
+#[test]
+fn group_paths_normalised_on_write() {
+    let p = fixture_paths("groups");
+    db::set_person_group(&p, 1, "  family |  test  ").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let u1 = s.persons.iter().find(|x| x.id == 1).unwrap();
+    assert_eq!(u1.groups, vec!["family|test".to_string()]);
+    // empties collapse; a whitespace-only path means ungrouped
+    db::set_person_group(&p, 1, "a || b |  ").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.persons.iter().find(|x| x.id == 1).unwrap().groups, vec!["a|b".to_string()]);
+    db::set_person_group(&p, 1, "   |  ").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().find(|x| x.id == 1).unwrap().groups.is_empty());
+    // the same normalisation applies through assign_person (new person)
+    db::assign_person(&p, &[3], "Gina", " x |  y | ").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let gina = s.persons.iter().find(|x| x.name == "Gina").unwrap();
+    assert_eq!(gina.groups, vec!["x|y".to_string()]);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #39 — a confirmed face with a NULL preview must not abort the refcrop
 /// recompute (and therefore the mutation transaction); it is skipped.
 #[test]
