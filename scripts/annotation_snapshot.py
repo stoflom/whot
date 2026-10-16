@@ -239,7 +239,7 @@ def do_export(db: Path) -> dict:
     con.close()
 
     return {"format": FORMAT, "source_schema": schema,
-            "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),  # #40: UTC
             "persons": persons, "faces": faces, "pins": pins,
             "skipped_unknown_pins": skipped_unknown}
 
@@ -295,7 +295,8 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
     stats = {"persons": 0, "faces": 0, "unmatched_faces": 0,
              "moved_faces": 0, "primary": 0, "pins": 0, "unmatched_pins": 0,
              "shells_deleted": 0, "refcrops": 0}
-    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    # #40: UTC, same convention as the importer's datetime('now')
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     try:
         restored: dict[str, int] = {}
         for p in data["persons"]:

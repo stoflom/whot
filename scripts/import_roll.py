@@ -498,7 +498,9 @@ def main(argv: list[str] | None = None) -> int:
     # every UnknownN name owns its number, incl. faceless/rejected-only (#45)
     numbering_names = load_unknown_numbering_names(con)
 
-    import_id, now = None, time.strftime("%Y-%m-%dT%H:%M:%S")
+    # #40: UTC, same convention as persons (datetime('now')) — one clock,
+    # one format, for the whole import
+    import_id, now = None, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     if not args.dry_run:
         cur = con.execute("INSERT INTO imports(path, started_at) VALUES (?, ?)",
                           (str(args.roll_dir), now))
