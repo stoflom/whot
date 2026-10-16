@@ -657,17 +657,27 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
 
-    let selected: Vec<(i64, Option<i64>)> = {
+    let selected: Vec<(i64, Option<i64>, String)> = {
         let list = ids_list(&ids);
-        let mut st = tx.prepare(&format!("SELECT id, person_id FROM faces WHERE id IN ({list})"))?;
-        let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?)))?
+        let mut st = tx.prepare(&format!("SELECT id, person_id, link_status FROM faces WHERE id IN ({list})"))?;
+        let rows = st
+            .query_map(
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Option<i64>>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         if rows.len() != ids.len() {
             bail!("some selected faces no longer exist");
         }
         rows
     };
-    let mut old_persons: HashSet<i64> = selected.iter().filter_map(|(_, p)| *p).collect();
+    let mut old_persons: HashSet<i64> = selected.iter().filter_map(|(_, p, _)| *p).collect();
 
     // (target, owns_group): the group field only applies when we rename an
     // UnknownN in place or create the person — merging into an existing
@@ -718,10 +728,13 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
         }
     }
 
-    for (face_id, person_id) in &selected {
+    for (face_id, person_id, status) in &selected {
         if *person_id == Some(target) {
+            // sticky rejected (design §4.2): a rename never un-rejects —
+            // confirm only faces that aren't already rejected
             tx.execute(
-                "UPDATE faces SET link_status = 'confirmed' WHERE id = ?",
+                "UPDATE faces SET link_status = 'confirmed'
+                  WHERE id = ? AND link_status != 'rejected'",
                 params![face_id],
             )?;
         } else {
@@ -735,10 +748,20 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
                 params![target, face_id],
                 |r| r.get(0),
             )?;
-            tx.execute(
-                "UPDATE faces SET person_id = ?, link_status = 'confirmed', reassigned = 1, seq = ? WHERE id = ?",
-                params![target, seq, face_id],
-            )?;
+            if status == "rejected" {
+                // sticky rejected (design §4.2): the face moves with its
+                // person but keeps its status — only an explicit accept
+                // un-rejects it
+                tx.execute(
+                    "UPDATE faces SET person_id = ?, reassigned = 1, seq = ? WHERE id = ?",
+                    params![target, seq, face_id],
+                )?;
+            } else {
+                tx.execute(
+                    "UPDATE faces SET person_id = ?, link_status = 'confirmed', reassigned = 1, seq = ? WHERE id = ?",
+                    params![target, seq, face_id],
+                )?;
+            }
         }
     }
 

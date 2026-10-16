@@ -432,17 +432,61 @@ fn remove_persons_rejects_detaches_deletes() {
     }
     // refcrops cascaded with the person
     assert!(db::get_refcrops(&p, 1).unwrap().is_empty());
-    // a removed person's faces can be claimed again (un-reject via assign)
+    // a removed person's faces move with an assignment but keep their
+    // rejected status (sticky, §4.2); the explicit accept re-claims them
     db::assign_person(&p, &[6], "Rescued", "").unwrap();
     let s = db::snapshot(&p).unwrap();
+    let rescued = s.persons.iter().find(|x| x.name == "Rescued").unwrap().id;
     let f6 = s.faces.iter().find(|f| f.id == 6).unwrap();
-    assert_eq!(f6.person_id, Some(s.persons.iter().find(|x| x.name == "Rescued").unwrap().id));
-    assert_eq!(f6.link_status, "confirmed");
+    assert_eq!(f6.person_id, Some(rescued));
+    assert_eq!(f6.link_status, "rejected", "assignment must not un-reject");
+    db::set_link_status(&p, &[6], "confirmed").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.faces.iter().find(|f| f.id == 6).unwrap().link_status, "confirmed");
     // removing an unknown id errors, batch of several works
     assert!(db::remove_persons(&p, &[]).is_err());
     db::remove_persons(&p, &[2, 3]).unwrap();
     let s = db::snapshot(&p).unwrap();
     assert!(s.persons.iter().all(|x| x.id != 2 && x.id != 3));
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #36 / design v1.12 §4.2 — `rejected` is sticky: a rename or merge moves
+/// a person's rejected faces along but never re-confirms them; only an
+/// explicit accept un-rejects.
+#[test]
+fn rename_merge_keeps_rejected_sticky() {
+    let p = fixture_paths("sticky");
+    // Unknown1: confirm 1+6, reject 2
+    db::set_link_status(&p, &[1, 6], "confirmed").unwrap();
+    db::set_link_status(&p, &[2], "rejected").unwrap();
+
+    // 1) rename-in-place: the rejected face keeps its status
+    db::assign_person(&p, &[1, 2, 6], "Alice", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let alice = s.persons.iter().find(|x| x.name == "Alice").unwrap();
+    let f2 = s.faces.iter().find(|f| f.id == 2).unwrap();
+    assert_eq!(f2.person_id, Some(alice.id));
+    assert_eq!(f2.link_status, "rejected", "rename must not un-reject");
+    assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().link_status, "confirmed");
+    assert_eq!(s.faces.iter().find(|f| f.id == 6).unwrap().link_status, "confirmed");
+    assert_ne!(alice.primary_face_id, Some(2), "rejected face is not a primary candidate");
+
+    // 2) merge into an existing person: the rejected face follows, still rejected
+    db::assign_person(&p, &[3], "Carol", "").unwrap(); // Unknown2 → Carol (confirmed)
+    db::assign_person(&p, &[1, 2, 6], "Carol", "").unwrap(); // Alice merged into Carol
+    let s = db::snapshot(&p).unwrap();
+    let carol = s.persons.iter().find(|x| x.name == "Carol").unwrap();
+    assert!(s.persons.iter().all(|x| x.name != "Alice"), "emptied Alice shell deleted");
+    let f2 = s.faces.iter().find(|f| f.id == 2).unwrap();
+    assert_eq!(f2.person_id, Some(carol.id), "rejected face follows the merge");
+    assert_eq!(f2.link_status, "rejected", "merge must not un-reject");
+    assert_eq!(carol.counts.rejected, 1);
+
+    // 3) the explicit accept is the only exit
+    db::set_link_status(&p, &[2], "confirmed").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.faces.iter().find(|f| f.id == 2).unwrap().link_status, "confirmed");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
