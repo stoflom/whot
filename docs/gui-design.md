@@ -25,7 +25,7 @@ change/correction)
     are normalized at write time (segments trimmed, empties dropped, empty
     result = ungrouped) (#42); `set_person_name` re-runs the person's
     primary/refcrop recompute so it is symmetric with `assign_person` (#43);
-    `Settings::load` warns (eprintln) when `whotrc.json` is malformed instead
+    `get_settings` warns (eprintln) when `whotrc.json` is malformed instead
     of silently resetting to defaults (#44); `l2_vectors` rejects embedding
     blobs whose byte length is not a multiple of 4 instead of truncating them
     silently (#45); person deletion explicitly deletes `person_groups` and
