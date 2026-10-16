@@ -163,7 +163,7 @@ fn check_schema(con: &Connection, db: &Path) -> Result<()> {
 
 // ---------------------------------------------------------------- settings
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub struct Settings {
     pub cluster_threshold: f64,
     pub refcrop_n: i64,
@@ -189,8 +189,19 @@ impl Default for Settings {
 
 pub fn get_settings(paths: &Paths) -> Result<Settings> {
     match std::fs::read_to_string(&paths.config) {
-        Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_default()),
-        Err(_) => Ok(Settings::default()),
+        Ok(text) => match serde_json::from_str::<Settings>(&text) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                // #44: a malformed whotrc.json must not vanish silently —
+                // warn and fall back to defaults so the app keeps working
+                eprintln!(
+                    "warning: could not parse {} ({e}); using default settings",
+                    paths.config.display()
+                );
+                Ok(Settings::default())
+            }
+        },
+        Err(_) => Ok(Settings::default()), // first run: no config file yet
     }
 }
 

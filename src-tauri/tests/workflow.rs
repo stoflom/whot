@@ -494,6 +494,22 @@ fn corrupt_embedding_blob_is_reported() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #44 — a malformed whotrc.json falls back to the defaults (with a
+/// visible warning) instead of vanishing silently; a missing file is a
+/// first run and stays quiet.
+#[test]
+fn corrupt_settings_file_falls_back_to_defaults() {
+    let p = fixture_paths("corruptcfg");
+    std::fs::write(&p.config, "{ not json !").unwrap();
+    assert_eq!(db::get_settings(&p).unwrap(), db::Settings::default());
+    // a well-formed file still wins
+    let mut s2 = db::Settings::default();
+    s2.refcrop_n = 7;
+    db::set_settings(&p, s2).unwrap();
+    assert_eq!(db::get_settings(&p).unwrap().refcrop_n, 7);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #43 — set_person_name rebuilds the refcrops, so filenames follow the
 /// renamed face names (symmetric with assign_person).
 #[test]
