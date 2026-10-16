@@ -1,10 +1,47 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.11** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.12** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.12** (2026-07-21, review round #36–#48 — correctness/robustness, no new
+  features):
+  - §4.1/§4.2 — **`rejected` is sticky**: `assign_person` (rename, merge,
+    whole-group, section rule) never changes the `link_status` of a face that
+    is currently `rejected`; rename/merge may *move* it with its person but
+    never un-reject it. The only exit is an explicit accept (§4.3 / the face
+    menu's *Un-reject (accept)*). Previously a rename/merge of a person
+    silently re-confirmed all of its rejected faces (#36).
+  - §4.1/§3 — the review-section rule bar no longer prefills `Unknown` as the
+    group for `UnknownN` sections, and renaming a *faceless* person away from
+    an `UnknownN` name clears the `Unknown` group — a renamed person always
+    leaves the Unknown branch, from every entry point (#38).
+  - §4.13 — re-claiming a removed person's faces goes through an explicit
+    accept (§4.3), consistent with the sticky rule (a section rule can still
+    *name* them, but it cannot un-reject them).
+  - Backend robustness: `recompute_refcrops` skips faces with a NULL
+    `preview` instead of aborting the whole transaction (#39); group paths
+    are normalized at write time (segments trimmed, empties dropped, empty
+    result = ungrouped) (#42); `set_person_name` re-runs the person's
+    primary/refcrop recompute so it is symmetric with `assign_person` (#43);
+    `Settings::load` warns (eprintln) when `whotrc.json` is malformed instead
+    of silently resetting to defaults (#44); `l2_vectors` rejects embedding
+    blobs whose byte length is not a multiple of 4 instead of truncating them
+    silently (#45); person deletion explicitly deletes `person_groups` and
+    `person_refcrops` rows in addition to the FK cascade (#46);
+    `person_face_clusters` reports similarity 0.0 (not 1.0) for a face with
+    no embedding (#41).
+  - Scripts: `annotation_snapshot.py restore` now deletes `UnknownN` persons
+    left faceless by the restore and backfills the machine primary and
+    refcrops (top-N per appearance, excluding the primary, honoring pinned
+    rows) for each restored person, so a fresh restore opens in a fully
+    derived state (#37); the importer and snapshot tool write **all**
+    timestamps in UTC (`YYYY-MM-DD HH:MM:SS`) so persons and faces from one
+    run read consistently (#40).
+  - Frontend: `Esc` no longer closes a split view while a dialog, context
+    menu or the settings popover is open (#47); settings inputs are clamped
+    on save (threshold ∈ [0, 1], `refcrop_n` ≥ 1) (#48).
 - **1.11** (2026-10-15, #29 final follow-up): **"person already exists" is
   unreachable from the GUI.** Every rename entry point — tree row,
   context menu, detail pane — routes through one rename-merge helper
@@ -234,12 +271,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   group path preserved for the current person on a whole-group rename).
   The dialog is **skipped when it cannot disambiguate** (§1.10): a
   single-face person or an unowned face assigns directly. The full
-  derived label stays in the tooltip; the detail pane's rename
-  keeps the uniqueness rule.
+  derived label stays in the tooltip; the detail pane's rename routes
+  through the same rename-merge helper (§4.1).
 - **Inline rename** (#29): double-clicking a person row in the tree turns
-  its name into an entry field (Enter/blur commits via `set_person_name`,
-  Esc cancels — same pattern as the detail-pane fields; validation errors
-  surface as toast).
+  its name into an entry field (Enter/blur commits via the rename-merge
+  helper, §4.1, Esc cancels — same pattern as the detail-pane fields;
+  validation errors surface as toast).
 - **Section stepping** (#31): ‹ › buttons in the center toolbar — and the
   `←`/`→` **shortcuts** — step through the persons in the tree's current
   (filtered) display order, selecting each (person view); disabled at the
@@ -294,12 +331,14 @@ Double-click opens the full image split (§3).
    - If all selected faces belong to *one* `UnknownN` and the user keeps/
      supplies a name for that person: **rename in place** — `persons.name`,
      replace `person_groups` with the given path (empty ⇒ no group rows ⇒
-     Ungrouped), all selected faces `link_status='confirmed'`. The old
-     `UnknownN` number is retired and never reused (importer numbering is
-     max-based over remaining names — safe).
+     Ungrouped), all selected faces `link_status='confirmed'` — **except
+     `rejected` faces, which keep their status** (sticky rule, §4.2). The
+     old `UnknownN` number is retired and never reused (importer numbering
+     is max-based over remaining names — safe).
    - If selected faces span multiple persons or the name is new: move the
-     selected faces to that person (create if needed), `confirmed`,
-     `reassigned=1`. Faces **not** selected stay with their original person
+     selected faces to that person (create if needed), `confirmed` (a
+     `rejected` face keeps its status — §4.2), `reassigned=1`. Faces **not**
+     selected stay with their original person
      (e.g. `UnknownN`) for later assignment or rejection.
    - Assigning to a name that matches an **existing person merges** the
      selection into that person (names are not required to be unique for
@@ -315,13 +354,18 @@ Double-click opens the full image split (§3).
      the GUI; a *faceless* person renamed to an existing name merges by
      deletion, an empty input is a no-op, and renaming an `UnknownN` in
      these flows clears its `Unknown` group (F7 — the group argument is
-     not user-visible there).
+     not user-visible there; the review-section rule bar likewise defaults
+     the group to empty for `UnknownN` sections, so a rename always leaves
+     the Unknown branch from every entry point).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
      are per `(person, description)` — see §4.12.
 2. **Reject** ⇒ `link_status='rejected'`. Rejected faces: excluded from
    similarity grouping, primary-face eligibility, refcrops and importer
-   corpora. Reversible: re-selecting + Accept sets `confirmed`.
+   corpora. Reversible: re-selecting + Accept sets `confirmed`. **Sticky
+   rule (1.12):** assignments (rename, merge, whole-group, section rule) never
+   change a face that is currently `rejected` — they may move it with its
+   person, but never un-reject it; an explicit accept (§4.3) is the only exit.
 3. **Accept (without rename)** ⇒ selected faces `link_status='confirmed'`
    (stay with their current person; used to confirm a `UnknownN` as-is or
    to recover a previously rejected face).
@@ -401,8 +445,10 @@ Double-click opens the full image split (§3).
     person row is deleted — `person_groups` and `person_refcrops` cascade,
     any *other* person's stale primary pointer at these faces is cleared
     first. **No undo** (the faces themselves are never deleted; they stay
-    in the DB as rejected, unowned records and can be re-claimed via a
-    section rule). With `show_rejected` off the removed persons vanish
+    in the DB as rejected, unowned records and can be re-claimed by an
+    explicit accept (§4.3), optionally followed by an assignment; a section
+    rule can name them but cannot un-reject them (sticky rule, §4.2).
+    With `show_rejected` off the removed persons vanish
     immediately; the image-detail grid titles unowned faces
     "unassigned". Available from the person-tile context menu (also for a
     multi-selection), the reference-set pane and — batched — from tree
