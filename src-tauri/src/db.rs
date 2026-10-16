@@ -1070,15 +1070,21 @@ fn l2_vectors(con: &Connection, face_ids: &[i64]) -> Result<Vec<Vec<f32>>> {
         "SELECT face_id, vector FROM face_embeddings
           WHERE face_id IN ({list}) AND model = ? ORDER BY face_id"
     ))?;
+    let rows: Vec<(i64, Vec<u8>)> = st
+        .query_map(params![MODEL_TAG], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut map: HashMap<i64, Vec<f32>> = HashMap::new();
-    let rows = st.query_map(params![MODEL_TAG], |r| {
-        let fid: i64 = r.get(0)?;
-        let blob: Vec<u8> = r.get(1)?;
+    for (fid, blob) in rows {
+        // #45: a blob whose length is not a multiple of 4 is corrupt —
+        // as_chunks::<4> would silently drop the trailing bytes and every
+        // subsequent similarity from that face would be wrong
+        if blob.len() % 4 != 0 {
+            bail!(
+                "corrupt embedding for face {fid}: {} bytes is not a multiple of 4 (insightface:buffalo_l)",
+                blob.len()
+            );
+        }
         let v: Vec<f32> = blob.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
-        Ok((fid, v))
-    })?;
-    for row in rows {
-        let (fid, v) = row?;
         map.insert(fid, v);
     }
     for &id in face_ids {
@@ -1144,8 +1150,13 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
         .iter()
         .enumerate()
         .map(|(i, &(id, _, _, _))| {
-            if Some(id) == primary || vectors[i].is_empty() {
+            if Some(id) == primary {
                 1.0
+            } else if vectors[i].is_empty() {
+                // #41: no embedding ⇒ no similarity evidence — 0.0, not the
+                // 1.0 that made the GUI claim '≥ 100% similar to primary'
+                // for faces it could not measure
+                0.0
             } else {
                 cosine(&vectors[ref_idx], &vectors[i])
             }

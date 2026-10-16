@@ -451,6 +451,49 @@ fn remove_persons_rejects_detaches_deletes() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #41 — a face without an embedding reports sim 0.0 (no evidence), not 1.0.
+#[test]
+fn embeddingless_face_reports_zero_sim() {
+    let p = fixture_paths("nosim");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // Unknown1: .90/.80/.60
+    {
+        let con = db::connect(&p).unwrap();
+        con.execute("DELETE FROM face_embeddings WHERE face_id = 6", []).unwrap();
+    }
+    let cl = db::person_face_clusters(&p, 1, 0.5).unwrap();
+    let all: Vec<&db::ClusterFace> = cl.iter().flat_map(|g| g.clusters.iter().flatten()).collect();
+    let f6 = all.iter().find(|c| c.face_id == 6).copied().expect("face 6 must be shown");
+    assert_eq!(f6.sim, 0.0, "no embedding ⇒ no similarity evidence, not 100%");
+    assert!(
+        cl.iter().any(|g| g.clusters.iter().any(|c| c.len() == 1 && c[0].face_id == 6)),
+        "face 6 stays visible in its own cluster"
+    );
+    let f1 = all.iter().find(|c| c.face_id == 1).copied().unwrap();
+    assert_eq!(f1.sim, 1.0, "the primary keeps sim 1.0");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #45 — a corrupt embedding blob (length not a multiple of 4) is reported
+/// with the face id instead of being silently truncated by as_chunks.
+#[test]
+fn corrupt_embedding_blob_is_reported() {
+    let p = fixture_paths("corrupt");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap();
+    {
+        let con = db::connect(&p).unwrap();
+        con.execute(
+            "UPDATE face_embeddings SET vector = ? WHERE face_id = 6",
+            params![vec![0u8; 10]], // 10 % 4 != 0
+        )
+        .unwrap();
+    }
+    let err = db::person_face_clusters(&p, 1, 0.5).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("face 6"), "{msg}");
+    assert!(msg.contains("not a multiple of 4"), "{msg}");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #39 — a confirmed face with a NULL preview must not abort the refcrop
 /// recompute (and therefore the mutation transaction); it is skipped.
 #[test]
