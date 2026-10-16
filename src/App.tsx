@@ -458,14 +458,14 @@ export default function App() {
           title: p?.name ?? "unassigned",
           faceIds: fl.map((f) => f.id),
           ruleDefaultName: p?.name,
-          ruleDefaultGroup: p?.groups[0] ?? "",
+          // #38: an UnknownN must leave the Unknown branch on rename
+          ruleDefaultGroup: renameGroup(p),
         };
       });
     }
     if (view === "person" && personId != null) {
       const out: Section[] = [];
       const pname = selectedPerson?.name ?? "";
-      const pgroup = selectedPerson?.groups[0] ?? "";
       const groups = clusters ?? [];
       const multi = groups.length > 1;
       let n = 0;
@@ -485,7 +485,8 @@ export default function App() {
             subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
             faceIds: cl.map((c) => c.face_id),
             ruleDefaultName: pname,
-            ruleDefaultGroup: pgroup,
+            // #38: an UnknownN must leave the Unknown branch on rename
+            ruleDefaultGroup: renameGroup(selectedPerson ?? undefined),
           });
         });
       });
@@ -519,7 +520,9 @@ export default function App() {
         subtitle: p.counts.total > byPerson.get(p.id)!.length ? `${p.counts.total} faces total` : undefined,
         faceIds: byPerson.get(p.id)!.map((f) => f.id),
         ruleDefaultName: p.name,
-        ruleDefaultGroup: p.groups[0] ?? "",
+        // #38: review sections come from UnknownN importer clusters — a
+        // rename must leave the Unknown branch (F7)
+        ruleDefaultGroup: renameGroup(p),
       }));
   }, [snap, view, personId, imageId, clusters, personsById, selectedPerson]);
 
