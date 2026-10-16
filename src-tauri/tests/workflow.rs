@@ -451,6 +451,27 @@ fn remove_persons_rejects_detaches_deletes() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #39 — a confirmed face with a NULL preview must not abort the refcrop
+/// recompute (and therefore the mutation transaction); it is skipped.
+#[test]
+fn recompute_tolerates_null_preview() {
+    let p = fixture_paths("nullprev");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // Unknown1: .90/.80/.60
+    {
+        let con = db::connect(&p).unwrap();
+        con.execute("UPDATE faces SET preview = NULL WHERE id = 2", []).unwrap();
+    }
+    // a mutation that triggers person 1's recompute must not error
+    db::set_link_status(&p, &[6], "rejected").unwrap();
+    db::set_link_status(&p, &[6], "confirmed").unwrap();
+    let rc = db::get_refcrops(&p, 1).unwrap();
+    assert!(rc.iter().all(|r| r.face_id != 2), "crop-less face must be skipped");
+    let f6 = rc.iter().find(|r| r.face_id == 6).expect("face 6 still a refcrop");
+    assert_eq!(f6.seq, 2, "face 6 keeps its rank position (rn 2; the skip leaves a gap)");
+    assert_eq!(rc.len(), 1);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #36 / design v1.12 §4.2 — `rejected` is sticky: a rename or merge moves
 /// a person's rejected faces along but never re-confirms them; only an
 /// explicit accept un-rejects.

@@ -552,7 +552,10 @@ fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, Option<String>>(2)?,
-                r.get::<_, Vec<u8>>(3)?,
+                // #39: faces.preview is nullable — read it as Option and
+                // skip crop-less faces below instead of aborting the whole
+                // mutation transaction
+                r.get::<_, Option<Vec<u8>>>(3)?,
                 r.get::<_, i64>(4)?,
             ))
         })?
@@ -560,6 +563,10 @@ fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
     // rn-order within each group; skip seq slots held by pins of that group
     let mut next: HashMap<String, i64> = HashMap::new();
     for (face_id, name, description, crop, rn) in rows {
+        let crop = match crop {
+            Some(crop) => crop,
+            None => continue, // a face without a preview cannot become a refcrop
+        };
         let group = description.filter(|d| !d.is_empty()).unwrap_or_default();
         let cursor = next.get(&group).copied().unwrap_or(1);
         let mut seq = rn.max(cursor);
