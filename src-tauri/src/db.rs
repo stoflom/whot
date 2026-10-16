@@ -785,7 +785,7 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
 
     refresh_person_names(&tx, target)?;
     // §4.1/§4.13 housekeeping: a person left with zero faces by this move is
-    // a stale shell — delete it (groups/refcrops cascade) so merges and
+    // a stale shell — delete it (groups/refcrops with it, #46) so merges and
     // whole-group moves don't leave the old person behind in the tree.
     for pid in &old_persons {
         let n: i64 = tx.query_row(
@@ -794,6 +794,11 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
             |r| r.get(0),
         )?;
         if n == 0 {
+            // #46: delete dependents explicitly instead of trusting the FK
+            // cascade — a connection opened without foreign_keys=ON would
+            // otherwise orphan these rows
+            tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
+            tx.execute("DELETE FROM person_refcrops WHERE person_id = ?", params![pid])?;
             tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
         }
     }
@@ -1005,6 +1010,11 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
             "UPDATE faces SET person_id = NULL WHERE person_id = ?",
             params![pid],
         )?;
+        // #46: delete dependents explicitly instead of trusting the FK
+        // cascade — a connection opened without foreign_keys=ON would
+        // otherwise orphan these rows
+        tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
+        tx.execute("DELETE FROM person_refcrops WHERE person_id = ?", params![pid])?;
         removed += tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
     }
     if removed == 0 {
