@@ -15,6 +15,13 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
     setRefcropN(settings.refcrop_n);
   }, [settings]);
 
+  // #48 — min/max attributes only steer the spinner; typed values pass
+  // them, so clamp on save (threshold ∈ [0,1], refcrop_n ≥ 1)
+  const clamped = {
+    cluster_threshold: Math.min(1, Math.max(0, Number.isFinite(threshold) ? threshold : 0)),
+    refcrop_n: Math.max(1, Math.floor(Number.isFinite(refcropN) ? refcropN : 1)),
+  };
+
   return (
     <div className="overlay settings-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="dialog settings">
@@ -54,9 +61,7 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
         </div>
         <div className="dialog-actions">
           <button className="secondary" onClick={onClose}>cancel</button>
-          <button onClick={() => onSave({ ...settings, cluster_threshold: threshold, refcrop_n: refcropN })}>
-            save
-          </button>
+          <button onClick={() => onSave({ ...settings, ...clamped })}>save</button>
         </div>
       </div>
     </div>

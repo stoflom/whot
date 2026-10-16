@@ -148,13 +148,24 @@ export default function App() {
 
   // #25 — Esc closes the double-click image split
   useEffect(() => {
-    if (splitImageId == null || dialogFaceIds != null) return;
+    // #47: overlay layers own the first Esc — the split view must not close
+    // while a dialog, the context menu or the settings popover is open
+    // (the ones with their own Esc handlers close first, in sequence)
+    if (
+      splitImageId == null ||
+      dialogFaceIds != null ||
+      faceAssign != null ||
+      confirmRemove != null ||
+      menu != null ||
+      settingsOpen
+    )
+      return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setSplitImageId(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [splitImageId, dialogFaceIds]);
+  }, [splitImageId, dialogFaceIds, faceAssign, confirmRemove, menu, settingsOpen]);
 
   const mutate = useCallback(
     async (fn: () => Promise<unknown>, clearSel = false) => {
