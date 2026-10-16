@@ -922,6 +922,9 @@ pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<()> 
         )?;
     }
     refresh_person_names(&tx, person_id)?;
+    // #43: refcrop filenames embed the face name, so a rename must rebuild
+    // them — symmetric with assign_person (no-op for a faceless person)
+    recompute_person(&tx, person_id, &get_settings(paths)?)?;
     tx.commit()?;
     Ok(())
 }

@@ -494,6 +494,21 @@ fn corrupt_embedding_blob_is_reported() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #43 — set_person_name rebuilds the refcrops, so filenames follow the
+/// renamed face names (symmetric with assign_person).
+#[test]
+fn rename_updates_refcrop_filenames() {
+    let p = fixture_paths("refnames");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // primary = face 1
+    db::set_person_name(&p, 1, "Rita").unwrap();
+    let rc = db::get_refcrops(&p, 1).unwrap();
+    assert!(!rc.is_empty(), "refcrops must exist after the rename");
+    for r in &rc {
+        assert!(r.filename.starts_with("Rita-"), "stale filename: {}", r.filename);
+    }
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #42 — group paths are normalised on the write side: segments trimmed,
 /// empties dropped, whitespace-only path ⇒ ungrouped.
 #[test]
