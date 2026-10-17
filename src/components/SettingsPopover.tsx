@@ -56,7 +56,7 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
             <li><b>Ctrl-click</b> — toggle a face card in the selection</li>
             <li><b>Esc</b> — close split, dialog or context menu</li>
             <li><b>Enter</b> — commit an edited field</li>
-            <li>face-card name — assign that person (asks: this face or whole group)</li>
+            <li>face-card name — assign that person (asks: this face or whole group — unless the card is selected, then the whole selection)</li>
             <li>double-click — rename a person · open a face's full image</li>
             <li>right-click — context menus on tiles and images</li>
           </ul>
