@@ -649,3 +649,74 @@ fn stale_empty_persons_are_deleted() {
     assert_eq!(alicia.counts.total, 6);
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+/// design v1.16 §4.16 (#50) — group management: rename/move a branch
+/// (prefix rewrite incl. sub-branches), delete a branch (members fall to
+/// Ungrouped), move persons between groups; membership only, faces and
+/// statuses untouched.
+#[test]
+fn group_management() {
+    let p = fixture_paths("groupmgmt");
+    // seed groups: Carol family|test, Alice family|test|deep, Bob friends
+    db::assign_person(&p, &[4, 5], "Carol", "family|test").unwrap();
+    db::assign_person(&p, &[1, 2, 6], "Alice", "family|test|deep").unwrap();
+    db::assign_person(&p, &[3], "Bob", "friends").unwrap();
+
+    let groups_of = |name: &str| -> Vec<String> {
+        let s = db::snapshot(&p).unwrap();
+        s.persons.iter().find(|x| x.name == name).unwrap().groups.clone()
+    };
+    let status_of = |fid: i64| -> String {
+        let s = db::snapshot(&p).unwrap();
+        s.faces.iter().find(|f| f.id == fid).unwrap().link_status.clone()
+    };
+    let faces_of = |name: &str| -> usize {
+        let s = db::snapshot(&p).unwrap();
+        let pid = s.persons.iter().find(|x| x.name == name).unwrap().id;
+        s.faces.iter().filter(|f| f.person_id == Some(pid)).count()
+    };
+
+    // 1) rename/move a branch — the prefix rewrite reaches sub-branches
+    db::rename_group(&p, "family", "work").unwrap();
+    assert_eq!(groups_of("Carol"), vec!["work|test".to_string()]);
+    assert_eq!(groups_of("Alice"), vec!["work|test|deep".to_string()]);
+    assert_eq!(groups_of("Bob"), vec!["friends".to_string()], "others untouched");
+
+    // 2) guards: inside itself, empty old, reserved name, unknown branch
+    assert!(db::rename_group(&p, "work", "work|inner").is_err());
+    assert!(db::rename_group(&p, "work", "work").is_err());
+    assert!(db::rename_group(&p, "", "x").is_err());
+    assert!(db::rename_group(&p, "work", "x|Ungrouped").is_err());
+    assert!(db::rename_group(&p, "nope", "x").is_err(), "empty branch is an error");
+
+    // 3) move the branch under another one (frontend computes target|leaf)
+    db::rename_group(&p, "work|test", "friends|test").unwrap();
+    assert_eq!(groups_of("Carol"), vec!["friends|test".to_string()]);
+    assert_eq!(groups_of("Alice"), vec!["friends|test|deep".to_string()]);
+
+    // 4) move persons between groups (single + batch), incl. to Ungrouped
+    // (fixture ids: Alice=1, Bob=2, Carol=3)
+    db::move_persons_to_group(&p, &[2, 1], "acme").unwrap();
+    assert_eq!(groups_of("Bob"), vec!["acme".to_string()]);
+    assert_eq!(groups_of("Alice"), vec!["acme".to_string()], "batch move replaces the path");
+    db::move_persons_to_group(&p, &[1], "").unwrap();
+    assert!(groups_of("Alice").is_empty(), "empty target = Ungrouped");
+    assert!(db::move_persons_to_group(&p, &[2], "a|Ungrouped").is_err());
+    assert!(db::move_persons_to_group(&p, &[], "x").is_err());
+    assert!(db::move_persons_to_group(&p, &[999], "x").is_err());
+
+    // 5) delete a branch — its persons (incl. sub-branches) fall to Ungrouped
+    db::delete_group(&p, "friends").unwrap();
+    assert!(groups_of("Carol").is_empty());
+    assert!(db::delete_group(&p, "friends").is_err(), "already gone");
+    assert!(db::delete_group(&p, "").is_err());
+
+    // 6) membership only: faces, statuses and person rows all survived
+    assert_eq!(faces_of("Carol"), 2);
+    assert_eq!(faces_of("Bob"), 1);
+    assert_eq!(status_of(4), "confirmed");
+    assert_eq!(status_of(3), "confirmed");
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.persons.len(), 3);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
