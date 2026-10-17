@@ -477,26 +477,48 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--recursive", action="store_true")
     args = ap.parse_args(argv)
 
+    # line-buffered stdout so progress is visible even when piped/redirected
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError, OSError):
+        pass
+
     env = load_env(PROJECT_ROOT / ".env")
     inject_insightface_venv(env)            # must precede Detector creation
     db_path = PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
 
+    mode = "DRY RUN — no writes" if args.dry_run else "import"
+    print("=" * 64)
+    print(f"WhoT import_roll — {mode}")
+    print(f"  roll dir  : {args.roll_dir}")
+    print(f"  recursive : {'yes' if args.recursive else 'no'}")
+    print(f"  threshold : {args.threshold}  (model {MODEL_TAG})")
+    print(f"  database  : {db_path}")
+    print("=" * 64, flush=True)
+
     # non-recursive by default; --recursive walks subdirectories (design §3.1, #48)
+    print(f"scanning {args.roll_dir} ...", flush=True)
     walk = args.roll_dir.rglob("*") if args.recursive else args.roll_dir.glob("*")
     files = sorted(p for p in (walk if args.roll_dir.is_dir() else [])
                    if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
     if not files:
         print(f"no image files in {args.roll_dir}")
         return 1
+    print(f"found {len(files)} image file(s)", flush=True)
 
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA foreign_keys = ON")
     check_schema(con, db_path)   # refuse a mismatched schema up-front
+    print(f"loading face model {MODEL_TAG} (first run may take a moment)...", flush=True)
     detector = Detector(cpu=args.cpu)   # dry-run still detects; it only suppresses writes
+    print("face model ready", flush=True)
+    print("loading match corpus from database...", flush=True)
     unknowns = load_unknown_corpus(con)   # existing UnknownN are matchable (design 3.2)
     corpus = load_known_corpus(con)
     # every UnknownN name owns its number, incl. faceless/rejected-only (#45)
     numbering_names = load_unknown_numbering_names(con)
+    print(f"corpus ready: {len(corpus)} known group(s), {len(unknowns)} unknown group(s)",
+          flush=True)
 
     # #40: UTC, same convention as persons (datetime('now')) — one clock,
     # one format, for the whole import
@@ -506,16 +528,19 @@ def main(argv: list[str] | None = None) -> int:
                           (str(args.roll_dir), now))
         import_id = cur.lastrowid
         con.commit()               # record the run up-front, even if it adds nothing (#47)
+        print(f"import run #{import_id} started at {now} UTC", flush=True)
 
     failures: list[tuple[Path, str]] = []
     n_new = n_existing = n_noface = n_faces = 0
-    for path in files:
+    for i, path in enumerate(files, 1):
         n_stub = len(unknowns)     # run-created stubs before this file (dropped on failure)
+        print(f"[{i}/{len(files)}] {path.name}", flush=True)
         try:
             hash_ = blake3_hex(path)
             existing = con.execute("SELECT id FROM images WHERE content_hash = ?", (hash_,)).fetchone()
             if existing:
                 n_existing += 1
+                print("  already in database — skipping", flush=True)
                 if not args.dry_run:      # dry-run must not write
                     con.execute("INSERT OR IGNORE INTO image_paths(image_id, path) VALUES (?, ?)",
                                 (existing[0], str(path)))
@@ -555,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
         assign_missing_primaries(con)   # machine-initial primaries (req 3.2.2, issue #10)
         con.commit()
     con.close()
+    print("-" * 64)
     print(f"{'would import' if args.dry_run else 'imported'} {n_new} image(s) "
           f"({n_faces} faces), skipped {n_existing} existing, {n_noface} without faces")
     if failures:
