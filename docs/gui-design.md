@@ -1,10 +1,33 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.12** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.13** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.13** (2026-10-17, review/tree interaction round #49–#52):
+  - §4.14 — **selection-scoped face actions** (#49): when the right-clicked
+    face card is part of an active selection, the face context menu
+    (*Accept* / *Reject* / *Assign to person…*) and the card's ✗/undo
+    button act on the **whole selection**, matching the rule-bar buttons;
+    single-face actions — ★ primary and ◈ reference — are **greyed out**
+    whenever the effective scope would be more than one face. With no
+    selection (or the card not in it) every action targets just that card.
+  - §4.15 — **split-pane lifecycle** (#51/#52): the face-rectangle context
+    menu no longer offers *Open full image* when that very image is already
+    open in the split; the split **closes automatically** when the
+    selection moves to a different image (tree row select, person stepping,
+    card/rectangle select) and **stays open** when the new selection is on
+    the same image. Manual opens (double-click, *Open beside*, *Open full
+    image*) always win.
+  - §4.16 — **group management** (#50): the branch context menu gains
+    *Rename/move group…* and *Delete group* (members — including
+    sub-branches — fall to Ungrouped); the person menu gains *Move to
+    group…* acting on the current multi-selection; persons, selections and
+    whole branches also move by **mouse drag** onto a branch node or onto
+    Ungrouped (cycle guard; `Ungrouped` is reserved as a typed path
+    segment). New backend commands `rename_group`, `delete_group`,
+    `move_persons_to_group` (§5) — membership only, faces untouched.
 - **1.12** (2026-07-21, review round #36–#48 — correctness/robustness, no new
   features):
   - §4.1/§4.2 — **`rejected` is sticky**: `assign_person` (rename, merge,
@@ -258,7 +281,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   in Rolls image detail the image replaces nothing — same overlay). Closable
   via ×/Esc; selection and current view survive; double-clicking another
   card swaps the image. Single-click selection is unaffected (the two
-  clicks of a double-click cancel each other out).
+  clicks of a double-click cancel each other out). **Lifecycle (#51/#52,
+  §4.15)**: the split closes itself when the selection moves to a
+  different image (tree row, person stepping, card/rectangle select) and
+  stays open while the new selection is on the same image; the
+  face-rectangle menu hides *Open full image* while its image is the one
+  already open.
 - **Face vs person tiles** (#30): face crops render as **rounded squares
   with a large corner radius**, so a face tile never reads as a person
   tile (whose avatar is a small circle) without cropping the face tight.
@@ -293,8 +321,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   **Remove person / Remove N persons** (§4.13); **branch headers** have
   their own menu — *remove all unknown persons* on the `Unknown` root,
   *remove all persons in this branch* on any group branch (counts shown,
-  confirm dialog required). The reference-set pane exposes **Remove
-  person** as a button. **Full images get their own context menu** (#33
+  confirm dialog required) — and, on real group branches, *rename/move
+  group…* and *delete group* (§4.16, #50). The reference-set pane exposes
+  **Remove person** as a button.
+- **Group management & drag-and-drop** (#50, §4.16): real group branches
+  (not the virtual `Unknown`/`Ungrouped` nodes) can be **renamed/moved**
+  (a path dialog, prefilled; the whole subtree follows the prefix rewrite)
+  and **deleted** (persons — incl. sub-branches — fall to Ungrouped; faces
+  untouched). Persons and multi-selections **move to a group** via the
+  person context menu (path dialog) or by **dragging** rows onto a branch
+  node or onto Ungrouped; whole branches drag the same way (a drop onto
+  the branch itself or into its own subtree is refused). Drops and dialog
+  submits normalise the path like every other group write (#42). **Full images get their own context menu** (#33
   correction): the webkit
   default menu appears but its entries ("open image in new window", …)
   are not functional inside Tauri, so image areas intercept
@@ -453,6 +491,46 @@ Double-click opens the full image split (§3).
     "unassigned". Available from the person-tile context menu (also for a
     multi-selection), the reference-set pane and — batched — from tree
     branch menus (§3).
+14. **Selection-scoped face actions** (#49) ⇒ every face action has one
+    *effective scope*: the active selection when the invoked card is part
+    of it (`sel.size > 1`), otherwise just that card. Context-menu entries
+    (*Accept*, *Reject*, *Assign to person…*) and the card's ✗/undo button
+    all honour this scope — the same ids the rule-bar buttons would act
+    on — so "select whole section → reject" rejects the section from any
+    entry point. Actions that cannot apply to more than one face —
+    **★ set as primary** and **◈ add as reference** — are greyed out
+    (disabled) whenever the effective scope would exceed one face, never
+    silently applied to a single card. Per-card inputs (name, description)
+    always stay single-face.
+15. **Split-pane lifecycle** (#51/#52) ⇒ the double-click image split
+    closes automatically when the selection moves to a **different**
+    image: a tree-row select (plain, ctrl/cmd or shift), person stepping
+    (‹ › / ← →) or selecting a card/rectangle whose `image_id` differs
+    from `splitImageId`. It **stays open** when the new selection is a
+    face (or a person with a face) **on the open image**. Manual opens —
+    card double-click, *Open beside (split)*, *Open full image* — always
+    win; Esc/× keep their meaning. In the rectangle context menu the
+    *Open full image* entry is hidden while `face.image_id` is already the
+    open image (#51).
+16. **Group management** (#50) ⇒ membership-only operations in one
+    transaction each; faces, names, statuses, primaries and refcrops are
+    untouched:
+    - `rename_group(old, new)` — rewrites the path prefix for every person
+      inside the branch (the branch itself or any sub-branch). `new`
+      empty ⇒ the whole subtree drops to Ungrouped. A branch cannot be
+      moved inside itself (`new == old` or `new` prefixed by `old`).
+    - `delete_group(path)` — deletes the `person_groups` rows of the whole
+      subtree; those persons become Ungrouped (structure below the branch
+      is not preserved — re-group by move/rename).
+    - `move_persons_to_group(person_ids, group)` — replaces each person's
+      group path with the target (empty ⇒ Ungrouped); works for any
+      selection, wherever the persons live (incl. Unknown/Ungrouped).
+    All three normalise the path (#42) and reject a literal `Ungrouped`
+    segment (reserved pseudo-group; `Unknown` stays a normal branch).
+    GUI entry points: branch menu (*rename/move…*, *delete group* with
+    confirm dialog), person menu (*move to group…* for the selection), and
+    drag-and-drop of persons/selections/branches onto branch nodes or
+    Ungrouped (virtual nodes are not draggable/renameable themselves).
 
 ## 5. Tauri commands (Rust)
 
@@ -489,6 +567,10 @@ affected persons; all return an error string on constraint violation)
 - `add_refcrop(person_id, face_id)` (manual, pinned) /
   `remove_refcrop(person_id, face_id)`
 - `remove_persons(person_ids)` — §4.13 (reject + detach + delete, no undo)
+- `rename_group(old_path, new_path)` / `delete_group(path)` /
+  `move_persons_to_group(person_ids, group)` — §4.16 (#50) group
+  membership: prefix rewrite / subtree drop to Ungrouped / per-person
+  replace; normalised (#42), `Ungrouped` segment reserved
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
 
 ## 6. File layout
@@ -500,7 +582,7 @@ whot/
     main.tsx  App.tsx  api.ts      # api.ts = typed tauri invoke wrapper
     components/  PersonTree.tsx  FaceCard.tsx  FaceGrid.tsx
                  RuleBar.tsx  DetailPane.tsx  RollsPane.tsx  AssignDialog.tsx
-                 FaceOverlay.tsx   # active rectangles on full-size images
+                 GroupDialog.tsx  FaceOverlay.tsx   # active rectangles on full-size images
     styles.css
   src-tauri/
     tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde, base64
