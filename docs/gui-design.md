@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.14** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.15** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -114,7 +114,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Card double-click — full-image focus** (#55, §4.19): double-clicking a
   face card opens the center pane's **focus mode**: the annotated full
   image spans the pane's full width (height-fitted, §4.11 overlay
-  unchanged) and a **film roll** below shows only that image's face cards
+  unchanged) and is **pinned at the top of the pane** — only the film roll
+  below scrolls (#57, §4.19). The **film roll** shows only that image's
+  face cards
   (horizontal scroll strip; all card operations keep working). The
   regular grid is hidden while the mode is active. Closable via ×/Esc;
   selection and current view survive; single-click selection is
@@ -207,7 +209,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 Face card: preview image, derived `name`, confidence %, description input
 (`|`-separated tags, edited inline, committed on blur/Enter), star (set as
 primary), status badge (provisional/confirmed/rejected), reject button.
-Double-click opens the full image split (§3).
+Double-click opens the full-image focus mode (§3).
+- **Input families** (#56, §4.20): group-path inputs and face-description
+  inputs carry different frames and backgrounds everywhere they appear —
+  solid accent-tinted frame for group paths, dashed second-accent frame
+  for descriptions — so *where a person lives* and *what a face looks
+  like* are never confusable at a glance (frame style also carries the
+  distinction for colour-blind users).
 
 ## 4. Behaviour rules (decided)
 
@@ -398,12 +406,28 @@ Double-click opens the full image split (§3).
     focused workspace: the annotated image spans the pane's full width
     (height-fitted, §4.11 unchanged) with a **film roll** below — one
     horizontal, scrollable strip of that image's face cards (all card
-    operations keep working; no other faces are shown). The regular grid
+    operations keep working; no other faces are shown). The image and its
+    header row are **pinned at the top** of the pane while the film roll
+    scrolls beneath it (#57) — the user works against the image, so it
+    never scrolls out of sight; the pinned block gets a solid backdrop so
+    cards pass behind it cleanly. The regular grid
     is hidden while the mode is active; it returns when the mode ends:
     × / **Esc**, a left-pane selection that leaves the image (§4.15), or
     explicit navigation (top-bar tabs, *Review*). Selection and view
     state survive as before; the former side-by-side split and its
     draggable divider are gone.
+20. **Input families** (#56) ⇒ group-path inputs (`family|lombards`) and
+    face-description inputs (`beard|glasses`) are **visually distinct**
+    everywhere they appear: group paths get a solid accent-tinted frame
+    and slightly tinted background (structural, hierarchical value),
+    descriptions a dashed frame in a second accent colour (free-form
+    per-face tags) — the frame *style* carries the distinction for
+    colour-blind users, the hues only reinforce it. Applied to the
+    section rule bar's group field, the face-card desc input, the
+    AssignDialog/GroupDialog group fields and the detail pane's Group
+    field (Name/Note keep the default look; `Editable` gains a variant).
+    The tints stay legible in the dark theme and clear of the
+    warn/ok/bad status colours.
 
 ## 5. Tauri commands (Rust)
 
