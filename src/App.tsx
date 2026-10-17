@@ -472,13 +472,14 @@ export default function App() {
       if (!snap) return;
       const f = facesById.get(faceId);
       if (!f) return;
-      // #58 (§4.14): per-card inputs honour the selection scope — an
-      // active multi-selection *is* the disambiguation, so the just-this-
-      // face/whole-group dialog is skipped and the assign applies to the
-      // whole selection (group paths: unowned faces have none, the rest
-      // keep their current person's path)
+      // #58/#59 (§4.14): per-card inputs honour the selection scope —
+      // an active selection *of any size* is the disambiguation, so the
+      // just-this-face/whole-group dialog is skipped and the assign
+      // applies to the whole selection (group paths: unowned faces have
+      // none, the rest keep their current person's path); the dialog is
+      // left to its original role — cards outside any selection
       const scope = actionScope(faceId);
-      if (scope.length > 1) {
+      if (sel.has(faceId)) {
         doAssign(
           scope,
           name,
