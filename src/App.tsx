@@ -783,7 +783,7 @@ export default function App() {
           title="drag to resize, double-click to reset"
         />
 
-        <main className="center">
+        <main className={splitRow ? "center focus" : "center"}>
           <div className="center-toolbar">
             <span className="toolbar-left">
               <button

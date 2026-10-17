@@ -510,15 +510,20 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 /* full-image focus mode (#55, §4.19): image on top at full pane width,
    film roll of this image's faces below; replaces the old side-by-side
    split and its divider */
-.center-focus { display: flex; min-width: 0; }
+/* #57: in focus mode the pane itself does NOT scroll — the image is
+   locked at the top (below the toolbar) and only the film roll scrolls */
+.center.focus { display: flex; flex-direction: column; overflow: hidden; }
+.center-focus { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .focus-pane {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   flex: 1;
+  min-height: 0;
   min-width: 0;
 }
 .focus-top {
+  flex: none;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -531,6 +536,7 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   white-space: nowrap;
 }
 .focus-image {
+  flex: none;
   display: flex;
   justify-content: center;
   background: var(--panel2);
@@ -543,8 +549,8 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .focus-image .annotated { display: block; text-align: center; }
 .focus-image .annotated img { max-height: 58vh; width: auto; }
 /* film roll: one horizontal scroll strip of this image's face cards,
-   per person section */
-.film-roll { min-width: 0; }
+   per person section — the pane's only scrolling region (#57) */
+.film-roll { min-width: 0; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .film-roll .face-sections { gap: 0.4rem; }
 .film-roll .face-section-header {
   padding: 0.2rem 0.5rem;
