@@ -185,12 +185,16 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     groupPath: string;      // '|' path — branch ops live in that namespace
     virtual: boolean;       // Unknown/Ungrouped are display-only (#50)
   } | null>(null);
-  // #50 (§4.16) — group dialogs: rename/move a branch, move persons
+  // #50 (§4.16) — group dialogs: rename/move a branch, move persons,
+  // add a group (#54, §4.18: create = move the tree selection into it)
   const [groupDialog, setGroupDialog] = useState<
     | { kind: "rename-branch"; path: string }
     | { kind: "move-persons"; ids: number[] }
+    | { kind: "add-group"; parent: string }
     | null
   >(null);
+  // #54: 'Add group…' from the tree root (empty space) as well
+  const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<{
     path: string;
     count: number;
@@ -312,9 +316,15 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
       .filter((p): p is Person => !!p && matches(p));
     const children = node.children.filter(subtreeMatch);
     if (node.name === "" ) {
-      // root: just render children
+      // root: just render children; empty space offers 'Add group…' (#54)
       return (
-        <div key={path || "root"}>
+        <div
+          key={path || "root"}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setRootMenu({ x: e.clientX, y: e.clientY });
+          }}
+        >
           {children.map((c) => renderNode(c, 0, c.name, c.name))}
         </div>
       );
@@ -485,6 +495,15 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                       title: "Group",
                       items: [
                         {
+                          // #54 (§4.18): 'creating' a group = moving the
+                          // tree selection into it — empty groups cannot
+                          // exist (branches derive from person paths)
+                          label: "Add group…",
+                          onClick: () =>
+                            setGroupDialog({ kind: "add-group", parent: branchMenu.groupPath }),
+                          disabled: selectedIds.size === 0,
+                        },
+                        {
                           label: "Rename/move group…",
                           onClick: () =>
                             setGroupDialog({ kind: "rename-branch", path: branchMenu.groupPath }),
@@ -520,28 +539,68 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           onClose={() => setBranchMenu(null)}
         />
       )}
+      {rootMenu && (
+        <ContextMenu
+          menu={{
+            x: rootMenu.x,
+            y: rootMenu.y,
+            groups: [
+              {
+                items: [
+                  {
+                    label:
+                      selectedIds.size > 0
+                        ? `Add group with ${selectedIds.size} selected person(s)…`
+                        : "Add group…",
+                    onClick: () => setGroupDialog({ kind: "add-group", parent: "" }),
+                    disabled: selectedIds.size === 0,
+                  },
+                ],
+              },
+            ],
+          }}
+          onClose={() => setRootMenu(null)}
+        />
+      )}
       {groupDialog && (
         <GroupDialog
           title={
             groupDialog.kind === "rename-branch"
               ? "Rename / move group"
-              : groupDialog.ids.length > 1
-                ? `Move ${groupDialog.ids.length} persons to a group`
-                : "Move person to a group"
+              : groupDialog.kind === "add-group"
+                ? groupDialog.parent
+                  ? `Add group under '${groupDialog.parent}'`
+                  : "Add top-level group"
+                : groupDialog.ids.length > 1
+                  ? `Move ${groupDialog.ids.length} persons to a group`
+                  : "Move person to a group"
           }
           body={
             groupDialog.kind === "rename-branch"
               ? "The whole branch — including sub-branches — follows to the new path. " +
                 "Empty = move everything to Ungrouped."
+            : groupDialog.kind === "add-group"
+              ? `The ${selectedIds.size} selected person(s) move into the new group ` +
+                "(a group exists through its persons). Faces and names are untouched."
             : "Replaces each person's group path (empty = ungrouped). " +
               "Faces and names are untouched."
           }
           defaultPath={
             groupDialog.kind === "rename-branch"
               ? groupDialog.path
+              : groupDialog.kind === "add-group"
+                ? groupDialog.parent
+                  ? `${groupDialog.parent}|`
+                  : ""
               : (byId.get(groupDialog.ids[0])?.groups[0] ?? "")
           }
-          submitLabel={groupDialog.kind === "rename-branch" ? "move group" : "move"}
+          submitLabel={
+            groupDialog.kind === "rename-branch"
+              ? "move group"
+              : groupDialog.kind === "add-group"
+                ? "add group"
+                : "move"
+          }
           onSubmit={(path) => {
             const d = groupDialog;
             setGroupDialog(null);
@@ -549,6 +608,9 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
               // compare normalised (#42): whitespace-only edits are a no-op
               const norm = path.split("|").map((s) => s.trim()).filter(Boolean).join("|");
               if (norm !== d.path) onRenameGroup(d.path, norm);
+            } else if (d.kind === "add-group") {
+              const norm = path.split("|").map((s) => s.trim()).filter(Boolean).join("|");
+              if (norm && selectedIds.size > 0) onMovePersons([...selectedIds], norm);
             } else {
               onMovePersons(d.ids, path);
             }
