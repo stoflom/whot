@@ -35,6 +35,22 @@ function buildTree(persons: Person[]): TreeNode {
       node.personIds.push(p.id);
     }
   }
+  // #61 (§3): within every branch, biggest clusters first — persons
+  // ordered by face count desc; ties by name, then id (deterministic).
+  // Sub-branches keep their (snapshot) order.
+  const byId = new Map(persons.map((p) => [p.id, p]));
+  const sortNodes = (n: TreeNode) => {
+    n.personIds.sort((a, b) => {
+      const pa = byId.get(a);
+      const pb = byId.get(b);
+      const d = (pb?.counts.total ?? 0) - (pa?.counts.total ?? 0);
+      if (d !== 0) return d;
+      const c = (pa?.name ?? "").localeCompare(pb?.name ?? "");
+      return c !== 0 ? c : a - b;
+    });
+    n.children.forEach(sortNodes);
+  };
+  sortNodes(root);
   return root;
 }
 
