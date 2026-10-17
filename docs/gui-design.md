@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.17** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.18** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -80,6 +80,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
   rejected). One filter box matches **person name and/or group path**
   (case-insensitive substring); tree stays hierarchical below the match.
+  Within every branch, persons are ordered by **face count, most first**
+  (#61; ties broken by name, then id — deterministic, no sort toggle);
+  sub-branches keep their order. The stepping shortcuts and the
+  selection ranges therefore follow this display order.
   Branches **roll up/down** by clicking their header (any branch holding
   persons or sub-branches, arrows reflect state) and all at once via
   **⌃ roll-up / ⌄ roll-down** controls beside the filter. The collapsed set
