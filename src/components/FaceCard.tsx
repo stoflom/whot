@@ -109,7 +109,11 @@ export default function FaceCard({
           className="face-person-name"
           value={pname}
           placeholder="person name"
-          title={face.name}
+          title={
+            scopeMulti
+              ? `Assigning applies to all ${selSize} selected faces (#58)`
+              : face.name
+          }
           onChange={(e) => setPname(e.target.value)}
           onBlur={commitName}
           onKeyDown={(e) => {

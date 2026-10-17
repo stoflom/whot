@@ -472,6 +472,20 @@ export default function App() {
       if (!snap) return;
       const f = facesById.get(faceId);
       if (!f) return;
+      // #58 (§4.14): per-card inputs honour the selection scope — an
+      // active multi-selection *is* the disambiguation, so the just-this-
+      // face/whole-group dialog is skipped and the assign applies to the
+      // whole selection (group paths: unowned faces have none, the rest
+      // keep their current person's path)
+      const scope = actionScope(faceId);
+      if (scope.length > 1) {
+        doAssign(
+          scope,
+          name,
+          f.person_id != null ? renameGroup(personsById.get(f.person_id)) : ""
+        );
+        return;
+      }
       if (f.person_id == null) {
         // unowned face (§4.13): nothing to disambiguate — assign directly
         doAssign([faceId], name, "");
