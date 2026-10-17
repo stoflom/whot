@@ -488,30 +488,57 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 /* hover link between overlay rectangles and face cards (#26) */
 .face-card.hovered { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* double-click image split (#25) */
-.center-split { display: flex; align-items: flex-start; gap: 0.75rem; }
-.center-split .split-main { flex: 1 1 55%; min-width: 0; }
-.center-split .split-side {
-  flex: 1 1 45%;
+/* full-image focus mode (#55, §4.19): image on top at full pane width,
+   film roll of this image's faces below; replaces the old side-by-side
+   split and its divider */
+.center-focus { display: flex; min-width: 0; }
+.focus-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
   min-width: 0;
-  position: sticky;
-  top: 2.4rem;
-  padding-left: 0.75rem;
-  border-left: 1px solid var(--border);
 }
-.split-side-top {
+.focus-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.4rem;
   font-size: 0.8rem;
 }
-.split-side-top span {
+.focus-top span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.focus-image {
+  display: flex;
+  justify-content: center;
+  background: var(--panel2);
+  border-radius: var(--radius);
+  padding: 0.4rem;
+  min-width: 0;
+}
+/* the image spans the pane's width; taller cap than the grid-context
+   overlay because this mode is all about the image */
+.focus-image .annotated { display: block; text-align: center; }
+.focus-image .annotated img { max-height: 58vh; width: auto; }
+/* film roll: one horizontal scroll strip of this image's face cards,
+   per person section */
+.film-roll { min-width: 0; }
+.film-roll .face-sections { gap: 0.4rem; }
+.film-roll .face-section-header {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  border-bottom: none;
+}
+.film-roll .face-grid {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 0.4rem;
+}
+.film-roll .face-card { flex: 0 0 150px; }
 
 /* tree roll up/down controls (#24) */
 .tree-tools { display: flex; align-items: center; gap: 2px; margin-bottom: 0.4rem; }

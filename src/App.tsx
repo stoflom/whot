@@ -35,11 +35,12 @@ export default function App() {
   const [splitImageId, setSplitImageId] = useState<number | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // #34 — pane sizes (session state); defaults match the stylesheet
-  const [paneSizes, setPaneSizes] = useState({ left: 250, right: 290, split: 45 });
-  const dragRef = useRef<{ edge: "left" | "right" | "split"; startX: number; start: number } | null>(
+  // (#55: the image-split size is gone — the focus mode takes the pane)
+  const [paneSizes, setPaneSizes] = useState({ left: 250, right: 290 });
+  const dragRef = useRef<{ edge: "left" | "right"; startX: number; start: number } | null>(
     null
   );
-  const startDrag = (edge: "left" | "right" | "split") => (e: ReactMouseEvent) => {
+  const startDrag = (edge: "left" | "right") => (e: ReactMouseEvent) => {
     e.preventDefault();
     dragRef.current = { edge, startX: e.clientX, start: paneSizes[edge] };
     const move = (ev: MouseEvent) => {
@@ -48,11 +49,7 @@ export default function App() {
       const dx = ev.clientX - d.startX;
       setPaneSizes((s) => {
         if (d.edge === "left") return { ...s, left: Math.min(Math.max(d.start + dx, 160), 480) };
-        if (d.edge === "right") return { ...s, right: Math.min(Math.max(d.start - dx, 200), 560) };
-        return {
-          ...s,
-          split: Math.min(Math.max(d.start + (dx / window.innerWidth) * 100, 20), 80),
-        };
+        return { ...s, right: Math.min(Math.max(d.start - dx, 200), 560) };
       });
     };
     const up = () => {
@@ -278,9 +275,11 @@ export default function App() {
 
   // group argument for rename-style assigns: an UnknownN must leave the
   // 'Unknown' branch (F7) — the group isn't user-visible in these flows;
-  // otherwise the person keeps their current path
-  const renameGroup = (p: Person | undefined) =>
-    p && p.name.startsWith("Unknown") ? "" : (p?.groups[0] ?? "");
+  // otherwise the person keeps their current path (pure — stable ref)
+  const renameGroup = useCallback(
+    (p: Person | undefined) => (p && p.name.startsWith("Unknown") ? "" : (p?.groups[0] ?? "")),
+    []
+  );
 
   // rename-merge (v1.9/v1.11): EVERY GUI rename (tree, context menu,
   // detail pane) routes through assign over all the person's faces — a
@@ -430,7 +429,7 @@ export default function App() {
               setImageId(image.id);
             },
           },
-          { label: "Open beside (split)", onClick: () => setSplitImageId(image.id) },
+          { label: "Open full image (focused)", onClick: () => setSplitImageId(image.id) },
         ],
       },
       {
@@ -495,13 +494,15 @@ export default function App() {
     onAssign: (ids: number[], name: string, group: string) => doAssign(ids, name, group),
   };
 
-  const sections = useMemo<Section[]>(() => {
-    if (!snap) return [];
-    if (imageId != null) {
+  // one section per person over an image's faces — the Rolls image
+  // detail and the #55 focus-mode film roll share it
+  const sectionsForImage = useCallback(
+    (imgId: number): Section[] => {
+      if (!snap) return [];
       const byPerson = new Map<number | null, Face[]>();
       for (const f of snap.faces.filter(
         (x) =>
-          x.image_id === imageId &&
+          x.image_id === imgId &&
           (snap.settings.show_rejected || x.link_status !== "rejected")
       )) {
         const arr = byPerson.get(f.person_id) ?? [];
@@ -519,6 +520,16 @@ export default function App() {
           ruleDefaultGroup: renameGroup(p),
         };
       });
+    },
+    [snap, personsById, renameGroup]
+  );
+
+  // plain (unmemoised) on purpose: sectionsForImage is recreated per
+  // render and the #55 film roll needs it too — one pass over faces
+  const sections: Section[] = (() => {
+    if (!snap) return [];
+    if (imageId != null) {
+      return sectionsForImage(imageId);
     }
     if (view === "person" && personId != null) {
       const out: Section[] = [];
@@ -581,7 +592,7 @@ export default function App() {
         // rename must leave the Unknown branch (F7)
         ruleDefaultGroup: renameGroup(p),
       }));
-  }, [snap, view, personId, imageId, clusters, personsById, selectedPerson]);
+  })();
 
   // #31 — person stepping: ‹ › and ← → walk the persons in the tree's
   // current (filtered) display order; the shortcut set is listed in the
@@ -632,7 +643,10 @@ export default function App() {
         e.preventDefault();
         const targetId = hoverId ?? lastSelRef.current;
         if (targetId == null) return;
-        const section = sections.find((s) => s.faceIds.includes(targetId));
+        // in focus mode the rendered sections are the film roll's (#55)
+        const rendered =
+          splitImageId != null ? sectionsForImage(splitImageId) : sections;
+        const section = rendered.find((s) => s.faceIds.includes(targetId));
         if (!section || section.faceIds.length === 0) return;
         const all = section.faceIds.every((id) => sel.has(id));
         toggleMany(section.faceIds, !all);
@@ -648,7 +662,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sel]);
+  }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sectionsForImage, sel, splitImageId]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -690,13 +704,17 @@ export default function App() {
             onClick={() => {
               setView("review");
               setImageId(null);
+              setSplitImageId(null); // #55 (§4.19): explicit navigation ends focus mode
             }}
           >
             Review <span className="pill">{pendingCount}</span>
           </button>
           <button
             className={view === "rolls" ? "active" : ""}
-            onClick={() => setView("rolls")}
+            onClick={() => {
+              setView("rolls");
+              setSplitImageId(null); // #55 (§4.19)
+            }}
           >
             Rolls
           </button>
@@ -706,6 +724,7 @@ export default function App() {
             onClick={() => {
               setView("person");
               setImageId(null);
+              setSplitImageId(null); // #55 (§4.19)
             }}
             title={personId == null ? "select a person in the tree" : ""}
           >
@@ -738,6 +757,7 @@ export default function App() {
             onReview={() => {
               setView("review");
               setImageId(null);
+              setSplitImageId(null); // #55 (§4.19)
             }}
             onSelect={handleTreeSelect}
             selectedIds={selPersons}
@@ -795,8 +815,52 @@ export default function App() {
               show rejected
             </label>
           </div>
-          <div className={splitRow ? "center-split" : undefined}>
-            <div className="split-main">
+          <div className={splitRow ? "center-focus" : undefined}>
+            {splitRow ? (
+              // #55 (§4.19) — full-image focus mode: the annotated image
+              // takes the pane's full width, a film roll below shows only
+              // this image's faces; the regular grid returns when the mode
+              // ends (×/Esc, §4.15 selection move, explicit navigation)
+              <div className="focus-pane">
+                <div className="focus-top">
+                  <span title={splitRow.primary_path}>
+                    {splitRow.primary_path.replace(/^.*\//, "") || splitRow.primary_path}
+                  </span>
+                  <span className="dim">
+                    {splitRow.width}×{splitRow.height} · {splitRow.state}
+                  </span>
+                  <button
+                    className="ghost"
+                    onClick={() => setSplitImageId(null)}
+                    title="close (Esc)"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="focus-image">
+                  <FaceOverlay
+                    imageId={splitRow.id}
+                    width={splitRow.width}
+                    height={splitRow.height}
+                    faces={snap.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f))}
+                    sel={sel}
+                    hoverId={hoverId}
+                    onHover={setHoverId}
+                    onToggle={toggle}
+                    onFaceContextMenu={faceMenu}
+                    onImageContextMenu={(e) => imageAreaMenu(e, splitRow.id)}
+                  />
+                </div>
+                <div className="film-roll">
+                  <FaceGrid
+                    sections={sectionsForImage(splitRow.id)}
+                    {...gridHandlers}
+                    primaryFaceId={displayPerson?.primary_face_id ?? null}
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
           {view === "rolls" && imageId == null ? (
             <RollsPane
               imports={snap.imports}
@@ -842,41 +906,6 @@ export default function App() {
               primaryFaceId={view === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />
           )}
-            </div>
-            {splitRow && (
-              <>
-                <div
-                  className="v-divider"
-                  onMouseDown={startDrag("split")}
-                  onDoubleClick={() => setPaneSizes((s) => ({ ...s, split: 45 }))}
-                  title="drag to resize, double-click to reset"
-                />
-                <aside className="split-side" style={{ flex: `0 0 ${paneSizes.split}%` }}>
-                <div className="split-side-top">
-                  <span title={splitRow.primary_path}>
-                    {splitRow.primary_path.replace(/^.*\//, "") || splitRow.primary_path}
-                  </span>
-                  <button
-                    className="ghost"
-                    onClick={() => setSplitImageId(null)}
-                    title="close (Esc)"
-                  >
-                    ×
-                  </button>
-                </div>
-                <FaceOverlay
-                  imageId={splitRow.id}
-                  width={splitRow.width}
-                  height={splitRow.height}
-                  faces={snap.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f))}
-                  sel={sel}
-                  hoverId={hoverId}
-                  onHover={setHoverId}
-                  onToggle={toggle}
-                  onFaceContextMenu={faceMenu}
-                  onImageContextMenu={(e) => imageAreaMenu(e, splitRow.id)}
-                />
-              </aside>
               </>
             )}
           </div>
