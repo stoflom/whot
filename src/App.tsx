@@ -222,13 +222,26 @@ export default function App() {
     });
   };
 
+  // #49 (§4.14) — effective action scope: the active selection when the
+  // invoked card is part of it, otherwise just that card
+  const actionScope = (id: number): number[] =>
+    sel.has(id) && sel.size > 1 ? [...sel] : [id];
+
   // ------------------------------------------------------------ mutations
 
   const doAssign = (ids: number[], name: string, group: string) =>
     mutate(() => api.assignPerson(ids, name, group), true);
   const doAccept = (ids: number[]) => mutate(() => api.acceptFaces(ids), true);
   const doReject = (ids: number[]) => mutate(() => api.rejectFaces(ids), true);
-  const doDesc = (id: number, d: string) => mutate(() => api.setFaceDescription(id, d));
+  // #58 (§4.14): per-card inputs honour the same scope — editing the
+  // description of a card inside a multi-selection updates the whole
+  // selection; applied sequentially because each call re-assigns seq
+  // within its new (person, description) group (§4.4) and concurrent
+  // transactions could compute the same next seq
+  const doDesc = (id: number, d: string) =>
+    mutate(async () => {
+      for (const i of actionScope(id)) await api.setFaceDescription(i, d);
+    });
   const doPrimary = (id: number) => {
     const f = facesById.get(id);
     if (f && f.person_id != null) mutate(() => api.setPrimaryFace(f.person_id!, id));
@@ -237,11 +250,6 @@ export default function App() {
     const f = facesById.get(id);
     if (f && f.person_id != null) mutate(() => api.addRefcrop(f.person_id!, id));
   };
-
-  // #49 (§4.14) — effective action scope: the active selection when the
-  // invoked card is part of it, otherwise just that card
-  const actionScope = (id: number): number[] =>
-    sel.has(id) && sel.size > 1 ? [...sel] : [id];
 
   // #35 — tree selection: click selects, ctrl/cmd toggles, shift extends
   // over the tree's visible order; the anchor row stays the person shown
