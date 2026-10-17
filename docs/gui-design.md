@@ -1,10 +1,29 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.13** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.14** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 **Change log**
 
+- **1.14** (2026-10-17, follow-up round #53–#55 — all frontend):
+  - §4.17 — **selection accelerators** (#53): Ctrl/⌘-click on a face-card
+    body toggles that card in the selection (same idiom as tree rows;
+    plain click stays inert so double-click-to-open is unaffected);
+    **Ctrl-G** toggles the whole section — the one holding the hovered
+    card, else the one holding the most recently selected card. Listed in
+    the settings popover's shortcut set.
+  - §3/§4.18 — **Add group…** (#54) on the context menus of every *real*
+    branch and of the tree root: a path dialog prefilled with `<parent>|`
+    that moves the **current tree selection** into the new group. Option 3
+    of #54: groups derive from person paths, so an empty group cannot
+    exist — the entry is disabled without a selection and the virtual
+    `Unknown`/`Ungrouped` nodes do not offer it.
+  - §3/§4.19 — the card double-click split becomes a **full-image focus
+    mode** (#55): the annotated image spans the center pane's full width
+    with a **film roll** of just that image's faces below; the regular
+    grid is hidden while the mode is active. Ends on ×/Esc, a left-pane
+    selection that leaves the image (§4.15) or explicit navigation. The
+    side-by-side split and its draggable divider are removed.
 - **1.13** (2026-10-17, review/tree interaction round #49–#52):
   - §4.14 — **selection-scoped face actions** (#49): when the right-clicked
     face card is part of an active selection, the face context menu
@@ -276,15 +295,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   name-labelled rectangle** per visible face of that image, colour-coded by
   `link_status`; hover highlights the rectangle and its card (bidirectional),
   click toggles the face's selection.
-- **Card double-click — image split**: double-clicking a face card splits
-  the center pane vertically (current grid left, annotated full image right;
-  in Rolls image detail the image replaces nothing — same overlay). Closable
-  via ×/Esc; selection and current view survive; double-clicking another
-  card swaps the image. Single-click selection is unaffected (the two
-  clicks of a double-click cancel each other out). **Lifecycle (#51/#52,
-  §4.15)**: the split closes itself when the selection moves to a
-  different image (tree row, person stepping, card/rectangle select) and
-  stays open while the new selection is on the same image; the
+- **Card double-click — full-image focus** (#55, §4.19): double-clicking a
+  face card opens the center pane's **focus mode**: the annotated full
+  image spans the pane's full width (height-fitted, §4.11 overlay
+  unchanged) and a **film roll** below shows only that image's face cards
+  (horizontal scroll strip; all card operations keep working). The
+  regular grid is hidden while the mode is active. Closable via ×/Esc;
+  selection and current view survive; single-click selection is
+  unaffected (the two clicks of a double-click cancel each other out).
+  **Lifecycle (#51/#52, §4.15)**: the mode ends when the selection moves
+  to a different image (tree row, person stepping, card/rectangle
+  select) or the user navigates explicitly (top-bar tabs, *Review*); the
   face-rectangle menu hides *Open full image* while its image is the one
   already open.
 - **Face vs person tiles** (#30): face crops render as **rounded squares
@@ -322,7 +343,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   their own menu — *remove all unknown persons* on the `Unknown` root,
   *remove all persons in this branch* on any group branch (counts shown,
   confirm dialog required) — and, on real group branches, *rename/move
-  group…* and *delete group* (§4.16, #50). The reference-set pane exposes
+  group…*, *delete group* and *add group…* (§4.16/§4.18, #50/#54; the
+  tree root offers *add group…* too). The reference-set pane exposes
   **Remove person** as a button.
 - **Group management & drag-and-drop** (#50, §4.16): real group branches
   (not the virtual `Unknown`/`Ungrouped` nodes) can be **renamed/moved**
@@ -332,7 +354,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   person context menu (path dialog) or by **dragging** rows onto a branch
   node or onto Ungrouped; whole branches drag the same way (a drop onto
   the branch itself or into its own subtree is refused). Drops and dialog
-  submits normalise the path like every other group write (#42). **Full images get their own context menu** (#33
+  submits normalise the path like every other group write (#42).
+- **Add group…** (#54, §4.18): the branch/root context menu offers *add
+  group…* — a path dialog prefilled with `<parent>|` (root: empty) that
+  moves the **current tree selection** into the new group. Groups are
+  derived from person paths, so an empty group cannot exist: the entry is
+  disabled without a selection, and the virtual `Unknown`/`Ungrouped`
+  nodes do not offer it (a path under them is meaningless — Unknown is
+  name-driven, Ungrouped reserved).
+- **Full images get their own context menu** (#33
   correction): the webkit
   default menu appears but its entries ("open image in new window", …)
   are not functional inside Tauri, so image areas intercept
@@ -531,6 +561,33 @@ Double-click opens the full image split (§3).
     confirm dialog), person menu (*move to group…* for the selection), and
     drag-and-drop of persons/selections/branches onto branch nodes or
     Ungrouped (virtual nodes are not draggable/renameable themselves).
+17. **Selection accelerators** (#53) ⇒ Ctrl/⌘-click on a face-card body
+    toggles that card in the selection — the tree's idiom, now mirrored
+    on cards; plain click stays inert so double-click-to-open is
+    unaffected. **Ctrl-G** toggles the whole section: the one holding the
+    hovered card, else the one holding the most recently selected card
+    (no-op when neither exists); all-selected ⇒ deselect, otherwise
+    select all. Shortcuts obey the existing guards (never while an input
+    or dialog has focus, `preventDefault` so webkit cannot steal Ctrl-G)
+    and are listed in the settings popover.
+18. **Add group…** (#54) ⇒ context menu of every *real* branch and of the
+    tree root; a `GroupDialog` prefilled with `<parent>|` (root: empty)
+    that runs `move_persons_to_group` (§4.16) over the **current tree
+    selection**. Since branches derive from person paths, "creating" a
+    group *is* moving persons into it (option 3 of #54) — the entry is
+    disabled when no persons are selected; virtual `Unknown`/`Ungrouped`
+    nodes do not offer it.
+19. **Full-image focus mode** (#55) ⇒ opening a full image (card
+    double-click or *Open full image*) turns the center pane into a
+    focused workspace: the annotated image spans the pane's full width
+    (height-fitted, §4.11 unchanged) with a **film roll** below — one
+    horizontal, scrollable strip of that image's face cards (all card
+    operations keep working; no other faces are shown). The regular grid
+    is hidden while the mode is active; it returns when the mode ends:
+    × / **Esc**, a left-pane selection that leaves the image (§4.15), or
+    explicit navigation (top-bar tabs, *Review*). Selection and view
+    state survive as before; the former side-by-side split and its
+    draggable divider are gone.
 
 ## 5. Tauri commands (Rust)
 
