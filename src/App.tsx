@@ -186,13 +186,30 @@ export default function App() {
 
   // ------------------------------------------------------------ selection
 
-  const toggle = (id: number) =>
+  // #52 (§4.15): the split follows the selection — it closes itself when
+  // the selection moves to a different image and stays open while the new
+  // selection is on the image it already shows; manual opens always win
+  const closeSplitForFaces = (ids: number[]) => {
+    if (splitImageId == null) return;
+    if (!ids.some((id) => facesById.get(id)?.image_id === splitImageId))
+      setSplitImageId(null);
+  };
+  const closeSplitForPerson = (pid: number) => {
+    if (splitImageId == null) return;
+    const relevant =
+      snap?.faces.some((f) => f.person_id === pid && f.image_id === splitImageId) ?? false;
+    if (!relevant) setSplitImageId(null);
+  };
+
+  const toggle = (id: number) => {
+    closeSplitForFaces([id]);
     setSel((prev) => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id);
       else n.add(id);
       return n;
     });
+  };
   const toggleMany = (ids: number[], on: boolean) =>
     setSel((prev) => {
       const n = new Set(prev);
@@ -219,6 +236,7 @@ export default function App() {
   // #35 — tree selection: click selects, ctrl/cmd toggles, shift extends
   // over the tree's visible order; the anchor row stays the person shown
   const handleTreeSelect = (id: number, e?: ReactMouseEvent) => {
+    closeSplitForPerson(id); // #52
     if (e?.ctrlKey || e?.metaKey) {
       setSelPersons((prev) => {
         const n = new Set(prev);
@@ -341,7 +359,10 @@ export default function App() {
             disabled: f.link_status !== "confirmed" || f.person_id == null,
           },
           { label: "Assign to person…", onClick: () => setDialogFaceIds([id]) },
-          { label: "Open full image", onClick: () => setSplitImageId(f.image_id) },
+          // #51: pointless while this very image is already open in the split
+          ...(f.image_id === splitImageId
+            ? []
+            : [{ label: "Open full image", onClick: () => setSplitImageId(f.image_id) }]),
         ],
       },
     ]);
@@ -556,11 +577,18 @@ export default function App() {
           : Math.min(Math.max(stepIdx + dir, 0), stepIds.length - 1);
       const id = stepIds[next];
       if (id == null) return;
+      // #52 (§4.15): stepping selects another person — keep the split only
+      // while that person still has a face on the open image
+      if (
+        splitImageId != null &&
+        !(snap?.faces.some((f) => f.person_id === id && f.image_id === splitImageId) ?? false)
+      )
+        setSplitImageId(null);
       setPersonId(id);
       setView("person");
       setImageId(null);
     },
-    [stepIdx, stepIds]
+    [stepIdx, stepIds, splitImageId, snap]
   );
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
