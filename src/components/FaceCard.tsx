@@ -109,7 +109,11 @@ export default function FaceCard({
           className="face-person-name"
           value={pname}
           placeholder="person name"
-          title={face.name}
+          title={
+            scopeMulti
+              ? `Assigning applies to all ${selSize} selected faces (#58)`
+              : face.name
+          }
           onChange={(e) => setPname(e.target.value)}
           onBlur={commitName}
           onKeyDown={(e) => {
@@ -125,6 +129,13 @@ export default function FaceCard({
       <input
         className="face-desc input-desc"
         placeholder="desc e.g. beard|glasses"
+        // #58 (§4.14): per-card inputs honour the selection scope —
+        // editing here updates every selected face, say so up front
+        title={
+          scopeMulti
+            ? `Editing applies to all ${selSize} selected faces (#58)`
+            : undefined
+        }
         value={desc}
         onChange={(e) => setDesc(e.target.value)}
         onBlur={commit}
