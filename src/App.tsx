@@ -233,6 +233,11 @@ export default function App() {
     if (f && f.person_id != null) mutate(() => api.addRefcrop(f.person_id!, id));
   };
 
+  // #49 (§4.14) — effective action scope: the active selection when the
+  // invoked card is part of it, otherwise just that card
+  const actionScope = (id: number): number[] =>
+    sel.has(id) && sel.size > 1 ? [...sel] : [id];
+
   // #35 — tree selection: click selects, ctrl/cmd toggles, shift extends
   // over the tree's visible order; the anchor row stays the person shown
   const handleTreeSelect = (id: number, e?: ReactMouseEvent) => {
@@ -326,6 +331,10 @@ export default function App() {
     const f = facesById.get(id);
     if (!f) return;
     const section = sections.find((s) => s.faceIds.includes(id));
+    // #49: actions hit the whole selection when this card is part of it
+    const scope = actionScope(id);
+    const multi = scope.length > 1;
+    const label = (s: string) => (multi ? `${s} (${scope.length} selected)` : s);
     openMenu(e, [
       {
         title: "Selection",
@@ -340,25 +349,31 @@ export default function App() {
         ],
       },
       {
-        title: "Face",
+        title: multi ? `Face — ${scope.length} selected` : "Face",
         items: [
           {
-            label: f.link_status === "rejected" ? "Un-reject (accept)" : "Accept",
-            onClick: () => doAccept([id]),
+            label: label(f.link_status === "rejected" ? "Un-reject (accept)" : "Accept"),
+            onClick: () => doAccept(scope),
           },
           {
-            label: "Reject",
-            onClick: () => doReject([id]),
-            disabled: f.link_status === "rejected",
+            label: label("Reject"),
+            onClick: () => doReject(scope),
+            // reject stays offered while any face of the scope is not rejected
+            disabled: !scope.some((sid) => facesById.get(sid)?.link_status !== "rejected"),
             danger: true,
           },
-          { label: "Set as primary", onClick: () => doPrimary(id), disabled: f.person_id == null },
+          {
+            label: "Set as primary",
+            onClick: () => doPrimary(id),
+            // single-face action (#49): greyed out for a multi-scope
+            disabled: f.person_id == null || multi,
+          },
           {
             label: "Add as reference",
             onClick: () => doRefcrop(id),
-            disabled: f.link_status !== "confirmed" || f.person_id == null,
+            disabled: f.link_status !== "confirmed" || f.person_id == null || multi,
           },
-          { label: "Assign to person…", onClick: () => setDialogFaceIds([id]) },
+          { label: label("Assign to person…"), onClick: () => setDialogFaceIds(scope) },
           // #51: pointless while this very image is already open in the split
           ...(f.image_id === splitImageId
             ? []
@@ -465,8 +480,10 @@ export default function App() {
     onDescription: doDesc,
     onPrimary: doPrimary,
     onRefcrop: doRefcrop,
-    onReject: (id: number) => doReject([id]),
-    onAccept: (id: number) => doAccept([id]),
+    // #49 (§4.14): the card's ✗/undo honours the effective scope — the
+    // same ids the rule-bar buttons act on
+    onReject: (id: number) => doReject(actionScope(id)),
+    onAccept: (id: number) => doAccept(actionScope(id)),
     onAssign: (ids: number[], name: string, group: string) => doAssign(ids, name, group),
   };
 

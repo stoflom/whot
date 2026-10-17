@@ -15,6 +15,9 @@ interface Props {
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
   /** person's name — the face-meta input assigns that person (#29) */
   personName?: string;
+  /** total selection size — ★/◈ are single-face actions and grey out
+      while this card is part of a multi-selection (#49, §4.14) */
+  selSize: number;
   onAssignName: (faceId: number, name: string) => void;
   onDescription: (id: number, description: string) => void;
   onPrimary: (id: number) => void;
@@ -33,6 +36,7 @@ export default function FaceCard({
   onOpen,
   onContextMenu,
   personName,
+  selSize,
   onAssignName,
   onDescription,
   onPrimary,
@@ -57,6 +61,10 @@ export default function FaceCard({
   };
   // unowned faces (removed person, §4.13): no primary/reference actions
   const unowned = face.person_id == null;
+  // #49 (§4.14): this card is part of a multi-selection — ★/◈ cannot
+  // apply to more than one face, so they are greyed out, never re-routed
+  const scopeMulti = selected && selSize > 1;
+  const scopeLabel = scopeMulti ? ` (${selSize} selected)` : "";
 
   return (
     <div
@@ -115,23 +123,34 @@ export default function FaceCard({
       />
       <div className="face-actions">
         <button
-          title={isPrimary ? "Primary face" : "Set as primary face"}
+          title={
+            scopeMulti
+              ? `Set as primary face${scopeLabel} — single-face action, not available`
+              : isPrimary
+                ? "Primary face"
+                : "Set as primary face"
+          }
           className={isPrimary ? "on" : ""}
-          disabled={unowned || isPrimary}
+          disabled={unowned || isPrimary || scopeMulti}
           onClick={() => !isPrimary && onPrimary(face.id)}
         >
           ★
         </button>
         <button
-          title="Add as reference face"
+          title={
+            scopeMulti
+              ? `Add as reference face${scopeLabel} — single-face action, not available`
+              : "Add as reference face"
+          }
           onClick={() => onRefcrop(face.id)}
-          disabled={face.link_status !== "confirmed" || unowned}
+          disabled={face.link_status !== "confirmed" || unowned || scopeMulti}
         >
           ◈
         </button>
         <button
           title={
-            face.link_status === "rejected" ? "Un-reject (accept) face" : "Reject face"
+            (face.link_status === "rejected" ? "Un-reject (accept) face" : "Reject face") +
+            scopeLabel
           }
           className={face.link_status === "rejected" ? "reject" : ""}
           onClick={() =>
