@@ -22,12 +22,16 @@ function Editable({
   value,
   placeholder,
   multiline,
+  variant,
   onCommit,
 }: {
   label: string;
   value: string;
   placeholder?: string;
   multiline?: boolean;
+  /** #56 (§4.20): input family — 'group' for paths, 'desc' for face
+      descriptions; Name/Note keep the default look */
+  variant?: "group" | "desc";
   onCommit: (v: string) => void;
 }) {
   const [v, setV] = useState(value);
@@ -35,13 +39,15 @@ function Editable({
   const commit = () => {
     if (v !== value) onCommit(v);
   };
+  const cls = variant === "group" ? "input-group" : variant === "desc" ? "input-desc" : undefined;
   return (
     <label className="dp-field">
       <span>{label}</span>
       {multiline ? (
-        <textarea rows={2} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} placeholder={placeholder} />
+        <textarea rows={2} className={cls} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} placeholder={placeholder} />
       ) : (
         <input
+          className={cls}
           value={v}
           onChange={(e) => setV(e.target.value)}
           onBlur={commit}
@@ -85,6 +91,7 @@ function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, o
         label="Group"
         value={person.groups[0] ?? ""}
         placeholder="e.g. family|lombards (empty = ungrouped)"
+        variant="group"
         onCommit={(v) => onGroup(person.id, v)}
       />
       <Editable

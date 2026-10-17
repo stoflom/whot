@@ -123,7 +123,7 @@ export default function FaceCard({
         <span className="face-conf">{Math.round(face.confidence * 100)}%</span>
       </div>
       <input
-        className="face-desc"
+        className="face-desc input-desc"
         placeholder="desc e.g. beard|glasses"
         value={desc}
         onChange={(e) => setDesc(e.target.value)}

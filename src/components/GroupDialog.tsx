@@ -33,6 +33,7 @@ export default function GroupDialog({
           Group
           <input
             autoFocus
+            className="input-group"
             value={path}
             onChange={(e) => setPath(e.target.value)}
             placeholder="e.g. family|lombards (empty = ungrouped)"

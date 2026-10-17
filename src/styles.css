@@ -9,6 +9,9 @@
   --ok: #3fb950;
   --warn: #d9a53a;
   --bad: #f0605a;
+  /* input-family tint for face descriptions (#56, §4.20) — clear of the
+     status colours above and of --accent */
+  --tag: #a78bfa;
   --radius: 8px;
   font-size: 14px;
 }
@@ -51,6 +54,22 @@ input, textarea {
   width: 100%;
 }
 input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+/* input families (#56, §4.20): group paths (structural, hierarchical)
+   vs face descriptions (free-form tags) — frame *style* carries the
+   distinction (solid vs dashed) for colour-blind users, the tints only
+   reinforce it */
+.input-group {
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.input-group:focus { border-color: var(--accent); }
+.input-desc {
+  background: color-mix(in srgb, var(--tag) 9%, var(--bg));
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--tag) 55%, var(--border));
+}
+.input-desc:focus { border-color: var(--tag); }
 
 .dim { color: var(--dim); }
 .center-msg { display: flex; align-items: center; justify-content: center; height: 100%; }

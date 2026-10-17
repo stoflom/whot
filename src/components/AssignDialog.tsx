@@ -32,7 +32,7 @@ export default function AssignDialog({ count, defaultName, defaultGroup, onSubmi
         </label>
         <label>
           Group
-          <input value={group} onChange={(e) => setGroup(e.target.value)}
+          <input value={group} className="input-group" onChange={(e) => setGroup(e.target.value)}
             placeholder="e.g. family|lombards (empty = ungrouped)"
             onKeyDown={(e) => e.key === "Enter" && name.trim() && onSubmit(name, group)} />
         </label>

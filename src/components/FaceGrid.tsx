@@ -72,7 +72,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             placeholder="person name"
           />
           <input
-            className="rule-group"
+            className="rule-group input-group"
             value={group}
             onChange={(e) => setGroup(e.target.value)}
             placeholder="group e.g. family|lombards"
