@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.16** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.17** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -132,11 +132,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Face-card name input** (#29): the name in a face card's `face-meta`
   row is a text input like the description field below it; committing it
   **assigns that person** — an existing person is merged into, a new one is
-  created (`assign_person` semantics, never a collision error) — and a
+  created (`assign_person` semantics, never a collision error). A
   small dialog asks whether to apply it to **just this face** or the
   **whole group** of the face's current person (§4.1 move/rename-in-place,
-  group path preserved for the current person on a whole-group rename).
-  The dialog is **skipped when it cannot disambiguate** (§1.10): a
+  group path preserved for the current person on a whole-group rename)
+  — but is **skipped whenever the card is part of an active selection
+  of any size** (#59): the selection *is* the disambiguation and the
+  assign applies to it directly (§4.14 scope). The dialog is also
+  **skipped when it cannot disambiguate** (§1.10): a
   single-face person or an unowned face assigns directly. The full
   derived label stays in the tooltip; the detail pane's rename routes
   through the same rename-merge helper (§4.1).
@@ -356,10 +359,15 @@ Double-click opens the full-image focus mode (§3).
     (disabled) whenever the effective scope would exceed one face, never
     silently applied to a single card. **Per-card inputs (name,
     description) honour the same scope** (#58): editing one on a card that
-    is part of a multi-selection applies the change to the **whole
+    is part of a selection applies the change to the **whole
     selection**, following the general GUI rule that whenever a
-    multi-selection is active, edits apply to the whole set — for all
+    selection is active, edits apply to the whole set — for all
     editable properties, unless an action is explicitly single-item.
+    For the name input this also means the #29 disambiguation dialog is
+    suppressed while the card is selected: an active selection — **of
+    any size, including a single face** (#59) — is itself the answer to
+    "just this face or whole group?", so the dialog appears only for
+    cards outside any selection.
 15. **Split-pane lifecycle** (#51/#52) ⇒ the double-click image split
     closes automatically when the selection moves to a **different**
     image: a tree-row select (plain, ctrl/cmd or shift), person stepping
