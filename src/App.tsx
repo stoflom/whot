@@ -722,6 +722,11 @@ export default function App() {
             selectedIds={selPersons}
             onRemovePersons={doRemovePersons}
             onRename={renameOrMerge}
+            // #50 (§4.16) — group management: membership only, faces untouched
+            onRenameGroup={(oldPath, newPath) => mutate(() => api.renameGroup(oldPath, newPath))}
+            onDeleteGroup={(path) => mutate(() => api.deleteGroup(path))}
+            onMovePersons={(ids, path) => mutate(() => api.movePersonsToGroup(ids, path))}
+            onError={setError}
             onSelectPending={(id) => {
               const ids = snap.faces
                 .filter((f) => f.person_id === id && f.link_status === "provisional")

@@ -99,6 +99,16 @@ export const setPersonGroup = (personId: number, group: string) =>
   invoke("set_person_group", { personId, group });
 export const setPersonNote = (personId: number, note: string) =>
   invoke("set_person_note", { personId, note });
+/** §4.16 (#50) — group membership: replace each person's group path
+    (empty ⇒ Ungrouped); faces/statuses untouched */
+export const movePersonsToGroup = (personIds: number[], group: string) =>
+  invoke("move_persons_to_group", { personIds, group });
+/** §4.16 (#50) — rename/move a branch: rewrite the path prefix of every
+    person inside it (sub-branches follow); empty new ⇒ subtree to Ungrouped */
+export const renameGroup = (oldPath: string, newPath: string) =>
+  invoke("rename_group", { oldPath, newPath });
+/** §4.16 (#50) — delete a branch: members (incl. sub-branches) become Ungrouped */
+export const deleteGroup = (path: string) => invoke("delete_group", { path });
 /** §4.13 (#35) — reject + detach faces, delete the person(s); no undo */
 export const removePersons = (personIds: number[]) =>
   invoke("remove_persons", { personIds });

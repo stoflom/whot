@@ -972,6 +972,118 @@ pub fn set_person_group(paths: &Paths, person_id: i64, path: &str) -> Result<()>
     Ok(())
 }
 
+/// §4.16 (#50) — group paths are normalised (#42) and `Ungrouped` is
+/// reserved: it is the tree's pseudo-group for persons with no group row,
+/// so a literal segment of that name would render as (and merge into) the
+/// virtual branch. `Unknown` stays an ordinary branch name.
+fn validate_group_path(path: &str) -> Result<()> {
+    if path.split('|').any(|s| s == "Ungrouped") {
+        bail!("'Ungrouped' is a reserved group name");
+    }
+    Ok(())
+}
+
+/// Path-or-subtree match on segment boundaries: `path = ?` or
+/// `path LIKE ?|…%` without LIKE's wildcard pitfalls (segments may contain
+/// `%`/`_`). Character-based, so multi-byte segments are safe.
+const BRANCH_OF: &str = "(path = ?1 OR (substr(path, 1, length(?1) + 1) = ?1 || '|'))";
+
+/// §4.16 (#50) — rename/move a group branch: rewrite the path prefix of
+/// every person whose group path is inside the branch (the branch itself
+/// or any sub-branch). `new_path` empty ⇒ the whole subtree drops to
+/// Ungrouped (rows deleted). A branch cannot be moved inside itself.
+/// Membership only — faces, names, statuses, primaries untouched.
+pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()> {
+    let old = normalize_group_path(old_path);
+    let new = normalize_group_path(new_path);
+    if old.is_empty() {
+        bail!("no group to rename");
+    }
+    validate_group_path(&new)?;
+    if new == old || new.starts_with(&format!("{old}|")) {
+        bail!("a branch cannot be moved inside itself");
+    }
+    let mut con = connect(paths)?;
+    let tx = con.transaction()?;
+    let n = if new.is_empty() {
+        tx.execute(
+            &format!("DELETE FROM person_groups WHERE {BRANCH_OF}"),
+            params![old],
+        )?
+    } else {
+        tx.execute(
+            &format!(
+                "UPDATE person_groups SET path = ?2 || substr(path, length(?1) + 1)
+                  WHERE {BRANCH_OF}"
+            ),
+            params![old, new],
+        )?
+    };
+    if n == 0 {
+        bail!("no persons in that group");
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// §4.16 (#50) — delete a group branch: the `person_groups` rows of the
+/// whole subtree go away, so every person inside (incl. sub-branches)
+/// becomes Ungrouped. Structure below the branch is not preserved —
+/// re-group via move/rename. Faces, names, statuses untouched.
+pub fn delete_group(paths: &Paths, path: &str) -> Result<()> {
+    let path = normalize_group_path(path);
+    if path.is_empty() {
+        bail!("no group to delete");
+    }
+    let mut con = connect(paths)?;
+    let tx = con.transaction()?;
+    let n = tx.execute(
+        &format!("DELETE FROM person_groups WHERE {BRANCH_OF}"),
+        params![path],
+    )?;
+    if n == 0 {
+        bail!("no persons in that group");
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// §4.16 (#50) — move persons to a (possibly new) group: each person's
+/// group path is replaced with the target; empty ⇒ Ungrouped. Works for
+/// any persons, wherever they live (incl. Unknown/Ungrouped). Faces,
+/// names, statuses, primaries untouched.
+pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> Result<()> {
+    let ids: HashSet<i64> = person_ids.iter().copied().collect();
+    if ids.is_empty() {
+        bail!("no persons selected");
+    }
+    let path = normalize_group_path(group);
+    validate_group_path(&path)?;
+    let mut con = connect(paths)?;
+    let tx = con.transaction()?;
+    let mut moved = 0;
+    for pid in ids {
+        let exists: i64 =
+            tx.query_row("SELECT COUNT(*) FROM persons WHERE id = ?", params![pid], |r| r.get(0))?;
+        if exists == 0 {
+            continue;
+        }
+        tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
+        if !path.is_empty() {
+            tx.execute(
+                "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?, ?)",
+                params![pid, path],
+            )?;
+        }
+        moved += 1;
+    }
+    if moved == 0 {
+        bail!("none of the selected persons exist any more");
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<()> {
     let con = connect(paths)?;
     con.execute(

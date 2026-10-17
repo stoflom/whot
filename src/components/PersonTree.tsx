@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
+import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
+import GroupDialog from "./GroupDialog";
 
 interface TreeNode {
   name: string;
@@ -83,6 +85,14 @@ interface Props {
   onSelectPending?: (id: number) => void;
   /** remove persons — row menu + branch bulk menus (§4.13, #35) */
   onRemovePersons: (ids: number[]) => void;
+  /** #50 (§4.16) — rename/move a whole branch (prefix rewrite) */
+  onRenameGroup: (oldPath: string, newPath: string) => void;
+  /** #50 (§4.16) — delete a branch; its persons fall to Ungrouped */
+  onDeleteGroup: (path: string) => void;
+  /** #50 (§4.16) — move persons (or a selection) into a group */
+  onMovePersons: (ids: number[], path: string) => void;
+  /** drag-drop validation errors surface as toast */
+  onError?: (msg: string) => void;
 }
 
 function PersonRow({
@@ -95,6 +105,8 @@ function PersonRow({
   onRename,
   onRenameCancel,
   onContextMenu,
+  onDragStart,
+  onDragEnd,
 }: {
   person: Person;
   selected: boolean;
@@ -105,6 +117,9 @@ function PersonRow({
   onRename: (id: number, name: string) => void;
   onRenameCancel: () => void;
   onContextMenu: (e: ReactMouseEvent) => void;
+  /** #50: drag the person — or the whole selection when part of one */
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
 }) {
   const img = useFaceImage(person.primary_face_id);
   const [name, setName] = useState(person.name);
@@ -120,6 +135,9 @@ function PersonRow({
       onClick={onSelect}
       onDoubleClick={onStartRename}
       onContextMenu={onContextMenu}
+      draggable={!renaming}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       title={`${person.groups.join(", ") || "Ungrouped"} — double-click to rename`}
     >
       <span className="tree-avatar">
@@ -157,10 +175,31 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons }: Props) {
+export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onError }: Props) {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: number } | null>(null);
-  const [branchMenu, setBranchMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null);
+  const [branchMenu, setBranchMenu] = useState<{
+    x: number;
+    y: number;
+    node: TreeNode;
+    groupPath: string;      // '|' path — branch ops live in that namespace
+    virtual: boolean;       // Unknown/Ungrouped are display-only (#50)
+  } | null>(null);
+  // #50 (§4.16) — group dialogs: rename/move a branch, move persons
+  const [groupDialog, setGroupDialog] = useState<
+    | { kind: "rename-branch"; path: string }
+    | { kind: "move-persons"; ids: number[] }
+    | null
+  >(null);
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<{
+    path: string;
+    count: number;
+  } | null>(null);
+  // #50 — drag-and-drop state: what is dragged, and the hovered branch
+  const dragRef = useRef<
+    { kind: "persons"; ids: number[] } | { kind: "branch"; path: string } | null
+  >(null);
+  const [dropPath, setDropPath] = useState<string | null>(null); // '' = Ungrouped node
   const tree = useMemo(() => buildTree(persons), [persons]);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -212,7 +251,61 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     : [];
   const branchIds = branchMenu ? collectSubtreeIds(branchMenu.node) : [];
 
-  const renderNode = (node: TreeNode, depth: number, path: string) => {
+  // ------------------------------------------------------------ #50 drag & drop (§4.16)
+
+  /** virtual root nodes are display-only; every other branch is a real
+      group path that ops and drops act on */
+  const isVirtual = (name: string, depth: number) =>
+    depth === 0 && (name === "Unknown" || name === "Ungrouped");
+
+  const startDragPerson = (e: React.DragEvent, id: number) => {
+    // dragging a selected row moves the whole selection; otherwise just it
+    const ids = selectedIds.has(id) && selectedIds.size > 1 ? [...selectedIds] : [id];
+    dragRef.current = { kind: "persons", ids };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", `${ids.length} person(s)`); // firefox needs data
+  };
+  const startDragBranch = (e: React.DragEvent, groupPath: string) => {
+    dragRef.current = { kind: "branch", path: groupPath };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", groupPath);
+  };
+  const clearDrag = () => {
+    dragRef.current = null;
+    setDropPath(null);
+  };
+  const acceptDrop = (e: React.DragEvent, target: string) => {
+    // target '' = the Ungrouped node: persons drop ungrouped, a branch
+    // re-homes at the top level (its leaf name only)
+    e.preventDefault();
+    e.stopPropagation();
+    const d = dragRef.current;
+    clearDrag();
+    if (!d) return;
+    if (d.kind === "persons") {
+      onMovePersons(d.ids, target);
+      return;
+    }
+    const src = d.path;
+    if (target) {
+      if (target === src || target.startsWith(`${src}|`)) {
+        onError?.("a branch cannot be moved inside itself"); // cycle guard
+        return;
+      }
+    }
+    const leaf = src.split("|").pop() ?? src;
+    const dest = target ? `${target}|${leaf}` : leaf;
+    if (dest !== src) onRenameGroup(src, dest);
+  };
+  const dragOver = (e: React.DragEvent, target: string) => {
+    if (!dragRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    if (dropPath !== target) setDropPath(target);
+  };
+
+  const renderNode = (node: TreeNode, depth: number, path: string, groupPath: string) => {
     if (!subtreeMatch(node)) return null;
     const personsHere = node.personIds
       .map((id) => byId.get(id))
@@ -222,23 +315,35 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
       // root: just render children
       return (
         <div key={path || "root"}>
-          {children.map((c) => renderNode(c, 0, c.name))}
+          {children.map((c) => renderNode(c, 0, c.name, c.name))}
         </div>
       );
     }
+    const virtual = isVirtual(node.name, depth);
+    // drop target for this node: '' = Ungrouped (virtual) — no group path
+    const dropTarget = virtual && node.name === "Ungrouped" ? "" : groupPath;
     const isCollapsed = collapsed.has(path) && f === "";
     const collapsible = node.children.length > 0 || node.personIds.length > 0;
     return (
       <div key={path}>
         <div
-          className="tree-node"
+          className={`tree-node${dropPath === dropTarget ? " drop-target" : ""}`}
           style={{ paddingLeft: 8 + depth * 14 }}
           onClick={() => (collapsible ? toggle(path) : undefined)}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            setBranchMenu({ x: e.clientX, y: e.clientY, node });
+            setBranchMenu({ x: e.clientX, y: e.clientY, node, groupPath, virtual });
           }}
+          draggable={!virtual}
+          onDragStart={(e) => !virtual && startDragBranch(e, groupPath)}
+          onDragEnd={clearDrag}
+          onDragOver={(e) => dragOver(e, dropTarget)}
+          onDragLeave={(e) => {
+            e.stopPropagation();
+            if (dropPath === dropTarget) setDropPath(null);
+          }}
+          onDrop={(e) => acceptDrop(e, dropTarget)}
         >
           {collapsible ? (
             <span className="tree-arrow">{isCollapsed ? "▸" : "▾"}</span>
@@ -273,10 +378,12 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                     e.stopPropagation();
                     setMenu({ x: e.clientX, y: e.clientY, id: p.id });
                   }}
+                  onDragStart={(e) => startDragPerson(e, p.id)}
+                  onDragEnd={clearDrag}
                 />
               ))}
             </div>
-            {children.map((c) => renderNode(c, depth + 1, `${path}/${c.name}`))}
+            {children.map((c) => renderNode(c, depth + 1, `${path}/${c.name}`, groupPath ? `${groupPath}|${c.name}` : c.name))}
           </>
         )}
       </div>
@@ -319,7 +426,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
       <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}>
         ▦ Review — {reviewCount} pending
       </button>
-      {renderNode(tree, 0, "")}
+      {renderNode(tree, 0, "", "")}
       {menu && (
         <ContextMenu
           menu={{
@@ -341,6 +448,14 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
               {
                 items: [
                   {
+                    // #50: acts on the multi-selection, like Remove does
+                    label:
+                      menuTargets.length > 1
+                        ? `Move ${menuTargets.length} persons to group…`
+                        : "Move to group…",
+                    onClick: () => setGroupDialog({ kind: "move-persons", ids: menuTargets }),
+                  },
+                  {
                     label:
                       menuTargets.length > 1
                         ? `Remove ${menuTargets.length} persons`
@@ -361,6 +476,32 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
             x: branchMenu.x,
             y: branchMenu.y,
             groups: [
+              // #50 (§4.16): real branches can be renamed/moved and
+              // deleted; the virtual Unknown/Ungrouped nodes cannot
+              ...(branchMenu.virtual
+                ? []
+                : [
+                    {
+                      title: "Group",
+                      items: [
+                        {
+                          label: "Rename/move group…",
+                          onClick: () =>
+                            setGroupDialog({ kind: "rename-branch", path: branchMenu.groupPath }),
+                        },
+                        {
+                          label: "Delete group",
+                          onClick: () =>
+                            setConfirmDeleteGroup({
+                              path: branchMenu.groupPath,
+                              count: branchIds.length,
+                            }),
+                          disabled: branchIds.length === 0,
+                          danger: true,
+                        },
+                      ],
+                    },
+                  ]),
               {
                 items: [
                   {
@@ -377,6 +518,59 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
             ],
           }}
           onClose={() => setBranchMenu(null)}
+        />
+      )}
+      {groupDialog && (
+        <GroupDialog
+          title={
+            groupDialog.kind === "rename-branch"
+              ? "Rename / move group"
+              : groupDialog.ids.length > 1
+                ? `Move ${groupDialog.ids.length} persons to a group`
+                : "Move person to a group"
+          }
+          body={
+            groupDialog.kind === "rename-branch"
+              ? "The whole branch — including sub-branches — follows to the new path. " +
+                "Empty = move everything to Ungrouped."
+            : "Replaces each person's group path (empty = ungrouped). " +
+              "Faces and names are untouched."
+          }
+          defaultPath={
+            groupDialog.kind === "rename-branch"
+              ? groupDialog.path
+              : (byId.get(groupDialog.ids[0])?.groups[0] ?? "")
+          }
+          submitLabel={groupDialog.kind === "rename-branch" ? "move group" : "move"}
+          onSubmit={(path) => {
+            const d = groupDialog;
+            setGroupDialog(null);
+            if (d.kind === "rename-branch") {
+              // compare normalised (#42): whitespace-only edits are a no-op
+              const norm = path.split("|").map((s) => s.trim()).filter(Boolean).join("|");
+              if (norm !== d.path) onRenameGroup(d.path, norm);
+            } else {
+              onMovePersons(d.ids, path);
+            }
+          }}
+          onCancel={() => setGroupDialog(null)}
+        />
+      )}
+      {confirmDeleteGroup && (
+        <ConfirmDialog
+          title={`Delete group '${confirmDeleteGroup.path}'`}
+          body={
+            `${confirmDeleteGroup.count} person(s) — including any sub-branches — ` +
+            "move to Ungrouped. Faces, names and statuses are untouched."
+          }
+          confirmLabel="delete group"
+          danger
+          onConfirm={() => {
+            const d = confirmDeleteGroup;
+            setConfirmDeleteGroup(null);
+            onDeleteGroup(d.path);
+          }}
+          onCancel={() => setConfirmDeleteGroup(null)}
         />
       )}
     </div>

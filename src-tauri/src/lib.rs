@@ -122,6 +122,28 @@ fn set_person_note(state: State<AppState>, person_id: i64, note: String) -> Resu
 }
 
 /// §4.13 (#35) — remove persons: reject + detach their faces, delete the row.
+/// §4.16 (#50) — move persons to a group (membership only).
+#[tauri::command]
+fn move_persons_to_group(
+    state: State<AppState>,
+    person_ids: Vec<i64>,
+    group: String,
+) -> Result<(), String> {
+    db::move_persons_to_group(state.paths()?, &person_ids, &group).map_err(|e| e.to_string())
+}
+
+/// §4.16 (#50) — rename/move a group branch (path-prefix rewrite).
+#[tauri::command]
+fn rename_group(state: State<AppState>, old_path: String, new_path: String) -> Result<(), String> {
+    db::rename_group(state.paths()?, &old_path, &new_path).map_err(|e| e.to_string())
+}
+
+/// §4.16 (#50) — delete a group branch (members fall to Ungrouped).
+#[tauri::command]
+fn delete_group(state: State<AppState>, path: String) -> Result<(), String> {
+    db::delete_group(state.paths()?, &path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn remove_persons(state: State<AppState>, person_ids: Vec<i64>) -> Result<(), String> {
     db::remove_persons(state.paths()?, &person_ids).map_err(|e| e.to_string())
@@ -170,6 +192,9 @@ pub fn run() {
             set_person_name,
             set_person_group,
             set_person_note,
+            move_persons_to_group,
+            rename_group,
+            delete_group,
             remove_persons,
             add_refcrop,
             remove_refcrop,
