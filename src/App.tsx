@@ -65,6 +65,9 @@ export default function App() {
   };
   const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
+  // #53 (§4.17): most recently selected card — Ctrl-G's fallback target
+  // when nothing is hovered
+  const lastSelRef = useRef<number | null>(null);
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
   const [faceAssign, setFaceAssign] = useState<{
     faceId: number;
@@ -206,16 +209,21 @@ export default function App() {
     setSel((prev) => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id);
-      else n.add(id);
+      else {
+        n.add(id);
+        lastSelRef.current = id;
+      }
       return n;
     });
   };
-  const toggleMany = (ids: number[], on: boolean) =>
+  const toggleMany = (ids: number[], on: boolean) => {
+    if (on && ids.length > 0) lastSelRef.current = ids[ids.length - 1];
     setSel((prev) => {
       const n = new Set(prev);
       ids.forEach((i) => (on ? n.add(i) : n.delete(i)));
       return n;
     });
+  };
 
   // ------------------------------------------------------------ mutations
 
@@ -617,6 +625,19 @@ export default function App() {
       )
         return;
       if (dialogFaceIds != null || faceAssign != null || confirmRemove != null) return;
+      // #53 (§4.17): Ctrl-G toggles the whole section — the hovered
+      // card's, else the most recently selected card's; preventDefault
+      // so webkit cannot steal the chord
+      if ((e.ctrlKey || e.metaKey) && (e.key === "g" || e.key === "G")) {
+        e.preventDefault();
+        const targetId = hoverId ?? lastSelRef.current;
+        if (targetId == null) return;
+        const section = sections.find((s) => s.faceIds.includes(targetId));
+        if (!section || section.faceIds.length === 0) return;
+        const all = section.faceIds.every((id) => sel.has(id));
+        toggleMany(section.faceIds, !all);
+        return;
+      }
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         stepPerson(-1);
@@ -627,7 +648,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove]);
+  }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sel]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 

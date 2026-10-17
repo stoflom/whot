@@ -74,6 +74,17 @@ export default function FaceCard({
       onMouseLeave={() => onHover(null)}
       onDoubleClick={() => onOpen(face.id)}
       onContextMenu={(e) => onContextMenu(face.id, e)}
+      // #53 (§4.17): ctrl/cmd-click toggles the selection — the tree's
+      // idiom mirrored on cards; plain click stays inert so
+      // double-click-to-open is unaffected
+      onClick={(e) => {
+        // the checkbox has its own toggle — don't double-fire on bubbled clicks
+        if ((e.target as HTMLElement).closest(".face-check")) return;
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          onToggle(face.id);
+        }
+      }}
     >
       <label className="face-check">
         <input

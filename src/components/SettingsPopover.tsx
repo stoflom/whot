@@ -52,6 +52,8 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
           <h4>Keyboard</h4>
           <ul>
             <li><b>←</b> / <b>→</b> — previous / next person (tree order)</li>
+            <li><b>Ctrl-G</b> — select/deselect the whole section (hovered or last-selected card)</li>
+            <li><b>Ctrl-click</b> — toggle a face card in the selection</li>
             <li><b>Esc</b> — close split, dialog or context menu</li>
             <li><b>Enter</b> — commit an edited field</li>
             <li>face-card name — assign that person (asks: this face or whole group)</li>
