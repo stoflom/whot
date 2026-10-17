@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.15** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.16** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -354,8 +354,12 @@ Double-click opens the full-image focus mode (§3).
     entry point. Actions that cannot apply to more than one face —
     **★ set as primary** and **◈ add as reference** — are greyed out
     (disabled) whenever the effective scope would exceed one face, never
-    silently applied to a single card. Per-card inputs (name, description)
-    always stay single-face.
+    silently applied to a single card. **Per-card inputs (name,
+    description) honour the same scope** (#58): editing one on a card that
+    is part of a multi-selection applies the change to the **whole
+    selection**, following the general GUI rule that whenever a
+    multi-selection is active, edits apply to the whole set — for all
+    editable properties, unless an action is explicitly single-item.
 15. **Split-pane lifecycle** (#51/#52) ⇒ the double-click image split
     closes automatically when the selection moves to a **different**
     image: a tree-row select (plain, ctrl/cmd or shift), person stepping
