@@ -125,7 +125,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 
 .person-tree { display: flex; flex-direction: column; gap: 0.25rem; }
 .tree-filter { margin-bottom: 0.4rem; }
-.tree-review { text-align: left; margin-bottom: 0.3rem; }
+.tree-review { text-align: left; margin-bottom: 0; }
 
 .tree-node {
   display: flex;
@@ -565,8 +565,27 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .film-roll .face-card { flex: 0 0 150px; }
 
-/* tree roll up/down controls (#24) */
-.tree-tools { display: flex; align-items: center; gap: 2px; margin-bottom: 0.4rem; }
+/* tree header (#78): rolls + filter + Review pinned flush to the top of
+   the scrolling left pane. top: -0.5rem cancels .left's 0.5rem padding-top
+   so no sliver of passing text shows above the pinned block; the negative
+   side margins span the pane's side padding, and every spacing lives in
+   the header's own padding (margins would be transparent over passing
+   content) */
+.tree-header {
+  position: sticky;
+  top: -0.5rem;
+  z-index: 5;
+  margin: -0.5rem -0.5rem 0;
+  padding: 0.5rem 0.5rem 0.3rem;
+  background: var(--panel);
+}
+/* tree roll up/down controls (#24), rolls left + filter right (#78) */
+.tree-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 0.3rem;
+}
 .tree-tools .tree-filter { flex: 1; margin-bottom: 0; min-width: 0; }
 .tree-tools button { font-size: 0.9rem; padding: 0.1rem 0.45rem; flex: none; }
 

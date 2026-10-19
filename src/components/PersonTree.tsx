@@ -437,30 +437,32 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
 
   return (
     <div className="person-tree">
-      <div className="tree-tools">
-        <input
-          className="tree-filter"
-          placeholder="filter by name or group…"
-          title="Filter the tree by person name or group"
-          value={filter}
-          onChange={(e) => onFilter(e.target.value)}
-        />
-        <button
-          className="ghost"
-          onClick={rollUpAll}
-          disabled={f !== ""}
-          title={f !== "" ? "Clear the search filter first" : "Collapse (roll up) all branches"}
-        >
-          ⌃
-        </button>
-        <button className="ghost" onClick={rollDownAll} title="Expand (roll down) all branches">
-          ⌄
+      <div className="tree-header">
+        <div className="tree-tools">
+          <button
+            className="ghost"
+            onClick={rollUpAll}
+            disabled={f !== ""}
+            title={f !== "" ? "Clear the search filter first" : "Collapse (roll up) all branches"}
+          >
+            ⌃
+          </button>
+          <button className="ghost" onClick={rollDownAll} title="Expand (roll down) all branches">
+            ⌄
+          </button>
+          <input
+            className="tree-filter"
+            placeholder="filter by name or group…"
+            title="Filter the tree by person name or group"
+            value={filter}
+            onChange={(e) => onFilter(e.target.value)}
+          />
+        </div>
+        <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}
+          title="Open the Review view — all unreviewed (provisional) faces, UnknownN first">
+          ▦ Review — {reviewCount} pending
         </button>
       </div>
-      <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}
-        title="Open the Review view — all unreviewed (provisional) faces, UnknownN first">
-        ▦ Review — {reviewCount} pending
-      </button>
       {renderNode(tree, 0, "", "")}
       {menu && (
         <ContextMenu
