@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.3** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -469,7 +469,10 @@ Double-click opens the full-image focus mode (§3).
       wholesale. User-entered values keep normal caret behaviour.
       Applied everywhere such a value can appear: the face-card name
       input, the tree inline rename, the detail-pane Name field and the
-      AssignDialog's pre-filled name.
+      AssignDialog's pre-filled name. **Group-path inputs** go further
+      and always select all on focus, user-entered value or not — a
+      group path is a structural value that is replaced wholesale,
+      never edited in place (#67 follow-up, confirmed in testing).
     - **Name typeahead**: the AssignDialog and the detail-pane Name
       field suggest existing persons (substring match, max 8, `UnknownN`
       names excluded — the point is to reach a real name; each row shows
