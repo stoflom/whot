@@ -111,7 +111,7 @@ export default function FaceCard({
           placeholder="person name"
           title={
             scopeMulti
-              ? `Assigning applies to all ${selSize} selected faces (#58)`
+              ? `Assigning applies to all ${selSize} selected faces`
               : face.name
           }
           onChange={(e) => setPname(e.target.value)}
@@ -133,7 +133,7 @@ export default function FaceCard({
         // editing here updates every selected face, say so up front
         title={
           scopeMulti
-            ? `Editing applies to all ${selSize} selected faces (#58)`
+            ? `Editing applies to all ${selSize} selected faces`
             : undefined
         }
         value={desc}
@@ -171,7 +171,9 @@ export default function FaceCard({
         </button>
         <button
           title={
-            (face.link_status === "rejected" ? "Un-reject (accept) face" : "Reject face") +
+            (face.link_status === "rejected"
+              ? "Un-reject (accept) face — back to the accepted default"
+              : "Reject face — only rejected faces get a ✗ marker; accepted is the default") +
             scopeLabel
           }
           className={face.link_status === "rejected" ? "reject" : ""}

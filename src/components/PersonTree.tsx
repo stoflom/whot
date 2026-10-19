@@ -180,7 +180,7 @@ function PersonRow({
         <span className="tree-name">{person.name}</span>
       )}
       {person.counts.provisional > 0 && (
-        <span className="tree-count prov" title="provisional faces">
+        <span className="tree-count prov" title="provisional (new, unreviewed) faces">
           {person.counts.provisional}
         </span>
       )}
@@ -441,11 +441,11 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           className="ghost"
           onClick={rollUpAll}
           disabled={f !== ""}
-          title={f !== "" ? "clear the filter first" : "roll up all branches"}
+          title={f !== "" ? "Clear the search filter first" : "Collapse (roll up) all branches"}
         >
           ⌃
         </button>
-        <button className="ghost" onClick={rollDownAll} title="roll down all branches">
+        <button className="ghost" onClick={rollDownAll} title="Expand (roll down) all branches">
           ⌄
         </button>
       </div>
