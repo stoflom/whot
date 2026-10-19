@@ -113,6 +113,7 @@ export default function NameTypeahead({
           setHi(-1);
         }}
         onFocus={selectAllIfAuto}
+        onClick={selectAllIfAuto}
         onKeyDown={onKeyDown}
         onBlur={onBlur}
       />

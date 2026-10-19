@@ -167,7 +167,10 @@ function PersonRow({
           value={name}
           onChange={(e) => setName(e.target.value)}
           onFocus={selectAllIfAuto} // #67: UnknownN is replaced wholesale
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            selectAllIfAuto(e);
+          }}
           onBlur={commit}
           onKeyDown={(e) => {
             e.stopPropagation();

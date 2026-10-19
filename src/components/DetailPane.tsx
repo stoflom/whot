@@ -68,6 +68,7 @@ function Editable({
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
           onFocus={selectAllOnFocus ? selectAll : undefined}
+          onClick={selectAllOnFocus ? selectAll : undefined}
           title={title}
           placeholder={placeholder}
         />
