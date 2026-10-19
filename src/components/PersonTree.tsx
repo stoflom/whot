@@ -166,6 +166,7 @@ function PersonRow({
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
+          title="Rename — an existing person merges into (Enter commits, Esc cancels)"
           onFocus={selectAllIfAuto} // #67: UnknownN is replaced wholesale
           onClick={(e) => {
             e.stopPropagation();
@@ -439,6 +440,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
         <input
           className="tree-filter"
           placeholder="filter by name or group…"
+          title="Filter the tree by person name or group"
           value={filter}
           onChange={(e) => onFilter(e.target.value)}
         />
@@ -454,7 +456,8 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           ⌄
         </button>
       </div>
-      <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}>
+      <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}
+        title="Open the Review view — all unreviewed (provisional) faces, UnknownN first">
         ▦ Review — {reviewCount} pending
       </button>
       {renderNode(tree, 0, "", "")}

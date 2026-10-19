@@ -62,6 +62,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
         <label className="select-all" title="Select whole group">
           <input
             type="checkbox"
+            title="Select the whole group"
             checked={allSelected}
             onChange={(e) => grid.onToggleMany(section.faceIds, e.target.checked)}
           />
@@ -75,6 +76,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="person name"
+            title="Name to assign — an existing person merges into; applies to the selected faces of this group (whole group if none selected)"
           />
           <input
             className="rule-group input-group"

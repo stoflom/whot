@@ -108,6 +108,7 @@ export default function FaceCard({
       <label className="face-check">
         <input
           type="checkbox"
+          title="Select — click toggles, Shift-click selects a range"
           checked={selected}
           onChange={() => onToggle(face.id)}
         />
