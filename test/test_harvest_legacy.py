@@ -205,24 +205,22 @@ class ParserTests(unittest.TestCase):
     def test_mwg_element_form(self):
         rows = list(hl.sidecar_face_data(MWG_ELEMENT))
         self.assertEqual(len(rows), 1)
-        kind, name, x, y, w, h, unit, iw, ih = rows[0]
-        self.assertEqual((kind, name), ("mwgrs", "Winnie Pelser"))
+        name, x, y, w, h, unit, iw, ih = rows[0]
+        self.assertEqual(name, "Winnie Pelser")
         self.assertEqual((x, y, w, h), (0.1, 0.2, 0.3, 0.4))
         self.assertEqual((unit, iw, ih), ("normalized", 4000, 3000))
 
     def test_mwg_attribute_form(self):
-        kind, name, x, y, w, h, unit, iw, ih = \
+        name, x, y, w, h, unit, iw, ih = \
             list(hl.sidecar_face_data(MWG_ATTRIBUTE))[0]
-        self.assertEqual((kind, name, unit), ("mwgrs", "Koos Kat", "normalized"))
+        self.assertEqual((name, unit), ("Koos Kat", "normalized"))
         self.assertEqual((x, y, w, h), (0.5, 0.5, 0.25, 0.25))
         self.assertIsNone(iw)
 
-    def test_mpri_presence_has_no_geometry(self):
-        rows = [r for r in hl.sidecar_face_data(MPRI)]
-        self.assertEqual(len(rows), 1)
-        kind, name, *rest = rows[0]
-        self.assertEqual((kind, name), ("mpri", "Barry Pelser"))
-        self.assertTrue(all(v is None for v in rest))
+    def test_mpri_not_captured(self):
+        """v1.1/§9: person presence without a rectangle is never harvested,
+        even when the sidecar carries MPRI display names."""
+        self.assertEqual(list(hl.sidecar_face_data(MPRI)), [])
 
     def test_non_face_type_skipped(self):
         text = MWG_ELEMENT.replace("<mwg-rs:Type>Face</mwg-rs:Type>",
@@ -290,8 +288,7 @@ class StagingLifecycleTests(unittest.TestCase):
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertEqual(tables, {"harvest_runs", "sources", "persons",
                                       "person_groups", "person_refs", "images",
-                                      "image_persons", "faces",
-                                      "schema_version"})
+                                      "faces", "schema_version"})
         finally:
             con.close()
 
@@ -317,16 +314,12 @@ class StagingLifecycleTests(unittest.TestCase):
         finally:
             con.close()
 
-    def test_image_person_null_path_deduped(self):
+    def test_mpri_source_refused(self):
+        """v1.1: sidecars-mpri is no longer canonical."""
         con = hl.create_staging(self.base / "s.db")
         try:
-            run_id = hl.start_run(con, ["sidecars-mpri"], {})
-            st = hl.Staging(con, run_id)
-            sid = hl.ensure_sources(con, ["sidecars-mpri"])["sidecars-mpri"]
-            iid = st.image(source_id=sid, path="/arc/a.jpg", path_origin="source")
-            pid = st.person("Barry Pelser")
-            self.assertTrue(st.image_person(iid, pid, sid))
-            self.assertFalse(st.image_person(iid, pid, sid))   # NULL-safe
+            with self.assertRaises(hl.StagingError):
+                hl.ensure_sources(con, ["sidecars-mpri"])
         finally:
             con.close()
 
@@ -336,9 +329,10 @@ class StagingLifecycleTests(unittest.TestCase):
 class EndToEndTests(HarvestFixture):
     def test_stats_and_provenance(self):
         stats = self.run_harvest()
-        # sidecars: one mwgrs face per image sidecar + one MPRI presence
+        # sidecars: one mwgrs face per image sidecar (c.PEF.xmp carries the
+        # attribute-form region); the MPRI name in a.jpg.xmp is ignored (v1.1)
         self.assertEqual(stats["faces"], 2)
-        self.assertEqual(stats["presence"], 1)
+        self.assertNotIn("presence", stats)
         # digiKam faces: a.jpg by path, b.PEF by name-size, dup.jpg ambiguous
         self.assertEqual(stats["dk_faces"], 3)
         self.assertEqual(stats["dk_faces_resolved_source"], 1)
@@ -420,8 +414,8 @@ class EndToEndTests(HarvestFixture):
         self.run_harvest()
         names = {r["name"] for r in self.q("SELECT name FROM persons")}
         self.assertIn("Winnie Pelser", names)
-        self.assertIn("Barry Pelser", names)
         self.assertIn("Koos Kat", names)
+        self.assertNotIn("Barry Pelser", names)   # MPRI presence: not captured
         refs = {(r["name"], r["kind"], r["ref"])
                 for r in self.q("SELECT p.name, pr.* FROM person_refs pr"
                                 " JOIN persons p ON p.id=pr.person_id")}
@@ -471,8 +465,8 @@ class EndToEndTests(HarvestFixture):
         # darktable-style sidecars only: a.jpg.xmp's two paths; d.xmp is a
         # Lightroom-style sidecar and its loader is disabled here
         self.assertEqual(stats["people_paths"], 2)
-        rows = self.q("SELECT s.name src FROM image_persons ip"
-                      " JOIN sources s ON s.id=ip.source_id")
+        rows = self.q("SELECT DISTINCT s.name src FROM person_groups pg"
+                      " JOIN sources s ON s.id=pg.source_id")
         self.assertEqual({r["src"] for r in rows}, {"sidecars-catsets"})
         names = {r["name"] for r in self.q("SELECT name FROM persons")}
         self.assertIn("Winnie Pelser", names)

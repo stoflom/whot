@@ -1,12 +1,14 @@
--- harvest staging DB — faces.db design §8.2 (docs/gui-design.md v2.0)
+-- harvest staging DB — faces.db design §8.2 (docs/gui-design.md v3.0, schema v1.1)
 -- Created fresh by scripts/harvest_legacy.py; never migrated, never mixed
 -- with faces.db, and the harvester's only write target (invariants H1-H4).
+-- v1.1: rectangle-less capture removed — only faces with geometry are
+-- harvested (§9 attaches persons by rectangle overlap), so the former
+-- image_persons table and the sidecars-mpri source are gone.
 --   sqlite3 harvest.db < database/harvest_schema.sql   (tests / emergencies)
 
 PRAGMA journal_mode = WAL;
 
 DROP TABLE IF EXISTS faces;
-DROP TABLE IF EXISTS image_persons;
 DROP TABLE IF EXISTS images;
 DROP TABLE IF EXISTS person_refs;
 DROP TABLE IF EXISTS person_groups;
@@ -72,20 +74,6 @@ CREATE TABLE images (
 CREATE INDEX idx_images_name_size ON images(name, file_size);
 CREATE INDEX idx_images_source_ref ON images(source_ref);
 
--- presence without geometry: MPRI display names, digiKam/catset tag hits.
--- `path` carries the tag/catset path where the source has one.  SQLite
--- treats NULLs as distinct in a PK, so writers must pair this with a
--- NOT EXISTS(... path IS ?) guard (design §8.2).
-CREATE TABLE image_persons (
-  image_id       INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
-  person_id      INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-  source_id      INTEGER NOT NULL REFERENCES sources(id),
-  path           TEXT,
-  harvest_run_id INTEGER NOT NULL REFERENCES harvest_runs(id),
-  PRIMARY KEY (image_id, person_id, source_id, path)
-);
-CREATE INDEX idx_image_persons_person ON image_persons(person_id);
-
 CREATE TABLE faces (
   id             INTEGER PRIMARY KEY,
   image_id       INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
@@ -111,4 +99,4 @@ CREATE TABLE schema_version (
   version    TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-INSERT INTO schema_version(version, updated_at) VALUES ('1.0', datetime('now'));
+INSERT INTO schema_version(version, updated_at) VALUES ('1.1', datetime('now'));
