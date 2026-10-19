@@ -194,12 +194,6 @@ export default function App() {
     if (!ids.some((id) => facesById.get(id)?.image_id === splitImageId))
       setSplitImageId(null);
   };
-  const closeSplitForPerson = (pid: number) => {
-    if (splitImageId == null) return;
-    const relevant =
-      snap?.faces.some((f) => f.person_id === pid && f.image_id === splitImageId) ?? false;
-    if (!relevant) setSplitImageId(null);
-  };
 
   const toggle = (id: number) => {
     anchorRef.current = id; // #69: the toggled card becomes the range anchor
@@ -253,9 +247,12 @@ export default function App() {
   };
 
   // #35 — tree selection: click selects, ctrl/cmd toggles, shift extends
-  // over the tree's visible order; the anchor row stays the person shown
+  // over the tree's visible order; the anchor row stays the person shown.
+  // #62 — a tree select shifts the attention to that person, so the full
+  // image closes whether the person appears in it or not (§4.15); #52's
+  // person-relevance check is gone on purpose
   const handleTreeSelect = (id: number, e?: ReactMouseEvent) => {
-    closeSplitForPerson(id); // #52
+    if (splitImageId != null) setSplitImageId(null);
     if (e?.ctrlKey || e?.metaKey) {
       setSelPersons((prev) => {
         const n = new Set(prev);
