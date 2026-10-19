@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.12** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.13** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -135,10 +135,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   regular grid is hidden while the mode is active. Closable via ×/Esc;
   selection and current view survive; single-click selection is
   unaffected (the two clicks of a double-click cancel each other out).
-  **Lifecycle (#51/#52/#62, §4.15)**: the mode ends when a tree row is
-  selected (always — the attention has shifted, §4.15), when the
-  selection moves to a different image (person stepping, card/rectangle
-  select) or the user navigates explicitly (top-bar tabs, *Review*); the
+  **Lifecycle (#51/#52/#62, §4.15)**: the mode ends when a person is
+  selected — tree row or stepping (always — the attention has shifted,
+  §4.15) — when a card/rectangle selection moves to a different image,
+  or the user navigates explicitly (top-bar tabs, *Review*); the
   face-rectangle menu hides *Open full image* while its image is the one
   already open.
 - **Face vs person tiles** (#30): face crops render as **rounded squares
@@ -392,15 +392,15 @@ Double-click opens the full-image focus mode (§3).
     cards outside any selection.
 15. **Split-pane lifecycle** (#51/#52, #62) ⇒ the double-click image
     split:
-    - a **tree-row select** (plain, ctrl/cmd or shift) **always** ends
-      it — clicking a person in the left hierarchy means the attention
-      has shifted to that person, whether or not they have a face on
-      the open image (#62, superseding #52's relevance check for the
-      tree);
-    - person stepping (‹ › / ← →) and card/rectangle selects end it
-      when the new selection's `image_id` differs from `splitImageId`
-      and it **stays open** when the new selection is a face (or a
-      person with a face) **on the open image**;
+    - a **tree-row select** (plain, ctrl/cmd or shift) and **person
+      stepping** (‹ › / ← →) **always** end it — selecting another
+      person means the attention has shifted to them, whether or not
+      they have a face on the open image (#62, superseding #52's
+      relevance check);
+    - a **card/rectangle select** ends it when the new selection's
+      `image_id` differs from `splitImageId` and it **stays open** when
+      the new selection is a face **on the open image** (focus mode
+      depends on this);
     - manual opens — card double-click, *Open beside (split)*, *Open
       full image* — always win; Esc/× keep their meaning. In the
       rectangle context menu the *Open full image* entry is hidden
@@ -451,7 +451,7 @@ Double-click opens the full-image focus mode (§3).
     never scrolls out of sight; the pinned block gets a solid backdrop so
     cards pass behind it cleanly. The regular grid
     is hidden while the mode is active; it returns when the mode ends:
-    × / **Esc**, a left-pane selection (§4.15), or
+    × / **Esc**, a left-pane selection or person stepping (§4.15), or
     explicit navigation (top-bar tabs, *Review*). Selection and view
     state survive as before; the former side-by-side split and its
     draggable divider are gone.
