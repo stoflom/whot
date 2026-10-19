@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.14** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.15** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -88,10 +88,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   (segments split on `|`). Virtual branches: `Unknown` (persons whose only
   group is `Unknown`) and `Ungrouped` (known persons with no group row).
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
-  rejected). The tree's control row — **roll up/down buttons on the
-  left, filter box on the right** — is **pinned to the top of the pane**
-  while the list scrolls (#78; sticky row with the panel background so
-  the list passes beneath it). The filter matches **person name and/or
+  rejected). The tree's header — **roll up/down buttons on the left,
+  filter box on the right, then the Review button** — is **pinned flush
+  to the top of the pane** while the list scrolls (#78; one sticky
+  block whose panel background covers the full pane width and the
+  pane's top padding, so no text can show through above or beside it).
+  The filter matches **person name and/or
   group path** (case-insensitive substring); tree stays hierarchical
   below the match.
   Within every branch, persons are ordered by **face count, most first**
