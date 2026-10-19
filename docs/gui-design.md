@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.9** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.10** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -529,7 +529,11 @@ Double-click opens the full-image focus mode (§3).
     letter shortcuts all agree; **A**/**R** fall back to the hovered
     card instead of no-oping. Ctrl-G's cursor hit-test (§4.22) and
     Space's hovered-card scope are the same rule — the cursor is the
-    implicit selection whenever there is no explicit one.
+    implicit selection whenever there is no explicit one. **←/→**
+    stepping honours it too (#76): with no selected person the first
+    step starts from the person under the cursor (tree rows expose
+    `data-person-id`), falling back to the list's start/end when the
+    cursor is over no tree row.
 
 ## 5. Tauri commands (Rust)
 
