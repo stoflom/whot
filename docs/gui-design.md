@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.3** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.4** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -483,6 +483,18 @@ Double-click opens the full-image focus mode (§3).
       pick mirrors the target's group into the group field (unless the
       user already typed one). Face-card and tree-rename typeahead are
       deferred until this interaction proves itself.
+22. **Keyboard shortcut set** (#68, extends #53) ⇒ shortcuts act on the
+    selection, or on the hovered/last-selected card when nothing is
+    selected (the Ctrl-G rule): **Ctrl-G** toggles the card's whole
+    section (#53), **Space** toggles the card itself, **Ctrl-A** selects
+    all cards of the current view, **A**/**R** accept/reject the
+    selection (the rule-bar buttons' scope), ←/→ step persons (#31) and
+    Esc closes split/dialog/menu (§4.19). Shortcuts are suppressed while
+    typing in any input and while a menu or dialog is open. Context-menu
+    items display their shortcut as a right-aligned dim hint
+    (\`MenuItem.hint\`); the rule-bar tooltips and the settings popover's
+    Keyboard list document the set. No shortcuts for destructive
+    actions (remove person, delete group) — they keep confirm dialogs.
 
 ## 5. Tauri commands (Rust)
 
