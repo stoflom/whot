@@ -153,6 +153,11 @@ def load_env(path: Path) -> dict[str, str]:
                 for ref, rv in raw.items():
                     v = v.replace("${" + ref + "}", rv)
                 raw[k] = v
+    for k, v in raw.items():                # then references to the real
+        if "${" in v:                       # environment (${HOME}, ${USER})
+            for ref, rv in os.environ.items():
+                v = v.replace("${" + ref + "}", rv)
+            raw[k] = v
     return raw
 
 

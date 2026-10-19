@@ -202,6 +202,18 @@ class HarvestFixture(unittest.TestCase):
 # ---------------------------------------------------------------- parsers
 
 class ParserTests(unittest.TestCase):
+    def test_load_env_expands_environment(self):
+        """${HOME}-style refs resolve against the real environment, not just
+        other .env keys (the .env defaults on this machine depend on it)."""
+        import os
+        with tempfile.TemporaryDirectory() as td:
+            envf = Path(td) / ".env"
+            envf.write_text("A=${HOME}/pics\nB=${A}/deep\nC=plain\n")
+            got = hl.load_env(envf)
+        self.assertEqual(got["A"], f"{os.environ['HOME']}/pics")
+        self.assertEqual(got["B"], f"{os.environ['HOME']}/pics/deep")
+        self.assertEqual(got["C"], "plain")
+
     def test_mwg_element_form(self):
         rows = list(hl.sidecar_face_data(MWG_ELEMENT))
         self.assertEqual(len(rows), 1)
