@@ -126,7 +126,7 @@ export default function FaceCard({
             }
           }}
         />
-        <span className="face-conf">{Math.round(face.confidence * 100)}%</span>
+        <span className="face-conf" title="Confidence — recognizer match score (read-only)">{Math.round(face.confidence * 100)}%</span>
       </div>
       <input
         className="face-desc input-desc"

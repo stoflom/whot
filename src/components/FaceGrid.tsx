@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
+import { selectAll } from "../autoText";
 
 export interface Section {
   key: string;
@@ -75,7 +76,9 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             className="rule-group input-group"
             value={group}
             onChange={(e) => setGroup(e.target.value)}
+            title="Group for the assignment — '|' separated, e.g. family|lombards (empty = ungrouped)"
             placeholder="group e.g. family|lombards"
+            onFocus={selectAll}
           />
           <button onClick={apply} title="Assign name+group to the selected faces of this group (whole group if none selected)">
             apply

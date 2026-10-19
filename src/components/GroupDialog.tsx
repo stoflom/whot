@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { selectAll } from "../autoText";
 
 // §4.16 (#50) — edit a group path: rename/move a branch or move persons
 // into a group. The path is `|`-separated; empty means Ungrouped (the
@@ -36,8 +37,11 @@ export default function GroupDialog({
             className="input-group"
             value={path}
             onChange={(e) => setPath(e.target.value)}
+            title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped)"
             placeholder="e.g. family|lombards (empty = ungrouped)"
+            onFocus={selectAll}
             onKeyDown={(e) => {
+              e.stopPropagation();
               if (e.key === "Enter") submit();
               if (e.key === "Escape") onCancel();
             }}
