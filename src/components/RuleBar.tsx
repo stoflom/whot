@@ -20,10 +20,27 @@ export default function RuleBar({ count, onAssign, onAccept, onReject, onClear }
     <footer className="rulebar active">
       <b>{count}</b>
       <span>selected</span>
-      <button onClick={onAssign}>Assign name…</button>
-      <button className="ok" onClick={onAccept}>Accept</button>
-      <button className="bad" onClick={onReject}>Reject</button>
-      <button className="secondary" onClick={onClear}>
+      <button
+        title={`Assign a name and group to the ${count} selected face(s)`}
+        onClick={onAssign}
+      >
+        Assign name…
+      </button>
+      <button
+        className="ok"
+        title={`Accept the ${count} selected face(s) — accepted is the default status`}
+        onClick={onAccept}
+      >
+        Accept
+      </button>
+      <button
+        className="bad"
+        title={`Reject the ${count} selected face(s) — hidden unless 'show rejected' is on`}
+        onClick={onReject}
+      >
+        Reject
+      </button>
+      <button className="secondary" title="Clear the selection" onClick={onClear}>
         clear
       </button>
     </footer>

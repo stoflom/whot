@@ -759,11 +759,11 @@ export default function App() {
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}
-            title="refresh"
+            title="Refresh"
           >
             ↻
           </button>
-          <button className="ghost" onClick={() => setSettingsOpen(true)} title="settings">
+          <button className="ghost" onClick={() => setSettingsOpen(true)} title="Settings">
             ⚙
           </button>
         </span>
@@ -833,7 +833,7 @@ export default function App() {
                 ›
               </button>
             </span>
-            <label title="Show/hide rejected faces in every view (#23)">
+            <label title="Show/hide rejected faces in every view">
               <input type="checkbox" checked={showRejected} onChange={toggleShowRejected} />
               show rejected
             </label>
@@ -973,6 +973,7 @@ export default function App() {
           count={dialogFaceIds.length}
           defaultName={dialogPrefill.name}
           defaultGroup={dialogPrefill.group}
+          persons={snap?.persons ?? []}
           onSubmit={(n, g) => {
             const ids = dialogFaceIds;
             setDialogFaceIds(null);

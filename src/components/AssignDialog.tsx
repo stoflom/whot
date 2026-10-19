@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
+import type { Person } from "../api";
+import NameTypeahead from "./NameTypeahead";
 
 interface Props {
   count: number;
   defaultName: string;
   defaultGroup: string;
+  /** existing persons — name suggestions; picking one merges into it */
+  persons: Person[];
   onSubmit: (name: string, group: string) => void;
   onCancel: () => void;
 }
 
-export default function AssignDialog({ count, defaultName, defaultGroup, onSubmit, onCancel }: Props) {
+export default function AssignDialog({ count, defaultName, defaultGroup, persons, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(defaultName);
   const [group, setGroup] = useState(defaultGroup);
   useEffect(() => {
@@ -27,14 +31,27 @@ export default function AssignDialog({ count, defaultName, defaultGroup, onSubmi
         </p>
         <label>
           Name
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && name.trim() && onSubmit(name, group)} />
+          <NameTypeahead
+            autoFocus
+            value={name}
+            onChange={setName}
+            persons={persons}
+            onPick={(p) => {
+              // the picked person is the merge target — mirror its group
+              // unless the user already typed one (#67)
+              if (group === defaultGroup) setGroup(p.groups[0] ?? "");
+            }}
+            onSubmit={() => name.trim() && onSubmit(name, group)}
+          />
         </label>
         <label>
           Group
           <input value={group} className="input-group" onChange={(e) => setGroup(e.target.value)}
             placeholder="e.g. family|lombards (empty = ungrouped)"
-            onKeyDown={(e) => e.key === "Enter" && name.trim() && onSubmit(name, group)} />
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter" && name.trim()) onSubmit(name, group);
+            }} />
         </label>
         <div className="dialog-actions">
           <button className="secondary" onClick={onCancel}>cancel</button>

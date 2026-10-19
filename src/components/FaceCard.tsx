@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face } from "../api";
 import { useFaceImage } from "../hooks";
+import { selectAllIfAuto } from "../autoText";
 
 interface Props {
   face: Face;
@@ -111,10 +112,11 @@ export default function FaceCard({
           placeholder="person name"
           title={
             scopeMulti
-              ? `Assigning applies to all ${selSize} selected faces (#58)`
-              : face.name
+              ? `Assigning applies to all ${selSize} selected faces`
+              : "Name"
           }
           onChange={(e) => setPname(e.target.value)}
+          onFocus={selectAllIfAuto} // #67: UnknownN is replaced wholesale
           onBlur={commitName}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -133,8 +135,8 @@ export default function FaceCard({
         // editing here updates every selected face, say so up front
         title={
           scopeMulti
-            ? `Editing applies to all ${selSize} selected faces (#58)`
-            : undefined
+            ? `Editing applies to all ${selSize} selected faces`
+            : "Description"
         }
         value={desc}
         onChange={(e) => setDesc(e.target.value)}
@@ -171,7 +173,9 @@ export default function FaceCard({
         </button>
         <button
           title={
-            (face.link_status === "rejected" ? "Un-reject (accept) face" : "Reject face") +
+            (face.link_status === "rejected"
+              ? "Un-reject (accept) face — back to the accepted default"
+              : "Reject face — only rejected faces get a ✗ marker; accepted is the default") +
             scopeLabel
           }
           className={face.link_status === "rejected" ? "reject" : ""}
