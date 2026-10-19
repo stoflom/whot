@@ -72,7 +72,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
   };
 
   return (
-    <section className="face-section">
+    <section className="face-section" data-section-key={section.key}>
       <div className="face-section-header">
         <label className="select-all" title="Select whole group">
           <input

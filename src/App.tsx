@@ -686,6 +686,24 @@ export default function App() {
     },
     [stepIdx, stepIds, splitImageId, snap]
   );
+  // #74 — section under the mouse cursor: Ctrl-G must work with the
+  // cursor anywhere inside a group, without a prior click/hover on one
+  // of its cards — the cursor position is tracked, the DOM resolves it
+  const mouseRef = useRef({ x: -1, y: -1 });
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      mouseRef.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener("mousemove", move);
+    return () => window.removeEventListener("mousemove", move);
+  }, []);
+  const sectionUnderCursor = (rendered: Section[]): Section | undefined => {
+    const el = document.elementFromPoint(mouseRef.current.x, mouseRef.current.y);
+    const key = el
+      ?.closest("[data-section-key]")
+      ?.getAttribute("data-section-key");
+    return key ? rendered.find((s) => s.key === key) : undefined;
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement | null;
@@ -697,17 +715,21 @@ export default function App() {
         return;
       if (dialogFaceIds != null || faceAssign != null || confirmRemove != null || menu != null)
         return;
-      // #53 (§4.17): Ctrl-G toggles the whole section — the hovered
-      // card's, else the most recently selected card's; preventDefault
-      // so webkit cannot steal the chord
+      // #53 (§4.17): Ctrl-G toggles the whole section — the one under
+      // the mouse cursor first (#74), else the hovered card's, else the
+      // most recently selected card's; preventDefault so webkit cannot
+      // steal the chord
       if ((e.ctrlKey || e.metaKey) && (e.key === "g" || e.key === "G")) {
         e.preventDefault();
-        const targetId = hoverId ?? lastSelRef.current;
-        if (targetId == null) return;
         // in focus mode the rendered sections are the film roll's (#55)
         const rendered =
           splitImageId != null ? sectionsForImage(splitImageId) : sections;
-        const section = rendered.find((s) => s.faceIds.includes(targetId));
+        let section = sectionUnderCursor(rendered);
+        if (!section) {
+          const targetId = hoverId ?? lastSelRef.current;
+          if (targetId == null) return;
+          section = rendered.find((s) => s.faceIds.includes(targetId));
+        }
         if (!section || section.faceIds.length === 0) return;
         const all = section.faceIds.every((id) => sel.has(id));
         toggleMany(section.faceIds, !all);
