@@ -51,9 +51,24 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
   const allSelected =
     section.faceIds.length > 0 && section.faceIds.every((id) => grid.sel.has(id));
 
-  const apply = () => {
-    const picked = section.faceIds.filter((id) => grid.sel.has(id));
-    grid.onAssign(picked.length > 0 ? picked : section.faceIds, name, group);
+  // #72/#73 — header scope: an active selection wins, whatever its
+  // scope — a cross-group selection must never be narrowed to this
+  // section (that silently dropped the other groups' cards, #73);
+  // with no selection the header acts on its own group (#72)
+  const apply = () =>
+    grid.onAssign(
+      grid.sel.size > 0 ? [...grid.sel] : section.faceIds,
+      name,
+      group
+    );
+  // commit on Enter/blur like every other field — changing the header
+  // inputs *is* the operation, no apply click required; guarded so an
+  // untouched field never re-fires on blur
+  const changed =
+    name !== (section.ruleDefaultName ?? "") ||
+    group !== (section.ruleDefaultGroup ?? "");
+  const commit = () => {
+    if (changed) apply();
   };
 
   return (
@@ -75,19 +90,29 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             className="rule-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
             placeholder="person name"
-            title="Name to assign — an existing person merges into; applies to the selected faces of this group (whole group if none selected)"
+            title="Name to assign — the whole selection if any (groups included), else every face in this group (Enter or click away to apply)"
           />
           <input
             className="rule-group input-group"
             value={group}
             onChange={(e) => setGroup(e.target.value)}
-            title="Group for the assignment — '|' separated, e.g. family|lombards (empty = ungrouped)"
+            onBlur={commit}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            title="Group — '|' separated, e.g. family|lombards (empty = ungrouped); applied to the whole selection if any, else the whole group (Enter or click away to apply)"
             placeholder="group e.g. family|lombards"
             onFocus={selectAll}
             onClick={selectAll}
           />
-          <button onClick={apply} title="Assign name+group to the selected faces of this group (whole group if none selected)">
+          <button onClick={apply} title="Assign name+group — to the whole selection if any (even across groups), else to every face in this group">
             apply
           </button>
         </span>
