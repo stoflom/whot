@@ -112,7 +112,7 @@ export default function FaceCard({
           title={
             scopeMulti
               ? `Assigning applies to all ${selSize} selected faces`
-              : face.name
+              : "Name"
           }
           onChange={(e) => setPname(e.target.value)}
           onBlur={commitName}
@@ -134,7 +134,7 @@ export default function FaceCard({
         title={
           scopeMulti
             ? `Editing applies to all ${selSize} selected faces`
-            : undefined
+            : "Description"
         }
         value={desc}
         onChange={(e) => setDesc(e.target.value)}
