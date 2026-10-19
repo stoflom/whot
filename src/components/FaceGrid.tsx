@@ -35,7 +35,14 @@ interface GridProps {
   onRefcrop: (id: number) => void;
   onReject: (id: number) => void;
   onAccept: (id: number) => void;
-  onAssign: (ids: number[], name: string, group: string) => void;
+  onAssign: (
+    ids: number[],
+    name: string,
+    group: string,
+    /** which fields the user actually changed (#77) */
+    nameChanged: boolean,
+    groupChanged: boolean
+  ) => void;
 }
 
 function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps, "sections">) {
@@ -51,24 +58,27 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
   const allSelected =
     section.faceIds.length > 0 && section.faceIds.every((id) => grid.sel.has(id));
 
-  // #72/#73 — header scope: an active selection wins, whatever its
+  // #72/#73/#77 — header scope: an active selection wins, whatever its
   // scope — a cross-group selection must never be narrowed to this
   // section (that silently dropped the other groups' cards, #73);
-  // with no selection the header acts on its own group (#72)
+  // with no selection the header acts on its own group (#72). The
+  // change flags route group-only edits to set_person_group (#77)
+  const nameChanged =
+    name.trim() !== "" && name !== (section.ruleDefaultName ?? "");
+  const groupChanged = group !== (section.ruleDefaultGroup ?? "");
   const apply = () =>
     grid.onAssign(
       grid.sel.size > 0 ? [...grid.sel] : section.faceIds,
       name,
-      group
+      group,
+      nameChanged,
+      groupChanged
     );
   // commit on Enter/blur like every other field — changing the header
   // inputs *is* the operation, no apply click required; guarded so an
   // untouched field never re-fires on blur
-  const changed =
-    name !== (section.ruleDefaultName ?? "") ||
-    group !== (section.ruleDefaultGroup ?? "");
   const commit = () => {
-    if (changed) apply();
+    if (nameChanged || groupChanged) apply();
   };
 
   return (
