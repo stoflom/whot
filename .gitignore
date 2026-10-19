@@ -28,3 +28,4 @@ scratch/
 
 # runtime GUI settings (defaults apply when absent)
 config/whotrc.json
+/test/archive-fixture/

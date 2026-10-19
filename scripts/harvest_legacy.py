@@ -29,14 +29,16 @@ Importing a staging DB into faces.db is a SEPARATE, later script (§8.5);
 this script and faces.db never meet.
 
 Sources (see --list-sources):
-  sidecars-mwgrs / sidecars-mpri / sidecars-catsets
-      darktable-style <image.ext>.xmp sidecars: MWG-RS face regions, MPRI
-      person presence, People|... hierarchical tags.
+  sidecars-mwgrs / sidecars-catsets
+      darktable-style <image.ext>.xmp sidecars: MWG-RS face regions and
+      People|... hierarchical tags.
   lightroom-catalog      .lrcat person keyword tree + face regions.
   lightroom-sidecars     Lightroom's own <stem>.xmp (RAW-master) sidecars.
-  digikam-core           digiKam tag paths linked to images.
+  digikam-core           digiKam tag paths -> person group info.
   digikam-faces          digiKam ImageTagProperties tagRegion rectangles.
   digikam-recognition    recognition DB identity names + UUIDs.
+Since schema v1.1 only faces WITH geometry are harvested (design §9):
+rectangle-less presence (MPRI display names, tag->image hits) is gone.
 
 Usage:
   scripts/harvest_legacy.py --out /tmp/harvest.db \\
@@ -60,14 +62,13 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "database" / "harvest_schema.sql"
-HARVEST_SCHEMA_VERSION = "1.0"   # exact-match, like faces.db (no migrations)
+HARVEST_SCHEMA_VERSION = "1.1"   # exact-match, like faces.db (no migrations)
 
 # The canonical source vocabulary (design §8).  kind groups the sources for
 # the harvest_runs.roots JSON; a name outside this map is refused, never
 # silently registered.
 CANON_SOURCES: dict[str, str] = {
     "sidecars-mwgrs":       "sidecars",     # MWG-RS rectangles (darktable)
-    "sidecars-mpri":        "sidecars",     # MPRI PersonDisplayName presence
     "sidecars-catsets":     "sidecars",     # People|... hierarchical paths
     "digikam-core":         "digikam",      # digiKam core DB tag paths
     "digikam-recognition":  "digikam",      # recognition DB identities
@@ -152,6 +153,11 @@ def load_env(path: Path) -> dict[str, str]:
                 for ref, rv in raw.items():
                     v = v.replace("${" + ref + "}", rv)
                 raw[k] = v
+    for k, v in raw.items():                # then references to the real
+        if "${" in v:                       # environment (${HOME}, ${USER})
+            for ref, rv in os.environ.items():
+                v = v.replace("${" + ref + "}", rv)
+            raw[k] = v
     return raw
 
 
@@ -194,8 +200,6 @@ def _mwg_field(seg: str, field: str):
     return m.group(1).strip() if m else None
 
 
-# MPRI regions: <rdf:li MPReg:PersonDisplayName=".."/>
-MPRI_NAME_PAT = re.compile(r'rdf:li\s+MPReg:PersonDisplayName="([^"]*)"')
 # any rdf:li item (hierarchical tags)
 LI_PAT = re.compile(r'<rdf:li[^>]*>(.*?)</rdf:li>', re.S)
 HIER_PAT = re.compile(
@@ -216,10 +220,11 @@ def _fnum(s: str):
 
 
 def sidecar_face_data(xmp_text: str):
-    """Yield (kind, name, x, y, w, h, unit, img_w, img_h) from one sidecar.
+    """Yield (name, x, y, w, h, unit, img_w, img_h) per MWG-RS face region.
 
-    kind is 'mwgrs' (rectangle) or 'mpri' (presence, None geometry).
     Handles both mwg-rs serializations (attribute and element form).
+    MPRI PersonDisplayName is deliberately NOT yielded (v1.1, §9): person
+    presence without a rectangle can never be attached to a face.
     """
     for block in MWG_REG_PAT.finditer(xmp_text):
         bsec = block.group(0)
@@ -245,13 +250,9 @@ def sidecar_face_data(xmp_text: str):
                 v = _mwg_field(asec, f"stArea:{axis}")
                 vals.append(_fnum(v) if v is not None else None)
             unit = _mwg_field(asec, "stArea:unit") or "normalized"
-            yield ("mwgrs", name, *vals, unit,
+            yield (name, *vals, unit,
                    int(img_w) if img_w is not None else None,
                    int(img_h) if img_h is not None else None)
-    # MPRI display names
-    for m in MPRI_NAME_PAT.finditer(xmp_text):
-        if m.group(1):
-            yield ("mpri", m.group(1), None, None, None, None, None, None, None)
 
 
 def sidecar_people_paths(xmp_text: str):
@@ -366,22 +367,6 @@ class Staging:
         return cur.lastrowid
 
     # -- presence without geometry ----------------------------------------
-
-    def image_person(self, image_id: int, pid: int, source_id: int,
-                     path: str | None = None) -> bool:
-        """NULL-safe insert-or-ignore; True if a row was added.
-
-        SQLite treats NULLs as distinct in a UNIQUE/PK, so INSERT OR IGNORE
-        alone would duplicate a NULL path on every encounter."""
-        before = self.con.total_changes
-        self.con.execute(
-            "INSERT INTO image_persons(image_id, person_id, source_id, path,"
-            " harvest_run_id) SELECT ?,?,?,?,? WHERE NOT EXISTS("
-            "   SELECT 1 FROM image_persons WHERE image_id=? AND person_id=?"
-            "     AND source_id=? AND path IS ?)",
-            (image_id, pid, source_id, path, self.run_id,
-             image_id, pid, source_id, path))
-        return self.con.total_changes > before
 
     # -- faces -------------------------------------------------------------
 
@@ -632,19 +617,19 @@ def _lr_keyword_paths(con2: sqlite3.Connection) -> dict[int, str]:
 def harvest_sidecars(st: Staging, images_dirs: list[Path],
                      src: dict[str, int], stats: dict,
                      enabled: set[str], hasher: "Hasher") -> set[str]:
-    """XMP `<image.ext>.xmp` sidecars: MWG-RS rects, MPRI presence, People| paths.
+    """XMP `<image.ext>.xmp` sidecars: MWG-RS rects + People| paths (v1.1:
+    rectangles only — presence without geometry is not captured, §9).
 
     darktable's export style.  The image path of record is the sidecar's
     own sibling image, exactly as the sidecar names it (H3).
     """
     known: set[str] = set()
     person_paths: dict[str, set[str]] = {}
-    n_files = n_faces = n_presence = n_paths = 0
-    n_faces_dup = n_pres_dup = n_unsupported = 0
-    # the image row is shared by all three sidecar sources; with a narrowed
+    n_files = n_faces = n_paths = 0
+    n_faces_dup = n_unsupported = 0
+    # the image row is shared by both sidecar sources; with a narrowed
     # --sources set it belongs to whichever of them is enabled
-    img_src = (src.get("sidecars-mwgrs") or src.get("sidecars-mpri")
-               or src.get("sidecars-catsets"))
+    img_src = src.get("sidecars-mwgrs") or src.get("sidecars-catsets")
     for images_dir in images_dirs:
         if not images_dir.is_dir():
             log(f"  (images dir not found: {images_dir})")
@@ -668,13 +653,9 @@ def harvest_sidecars(st: Staging, images_dirs: list[Path],
                                path=img_path, path_origin="source",
                                content_hash=ch)
 
-                for kind, name, x, y, w, h, unit, iw, ih in \
-                        sidecar_face_data(text):
-                    # the enabled check comes FIRST: a disabled source must
-                    # not mint person rows for data it is not recording (H4)
-                    if kind == "mwgrs":
-                        if "sidecars-mwgrs" not in enabled:
-                            continue
+                if "sidecars-mwgrs" in enabled:
+                    for name, x, y, w, h, unit, iw, ih in \
+                            sidecar_face_data(text):
                         pid = st.person(name)
                         known.add(name)
                         if unit not in ("normalized", "pixels"):
@@ -686,15 +667,6 @@ def harvest_sidecars(st: Staging, images_dirs: list[Path],
                             n_faces += 1
                         else:
                             n_faces_dup += 1
-                    else:
-                        if "sidecars-mpri" not in enabled:
-                            continue
-                        pid = st.person(name)
-                        known.add(name)
-                        if st.image_person(iid, pid, src["sidecars-mpri"]):
-                            n_presence += 1
-                        else:
-                            n_pres_dup += 1
 
                 if "sidecars-catsets" not in enabled:
                     continue
@@ -706,7 +678,6 @@ def harvest_sidecars(st: Staging, images_dirs: list[Path],
                     known.add(leaf)
                     person_paths.setdefault(leaf, set()).add(p)
                     n_paths += 1
-                    st.image_person(iid, pid, src["sidecars-catsets"], p)
             st.con.commit()
 
     for name, paths in person_paths.items():
@@ -715,8 +686,7 @@ def harvest_sidecars(st: Staging, images_dirs: list[Path],
             st.group(pid, p, src["sidecars-catsets"])
     st.con.commit()
     stats.update({"scanned": n_files, "faces": n_faces,
-                  "presence": n_presence, "people_paths": n_paths,
-                  "faces_dup": n_faces_dup, "presence_dup": n_pres_dup,
+                  "people_paths": n_paths, "faces_dup": n_faces_dup,
                   "faces_unsupported_unit": n_unsupported})
     return known
 
@@ -766,66 +736,31 @@ def harvest_recognition(st: Staging, db_path: Path, src_id: int,
 
 
 def harvest_digikam_core(st: Staging, db_path: Path, stats: dict,
-                         known: set[str],
-                         index: dict[tuple[str, int], list[str]],
-                         src_id: int, hasher: "Hasher"):
-    """digiKam core DB: person tag paths linked to images -> image_persons.
+                         known: set[str], src_id: int):
+    """digiKam core DB: tag paths of KNOWN persons -> person_groups (v1.1).
 
-    Gated on names the other sources already established (legacy discipline):
-    a tag path whose leaf is not a known person name is not person data.
+    Tag->image links are gone (rectangle-less capture, §9); what remains
+    is group info: the digiKam tag tree's paths for leaves the sidecar,
+    recognition and Lightroom loaders already established as persons.
     """
     if not db_path.exists():
         log(f"  (digikam core db not found: {db_path})")
         stats["dktags"] = 0
-        stats["dkt_pairs"] = 0
         return
     con2 = open_ro(db_path)
-    n_pairs = n_pairs_dup = 0
-    resolved: dict[str, int] = {}
     try:
         paths = _digikam_tag_paths(con2)
         known_l = {n.lower() for n in known}
-        # group paths of every known leaf, one person_groups row per path
+        n_tags = 0
         for p in set(paths.values()):
             leaf = p.rsplit(TAG_SEP, 1)[-1]
             if leaf.lower() in known_l:
                 st.group(st.person(leaf), p, src_id)
-        n_tags = len({p for p in paths.values()
-                      if p.rsplit(TAG_SEP, 1)[-1].lower() in known_l})
-
-        recon = _digikam_reconstructed_paths(con2)
-        meta = {r[0]: (r[1], r[2]) for r in
-                con2.execute("SELECT id, name, fileSize FROM Images")}
-        for r in con2.execute("SELECT imageid, tagid FROM ImageTags"):
-            dk_id, tid = r[0], r[1]
-            p = paths.get(tid)
-            if p is None:
-                continue
-            leaf = p.rsplit(TAG_SEP, 1)[-1]
-            if leaf.lower() not in known_l:
-                continue
-            name, fsize = meta.get(dk_id, (None, None))
-            path, origin = resolve_dk_image(dk_id, name, fsize, recon, index)
-            resolved[origin] = resolved.get(origin, 0) + 1
-            ch = hasher.hex(path) if path and Path(path).is_file() else None
-            iid = st.image(source_id=src_id, path=path,
-                           path_origin=origin if path else None,
-                           content_hash=ch, name=name, file_size=fsize,
-                           source_ref=f"digikam-image:{dk_id}")
-            pid = st.person(leaf)
-            if st.image_person(iid, pid, src_id, p):
-                n_pairs += 1
-            else:
-                n_pairs_dup += 1
+                n_tags += 1
         st.con.commit()
     finally:
         con2.close()
     stats["dktags"] = n_tags
-    stats["dkt_pairs"] = n_pairs
-    stats["dkt_pairs_dup"] = n_pairs_dup
-    for how in ("source", "name-size", "ambiguous", "unknown"):
-        if how in resolved:
-            stats[f"dkt_resolved_{how}"] = resolved[how]
 
 
 def harvest_digikam_faces(st: Staging, db_path: Path, src_id: int,
@@ -1037,10 +972,8 @@ def harvest_lightroom_sidecars(st: Staging, images_dirs: list[Path],
                 n_files += 1
                 iid = st.image(source_id=src_id, path=cand_path,
                                path_origin="source", content_hash=ch)
-                for kind, name, x, y, w, h, unit, iw, ih in \
+                for name, x, y, w, h, unit, iw, ih in \
                         sidecar_face_data(text):
-                    if kind != "mwgrs":
-                        continue
                     pid = st.person(name)
                     known.add(name)
                     if unit not in ("normalized", "pixels"):
@@ -1059,7 +992,6 @@ def harvest_lightroom_sidecars(st: Staging, images_dirs: list[Path],
                     known.add(leaf)
                     person_paths.setdefault(leaf, set()).add(p)
                     n_paths += 1
-                    st.image_person(iid, pid, src_id, p)
             st.con.commit()
     for name, paths in person_paths.items():
         pid = st.person(name)
@@ -1112,7 +1044,7 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
     src = ensure_sources(st.con, sources)
 
     index: dict[tuple[str, int], list[str]] = {}
-    needs_index = bool(enabled & {"digikam-core", "digikam-faces"})
+    needs_index = "digikam-faces" in enabled
     if needs_index:
         log(f"  indexing image files under {', '.join(str(d) for d in images_dirs)}")
         index, n_idx = build_file_index(images_dirs)
@@ -1127,8 +1059,8 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
                                      src["digikam-recognition"], stats)
 
     if "digikam-core" in sources:
-        harvest_digikam_core(st, digikam_db, stats, known, index,
-                             src["digikam-core"], hasher)
+        harvest_digikam_core(st, digikam_db, stats, known,
+                             src["digikam-core"])
 
     if "digikam-faces" in sources:
         harvest_digikam_faces(st, digikam_db, src["digikam-faces"], stats,
@@ -1175,7 +1107,7 @@ def _dry_scan(images_dirs: list[Path], digikam_db: Path,
                 text = read_text(Path(root, fname))
                 if text is None:
                     continue
-                for kind, name, *_ in sidecar_face_data(text):
+                for name, *_ in sidecar_face_data(text):
                     names.add(name)
                 for p in sidecar_people_paths(text):
                     if p != "People":
