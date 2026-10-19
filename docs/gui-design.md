@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -461,6 +461,25 @@ Double-click opens the full-image focus mode (§3).
     field (Name/Note keep the default look; `Editable` gains a variant).
     The tints stay legible in the dark theme and clear of the
     warn/ok/bad status colours.
+21. **Auto-filled fields & name typeahead** (#67) ⇒ two related input
+    behaviours:
+    - **Select-all-on-focus for generated values**: when an input holds
+      *auto-generated* text — today an `UnknownN` name — focusing it
+      selects the whole value, so the first keystroke replaces it
+      wholesale. User-entered values keep normal caret behaviour.
+      Applied everywhere such a value can appear: the face-card name
+      input, the tree inline rename, the detail-pane Name field and the
+      AssignDialog's pre-filled name.
+    - **Name typeahead**: the AssignDialog and the detail-pane Name
+      field suggest existing persons (substring match, max 8, `UnknownN`
+      names excluded — the point is to reach a real name; each row shows
+      the person's group because **picking a suggestion merges into that
+      person**, assign-not-rename §3). Arrow keys + Enter navigate,
+      Enter without a highlight submits as before, Esc closes the
+      dropdown before it touches anything else. In the AssignDialog a
+      pick mirrors the target's group into the group field (unless the
+      user already typed one). Face-card and tree-rename typeahead are
+      deferred until this interaction proves itself.
 
 ## 5. Tauri commands (Rust)
 
