@@ -565,8 +565,22 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .film-roll .face-card { flex: 0 0 150px; }
 
-/* tree roll up/down controls (#24) */
-.tree-tools { display: flex; align-items: center; gap: 2px; margin-bottom: 0.4rem; }
+/* tree roll up/down controls (#24); pinned at the top of the scrolling
+   left pane, rolls left + filter right (#78) — the negative side margins
+   span .left's 0.5rem padding so the list scrolls cleanly beneath the
+   row, and the padding-bottom carries the spacing (margins would be
+   transparent over passing content) */
+.tree-tools {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 -0.5rem;
+  padding: 0.15rem 0.5rem 0.4rem;
+  background: var(--panel);
+}
 .tree-tools .tree-filter { flex: 1; margin-bottom: 0; min-width: 0; }
 .tree-tools button { font-size: 0.9rem; padding: 0.1rem 0.45rem; flex: none; }
 

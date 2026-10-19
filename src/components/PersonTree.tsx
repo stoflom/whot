@@ -438,13 +438,6 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   return (
     <div className="person-tree">
       <div className="tree-tools">
-        <input
-          className="tree-filter"
-          placeholder="filter by name or group…"
-          title="Filter the tree by person name or group"
-          value={filter}
-          onChange={(e) => onFilter(e.target.value)}
-        />
         <button
           className="ghost"
           onClick={rollUpAll}
@@ -456,6 +449,13 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
         <button className="ghost" onClick={rollDownAll} title="Expand (roll down) all branches">
           ⌄
         </button>
+        <input
+          className="tree-filter"
+          placeholder="filter by name or group…"
+          title="Filter the tree by person name or group"
+          value={filter}
+          onChange={(e) => onFilter(e.target.value)}
+        />
       </div>
       <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}
         title="Open the Review view — all unreviewed (provisional) faces, UnknownN first">
