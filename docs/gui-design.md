@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.6** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.7** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -508,6 +508,17 @@ Double-click opens the full-image focus mode (§3).
     anchor when it selects; Space follows the hovered card. A vanished
     anchor (filtered/removed card) degrades shift-click to a plain
     select. Double-click-to-open is unaffected.
+24. **Section-header rule inputs** (#72/#73) ⇒ the name/group inputs in
+    a section header are the *direct* assignment path: they commit on
+    **Enter or blur** like every other field (change-guarded against the
+    section's defaults) as well as via the explicit **apply** button —
+    changing them is the operation itself, no button click required.
+    Scope precedence: **an active selection wins, whatever its extent**
+    — a cross-group selection is applied in full and never narrowed to
+    the header's own section (narrowing to `section∩selection` used to
+    drop the other groups' cards silently); only with **no selection**
+    do the inputs fall back to **every face of their own section**.
+    Tooltips state the precedence.
 
 ## 5. Tauri commands (Rust)
 
