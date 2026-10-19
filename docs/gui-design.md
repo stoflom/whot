@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -227,6 +227,13 @@ Face card: preview image, derived `name`, confidence %, description input
 (`|`-separated tags, edited inline, committed on blur/Enter), star (set as
 primary), status badge (provisional/confirmed/rejected), reject button.
 Double-click opens the full-image focus mode (§3).
+- **Accept/reject asymmetry** (#63): *accepted* (`confirmed`) is the
+  default status, so the card's reject **button** is the only styled
+  action embellishment; acceptance is indicated by the status badge's
+  `✓`. Tooltips on both states spell this out. More generally, every
+  tooltip is user-facing prose: sentence-style capitalisation, no issue
+  numbers, and cryptic-symbol buttons (`⌃`/`⌄`, `✕`) always name their
+  action (#64, #65).
 - **Input families** (#56, §4.20): group-path inputs and face-description
   inputs carry different frames and backgrounds everywhere they appear —
   solid accent-tinted frame for group paths, dashed second-accent frame
