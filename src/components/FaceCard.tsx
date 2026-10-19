@@ -86,8 +86,15 @@ export default function FaceCard({
       // selects the range from the anchor — double-click-to-open is
       // unaffected
       onClick={(e) => {
-        // the checkbox has its own toggle — don't double-fire on bubbled clicks
-        if ((e.target as HTMLElement).closest(".face-check")) return;
+        // clicks inside the card's own controls — checkbox, name/desc
+        // inputs, ★/◈/✗ buttons — are theirs, never a re-selection:
+        // a multi-selection must survive editing a card's fields (#70)
+        if (
+          (e.target as HTMLElement).closest(
+            ".face-check, input, textarea, button"
+          )
+        )
+          return;
         if (e.shiftKey) {
           onRangeSelect(face.id);
         } else if (e.ctrlKey || e.metaKey) {
