@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.10** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.11** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -521,7 +521,18 @@ Double-click opens the full-image focus mode (§3).
     the header's own section (narrowing to `section∩selection` used to
     drop the other groups' cards silently); only with **no selection**
     do the inputs fall back to **every face of their own section**.
-    Tooltips state the precedence.
+    Tooltips state the precedence. Commit distinguishes the two fields
+    (#77): a **name change** keeps the `assign_person` path (accept +
+    name; group applied on create/UnknownN-rename — and when the target
+    person pre-existed, an *explicitly typed* group is applied
+    afterwards via `set_person_group`, since F2 only guards implicit
+    merges); a **group-only change** skips `assign_person` entirely and
+    calls `set_person_group` on the persons owning the scope — which
+    also enables filing an **UnknownN** cluster into a group *without*
+    naming it (remember the face, not the name): `set_person_group`
+    never validates names, while `assign_person` rejects `Unknown*`.
+    An empty name field counts as "not changed"; unowned faces surface
+    a toast instead of failing silently.
 25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
     selection the mouse cursor decides the target: a face-card context
     menu opened on an **empty selection selects that card first**
