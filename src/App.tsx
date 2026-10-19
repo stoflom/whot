@@ -671,6 +671,8 @@ export default function App() {
   // current (filtered) display order; the shortcut set is listed in the
   // settings popover
   const [filter, setFilter] = useState("");
+  // shared cursor position for the cursor-as-target rules (#74/#75/#76)
+  const mouseRef = useRef({ x: -1, y: -1 });
   const stepIds = useMemo(
     () => orderedVisiblePersonIds(treePersons, filter),
     [treePersons, filter]
@@ -678,12 +680,27 @@ export default function App() {
   const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
   const stepPerson = useCallback(
     (dir: 1 | -1) => {
+      // #76 — cursor-as-target (§4.25): with no selected person the
+      // person under the mouse cursor anchors the step (mouseRef is the
+      // same ref object every render, so this closure never goes stale)
+      let base = stepIdx;
+      if (base === -1) {
+        const el = document.elementFromPoint(
+          mouseRef.current.x,
+          mouseRef.current.y
+        );
+        const v = el
+          ?.closest("[data-person-id]")
+          ?.getAttribute("data-person-id");
+        const i = v == null ? -1 : stepIds.indexOf(parseInt(v, 10));
+        if (i !== -1) base = i;
+      }
       const next =
-        stepIdx === -1
+        base === -1
           ? dir === 1
             ? 0
             : Math.max(stepIds.length - 1, 0)
-          : Math.min(Math.max(stepIdx + dir, 0), stepIds.length - 1);
+          : Math.min(Math.max(base + dir, 0), stepIds.length - 1);
       const id = stepIds[next];
       if (id == null) return;
       // #52 (§4.15): stepping selects another person — keep the split only
@@ -702,7 +719,6 @@ export default function App() {
   // #74 — section under the mouse cursor: Ctrl-G must work with the
   // cursor anywhere inside a group, without a prior click/hover on one
   // of its cards — the cursor position is tracked, the DOM resolves it
-  const mouseRef = useRef({ x: -1, y: -1 });
   useEffect(() => {
     const move = (e: MouseEvent) => {
       mouseRef.current = { x: e.clientX, y: e.clientY };
