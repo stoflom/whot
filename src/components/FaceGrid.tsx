@@ -25,6 +25,10 @@ interface GridProps {
   persons: Map<number, Person>;
   onAssignName: (faceId: number, name: string) => void;
   onToggle: (id: number) => void;
+  /** #69: plain click — select just this card and drop the range anchor */
+  onSelectOne: (id: number) => void;
+  /** #69: shift-click — select the range anchor…clicked card */
+  onRangeSelect: (id: number) => void;
   onToggleMany: (ids: number[], on: boolean) => void;
   onDescription: (id: number, d: string) => void;
   onPrimary: (id: number) => void;
@@ -105,6 +109,8 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               }
               onAssignName={grid.onAssignName}
               onToggle={grid.onToggle}
+              onSelectOne={grid.onSelectOne}
+              onRangeSelect={grid.onRangeSelect}
               onDescription={grid.onDescription}
               onPrimary={grid.onPrimary}
               onRefcrop={grid.onRefcrop}

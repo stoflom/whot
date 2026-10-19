@@ -202,6 +202,7 @@ export default function App() {
   };
 
   const toggle = (id: number) => {
+    anchorRef.current = id; // #69: the toggled card becomes the range anchor
     closeSplitForFaces([id]);
     setSel((prev) => {
       const n = new Set(prev);
@@ -464,6 +465,37 @@ export default function App() {
 
   // ------------------------------------------------------------ sections
 
+  // #69 — anchor + shift-click range selection over the rendered card
+  // order (sections render back-to-back, so ranges may span sections)
+  const anchorRef = useRef<number | null>(null);
+  const renderedIds = (): number[] =>
+    (splitImageId != null ? sectionsForImage(splitImageId) : sections).flatMap(
+      (s) => s.faceIds
+    );
+  // plain click: select just this card, drop the anchor
+  const selectOnly = (id: number) => {
+    anchorRef.current = id;
+    closeSplitForFaces([id]);
+    lastSelRef.current = id;
+    setSel(new Set([id]));
+  };
+  // shift-click: the contiguous range anchor…clicked card; the anchor
+  // stays put so repeated shift-clicks re-anchor the same start, the
+  // clicked card becomes the new last-selected
+  const rangeSelect = (id: number) => {
+    const ids = renderedIds();
+    const ai = anchorRef.current == null ? -1 : ids.indexOf(anchorRef.current);
+    const ci = ids.indexOf(id);
+    if (ai === -1 || ci === -1) {
+      // anchor gone (filtered/removed) or card not in this view
+      selectOnly(id);
+      return;
+    }
+    const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
+    lastSelRef.current = id;
+    setSel(new Set(ids.slice(lo, hi + 1)));
+  };
+
   const gridHandlers = {
     faces: facesById,
     persons: personsById,
@@ -505,6 +537,8 @@ export default function App() {
       setFaceAssign({ faceId, personId: f.person_id, name });
     },
     onToggle: toggle,
+    onSelectOne: selectOnly,
+    onRangeSelect: rangeSelect,
     onOpen: (id: number) => {
       const f = facesById.get(id);
       if (f) setSplitImageId(f.image_id);
