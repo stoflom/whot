@@ -346,6 +346,14 @@ export default function App() {
   const faceMenu = (id: number, e: ReactMouseEvent) => {
     const f = facesById.get(id);
     if (!f) return;
+    // #75 (cursor-as-target, generalises #74): with an empty selection
+    // the right-clicked card selects automatically — the menu then
+    // visibly acts on it and the rule bar / A-R / Ctrl-G all agree
+    if (sel.size === 0) {
+      anchorRef.current = id;
+      lastSelRef.current = id;
+      setSel(new Set([id]));
+    }
     const section = sections.find((s) => s.faceIds.includes(id));
     // #49: actions hit the whole selection when this card is part of it
     const scope = actionScope(id);
@@ -355,7 +363,12 @@ export default function App() {
       {
         title: "Selection",
         items: [
-          { label: sel.has(id) ? "Deselect" : "Select", hint: "Space", onClick: () => toggle(id) },
+          {
+            // an empty selection just auto-selected this card (#75)
+            label: sel.has(id) || sel.size === 0 ? "Deselect" : "Select",
+            hint: "Space",
+            onClick: () => toggle(id),
+          },
           {
             label: "Select whole section",
             hint: "Ctrl-G", // #68: advertise the existing shortcut (#53)
@@ -751,14 +764,20 @@ export default function App() {
           e.preventDefault();
           toggle(targetId);
         } else if (e.key === "a" || e.key === "A") {
-          if (sel.size > 0) {
+          // #75: cursor-as-target — the hovered card stands in for the
+          // selection when there is none
+          const ids =
+            sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
+          if (ids.length > 0) {
             e.preventDefault();
-            doAccept([...sel]);
+            doAccept(ids);
           }
         } else if (e.key === "r" || e.key === "R") {
-          if (sel.size > 0) {
+          const ids =
+            sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
+          if (ids.length > 0) {
             e.preventDefault();
-            doReject([...sel]);
+            doReject(ids);
           }
         }
         return;
