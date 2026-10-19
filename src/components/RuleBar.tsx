@@ -28,14 +28,14 @@ export default function RuleBar({ count, onAssign, onAccept, onReject, onClear }
       </button>
       <button
         className="ok"
-        title={`Accept the ${count} selected face(s) — accepted is the default status`}
+        title={`Accept the ${count} selected face(s) — accepted is the default status (shortcut: A)`}
         onClick={onAccept}
       >
         Accept
       </button>
       <button
         className="bad"
-        title={`Reject the ${count} selected face(s) — hidden unless 'show rejected' is on`}
+        title={`Reject the ${count} selected face(s) — hidden unless 'show rejected' is on (shortcut: R)`}
         onClick={onReject}
       >
         Reject

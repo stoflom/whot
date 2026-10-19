@@ -611,7 +611,9 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   padding: 4px 8px 1px;
 }
 .ctx-item {
-  display: block;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
   width: 100%;
   text-align: left;
   background: transparent;
@@ -626,6 +628,7 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .ctx-item.danger { color: var(--bad); }
+.ctx-hint { color: var(--dim); font-size: 0.85em; }
 
 /* draggable pane dividers (#34) */
 .v-divider {
