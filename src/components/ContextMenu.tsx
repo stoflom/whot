@@ -9,6 +9,8 @@ export interface MenuItem {
   onClick: () => void;
   disabled?: boolean;
   danger?: boolean;
+  /** keyboard shortcut shown right-aligned (#68) */
+  hint?: string;
 }
 export interface MenuGroup {
   title?: string;
@@ -71,6 +73,7 @@ export default function ContextMenu({ menu, onClose }: Props) {
               }}
             >
               {it.label}
+              {it.hint && <span className="ctx-hint">{it.hint}</span>}
             </button>
           ))}
         </div>

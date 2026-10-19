@@ -16,3 +16,13 @@ export function selectAllIfAuto(e: { currentTarget: HTMLInputElement }): void {
     if (document.activeElement === el && isAutoName(el.value)) el.select();
   });
 }
+
+/** onFocus handler for group-path inputs: always select the whole value —
+    a group path is a structural value that is normally replaced
+    wholesale, never edited in place (#67 follow-up) */
+export function selectAll(e: { currentTarget: HTMLInputElement }): void {
+  const el = e.currentTarget;
+  requestAnimationFrame(() => {
+    if (document.activeElement === el) el.select();
+  });
+}

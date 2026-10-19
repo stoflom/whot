@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
+import { selectAll } from "../autoText";
 
 export interface Section {
   key: string;
@@ -24,6 +25,10 @@ interface GridProps {
   persons: Map<number, Person>;
   onAssignName: (faceId: number, name: string) => void;
   onToggle: (id: number) => void;
+  /** #69: plain click — select just this card and drop the range anchor */
+  onSelectOne: (id: number) => void;
+  /** #69: shift-click — select the range anchor…clicked card */
+  onRangeSelect: (id: number) => void;
   onToggleMany: (ids: number[], on: boolean) => void;
   onDescription: (id: number, d: string) => void;
   onPrimary: (id: number) => void;
@@ -75,7 +80,9 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             className="rule-group input-group"
             value={group}
             onChange={(e) => setGroup(e.target.value)}
+            title="Group for the assignment — '|' separated, e.g. family|lombards (empty = ungrouped)"
             placeholder="group e.g. family|lombards"
+            onFocus={selectAll}
           />
           <button onClick={apply} title="Assign name+group to the selected faces of this group (whole group if none selected)">
             apply
@@ -102,6 +109,8 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               }
               onAssignName={grid.onAssignName}
               onToggle={grid.onToggle}
+              onSelectOne={grid.onSelectOne}
+              onRangeSelect={grid.onRangeSelect}
               onDescription={grid.onDescription}
               onPrimary={grid.onPrimary}
               onRefcrop={grid.onRefcrop}

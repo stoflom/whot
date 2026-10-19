@@ -202,6 +202,7 @@ export default function App() {
   };
 
   const toggle = (id: number) => {
+    anchorRef.current = id; // #69: the toggled card becomes the range anchor
     closeSplitForFaces([id]);
     setSel((prev) => {
       const n = new Set(prev);
@@ -354,9 +355,10 @@ export default function App() {
       {
         title: "Selection",
         items: [
-          { label: sel.has(id) ? "Deselect" : "Select", onClick: () => toggle(id) },
+          { label: sel.has(id) ? "Deselect" : "Select", hint: "Space", onClick: () => toggle(id) },
           {
             label: "Select whole section",
+            hint: "Ctrl-G", // #68: advertise the existing shortcut (#53)
             onClick: () => section && toggleMany(section.faceIds, true),
             disabled: !section,
           },
@@ -368,10 +370,12 @@ export default function App() {
         items: [
           {
             label: label(f.link_status === "rejected" ? "Un-reject (accept)" : "Accept"),
+            hint: "A",
             onClick: () => doAccept(scope),
           },
           {
             label: label("Reject"),
+            hint: "R",
             onClick: () => doReject(scope),
             // reject stays offered while any face of the scope is not rejected
             disabled: !scope.some((sid) => facesById.get(sid)?.link_status !== "rejected"),
@@ -461,6 +465,37 @@ export default function App() {
 
   // ------------------------------------------------------------ sections
 
+  // #69 — anchor + shift-click range selection over the rendered card
+  // order (sections render back-to-back, so ranges may span sections)
+  const anchorRef = useRef<number | null>(null);
+  const renderedIds = (): number[] =>
+    (splitImageId != null ? sectionsForImage(splitImageId) : sections).flatMap(
+      (s) => s.faceIds
+    );
+  // plain click: select just this card, drop the anchor
+  const selectOnly = (id: number) => {
+    anchorRef.current = id;
+    closeSplitForFaces([id]);
+    lastSelRef.current = id;
+    setSel(new Set([id]));
+  };
+  // shift-click: the contiguous range anchor…clicked card; the anchor
+  // stays put so repeated shift-clicks re-anchor the same start, the
+  // clicked card becomes the new last-selected
+  const rangeSelect = (id: number) => {
+    const ids = renderedIds();
+    const ai = anchorRef.current == null ? -1 : ids.indexOf(anchorRef.current);
+    const ci = ids.indexOf(id);
+    if (ai === -1 || ci === -1) {
+      // anchor gone (filtered/removed) or card not in this view
+      selectOnly(id);
+      return;
+    }
+    const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
+    lastSelRef.current = id;
+    setSel(new Set(ids.slice(lo, hi + 1)));
+  };
+
   const gridHandlers = {
     faces: facesById,
     persons: personsById,
@@ -502,6 +537,8 @@ export default function App() {
       setFaceAssign({ faceId, personId: f.person_id, name });
     },
     onToggle: toggle,
+    onSelectOne: selectOnly,
+    onRangeSelect: rangeSelect,
     onOpen: (id: number) => {
       const f = facesById.get(id);
       if (f) setSplitImageId(f.image_id);
@@ -658,7 +695,8 @@ export default function App() {
           tgt.tagName === "SELECT" || tgt.isContentEditable)
       )
         return;
-      if (dialogFaceIds != null || faceAssign != null || confirmRemove != null) return;
+      if (dialogFaceIds != null || faceAssign != null || confirmRemove != null || menu != null)
+        return;
       // #53 (§4.17): Ctrl-G toggles the whole section — the hovered
       // card's, else the most recently selected card's; preventDefault
       // so webkit cannot steal the chord
@@ -675,6 +713,34 @@ export default function App() {
         toggleMany(section.faceIds, !all);
         return;
       }
+      // #68 — core shortcut set: scope follows the hovered/last-selected
+      // card (like Ctrl-G); plain letters only, dialogs/menus/inputs above
+      if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        const rendered =
+          splitImageId != null ? sectionsForImage(splitImageId) : sections;
+        setSel(new Set(rendered.flatMap((s) => s.faceIds)));
+        return;
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === " ") {
+          const targetId = hoverId ?? lastSelRef.current;
+          if (targetId == null) return;
+          e.preventDefault();
+          toggle(targetId);
+        } else if (e.key === "a" || e.key === "A") {
+          if (sel.size > 0) {
+            e.preventDefault();
+            doAccept([...sel]);
+          }
+        } else if (e.key === "r" || e.key === "R") {
+          if (sel.size > 0) {
+            e.preventDefault();
+            doReject([...sel]);
+          }
+        }
+        return;
+      }
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         stepPerson(-1);
@@ -685,6 +751,10 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // toggle/toggleMany/doAccept/doReject follow this file's pattern:
+    // recreated per render, the handler re-captures them whenever any
+    // listed dep changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sectionsForImage, sel, splitImageId]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;

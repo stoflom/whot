@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
+import { selectAll } from "../autoText";
 
 interface Props {
   person: Person | null;
@@ -26,6 +27,8 @@ function Editable({
   variant,
   onCommit,
   persons,
+  title,
+  selectAllOnFocus,
 }: {
   label: string;
   value: string;
@@ -37,6 +40,9 @@ function Editable({
   onCommit: (v: string) => void;
   /** #67: existing persons → name suggestions (Name field only) */
   persons?: Person[];
+  /** #65/#67: hint shown on hover; select-all-on-focus (group paths) */
+  title?: string;
+  selectAllOnFocus?: boolean;
 }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
@@ -57,7 +63,12 @@ function Editable({
           value={v}
           onChange={(e) => setV(e.target.value)}
           onBlur={commit}
-          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          onFocus={selectAllOnFocus ? selectAll : undefined}
+          title={title}
           placeholder={placeholder}
         />
       )}
@@ -99,6 +110,8 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
         value={person.groups[0] ?? ""}
         placeholder="e.g. family|lombards (empty = ungrouped)"
         variant="group"
+        title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped)"
+        selectAllOnFocus
         onCommit={(v) => onGroup(person.id, v)}
       />
       <Editable

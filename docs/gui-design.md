@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.5** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -469,7 +469,10 @@ Double-click opens the full-image focus mode (§3).
       wholesale. User-entered values keep normal caret behaviour.
       Applied everywhere such a value can appear: the face-card name
       input, the tree inline rename, the detail-pane Name field and the
-      AssignDialog's pre-filled name.
+      AssignDialog's pre-filled name. **Group-path inputs** go further
+      and always select all on focus, user-entered value or not — a
+      group path is a structural value that is replaced wholesale,
+      never edited in place (#67 follow-up, confirmed in testing).
     - **Name typeahead**: the AssignDialog and the detail-pane Name
       field suggest existing persons (substring match, max 8, `UnknownN`
       names excluded — the point is to reach a real name; each row shows
@@ -480,6 +483,29 @@ Double-click opens the full-image focus mode (§3).
       pick mirrors the target's group into the group field (unless the
       user already typed one). Face-card and tree-rename typeahead are
       deferred until this interaction proves itself.
+22. **Keyboard shortcut set** (#68, extends #53) ⇒ shortcuts act on the
+    selection, or on the hovered/last-selected card when nothing is
+    selected (the Ctrl-G rule): **Ctrl-G** toggles the card's whole
+    section (#53), **Space** toggles the card itself, **Ctrl-A** selects
+    all cards of the current view, **A**/**R** accept/reject the
+    selection (the rule-bar buttons' scope), ←/→ step persons (#31) and
+    Esc closes split/dialog/menu (§4.19). Shortcuts are suppressed while
+    typing in any input and while a menu or dialog is open. Context-menu
+    items display their shortcut as a right-aligned dim hint
+    (\`MenuItem.hint\`); the rule-bar tooltips and the settings popover's
+    Keyboard list document the set. No shortcuts for destructive
+    actions (remove person, delete group) — they keep confirm dialogs.
+23. **Anchor + shift-click ranges** (#69) ⇒ a plain card click selects
+    just that card and drops the *range anchor*; **Shift-click** selects
+    the contiguous run of rendered cards from the anchor up to and
+    including the clicked card, replacing the selection. Ranges are
+    computed over the flat rendered order, so they may span section
+    boundaries — the context menus, rule-bar buttons and A/R shortcuts
+    then act on the whole set through the existing selection scope
+    (§4.14). Ctrl/⌘-click keeps its toggle meaning (#53) and moves the
+    anchor when it selects; Space follows the hovered card. A vanished
+    anchor (filtered/removed card) degrades shift-click to a plain
+    select. Double-click-to-open is unaffected.
 
 ## 5. Tauri commands (Rust)
 

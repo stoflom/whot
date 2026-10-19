@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
+import { selectAll } from "../autoText";
 
 interface Props {
   count: number;
@@ -47,7 +48,9 @@ export default function AssignDialog({ count, defaultName, defaultGroup, persons
         <label>
           Group
           <input value={group} className="input-group" onChange={(e) => setGroup(e.target.value)}
+            title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped); picking a name above copies its group here"
             placeholder="e.g. family|lombards (empty = ungrouped)"
+            onFocus={selectAll}
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === "Enter" && name.trim()) onSubmit(name, group);

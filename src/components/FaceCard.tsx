@@ -9,6 +9,10 @@ interface Props {
   hovered: boolean;
   isPrimary: boolean;
   onToggle: (id: number) => void;
+  /** plain click: select just this card — drops the range anchor (#69) */
+  onSelectOne: (id: number) => void;
+  /** shift-click: select the range from the anchor to this card (#69) */
+  onRangeSelect: (id: number) => void;
   onHover: (id: number | null) => void;
   /** double-click: open the full image (§3 card double-click) */
   onOpen: (id: number) => void;
@@ -33,6 +37,8 @@ export default function FaceCard({
   hovered,
   isPrimary,
   onToggle,
+  onSelectOne,
+  onRangeSelect,
   onHover,
   onOpen,
   onContextMenu,
@@ -75,15 +81,20 @@ export default function FaceCard({
       onMouseLeave={() => onHover(null)}
       onDoubleClick={() => onOpen(face.id)}
       onContextMenu={(e) => onContextMenu(face.id, e)}
-      // #53 (§4.17): ctrl/cmd-click toggles the selection — the tree's
-      // idiom mirrored on cards; plain click stays inert so
-      // double-click-to-open is unaffected
+      // #53 (§4.17): ctrl/cmd-click toggles the selection; #69: plain
+      // click drops the anchor (selects just this card), shift-click
+      // selects the range from the anchor — double-click-to-open is
+      // unaffected
       onClick={(e) => {
         // the checkbox has its own toggle — don't double-fire on bubbled clicks
         if ((e.target as HTMLElement).closest(".face-check")) return;
-        if (e.ctrlKey || e.metaKey) {
+        if (e.shiftKey) {
+          onRangeSelect(face.id);
+        } else if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
           onToggle(face.id);
+        } else {
+          onSelectOne(face.id);
         }
       }}
     >
@@ -126,7 +137,7 @@ export default function FaceCard({
             }
           }}
         />
-        <span className="face-conf">{Math.round(face.confidence * 100)}%</span>
+        <span className="face-conf" title="Confidence — recognizer match score (read-only)">{Math.round(face.confidence * 100)}%</span>
       </div>
       <input
         className="face-desc input-desc"
