@@ -37,6 +37,7 @@ export default function AssignDialog({ count, defaultName, defaultGroup, persons
             value={name}
             onChange={setName}
             persons={persons}
+            title="Name — an existing person merges into; suggestions list matches"
             onPick={(p) => {
               // the picked person is the merge target — mirror its group
               // unless the user already typed one (#67)

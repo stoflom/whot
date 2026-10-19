@@ -33,6 +33,7 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
             min={0}
             max={1}
             step={0.05}
+            title="0–1: minimum similarity for faces to group under one person"
             value={threshold}
             onChange={(e) => setThreshold(parseFloat(e.target.value) || 0)}
           />
@@ -44,6 +45,7 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
             min={1}
             max={30}
             step={1}
+            title="How many reference crops to keep per person (top by confidence)"
             value={refcropN}
             onChange={(e) => setRefcropN(parseInt(e.target.value) || 1)}
           />

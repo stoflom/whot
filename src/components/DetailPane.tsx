@@ -54,9 +54,9 @@ function Editable({
     <label className="dp-field">
       <span>{label}</span>
       {multiline ? (
-        <textarea rows={2} className={cls} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} placeholder={placeholder} />
+        <textarea rows={2} className={cls} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} placeholder={placeholder} title={title} />
       ) : persons ? (
-        <NameTypeahead value={v} onChange={setV} persons={persons} onSubmit={commit} />
+        <NameTypeahead value={v} onChange={setV} persons={persons} onSubmit={commit} title={title} />
       ) : (
         <input
           className={cls}
@@ -97,13 +97,14 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
   const primaryImg = useFaceImage(person.primary_face_id);
   return (
     <div className="dp-person" key={person.id}>
-      <div className="dp-avatar" onClick={() => person.primary_face_id && onSetPrimary(person.primary_face_id)}>
+      <div className="dp-avatar" title="Click to make this the primary face" onClick={() => person.primary_face_id && onSetPrimary(person.primary_face_id)}>
         {primaryImg ? <img src={primaryImg} alt="" /> : <span>?</span>}
       </div>
       <Editable
         label="Name"
         value={person.name}
         persons={snapshot?.persons}
+        title="Name — an existing person merges into (Enter commits)"
         onCommit={(v) => onName(person.id, v)}
       />
       <Editable
@@ -119,6 +120,7 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
         label="Note"
         value={person.note ?? ""}
         multiline
+        title="Note — free text about this person"
         onCommit={(v) => onNote(person.id, v)}
       />
       <div className="dp-counts">
