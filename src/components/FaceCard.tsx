@@ -128,6 +128,7 @@ export default function FaceCard({
           }
           onChange={(e) => setPname(e.target.value)}
           onFocus={selectAllIfAuto} // #67: UnknownN is replaced wholesale
+          onClick={selectAllIfAuto}
           onBlur={commitName}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();

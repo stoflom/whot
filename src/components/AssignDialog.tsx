@@ -51,6 +51,7 @@ export default function AssignDialog({ count, defaultName, defaultGroup, persons
             title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped); picking a name above copies its group here"
             placeholder="e.g. family|lombards (empty = ungrouped)"
             onFocus={selectAll}
+            onClick={selectAll}
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === "Enter" && name.trim()) onSubmit(name, group);

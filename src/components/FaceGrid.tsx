@@ -83,6 +83,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             title="Group for the assignment — '|' separated, e.g. family|lombards (empty = ungrouped)"
             placeholder="group e.g. family|lombards"
             onFocus={selectAll}
+            onClick={selectAll}
           />
           <button onClick={apply} title="Assign name+group to the selected faces of this group (whole group if none selected)">
             apply
