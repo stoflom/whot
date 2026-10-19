@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.4** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.5** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -495,6 +495,17 @@ Double-click opens the full-image focus mode (§3).
     (\`MenuItem.hint\`); the rule-bar tooltips and the settings popover's
     Keyboard list document the set. No shortcuts for destructive
     actions (remove person, delete group) — they keep confirm dialogs.
+23. **Anchor + shift-click ranges** (#69) ⇒ a plain card click selects
+    just that card and drops the *range anchor*; **Shift-click** selects
+    the contiguous run of rendered cards from the anchor up to and
+    including the clicked card, replacing the selection. Ranges are
+    computed over the flat rendered order, so they may span section
+    boundaries — the context menus, rule-bar buttons and A/R shortcuts
+    then act on the whole set through the existing selection scope
+    (§4.14). Ctrl/⌘-click keeps its toggle meaning (#53) and moves the
+    anchor when it selects; Space follows the hovered card. A vanished
+    anchor (filtered/removed card) degrades shift-click to a plain
+    select. Double-click-to-open is unaffected.
 
 ## 5. Tauri commands (Rust)
 
