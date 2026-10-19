@@ -564,7 +564,55 @@ export default function App() {
     // same ids the rule-bar buttons act on
     onReject: (id: number) => doReject(actionScope(id)),
     onAccept: (id: number) => doAccept(actionScope(id)),
-    onAssign: (ids: number[], name: string, group: string) => doAssign(ids, name, group),
+    // #77 — the header rule inputs: name changes keep the assign_person
+    // path (accept + name, group applied on create/UnknownN-rename);
+    // *group-only* edits bypass it entirely — assign_person never
+    // touches an existing person's group (F2) and rejects UnknownN
+    // names, which is exactly what made the group input a no-op
+    onAssign: (
+      ids: number[],
+      name: string,
+      group: string,
+      nameChanged: boolean,
+      groupChanged: boolean
+    ) => {
+      if (!nameChanged && !groupChanged) return;
+      if (!nameChanged) {
+        // regroup the persons owning the scope directly — this also
+        // serves 'remember the face, not the name': an UnknownN cluster
+        // can be filed into a group as-is (set_person_group never
+        // validates names)
+        const pids = [
+          ...new Set(
+            ids
+              .map((id) => facesById.get(id)?.person_id)
+              .filter((p): p is number => p != null)
+          ),
+        ];
+        if (pids.length === 0) {
+          setError("type a name first — unowned faces have no person to group");
+          return;
+        }
+        const unowned = ids.length -
+          ids.filter((id) => facesById.get(id)?.person_id != null).length;
+        mutate(async () => {
+          for (const pid of pids) await api.setPersonGroup(pid, group);
+        }, true).then(() => {
+          if (unowned > 0)
+            setError(`${unowned} unowned face(s) skipped — assign a name to group them`);
+        });
+        return;
+      }
+      // name changed: an explicitly typed group must also land when the
+      // target person pre-existed (assign_person drops it, F2)
+      const target = [...personsById.values()].find(
+        (p) => p.name === name.trim()
+      );
+      mutate(async () => {
+        await api.assignPerson(ids, name, group);
+        if (groupChanged && target) await api.setPersonGroup(target.id, group);
+      }, true);
+    },
   };
 
   // one section per person over an image's faces — the Rolls image
