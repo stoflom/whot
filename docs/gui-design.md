@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.6** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.10** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -487,14 +487,17 @@ Double-click opens the full-image focus mode (§3).
       deferred until this interaction proves itself.
 22. **Keyboard shortcut set** (#68, extends #53) ⇒ shortcuts act on the
     selection, or on the hovered/last-selected card when nothing is
-    selected (the Ctrl-G rule): **Ctrl-G** toggles the card's whole
-    section (#53), **Space** toggles the card itself, **Ctrl-A** selects
+    selected (the Ctrl-G rule): **Ctrl-G** toggles the section **under
+    the mouse cursor** — no prior click or card hover required (#74,
+    cursor hit-test via the section's `data-section-key`) — falling back
+    to the hovered/last-selected card's section (#53); **Space** toggles
+    the card itself, **Ctrl-A** selects
     all cards of the current view, **A**/**R** accept/reject the
     selection (the rule-bar buttons' scope), ←/→ step persons (#31) and
     Esc closes split/dialog/menu (§4.19). Shortcuts are suppressed while
     typing in any input and while a menu or dialog is open. Context-menu
     items display their shortcut as a right-aligned dim hint
-    (\`MenuItem.hint\`); the rule-bar tooltips and the settings popover's
+    (`MenuItem.hint`); the rule-bar tooltips and the settings popover's
     Keyboard list document the set. No shortcuts for destructive
     actions (remove person, delete group) — they keep confirm dialogs.
 23. **Anchor + shift-click ranges** (#69) ⇒ a plain card click selects
@@ -508,6 +511,29 @@ Double-click opens the full-image focus mode (§3).
     anchor when it selects; Space follows the hovered card. A vanished
     anchor (filtered/removed card) degrades shift-click to a plain
     select. Double-click-to-open is unaffected.
+24. **Section-header rule inputs** (#72/#73) ⇒ the name/group inputs in
+    a section header are the *direct* assignment path: they commit on
+    **Enter or blur** like every other field (change-guarded against the
+    section's defaults) as well as via the explicit **apply** button —
+    changing them is the operation itself, no button click required.
+    Scope precedence: **an active selection wins, whatever its extent**
+    — a cross-group selection is applied in full and never narrowed to
+    the header's own section (narrowing to `section∩selection` used to
+    drop the other groups' cards silently); only with **no selection**
+    do the inputs fall back to **every face of their own section**.
+    Tooltips state the precedence.
+25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
+    selection the mouse cursor decides the target: a face-card context
+    menu opened on an **empty selection selects that card first**
+    (anchor + last-selected), so the menu's scope, the rule bar and the
+    letter shortcuts all agree; **A**/**R** fall back to the hovered
+    card instead of no-oping. Ctrl-G's cursor hit-test (§4.22) and
+    Space's hovered-card scope are the same rule — the cursor is the
+    implicit selection whenever there is no explicit one. **←/→**
+    stepping honours it too (#76): with no selected person the first
+    step starts from the person under the cursor (tree rows expose
+    `data-person-id`), falling back to the list's start/end when the
+    cursor is over no tree row.
 
 ## 5. Tauri commands (Rust)
 

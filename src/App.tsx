@@ -346,6 +346,14 @@ export default function App() {
   const faceMenu = (id: number, e: ReactMouseEvent) => {
     const f = facesById.get(id);
     if (!f) return;
+    // #75 (cursor-as-target, generalises #74): with an empty selection
+    // the right-clicked card selects automatically — the menu then
+    // visibly acts on it and the rule bar / A-R / Ctrl-G all agree
+    if (sel.size === 0) {
+      anchorRef.current = id;
+      lastSelRef.current = id;
+      setSel(new Set([id]));
+    }
     const section = sections.find((s) => s.faceIds.includes(id));
     // #49: actions hit the whole selection when this card is part of it
     const scope = actionScope(id);
@@ -355,7 +363,12 @@ export default function App() {
       {
         title: "Selection",
         items: [
-          { label: sel.has(id) ? "Deselect" : "Select", hint: "Space", onClick: () => toggle(id) },
+          {
+            // an empty selection just auto-selected this card (#75)
+            label: sel.has(id) || sel.size === 0 ? "Deselect" : "Select",
+            hint: "Space",
+            onClick: () => toggle(id),
+          },
           {
             label: "Select whole section",
             hint: "Ctrl-G", // #68: advertise the existing shortcut (#53)
@@ -658,6 +671,8 @@ export default function App() {
   // current (filtered) display order; the shortcut set is listed in the
   // settings popover
   const [filter, setFilter] = useState("");
+  // shared cursor position for the cursor-as-target rules (#74/#75/#76)
+  const mouseRef = useRef({ x: -1, y: -1 });
   const stepIds = useMemo(
     () => orderedVisiblePersonIds(treePersons, filter),
     [treePersons, filter]
@@ -665,12 +680,27 @@ export default function App() {
   const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
   const stepPerson = useCallback(
     (dir: 1 | -1) => {
+      // #76 — cursor-as-target (§4.25): with no selected person the
+      // person under the mouse cursor anchors the step (mouseRef is the
+      // same ref object every render, so this closure never goes stale)
+      let base = stepIdx;
+      if (base === -1) {
+        const el = document.elementFromPoint(
+          mouseRef.current.x,
+          mouseRef.current.y
+        );
+        const v = el
+          ?.closest("[data-person-id]")
+          ?.getAttribute("data-person-id");
+        const i = v == null ? -1 : stepIds.indexOf(parseInt(v, 10));
+        if (i !== -1) base = i;
+      }
       const next =
-        stepIdx === -1
+        base === -1
           ? dir === 1
             ? 0
             : Math.max(stepIds.length - 1, 0)
-          : Math.min(Math.max(stepIdx + dir, 0), stepIds.length - 1);
+          : Math.min(Math.max(base + dir, 0), stepIds.length - 1);
       const id = stepIds[next];
       if (id == null) return;
       // #52 (§4.15): stepping selects another person — keep the split only
@@ -686,6 +716,23 @@ export default function App() {
     },
     [stepIdx, stepIds, splitImageId, snap]
   );
+  // #74 — section under the mouse cursor: Ctrl-G must work with the
+  // cursor anywhere inside a group, without a prior click/hover on one
+  // of its cards — the cursor position is tracked, the DOM resolves it
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      mouseRef.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener("mousemove", move);
+    return () => window.removeEventListener("mousemove", move);
+  }, []);
+  const sectionUnderCursor = (rendered: Section[]): Section | undefined => {
+    const el = document.elementFromPoint(mouseRef.current.x, mouseRef.current.y);
+    const key = el
+      ?.closest("[data-section-key]")
+      ?.getAttribute("data-section-key");
+    return key ? rendered.find((s) => s.key === key) : undefined;
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement | null;
@@ -697,17 +744,21 @@ export default function App() {
         return;
       if (dialogFaceIds != null || faceAssign != null || confirmRemove != null || menu != null)
         return;
-      // #53 (§4.17): Ctrl-G toggles the whole section — the hovered
-      // card's, else the most recently selected card's; preventDefault
-      // so webkit cannot steal the chord
+      // #53 (§4.17): Ctrl-G toggles the whole section — the one under
+      // the mouse cursor first (#74), else the hovered card's, else the
+      // most recently selected card's; preventDefault so webkit cannot
+      // steal the chord
       if ((e.ctrlKey || e.metaKey) && (e.key === "g" || e.key === "G")) {
         e.preventDefault();
-        const targetId = hoverId ?? lastSelRef.current;
-        if (targetId == null) return;
         // in focus mode the rendered sections are the film roll's (#55)
         const rendered =
           splitImageId != null ? sectionsForImage(splitImageId) : sections;
-        const section = rendered.find((s) => s.faceIds.includes(targetId));
+        let section = sectionUnderCursor(rendered);
+        if (!section) {
+          const targetId = hoverId ?? lastSelRef.current;
+          if (targetId == null) return;
+          section = rendered.find((s) => s.faceIds.includes(targetId));
+        }
         if (!section || section.faceIds.length === 0) return;
         const all = section.faceIds.every((id) => sel.has(id));
         toggleMany(section.faceIds, !all);
@@ -729,14 +780,20 @@ export default function App() {
           e.preventDefault();
           toggle(targetId);
         } else if (e.key === "a" || e.key === "A") {
-          if (sel.size > 0) {
+          // #75: cursor-as-target — the hovered card stands in for the
+          // selection when there is none
+          const ids =
+            sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
+          if (ids.length > 0) {
             e.preventDefault();
-            doAccept([...sel]);
+            doAccept(ids);
           }
         } else if (e.key === "r" || e.key === "R") {
-          if (sel.size > 0) {
+          const ids =
+            sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
+          if (ids.length > 0) {
             e.preventDefault();
-            doReject([...sel]);
+            doReject(ids);
           }
         }
         return;

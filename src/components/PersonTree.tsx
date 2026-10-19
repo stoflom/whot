@@ -148,6 +148,7 @@ function PersonRow({
   };
   return (
     <button
+      data-person-id={person.id} // #76: cursor hit-test for ←/→ stepping
       className={`tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}`}
       onClick={onSelect}
       onDoubleClick={onStartRename}

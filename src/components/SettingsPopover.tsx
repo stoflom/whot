@@ -53,11 +53,11 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
         <div className="shortcuts">
           <h4>Keyboard</h4>
           <ul>
-            <li><b>←</b> / <b>→</b> — previous / next person (tree order)</li>
-            <li><b>Ctrl-G</b> — select/deselect the whole section (hovered or last-selected card)</li>
+            <li><b>←</b> / <b>→</b> — previous / next person (tree order; from the person under the cursor if none is selected)</li>
+            <li><b>Ctrl-G</b> — select/deselect the group under the cursor (else the hovered or last-selected card's section)</li>
             <li><b>Space</b> — toggle selection of the hovered / last-selected card</li>
             <li><b>Ctrl-A</b> — select all cards in the current view</li>
-            <li><b>A</b> / <b>R</b> — accept / reject the selection</li>
+            <li><b>A</b> / <b>R</b> — accept / reject the selection (the hovered card if nothing is selected)</li>
             <li><b>click</b> — select a single card (drops the range anchor)</li>
             <li><b>Shift-click</b> — select everything from the anchor to the clicked card</li>
             <li><b>Ctrl-click</b> — toggle a face card in the selection</li>
