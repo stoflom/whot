@@ -748,18 +748,15 @@ export default function App() {
           : Math.min(Math.max(base + dir, 0), stepIds.length - 1);
       const id = stepIds[next];
       if (id == null) return;
-      // #52 (§4.15): stepping selects another person — keep the split only
-      // while that person still has a face on the open image
-      if (
-        splitImageId != null &&
-        !(snap?.faces.some((f) => f.person_id === id && f.image_id === splitImageId) ?? false)
-      )
-        setSplitImageId(null);
+      // #62 — attention shifted to the new person: the full image ends
+      // whether they appear in it or not (§4.15, same rule as a tree-row
+      // select; #52's relevance check dropped)
+      if (splitImageId != null) setSplitImageId(null);
       setPersonId(id);
       setView("person");
       setImageId(null);
     },
-    [stepIdx, stepIds, splitImageId, snap]
+    [stepIdx, stepIds, splitImageId]
   );
   // #74 — section under the mouse cursor: Ctrl-G must work with the
   // cursor anywhere inside a group, without a prior click/hover on one
