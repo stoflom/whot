@@ -64,7 +64,7 @@ Every cluster becomes an `UnknownN` person; all faces start `provisional`.
 Recaptures work already done in legacy applications (digiKam, Lightroom,
 darktable sidecars) by **attaching persons to the faces insightface has
 already detected** — it never imports new images, faces or detections
-design `docs/gui-design.md` §8/§9).
+(design `docs/gui-design.md` §8/§9).
 
 Two steps, both safe by construction:
 
