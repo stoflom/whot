@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
+import { selectAllIfAuto } from "../autoText";
 import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
 import GroupDialog from "./GroupDialog";
@@ -165,6 +166,7 @@ function PersonRow({
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
+          onFocus={selectAllIfAuto} // #67: UnknownN is replaced wholesale
           onClick={(e) => e.stopPropagation()}
           onBlur={commit}
           onKeyDown={(e) => {

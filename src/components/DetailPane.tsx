@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
+import NameTypeahead from "./NameTypeahead";
 
 interface Props {
   person: Person | null;
@@ -24,6 +25,7 @@ function Editable({
   multiline,
   variant,
   onCommit,
+  persons,
 }: {
   label: string;
   value: string;
@@ -33,6 +35,8 @@ function Editable({
       descriptions; Name/Note keep the default look */
   variant?: "group" | "desc";
   onCommit: (v: string) => void;
+  /** #67: existing persons → name suggestions (Name field only) */
+  persons?: Person[];
 }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
@@ -45,6 +49,8 @@ function Editable({
       <span>{label}</span>
       {multiline ? (
         <textarea rows={2} className={cls} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} placeholder={placeholder} />
+      ) : persons ? (
+        <NameTypeahead value={v} onChange={setV} persons={persons} onSubmit={commit} />
       ) : (
         <input
           className={cls}
@@ -59,7 +65,7 @@ function Editable({
   );
 }
 
-interface PersonViewProps extends Omit<Props, "snapshot"> {
+interface PersonViewProps extends Omit<Props, "person"> {
   person: Person;
 }
 
@@ -75,7 +81,7 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
   return [...m.entries()];
 }
 
-function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
+function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
   return (
     <div className="dp-person" key={person.id}>
@@ -85,6 +91,7 @@ function PersonView({ person, refcrops, onName, onGroup, onNote, onSetPrimary, o
       <Editable
         label="Name"
         value={person.name}
+        persons={snapshot?.persons}
         onCommit={(v) => onName(person.id, v)}
       />
       <Editable

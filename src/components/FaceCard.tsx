@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face } from "../api";
 import { useFaceImage } from "../hooks";
+import { selectAllIfAuto } from "../autoText";
 
 interface Props {
   face: Face;
@@ -115,6 +116,7 @@ export default function FaceCard({
               : "Name"
           }
           onChange={(e) => setPname(e.target.value)}
+          onFocus={selectAllIfAuto} // #67: UnknownN is replaced wholesale
           onBlur={commitName}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();

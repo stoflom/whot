@@ -973,6 +973,7 @@ export default function App() {
           count={dialogFaceIds.length}
           defaultName={dialogPrefill.name}
           defaultGroup={dialogPrefill.group}
+          persons={snap?.persons ?? []}
           onSubmit={(n, g) => {
             const ids = dialogFaceIds;
             setDialogFaceIds(null);
