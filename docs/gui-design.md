@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 1.18** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 2.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -9,6 +9,12 @@ the closing comment of the issue(s) it implements.
 
 Tauri-based desktop app for reviewing, naming, accepting, rejecting and
 annotating faces imported by `scripts/import_roll.py` into `data/faces.db`.
+
+Since v2.0 the design also covers `scripts/harvest_legacy.py` (§8): the
+read-only harvester that captures face & person knowledge from the archival
+sources (sidecar XMP files, the Lightroom catalog and its sidecars, digiKam's
+core and recognition databases) into a *staging database* for a subsequent
+importer to merge into `faces.db`.
 
 ## 1. Goals
 
@@ -38,7 +44,8 @@ All panes re-sync after every mutation.
 | Backend | Rust + **rusqlite** (bundled SQLite) | all SQL in one trusted place |
 | Embeddings | Rust float32 dot product on `face_embeddings.vector` (512-d, L2-normalised ⇒ cosine) | trivial cost up to ~10k faces |
 | Images | served from DB **BLOBs** (`faces.preview`, `images.thumbnail/preview`) as base64 data URLs, lazy + cached in the frontend | GUI works even if source files move; no file-system access needed |
-| Python | **none** at runtime | insightface only runs in the import script |
+| Python | **none** at runtime | insightface only runs in the import and
+  harvest scripts (§8) |
 
 App root = repository root (`package.json`, `src/`, `src-tauri/`).
 DB path resolved like `import_roll.py`: parse `.env` (`FACES_DB`, default
@@ -502,10 +509,18 @@ whot/
     src/main.rs  src/lib.rs        # lib.rs: #[tauri::command] surface (§5)
     src/db.rs                      # db.rs: queries + embeddings + refcrops
     tests/                         # Rust integration tests (self-built fixture DB)
-  test/                            # Python unit tests (import helpers)
+  scripts/                         # Python tooling (dev-time only)
+    import_roll.py                 # roll import into data/faces.db
+    annotation_snapshot.py         # annotation export/restore across drop&recreate
+    harvest_legacy.py              # §8: read-only archival harvester
+    legacy/                        # archived importers, superseded by harvest_legacy.py
+  database/
+    schema.sql                     # faces.db DDL (v1.5)
+    harvest_schema.sql             # staging DDL for harvest_legacy.py (§8, v1.0)
+  test/                            # Python unit tests (import + harvest helpers)
   docs/                            # design + review documents
   config/whotrc.json              # created at runtime
-  data/faces.db                   # (existing)
+  data/faces.db                   # (existing; never touched by §8's harvester)
 ```
 
 ## 7. Run / build
@@ -517,3 +532,131 @@ Non-goals (v1): moving faces between *known* persons by drag & drop,
 deleting faces (persons *can* be removed — §4.13; their faces become
 rejected, unowned records), editing embeddings, multi-group membership UI
 (one group path per person), i18n.
+
+## 8. Legacy harvest — staging database (v2.0)
+
+`scripts/harvest_legacy.py` is one self-contained script that replaces the
+legacy duo under `scripts/legacy/` (`import_common.py`, `import_harvest.py`
+and the old review DB they were written against). It captures what the
+archive already knows about **faces and persons** and writes it into a
+**staging database it creates itself**. Importing that staging DB into
+`faces.db` is the job of a *separate, later* script (§8.5) — the harvester
+and `faces.db` never meet.
+
+The three source families (each enabled by canonical name):
+
+| Source | What is read | Canonical names |
+| --- | --- | --- |
+| darktable-style sidecars (`<image.ext>.xmp`) | MWG-RS face regions, MPRI person presence, `People|…` hierarchical tags | `sidecars-mwgrs`, `sidecars-mpri`, `sidecars-catsets` |
+| Lightroom catalog (`.lrcat`) + Lightroom's own sidecars (`<stem>.xmp`) | person keyword tree, face regions (`userPick` kept as a flag), MWG-RS regions + `People|…` tags | `lightroom-catalog`, `lightroom-sidecars` |
+| digiKam core + recognition databases | tag paths, face rectangles (`tagRegion`), identity names + UUIDs | `digikam-core`, `digikam-faces`, `digikam-recognition` |
+
+### 8.1 Invariants
+
+- **H1 — sources are read-only.** Every external database is opened with
+  SQLite `mode=ro` (`&immutable=1` for the `.lrcat`, which is checkpointed);
+  sidecar files are opened for reading only. The archive
+  (`/run/media/…/Seagate Expansion Drive`) is mounted strictly read-only;
+  the harvester must never write there — or create WAL/SHM files next to a
+  source DB.
+- **H2 — `faces.db` is never touched.** Not read, not seeded from, not
+  written. The only write target is the staging DB, created fresh per run
+  (`O_EXCL` create; refusing to overwrite an existing file is an error).
+- **H3 — no image content is imported.** Images are not decoded,
+  thumbnailled or copied. The harvester captures the **fs path of the
+  image as the source states it**, plus any dimensions the source states
+  (`images.width/height`). The one deliberate read of image bytes is
+  hashing: whenever an image is **certainly** resolved — the sidecar's own
+  sibling, an existing mapped catalog path, a digiKam reconstructed path,
+  or a unique (basename, byte size) match — its **BLAKE3** hash is stored
+  in `images.content_hash`, the same identity `faces.db.images` keys on,
+  so the importer can match by content instead of by path. An ambiguous or
+  absent resolution gets no hash, never a guessed one; `--no-hash` skips
+  hashing entirely (e.g. a quick first pass over the archive). The tree
+  walk that feeds digiKam's size-based resolution (§8.3) stats files only.
+- **H4 — capture, not judgement.** Rows are stored as the source said, with
+  provenance: canonical `sources.name`, the source's own reference where it
+  has one (`faces.source_ref`, `person_refs.ref`), the source's own user
+  confirmation where it records one (`faces.picked` — Lightroom `userPick`),
+  and the harvest run (`harvest_run_id` → `harvest_runs.started_at`) on
+  every captured row. No cross-source deduplication, no ambiguous guessing:
+  an unresolvable image is counted in the run stats, never guessed.
+
+### 8.2 Staging schema (`database/harvest_schema.sql`, v1.0)
+
+Deliberately modelled on `faces.db` v1.5 naming so the importer is a
+translation, not a redesign — but without content: no `content_hash`, no
+BLOBs, no embeddings, no link statuses (review decisions happen in the GUI,
+after import).
+
+- `harvest_runs(id, started_at, finished_at, sources, roots, stats)` — one
+  row per harvest invocation; `sources`/`roots`/`stats` are JSON.
+- `sources(id, name UNIQUE, kind)` — the canonical vocabulary above,
+  `kind` ∈ `sidecars|lightroom|digikam`.
+- `persons(id, name UNIQUE, created_at, harvest_run_id)`.
+- `person_groups(person_id, path, source_id, harvest_run_id)` — `|`-paths
+  (`People|Friends|Pelsers`), one leaf-name person per path, same shape as
+  `faces.db.person_groups`.
+- `person_refs(person_id, kind, ref, source_id, harvest_run_id)` — external
+  identity references: digiKam recognition UUIDs, Lightroom keyword UUIDs
+  (`keyword:<id_global>`).
+- `images(id, path, path_origin, content_hash, name, file_size, source_ref,
+  source_id, width, height, harvest_run_id)` — **one row per distinct image
+  path as stated by a source**; `path_origin` records how the path was
+  obtained: `source` (the source states it) or `name-size` (uniquely
+  resolved against the scanned tree — digiKam's album-less images, §8.3).
+  `content_hash` is the BLAKE3 of the file, set **only when the image was
+  certainly resolved and read for hashing** (H3); `name`/`file_size`/
+  `source_ref` keep the source's own identifiers for the importer's
+  matching.
+- `image_persons(image_id, person_id, source_id, path, harvest_run_id)` —
+  *presence without geometry*: MPRI display names, digiKam/catset tag hits.
+  `path` carries the tag/catset path where the source has one.
+- `faces(id, image_id, person_id, x, y, w, h, unit, img_w, img_h,
+  source_id, source_ref, picked, harvest_run_id)` — corner-origin boxes as
+  the source states them: `unit` ∈ `normalized|pixels` plus the source's
+  image dimensions (`img_w/img_h`) when given. Normalised→pixel conversion
+  is deferred to the importer, because only it will know the canonical
+  decode dimensions (schema v1.5 `images.width/height`, design #18).
+  Lightroom's pixel rounding is banker's `round()` — contract, not choice,
+  because the legacy keys were built on it. `UNIQUE(image_id, person_id,
+  x, y, w, h, source_id)` dedupes digiKam's duplicate `Images` rows.
+- `schema_version(version, updated_at)` — single row `'1.0'`, exact-match
+  check like `faces.db`; no migrations (AGENTS.md).
+
+### 8.3 Image resolution (digiKam)
+
+digiKam reconstructs an exact path only when `Images.album` is set (rare in
+this archive: ~14k of ~145k rows). Where it is not, the harvester resolves
+on **(basename, byte size)** against a stat-index of the `--images` trees —
+never basename alone (basenames collide archive-wide). An ambiguous match
+is counted and skipped, never guessed; the digiKam image id, name and size
+stay in `images.source_ref/name/file_size` either way.
+
+### 8.4 CLI
+
+```
+scripts/harvest_legacy.py --out STAGING.db \
+    [--images DIR …] [--digikam-db P] [--recognition-db P] \
+    [--lightroom-catalog P] [--lr-root 'D:/LIVE/=/mnt/…/LIVE' …] \
+    [--sources sidecars-mwgrs,…] [--list-sources] [--dry-run]
+```
+
+Defaults come from `.env` (`DEFAULT_IMAGES_DIR`, `ARCHIVE_DIR`,
+`DIGIKAM_DB`, `DIGIKAM_RECOGNITION_DB`, `LR_CATALOG`, `LR_SIDECARS_DIR`);
+without `--out` the staging DB is created as
+`~/.cache/whot/harvest/harvest-<YYYYmmdd-HHMMSS>.db`. `--lr-root` maps a
+catalog root onto disk, tried **in order** (map the live tree first), and
+the *mapped* path is the path of record. `--dry-run` parses and counts
+without writing anything at all; `--no-hash` skips the BLAKE3 reads (H3).
+
+### 8.5 Import hand-off (future script, not yet designed)
+
+A later script merges one staging DB into `faces.db`: match staging
+images to `faces.db` images by `content_hash` first (the identity key,
+when the harvester hashed the file), else by path, else by (basename,
+size) against the operator's tree; convert normalised boxes to integer
+corner pixels in the canonical decode space; insert
+images/paths/faces/persons (`state='imported'`,
+`link_status='provisional'`) and person groups; respect invariants H1–H4
+throughout — `faces.db` writes belong to that importer alone.
