@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.8** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.9** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Revision history is not kept in this document — it lives in the GitHub
@@ -522,6 +522,14 @@ Double-click opens the full-image focus mode (§3).
     drop the other groups' cards silently); only with **no selection**
     do the inputs fall back to **every face of their own section**.
     Tooltips state the precedence.
+25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
+    selection the mouse cursor decides the target: a face-card context
+    menu opened on an **empty selection selects that card first**
+    (anchor + last-selected), so the menu's scope, the rule bar and the
+    letter shortcuts all agree; **A**/**R** fall back to the hovered
+    card instead of no-oping. Ctrl-G's cursor hit-test (§4.22) and
+    Space's hovered-card scope are the same rule — the cursor is the
+    implicit selection whenever there is no explicit one.
 
 ## 5. Tauri commands (Rust)
 
