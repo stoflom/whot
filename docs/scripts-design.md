@@ -1,8 +1,9 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 2.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
-group-path correction + §9.5 primary backfill (#80)
+group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
+file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82)
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -153,6 +154,40 @@ without writing anything at all; `--no-hash` skips the BLAKE3 reads (H3).
 
 Merged into `faces.db` by `scripts/import_harvested.py` — full spec in
 §9.
+
+### 8.6 Path map & coverage reporting (v3.0, #83/#85)
+
+Legacy sources state paths that no longer exist on disk (`D:/LIVE/…`,
+old NAS roots). A **path-map file** rewrites such prefixes onto the
+local archive — a *lookup aid only*: identity stays the BLAKE3 hash
+(J2/H3), and an ambiguous or still-unmapped path is counted and logged,
+never guessed (H4).
+
+**File** (`PATH_MAP` in `.env`, or `--path-map FILE`; repeatable flag
+for ad-hoc additions): one mapping per line, longest-prefix-first,
+case-insensitive, forward/back slashes normalised, `#` comments and
+blank lines ignored, plain prefix rewrite — **no globbing**:
+
+```
+# legacy root                       -> local root
+D:/images/PicFiles                  = /run/media/stoflom/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
+D:/LIVE                             = /run/media/stoflom/Seagate Expansion Drive/LIVE
+```
+
+`parse_lr_roots` and the digiKam name-size resolution consult the map
+exactly like `--lr-root` does today (same-order preference, mapped path
+is the path of record); the map additionally seeds the resolution index
+with its local roots.
+
+**Coverage reporting (both scripts):** when a run's unusable share
+exceeds **20%** — harvest: `lr_root_unmapped + dk_faces_resolved_unknown`
+of all rows; import: `hash-missing + image-not-in-db` of `staging_faces`
+— the run ends with a prominent, `stderr`, **never `-q`-suppressed**
+warning block (#83): the share in percent plus the **top unmapped
+catalog roots / unresolved digiKam albums with one example path each**
+(harvest) or the full stated path per unverifiable image, one line per
+*image*, not per face (#85). Unusable share and percentages also appear
+in every final summary, quiet or not.
 
 ## 9. Harvest import — attaching legacy persons to existing faces (v3.0)
 
@@ -359,3 +394,29 @@ stderr (§10.4).
 A module-level default instance keeps the existing `log()` helpers in
 `harvest_legacy.py` / `import_harvested.py` working unchanged for
 library callers (tests); `main()` swaps in the configured instance.
+
+### 9.8 Idempotent re-runs (v3.0, #82)
+
+Re-running the importer over data it already merged must **converge**,
+not snowball (`X 2` → `X 3`, …). Three rules:
+
+1. **Own-generation recognition** — the §9.4 reuse rule also matches a
+   staging person against an existing person named `<staging name> N`
+   (trailing ` N`, N ≥ 2) when that person has `state='imported'`
+   (only this importer writes that state, gui-design §4.1) *and* its
+   group set matches the harvested set exactly. The rename suffix stops
+   being a wall: the importer finds the person its previous run
+   created instead of minting the next suffix.
+2. **Already-there moves are no-ops** — a resolved move whose db face
+   is already attached to the resolved target person is dropped from
+   the plan (`already-there` counter): no relabel, no `seq` churn, no
+   derived-name rewrite. Faces a previous run moved stay exactly as
+   that run left them.
+3. **Importer-shell sweep** — after the plan executes, persons with
+   `state='imported'` and **zero faces** (emptied by a later re-run,
+   or left by an interrupted one) are deleted. Named/user persons
+   (`state='created'`) are never touched.
+
+A second identical run therefore reports `faces_moved=0`,
+`persons_created=0`, `already-there=<previous moves>` and changes
+nothing.

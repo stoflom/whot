@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.16** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.17** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -560,6 +560,25 @@ Double-click opens the full-image focus mode (§3).
     step starts from the person under the cursor (tree rows expose
     `data-person-id`), falling back to the list's start/end when the
     cursor is over no tree row.
+26. **Copyable errors** (#81) ⇒ every error surfaced by the app — the
+    fatal `loadError` screen and the runtime error toast — must be
+    cleanly copyable for filing issues:
+    - error text is selectable (`user-select: text`) and **wraps/scrolls**
+      instead of clipping at `max-width`;
+    - a **Copy** button writes the full, untruncated message to the
+      clipboard (one click; includes the operation that failed and the
+      raw error string);
+    - the toast no longer dismisses on a plain click (which swallowed
+      selections): dismissal is an explicit **✕** button, or the toast
+      stays until replaced/cleared; selecting text inside it never
+      dismisses it.
+27. **Stale-shell sweep** (#84) ⇒ on every `get_snapshot()`, persons
+    matching `name LIKE 'Unknown%'` with **zero faces** are deleted
+    (leftovers from pre-v1.9 runs or external writers — no code path
+    ever revisits them otherwise). Named persons are never swept: an
+    empty *named* person is a legitimate future assignment target.
+    The sweep is one statement inside the snapshot transaction, cheap
+    and idempotent.
 
 
 ## 5. Related documents

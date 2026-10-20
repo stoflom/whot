@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.1** (#84: stale-shell sweep in `snapshot()` — gui-design §4.27) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -97,7 +97,10 @@ person) — see `docs/schema-design.md` §5 and issue #80.
 
 - `snapshot()` is the one big read: persons (+groups, counts), faces,
   images, imports in a single query pass — the frontend re-fetches it
-  wholesale after every mutation.
+  wholesale after every mutation. It opens with the **stale-shell
+  sweep** (gui-design §4.27, #84): zero-face `UnknownN` persons are
+  deleted in the same transaction before the reads — leftovers no other
+  code path revisits; named persons are never swept.
 - Image/face content lives in the DB as BLOBs and leaves base64-encoded
   as data URLs (`face_preview`, `image_blobs`); the frontend caches by
   `face_id`/`image_id` and never invalidates (content is immutable).
