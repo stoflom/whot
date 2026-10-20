@@ -94,6 +94,36 @@ _CONSOLE = cli_console.Console()
 UNUSABLE_THRESHOLD = 0.20      # >20% unusable rows => loud warning (#83)
 
 
+def unmapped_breakdown(entries: list[tuple[str, str]],
+                       covered_names: set[str] | None = None,
+                       root_depth: int = 2, sub_depth: int = 3) -> dict:
+    """#86 (§8.6 v4.1): group unmapped catalog paths by root -> subtree
+    with counts, one example path each, and an in-scope tally.
+
+    *entries* are `(catalog_path, basename)` pairs; *covered_names* is the
+    casefolded basename set of the resolution index built from the
+    --images trees. In-scope = the row's file IS under the covered trees
+    (by basename — classification only, never identity; the catalog has
+    no file size), i.e. a path-map line could actually fix it.
+    """
+    roots: dict = {}
+    for path, base in entries:
+        parts = [s for s in path.replace(chr(92), "/").split("/") if s]
+        root = "/".join(parts[:root_depth]).casefold()
+        # subtree = the directory chain between root and basename
+        sub = "/".join(parts[root_depth:len(parts) - 1][:sub_depth]) or "(root)"
+        in_scope = bool(covered_names) and (base or "").casefold() in covered_names
+        r = roots.setdefault(root, {"count": 0, "example": path,
+                                    "in_scope": 0, "subtrees": {}})
+        r["count"] += 1
+        r["in_scope"] += int(in_scope)
+        s = r["subtrees"].setdefault(sub, {"count": 0, "in_scope": 0,
+                                           "example": path})
+        s["count"] += 1
+        s["in_scope"] += int(in_scope)
+    return roots
+
+
 def coverage_pct(unusable: int, total: int,
                  threshold: float = UNUSABLE_THRESHOLD) -> float | None:
     """Share of unusable rows in percent, or None while healthy (#8.6).
@@ -856,7 +886,9 @@ def harvest_digikam_faces(st: Staging, db_path: Path, src_id: int,
 def harvest_lightroom_catalog(st: Staging, catalog: Path,
                               roots: list[tuple[str, Path]],
                               src_id: int, stats: dict,
-                              hasher: "Hasher") -> set[str]:
+                              hasher: "Hasher",
+                              excludes: list[str] | None = None,
+                              covered_names: set[str] | None = None) -> set[str]:
     """Person keyword tree + face regions from a Lightroom `.lrcat` (read-only).
 
     `userPick` is kept only as the `picked` flag (H4): the sole evidence the
@@ -874,7 +906,8 @@ def harvest_lightroom_catalog(st: Staging, catalog: Path,
     n_persons = n_paths = n_refs = n_groups = 0
     n_faces = n_dup = 0
     n_unmapped = n_missing = n_nodims = n_degenerate = n_on_group = 0
-    unmapped_roots: dict[str, tuple[int, str]] = {}   # root -> (count, example) (#85)
+    n_excluded = 0
+    unmapped_entries: list[tuple[str, str]] = []      # (catalog path, basename) (#86)
     try:
         # person keywords: leaves become persons, group nodes do not
         kw = {r[0]: (r[1], r[2], r[3]) for r in con2.execute(
@@ -922,16 +955,17 @@ def harvest_lightroom_catalog(st: Staging, catalog: Path,
             if None in (W, H, tlx, tly, trx, bly):
                 n_nodims += 1
                 continue
+            cat_path = "/".join(p for p in ((ap or "").rstrip("/"),
+                                            (pfr or "").strip("/"),
+                                            fn or "") if p)
+            if pathmap.is_excluded(cat_path, excludes or []):
+                # deliberately ignored (#86): counted, never warned
+                n_excluded += 1
+                continue
             local = map_lr_path(ap, pfr, fn or "", roots)
             if local is None:
                 n_unmapped += 1
-                # remember the root nobody mapped, with one example (#85)
-                cat_path = "/".join(p for p in ((ap or "").rstrip("/"),
-                                                (pfr or "").strip("/"),
-                                                fn or "") if p)
-                root_key = "/".join(cat_path.split("/")[:2]).casefold()
-                n_prev = unmapped_roots.get(root_key, (0, ""))[0]
-                unmapped_roots[root_key] = (n_prev + 1, cat_path)
+                unmapped_entries.append((cat_path, fn or ""))
                 continue
             if not Path(local).exists():
                 n_missing += 1
@@ -958,10 +992,14 @@ def harvest_lightroom_catalog(st: Staging, catalog: Path,
         st.con.commit()
     finally:
         con2.close()
-    if unmapped_roots:
-        stats["lr_unmapped_roots"] =             {r: {"count": c, "example": ex}
-             for r, (c, ex) in sorted(unmapped_roots.items(),
-                                      key=lambda kv: -kv[1][0])}
+    if unmapped_entries:
+        # source-tagged, subtree-broken-down, in-scope split (#86, §8.6 v4.1)
+        stats["lr_unmapped_roots"] = unmapped_breakdown(
+            unmapped_entries, covered_names)
+        stats["lr_unmapped_in_scope"] = sum(
+            r["in_scope"] for r in stats["lr_unmapped_roots"].values())
+    if n_excluded:
+        stats["lr_excluded"] = n_excluded
     stats.update({"lr_persons": n_persons, "lr_group_nodes": n_groups,
                   "lr_people_paths": n_paths, "lr_person_refs": n_refs,
                   "lr_faces": n_faces, "lr_faces_dup": n_dup,
@@ -1060,7 +1098,8 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
             lightroom_catalog: Path | None = None,
             lr_roots: list[tuple[str, Path]] | None = None,
             hasher: "Hasher | None" = None,
-            path_map: list | None = None) -> dict:
+            path_map: list | None = None,
+            path_excludes: list[str] | None = None) -> dict:
     """Run the requested loaders; returns the stats dict.
 
     Load order is the legacy order minus the dropped Lap source, and it
@@ -1109,6 +1148,9 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
         log(f"  indexing image files under {', '.join(str(d) for d in idx_dirs)}")
         index, n_idx = build_file_index(idx_dirs)
         stats["indexed_files"] = n_idx
+    # #86 (§8.6 v4.1): in-scope classification for the coverage warning
+    # uses the index's basename set; no index => no split (old behaviour)
+    covered_names = {name for name, _size in index} if index else None
 
     if enabled & {"sidecars-mwgrs", "sidecars-mpri", "sidecars-catsets"}:
         log(f"  scanning sidecars under {', '.join(str(d) for d in images_dirs)}")
@@ -1130,7 +1172,8 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
         log(f"  lightroom catalog: {lightroom_catalog}")
         known |= harvest_lightroom_catalog(
             st, lightroom_catalog, roots,
-            src["lightroom-catalog"], stats, hasher)
+            src["lightroom-catalog"], stats, hasher,
+            excludes=path_excludes, covered_names=covered_names)
 
     if "lightroom-sidecars" in sources:
         log(f"  scanning Lightroom sidecars under "
@@ -1289,11 +1332,14 @@ def main(argv=None) -> int:
     # path map (#85, §8.6): --path-map files + PATH_MAP in .env; a broken
     # file is an error, never silently ignored
     path_map: list = []
+    path_excludes: list[str] = []
     try:
         for spec in [*args.path_map,
                      *[s for s in (env.get("PATH_MAP") or "").split(os.pathsep)
                        if s]]:
-            path_map += pathmap.load_path_map(Path(spec.strip()).expanduser())
+            rules, excl = pathmap.load_path_map(Path(spec.strip()).expanduser())
+            path_map += rules
+            path_excludes += excl
     except (OSError, ValueError) as e:
         ui.error(f"error: path map: {e}")
         return 1
@@ -1314,7 +1360,8 @@ def main(argv=None) -> int:
             stats = harvest(None, images_dirs=images_dirs,
                             digikam_db=digikam_db, recognition_db=recognition_db,
                             sources=sources, lightroom_catalog=catalog,
-                            lr_roots=lr_roots, path_map=path_map)
+                            lr_roots=lr_roots, path_map=path_map,
+                            path_excludes=path_excludes)
             ui.status("[dry-run] nothing written")
         else:
             t0 = time.time()
@@ -1342,7 +1389,8 @@ def main(argv=None) -> int:
                                 sources=sources, lightroom_catalog=catalog,
                                 lr_roots=lr_roots,
                                 hasher=Hasher(enabled=not args.no_hash),
-                                path_map=path_map)
+                                path_map=path_map,
+                                        path_excludes=path_excludes)
                 finish_run(con, st.run_id, stats)
             except (ValueError, StagingError) as e:
                 con.close()
@@ -1360,24 +1408,49 @@ def main(argv=None) -> int:
 
     ui.stop_beat()
 
-    # coverage warning (#83, §8.6): >20% unusable rows scream — stderr,
-    # never -q-suppressed, with the roots nobody mapped (#85)
-    unusable = stats.get("lr_root_unmapped", 0) + \
-        stats.get("dk_faces_resolved_unknown", 0)
-    total_rows = unusable + stats.get("lr_faces", 0) + \
+    # coverage warning (#83/#86, §8.6 v4.1): source-tagged, subtree-
+    # broken-down, and the 20% threshold counts only IN-SCOPE unusable
+    # rows — a scoped run must not read as a catastrophe. stderr, never
+    # -q-suppressed.
+    index_available = bool(stats.get("indexed_files"))
+    lr_unmapped = stats.get("lr_root_unmapped", 0)
+    lr_in_scope = stats.get("lr_unmapped_in_scope", lr_unmapped) \
+        if index_available else lr_unmapped
+    lr_out = lr_unmapped - lr_in_scope if index_available else 0
+    dk_unknown = stats.get("dk_faces_resolved_unknown", 0)
+    unusable = lr_in_scope + dk_unknown
+    total_rows = unusable + lr_out + stats.get("lr_faces", 0) + \
         stats.get("dk_faces", 0) + stats.get("dk_faces_dup", 0)
     pct = coverage_pct(unusable, total_rows)
     if pct is not None:
-        ui.error(f"WARNING: {pct:.0f}% of archive rows unusable"
-                 f" ({unusable} of {total_rows}): images could not be"
-                 f" resolved to a path, so their faces can never match"
-                 f" the import (J2). Map the missing roots in your"
+        scope_note = ("" if index_available else
+                      " (no resolution index: in-scope split unavailable,"
+                      " all rows counted)")
+        ui.error(f"WARNING: {pct:.0f}% of archive rows unusable IN SCOPE"
+                 f" ({unusable} of {total_rows}){scope_note}: images could"
+                 f" not be resolved to a path, so their faces can never"
+                 f" match the import (J2). Map the missing roots in your"
                  f" --path-map file (§8.6) or extend --images/--lr-root.")
         for root, info in list(stats.get("lr_unmapped_roots", {}).items())[:5]:
-            ui.error(f"  unmapped root {root!r}: {info['count']} row(s),"
-                     f" e.g. {info['example']}")
+            ui.error(f"  lightroom-catalog: unmapped root {root!r} —"
+                     f" {info['count']} row(s), {info.get('in_scope', 0)}"
+                     f" in scope:")
+            for sub, s in list(info.get("subtrees", {}).items())[:5]:
+                ui.error(f"      {sub:<44} {s['count']:>6} row(s)"
+                         f" ({s['in_scope']} in scope)"
+                         f"   e.g. {s['example']}")
         for sample in stats.get("dk_unresolved_samples", [])[:5]:
-            ui.error(f"  unresolved digiKam image: {sample}")
+            ui.error(f"  digikam-faces: unresolved image {sample}"
+                     f" (no album; only resolvable by (name,size) under"
+                     f" --images)")
+    if lr_out:
+        ui.error(f"note: {lr_out} unmapped lightroom-catalog row(s) are"
+                 f" OUT OF SCOPE (not under the indexed --images trees) —"
+                 f" informational, not counted toward the threshold"
+                 f" (#86)")
+    if stats.get("lr_excluded"):
+        ui.error(f"note: {stats['lr_excluded']} lightroom-catalog row(s)"
+                 f" skipped by '!' path-map excludes (#86)")
 
     ui.summary("", *(f"  {k:<26} {stats[k]}" for k in sorted(stats)
                      if not isinstance(stats[k], (dict, list))))

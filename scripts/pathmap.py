@@ -11,11 +11,14 @@ File format (#85 — a text file, one mapping per line):
     # comment lines and blank lines are ignored
     D:/images/PicFiles  =  /run/media/.../LIVE/PICTURES/PicFiles
     \\NAS\\photos        =  /mnt/nas/photos
+    !D:/LIVE/PICTURES/PicFiles/SourcePictures      <- deliberately ignored (#86)
 
 - `=` separates OLD from NEW (whitespace around both sides trimmed);
 - longest-prefix-first, case-insensitive match;
 - forward and back slashes are normalised to `/` before matching;
-- plain prefix rewrite — no globbing (predictable, auditable).
+- plain prefix rewrite — no globbing (predictable, auditable);
+- a leading `!` marks a prefix as **excluded** (#86, §8.6): rows under
+  it are counted `excluded`, never warned about, never rescued.
 """
 from __future__ import annotations
 
@@ -32,12 +35,23 @@ def _slashes(p: str) -> str:
     return p.replace("\\", "/").rstrip("/")
 
 
-def parse_path_map(text: str) -> list[Rule]:
-    """Text -> rules, longest OLD prefix first."""
+def parse_path_map(text: str) -> tuple[list[Rule], list[str]]:
+    """Text -> (rewrite rules longest OLD prefix first, excluded prefixes).
+
+    Excludes (#86, §8.6 v4.1) are `'!' + PREFIX` lines: catalog prefixes
+    deliberately ignored by this run — same prefix rules as rewrites.
+    """
     rules: list[Rule] = []
+    excludes: list[str] = []
     for n, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
+            continue
+        if line.startswith("!"):
+            excl = _slashes(line[1:].strip())
+            if not excl:
+                raise ValueError(f"path map line {n}: empty '!' exclude")
+            excludes.append(excl.casefold())
             continue
         old, sep, new = line.partition("=")
         if not sep or not old.strip() or not new.strip():
@@ -46,11 +60,25 @@ def parse_path_map(text: str) -> list[Rule]:
         old_d, new_d = _slashes(old.strip()), _slashes(new.strip())
         rules.append((old_d.casefold(), old_d, new_d))
     rules.sort(key=lambda r: -len(r[0]))
-    return rules
+    excludes.sort(key=lambda pr: -len(pr))
+    return rules, excludes
 
 
-def load_path_map(path: Path) -> list[Rule]:
+def load_path_map(path: Path) -> tuple[list[Rule], list[str]]:
     return parse_path_map(path.read_text())
+
+
+def is_excluded(path: str, excludes: list[str]) -> bool:
+    """True when *path* falls under one of the excluded prefixes (#86)."""
+    if not excludes:
+        return False
+    folded = _slashes(path).casefold()
+    for pre in excludes:
+        if folded == pre or (len(folded) > len(pre)
+                             and folded[len(pre)] == "/"
+                             and folded.startswith(pre)):
+            return True
+    return False
 
 
 def apply_path_map(path: str, rules: list[Rule]) -> str | None:
