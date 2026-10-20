@@ -1,9 +1,10 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 3.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 4.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
 group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
-file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82)
+file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
+§9.3 per-face claim model replacing greedy IoU matching (#87)
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -233,13 +234,42 @@ target image ever carries `inversion != 'none'`, the box is mapped through
 the inverse flip (`lr`: `x' = W−(x+w)`; `tb`: `y' = H−(y+h)`) — kept for
 forward compatibility with design #18.
 
-### 9.3 Matching (IoU)
+### 9.3 Matching — the per-face claim model (v4.0, #87)
 
 `overlap = |A∩B| / |A∪B| ≥ --min-overlap` (default **0.60**, configurable).
-Per image, matching is greedy one-to-one: all (harvested, db) pairs above
-the threshold are sorted by IoU descending (ties: lower `faces.id` first);
-each harvested face and each db face may win at most once. Below-threshold
-and already-claimed leftovers are logged, never guessed.
+
+**IoU is a face-identity test, never a ranking criterion**: ≥ threshold
+means "this harvested rectangle and this whot face are the same physical
+face". No IoU comparison ever decides *which person* a face belongs to —
+with three overlapping sources a greedy best-IoU pass would pick an
+identity winner with no basis (and a large loose rectangle can capture a
+neighbouring detection). The loop is therefore **inverted** from v3.x:
+iterate whot faces; per face gather **every** above-threshold claim
+(sidecar MWG, digiKam tagRegion, Lightroom — all sources at once); decide
+by **person-agreement**:
+
+1. **whot face is linked** (`confirmed`/`rejected` — user work): keep
+   whot as-is, the claims are ignored (J4, `status-protected`).
+2. **whot face is `UnknownN` and all claims resolve to the same target
+   person** (agreement per §9.4 — case-insensitive): link the face to
+   that person, exactly as if the user assigned it; the link stays
+   `provisional` (J5).
+3. **whot face is `UnknownN` and claims resolve to different persons**:
+   a face can only belong to one person — **log the disagreement**
+   (every claimant with person, group, source, IoU and `picked`) and
+   **leave the whot face untouched**. No contest is recorded in the DB
+   (user decision): the log is the arbiter; the user re-assigns by hand
+   (#88) if they want.
+
+Consequences: several rectangles on one whot face are simply several
+claims, deduped by agreement (rule 2) — a loose rectangle can add a
+claim but can never override agreement or capture a neighbour silently;
+whot's own overlapping duplicate detections each decide for themselves
+(the duplication pre-exists, the import creates none); staging faces
+below threshold everywhere are `below-threshold` log lines as before.
+Only staging persons that **win at least one face** are created in the
+copy — a contest-only claimant stays log-only, the whot data is left
+as-is (#87).
 
 ### 9.4 Person resolution
 
@@ -269,24 +299,44 @@ Per staging person with at least one accepted assignment:
   never guesses identity; otherwise it creates a new person
   (`state='imported'`) and the user merges later via the GUI's assign
   semantics (§4.1).
+- **v4.0 (#87): agreement is case-insensitive.** Person-name and
+  group-set comparisons `casefold`: `Winnie Pelser` = `winnie pelser` =
+  `WINNIE PELSER`; `family|Smith` = `Family|Smith`. Only the *stored*
+  spelling must be chosen, by fixed precedence — never synthesised:
+  1. **whot wins** — a person/group matching case-insensitively already
+     exists ⇒ reuse it, keep **whot's** capitalization (the user's
+     spelling is never rewritten; existing derived labels untouched);
+  2. **first source wins** — otherwise create new with the capitalization
+     of the first source that stated it: deterministic = the **lowest
+     staging `persons.id`** among the agreeing claims (staging ids are
+     insertion-ordered, i.e. harvest load order: sidecars →
+     recognition → digiKam → Lightroom).
+  The folding is the importer's (Python `casefold`) — never SQL:
+  `faces.db persons.name` UNIQUE and `=` are case-sensitive (SQLite
+  BINARY), so `winnie pelser` and `Winnie Pelser` can legitimately
+  coexist in whot today; a case-variant pair left by earlier runs is
+  cleaned up by the user via the GUI (#88), not by this script.
+  The §9.8 own-generation recognition (`<name> N` + `state='imported'`)
+  compares the same case-insensitively.
 - On a name collision the new person gets the smallest free seq suffix:
   `Winnie Pelser 2`, `Winnie Pelser 3`, …
 
-### 9.5 UnknownN cluster merge
+### 9.5 UnknownN cluster merge (v4.0 follow-on to §9.3)
 
-Assignments are grouped by the *current* person of the matched db face —
-exactly the shape a GUI group-assign works on (§4.1):
+Per-face claims decide first (§9.3); the cluster rule is a **post-pass**
+over the decisions, keeping the GUI group-assign semantics (§4.1):
 
-- The current person is an `UnknownN` and **all** its matched faces resolve
-  to the **same** new person ⇒ move **all** of the cluster's faces (matched
-  or not) to that person — as if the user had assigned the whole group —
-  then delete the emptied UnknownN (stale shell, §4.13).
-- The cluster's matches resolve to **different** persons ⇒ leave the whole
-  UnknownN untouched and log it: the script must not break things where
-  the evidence is contradictory.
+- A cluster's decided faces all went to the **same** target **and no
+  face of the cluster was contested** (§9.3 rule 3) ⇒ the cluster's
+  *undecided* faces (no claim anywhere) move along too — as if the user
+  had assigned the whole group — then the emptied UnknownN is deleted
+  (stale shell, §4.13).
+- Any **contested** face in the cluster ⇒ no co-move of undecided mates;
+  the agreeing faces still moved individually, contested ones stay
+  untouched (log, §9.3 rule 3).
 - The current person is a real (user/importer) person, or no person
-  (`person_id IS NULL`) ⇒ move only that face; an emptied person that is
-  not an UnknownN is **never** deleted.
+  (`person_id IS NULL`) ⇒ that face decides alone; an emptied person that
+  is not an UnknownN is **never** deleted.
 
 Every moved face is re-labelled like a GUI move (§4.7): `seq` becomes the
 next free seq of its new `(person, description)` group and `name` is re-
@@ -411,7 +461,9 @@ not snowball (`X 2` → `X 3`, …). Three rules:
    is already attached to the resolved target person is dropped from
    the plan (`already-there` counter): no relabel, no `seq` churn, no
    derived-name rewrite. Faces a previous run moved stay exactly as
-   that run left them.
+   that run left them. (Under §9.3 v4.0 this falls out naturally: a
+   face already linked to the resolved target is rule-2 agreement with
+   nothing to do.)
 3. **Importer-shell sweep** — after the plan executes, persons with
    `state='imported'` and **zero faces** (emptied by a later re-run,
    or left by an interrupted one) are deleted. Named/user persons
