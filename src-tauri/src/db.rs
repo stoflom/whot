@@ -288,6 +288,16 @@ pub struct Snapshot {
 pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
     let con = connect(paths)?;
 
+    // §4.27 (#84) — stale-shell sweep: zero-face UnknownN persons are
+    // leftovers no other code path revisits (assign_person only deletes
+    // shells it empties itself). Named persons are never swept — an empty
+    // named person is a legitimate future assignment target.
+    con.execute(
+        "DELETE FROM persons WHERE name GLOB 'Unknown*'
+           AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
+        [],
+    )?;
+
     // grouped queries — one pass for all face counts, one for all group paths
     // (F20: previously 2 extra queries per person)
     let mut counts: HashMap<i64, PersonCounts> = HashMap::new();
