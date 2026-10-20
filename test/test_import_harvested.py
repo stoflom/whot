@@ -199,6 +199,12 @@ class GeometryTests(unittest.TestCase):
         # name directly under the root -> ungrouped
         self.assertIsNone(ih.strip_group_root("People|Winnie Pelser",
                                               "Winnie Pelser"))
+        # §9.4 v4.0 (#87): the name-leaf drop is case-insensitive too
+        self.assertEqual(
+            ih.strip_group_root("People|family|WINNIE PELSER", "winnie pelser"),
+            "family")
+        self.assertIsNone(
+            ih.strip_group_root("People|WINNIE PELSER", "winnie pelser"))
 
     def test_next_free_name(self):
         self.assertEqual(ih.next_free_name(set(), "Winnie"), "Winnie")
@@ -343,20 +349,49 @@ class ScenarioTests(Fixture):
         self.assertEqual(row["name"], "Winnie Pelser")     # J5: provisional again
         self.assertEqual(row["link_status"], "provisional")
 
-    def test_cluster_disagreement_leaves_unknown(self):
+    def test_contested_face_left_untouched(self):
+        """§9.3 v4.0 (#87): ONE db face claimed by TWO different persons —
+        IoU never picks the person. The face stays, all claimants are
+        logged, and contest-only claimants are not created."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
-        self.s_face(img, "Koos Kat", 50, 50, 20, 20)      # different person
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # IoU 1.00 on f1
+        self.s_face(img, "Koos Kat", 12, 12, 20, 20)       # IoU ~0.69 on f1
         self.con.commit()
         rep = self.run_plan()
-        self.assertEqual(rep.counters["cluster-disagreement"], 1)
+        self.assertEqual(rep.counters["contested"], 1)
+        self.assertEqual(rep.counters.get("matched", 0), 0)
         self.assertEqual(rep.counters.get("faces_moved", 0), 0)
-        # nothing moved, no persons created (counters live in execution)
+        # contest-only claimants stay log-only, nothing created
         self.assertEqual(rep.counters.get("persons_created", 0), 0)
-        rows = self.q("SELECT person_id FROM faces WHERE id IN (1,2)")
-        self.assertTrue(all(r["person_id"] == 7 for r in rows))
+        self.assertEqual(self.q("SELECT person_id FROM faces WHERE id=1")[0]
+                         ["person_id"], 7)
         self.assertEqual(self.q("SELECT * FROM persons WHERE name"
                                 " IN ('Winnie Pelser','Koos Kat')"), [])
+        # the log names every claimant with source and IoU
+        det = [d for d in rep.details if d.startswith("contested")]
+        self.assertEqual(len(det), 1)
+        self.assertIn("Winnie Pelser", det[0])
+        self.assertIn("Koos Kat", det[0])
+        self.assertIn("IoU 1.00", det[0])
+        self.assertIn("left with Unknown7", det[0])
+
+    def test_different_faces_in_cluster_decide_separately(self):
+        """§9.3 v4.0: two DIFFERENT whot faces, one claim each — each face
+        decides alone; the cluster's undecided mates do not co-move."""
+        img = self.s_image(H1)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # claims f1
+        self.s_face(img, "Koos Kat", 50, 50, 20, 20)       # claims f2
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters["matched"], 2)
+        self.assertEqual(rep.counters["faces_moved"], 2)
+        names = {r["id"]: r["name"] for r in self.q(
+            "SELECT f.id, p.name FROM faces f JOIN persons p"
+            " ON p.id=f.person_id WHERE f.id IN (1,2)")}
+        self.assertEqual(names, {1: "Winnie Pelser", 2: "Koos Kat"})
+        # f3 had no claim and the cluster was NOT unanimous -> stays
+        self.assertEqual(self.q("SELECT person_id FROM faces WHERE id=3")[0]
+                         ["person_id"], 7)
 
     def test_name_collision_and_group_exact_reuse(self):
         # exact (name, group) match -> reuse 'Mary' (no groups)
@@ -445,19 +480,25 @@ class ScenarioTests(Fixture):
                      " ON p.id=f.person_id WHERE f.id=5")[0]
         self.assertEqual(row["name"], "Winnie Pelser")
 
-    def test_greedy_one_to_one(self):
-        """Two harvest faces over the same db face: best IoU wins, the
-        other is logged as already-claimed."""
+    def test_same_person_many_rects_dedup_to_one_move(self):
+        """§9.3 v4.0 (#87): several rects of the SAME person on one db
+        face are agreement — exactly one move; the rects are claims, not
+        competitors."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # exact on f1
-        self.s_face(img, "Koos Kat", 12, 12, 20, 20)       # IoU ~0.69 on f1
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # IoU 1.00
+        self.s_face(img, "winnie pelser", 12, 12, 20, 20)  # ~0.69, case-variant
+        self.s_face(img, "WINNIE PELSER", 11, 11, 20, 20)  # in between
         self.con.commit()
         rep = self.run_plan()
+        # one db face decided (agreement deduped the three rects) ...
         self.assertEqual(rep.counters["matched"], 1)
-        self.assertEqual(rep.counters["already-claimed"], 1)
-        row = self.q("SELECT p.name FROM faces f JOIN persons p"
-                     " ON p.id=f.person_id WHERE f.id=1")[0]
-        self.assertEqual(row["name"], "Winnie Pelser")      # the exact match
+        self.assertEqual(rep.counters.get("contested", 0), 0)
+        # ... and the unclaimed cluster mates followed (§9.5 co-move)
+        self.assertEqual(rep.counters["faces_moved"], 3)
+        rows = self.q("SELECT p.name FROM faces f JOIN persons p"
+                      " ON p.id=f.person_id WHERE f.id IN (1,2,3)")
+        # case-insensitive agreement -> one person, first source's spelling
+        self.assertEqual({r["name"] for r in rows}, {"Winnie Pelser"})
 
     # ---------------------------------------------------- #80 regressions
 
@@ -590,6 +631,122 @@ class IdempotencyTests(Fixture):
         names = set(self.snapshot_persons())
         self.assertNotIn("Ghost", names, "importer shell swept")
         self.assertIn("KeepMe", names, "user person untouched")
+
+    def test_whot_spelling_wins_case_insensitive_reuse(self):
+        """§9.4 v4.0 (#87): claims spelled 'winnie pelser'/'WINNIE PELSER'
+        reuse the whot person 'Winnie Pelser' — whot's spelling wins,
+        no new person, existing derived labels untouched."""
+        con = sqlite3.connect(self.faces_db)
+        con.execute("UPDATE persons SET name='Winnie Pelser' WHERE id=9")
+        con.execute("INSERT INTO person_groups(person_id, path)"
+                    " VALUES (9, 'Family')")          # note: 'Family' capital
+        con.commit()
+        con.close()
+        img = self.s_image(H1)
+        self.s_face(img, "winnie pelser", 10, 10, 20, 20,
+                    groups=("People|family|WINNIE PELSER",))  # case-variant groups
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters["persons_reused"], 1)
+        self.assertEqual(rep.counters.get("persons_created", 0), 0)
+        rows = self.q("SELECT id, name FROM persons WHERE name"
+                      " COLLATE NOCASE = 'winnie pelser'")
+        self.assertEqual(len(rows), 1)                # one person, not two
+        self.assertEqual(rows[0]["name"], "Winnie Pelser")   # whot spelling
+        g = self.q("SELECT path FROM person_groups WHERE person_id=9")
+        self.assertEqual([x["path"] for x in g], ["Family"])  # untouched
+
+    def test_first_source_spelling_wins_for_new_person(self):
+        """§9.4 v4.0 (#87): no whot match -> one new person, spelled as
+        the FIRST source (lowest staging person id) stated it."""
+        img = self.s_image(H1)
+        # s_face creates staging persons in call order: 'winnie pelser' is
+        # the first source, the capitalised variants join the same identity
+        self.s_face(img, "winnie pelser", 10, 10, 20, 20,
+                    groups=("People|Family|winnie pelser",))
+        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20,
+                    groups=("People|Family|Winnie Pelser",))
+        self.s_face(img, "WINNIE PELSER", 80, 10, 20, 20,
+                    groups=("People|family|WINNIE PELSER",))
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters["matched"], 3)
+        names = [r["name"] for r in self.q(
+            "SELECT name FROM persons WHERE state='imported'")]
+        # the three case-variants merged into ONE person ...
+        self.assertEqual(len(names), 1, names)
+        # ... spelled as the first source said it
+        self.assertEqual(names[0], "winnie pelser")
+        # its group is first-source spelling too — and the name-leaf was
+        # dropped by §9.4 v2.1, so just 'Family' (spelled by the first source,
+        # which happens to be capitalised here)
+        g = self.q("""SELECT pg.path FROM person_groups pg
+                      JOIN persons p ON p.id=pg.person_id
+                     WHERE p.state='imported'""")
+        self.assertEqual([x["path"] for x in g], ["Family"])
+
+    def test_case_insensitive_own_generation_reuse(self):
+        """#82 + §9.4 v4.0: claims spelled 'winnie pelser' recognise the
+        previous run's 'Winnie Pelser 2' (state='imported') — no ' 3'."""
+        # a GUI 'Winnie Pelser' with DIFFERENT groups forces the suffix
+        con = sqlite3.connect(self.faces_db)
+        con.execute("UPDATE persons SET name='Winnie Pelser' WHERE id=9")
+        con.execute("INSERT INTO person_groups(person_id, path)"
+                    " VALUES (9, 'Other')")
+        con.commit()
+        con.close()
+        img = self.s_image(H1)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
+                    groups=("People|Family|Winnie Pelser",))
+        self.con.commit()
+        self.run_plan()                       # run 1 mints 'Winnie Pelser 2'
+        names1 = {r["name"] for r in self.q("SELECT name FROM persons")}
+        self.assertIn("Winnie Pelser 2", names1)
+        # run 2: same claims, different capitalization (re-harvest effect)
+        st = sqlite3.connect(self.staging)
+        st.execute("UPDATE persons SET name='WINNIE PELSER'")
+        st.execute("UPDATE person_groups SET path='People|family|WINNIE PELSER'")
+        st.commit()
+        st.close()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters.get("persons_created", 0), 0)
+        self.assertEqual(rep.counters.get("faces_moved", 0), 0)   # already-there
+        names2 = {r["name"] for r in self.q("SELECT name FROM persons")}
+        self.assertEqual(names2, names1)          # no 'Winnie Pelser 3'
+
+    def test_loose_rect_cannot_override_agreement(self):
+        """§9.3 v4.0 (#87): a large loose rect adds a claim but can never
+        overturn agreement of the other sources."""
+        img = self.s_image(H1)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # tight, IoU 1.0
+        self.s_face(img, "Winnie Pelser", 12, 12, 20, 20)   # tight, ~0.69
+        # a loose rect for the SAME person also hitting f2 (IoU ~0.69) ->
+        # f2's only claim is Winnie, so it links too (agreement is per face)
+        self.s_face(img, "Winnie Pelser", 48, 48, 24, 24)
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters.get("contested", 0), 0)
+        self.assertEqual(rep.counters["matched"], 2)   # f1 and f2 decided
+        rows = self.q("SELECT p.name FROM faces f JOIN persons p"
+                      " ON p.id=f.person_id WHERE f.id IN (1,2)")
+        self.assertTrue(all(r["name"] == "Winnie Pelser" for r in rows))
+
+    def test_confirmed_face_claims_ignored(self):
+        """§9.3 rule 1 (#87): confirmed whot faces keep whot's work."""
+        img = self.s_image(H1)
+        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20)   # on f2 (provisional)
+        img2 = self.s_image(H2, w=200, h=200)
+        self.s_face(img2, "Winnie Pelser", 20, 20, 40, 40)  # on f4 (Mary, confirmed)
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters["status-protected"], 1)  # f4's claim
+        self.assertEqual(rep.counters["matched"], 1)           # f2 linked
+        row = self.q("SELECT p.name FROM faces f JOIN persons p"
+                     " ON p.id=f.person_id WHERE f.id=4")[0]
+        self.assertEqual(row["name"], "Mary")   # f4 still belongs to Mary
+        det = [d for d in rep.details if d.startswith("status-protected")]
+        self.assertEqual(len(det), 1)
+        self.assertIn("Winnie Pelser", det[0])   # the ignored claim is logged
 
     def test_rescue_overlay_feeds_matching(self):
         """§8.6: hashes rescued by the path map overlay the staging images
