@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import harvest_legacy as hl  # noqa: E402
+import pathmap  # noqa: E402
 
 MWG_ELEMENT = """<x:xmpmeta><rdf:RDF><rdf:Description>
 <mwg-rs:Regions>
@@ -484,6 +485,98 @@ class EndToEndTests(HarvestFixture):
         self.assertIn("Winnie Pelser", names)
         self.assertNotIn("Koos Kat", names)      # mwgrs disabled
         self.assertNotIn("Kat Booi", names)      # lr-sidecars disabled
+
+
+# ------------------------------------------ path map & coverage (#83/#85)
+
+class PathMapHarvestTests(HarvestFixture):
+    """§8.6: the path-map file feeds LR roots and the index (#85)."""
+
+    def test_unmapped_lr_roots_are_sampled(self):
+        """Run with NO lr-root mapping: the catalog root is remembered
+        with an example path instead of being counted and forgotten."""
+        stats = self.run_harvest(lr_roots=[])
+        self.assertGreater(stats["lr_root_unmapped"], 0)
+        roots = stats["lr_unmapped_roots"]
+        self.assertIn("d:/live", roots)             # root_key: first 2 segs
+        self.assertEqual(roots["d:/live"]["count"], 1)
+        self.assertEqual(roots["d:/live"]["example"],
+                         "D:/LIVE/PICTURES/PicFiles/a.jpg")
+
+    def test_path_map_resolves_lr_root(self):
+        """The same run, mapped through a path-map file, resolves and
+        hashes the image — no --lr-root flag involved."""
+        rules = pathmap.parse_path_map(
+            f"D:/LIVE/PICTURES/PicFiles = {self.pics}")
+        stats = self.run_harvest(lr_roots=[], path_map=rules)
+        self.assertEqual(stats["lr_root_unmapped"], 0)
+        self.assertNotIn("lr_unmapped_roots", stats)
+        self.assertEqual(stats["lr_faces"], 1)
+        self.assertGreaterEqual(stats["hashed"], 1)
+
+    def test_path_map_seeds_resolution_index(self):
+        """digiKam name-size resolution also consults the map's local
+        roots — a file living only under a mapped root becomes resolvable."""
+        # b.PEF is in self.pics with a sidecar-less digiKam entry resolved
+        # by name-size in the standard fixture; map an unrelated prefix onto
+        # pics so the seeded index gains nothing new — the invariant to
+        # pin is: indexing runs over images_dirs + mapped roots without
+        # duplication or crash.
+        rules = pathmap.parse_path_map(f"D:/somewhere/else = {self.pics}")
+        stats = self.run_harvest(path_map=rules)
+        # same unique name-size hit as the standard run
+        self.assertEqual(stats["dk_faces_resolved_name-size"], 1)
+
+    def test_broken_path_map_line_raises(self):
+        with self.assertRaises(ValueError):
+            pathmap.parse_path_map("just some text")
+
+
+class CoverageWarningTests(HarvestFixture):
+    """§8.6 (#83): >20% unusable => prominent stderr warning, never
+    -q-suppressed, naming the unmapped roots (#85)."""
+
+    def run_main(self, *args):
+        import contextlib, io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = hl.main(list(args))
+        return rc, out.getvalue(), err.getvalue()
+
+    def main_args(self, *extra, out_db: Path | None = None):
+        return ["--out", str(out_db or (self.base / "warn.db")),
+                "--images", str(self.pics),
+                "--digikam-db", str(self.digikam),
+                "--recognition-db", str(self.recognition),
+                "--lightroom-catalog", str(self.lrcat),
+                "--sources", "lightroom-catalog",   # nothing mapped -> 100%
+                *extra]
+
+    def test_warning_on_poor_coverage(self):
+        rc, out, err = self.run_main(*self.main_args())
+        self.assertEqual(rc, 0)
+        self.assertIn("WARNING:", err)
+        self.assertIn("100% of archive rows unusable", err)
+        self.assertIn("d:/live", err)                # the unmapped root named
+        self.assertIn("D:/LIVE/PICTURES/PicFiles/a.jpg", err)  # example path
+        # the header still leads stdout
+        self.assertTrue(out.startswith("=" * 64))
+
+    def test_warning_survives_quiet(self):
+        """-q silences status, never the coverage warning (§8.6)."""
+        rc, out, err = self.run_main(*self.main_args("-q"))
+        self.assertEqual(rc, 0)
+        self.assertIn("WARNING:", err)
+        # quiet stdout: header only (no phase lines)
+        self.assertNotIn("scanning", out)
+        self.assertIn("harvest_legacy", out)
+
+    def test_no_warning_when_coverage_ok(self):
+        rc, out, err = self.run_main(
+            *self.main_args("--lr-root",
+                            f"D:/LIVE/PICTURES/PicFiles={self.pics}"))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("WARNING:", err)
 
 
 if __name__ == "__main__":

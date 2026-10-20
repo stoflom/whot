@@ -508,5 +508,212 @@ class ScenarioTests(Fixture):
         self.assertEqual(rep.counters.get("persons_created", 0), 0)
 
 
+# ------------------------------------------------- idempotent re-runs (#82)
+
+class IdempotencyTests(Fixture):
+    """§9.8: a second identical run converges — no X-3 snowball, no seq
+    churn, no leftover shells."""
+
+    def seed_cluster(self):
+        # the whole Unknown7 cluster on image 1 (exact matches)
+        img = self.s_image(H1)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
+                    groups=("People|Family|Winnie Pelser",))
+        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20)
+        self.s_face(img, "Winnie Pelser", 80, 10, 20, 20)
+        # a second staging person colliding with the GUI 'Mary' by name:
+        # her staged face matches the unowned provisional f5 on image 2,
+        # and her group set differs from GUI-Mary's (none) -> first run
+        # must mint 'Mary 2' (state='imported'), which the second run
+        # has to recognise as its own generation (#82)
+        img2 = self.s_image(H2, w=200, h=200)
+        self.st.group(self.st.person("Mary"), "People|Friends|Mary", self.sid)
+        self.s_face(img2, "Mary", 120, 120, 30, 30)
+        self.con.commit()
+
+    def snapshot_persons(self):
+        return {r["name"]: r for r in self.q(
+            "SELECT id, name, state, primary_face_id FROM persons")}
+
+    def test_second_run_converges(self):
+        self.seed_cluster()
+        rep1 = self.run_plan()
+        self.assertGreater(rep1.counters["faces_moved"], 0)
+        # first run: Mary collides -> created as 'Mary 2' (state='imported')
+        p1 = self.snapshot_persons()
+        self.assertIn("Mary 2", p1)
+        self.assertEqual(p1["Mary 2"]["state"], "imported")
+        names1 = set(p1)
+        faces1 = self.q("SELECT id, seq, name, person_id FROM faces ORDER BY id")
+        prim1 = {n: p["primary_face_id"] for n, p in p1.items()}
+
+        # second identical run: same staging, same target
+        rep2 = self.run_plan()
+        # (1) no new persons, no snowball generation
+        self.assertEqual(rep2.counters.get("persons_created", 0), 0)
+        p2 = self.snapshot_persons()
+        self.assertEqual(set(p2), names1, "no 'X 3' duplicates")
+        # (2) every matched face is already-there: no moves, no relabel
+        self.assertEqual(rep2.counters.get("faces_moved", 0), 0)
+        self.assertGreater(rep2.counters.get("already-there", 0), 0)
+        faces2 = self.q("SELECT id, seq, name, person_id FROM faces ORDER BY id")
+        self.assertEqual(faces1, faces2, "seq/names/ownership unchanged")
+        # (3) primaries survive the second run (backfill is a no-op)
+        self.assertEqual({n: p["primary_face_id"] for n, p in self.snapshot_persons().items()},
+                         prim1)
+        # (4) no importer shells were created or deleted
+        self.assertEqual(rep2.counters.get("importer_shells_deleted", 0), 0)
+
+    def test_third_run_still_converges(self):
+        """Even after three runs: same person set, zero moves."""
+        self.seed_cluster()
+        self.run_plan()
+        self.run_plan()
+        rep3 = self.run_plan()
+        self.assertEqual(rep3.counters.get("faces_moved", 0), 0)
+        self.assertEqual(rep3.counters.get("persons_created", 0), 0)
+        suffixed = [n for n in self.snapshot_persons() if n.endswith(" 3")]
+        self.assertEqual(suffixed, [], "no third generation minted")
+
+    def test_shell_sweep_only_touches_imported(self):
+        """§9.8: state='imported' zero-face persons are swept; named
+        (state='created') empty persons are never touched."""
+        con = sqlite3.connect(self.faces_db)
+        con.execute("INSERT INTO persons(id, name, state, created_at)"
+                    " VALUES (90, 'Ghost', 'imported', '2026-10-20')")
+        con.execute("INSERT INTO persons(id, name, state, created_at)"
+                    " VALUES (91, 'KeepMe', 'created', '2026-10-20')")
+        con.commit()
+        con.close()
+        self.seed_cluster()
+        self.run_plan()
+        names = set(self.snapshot_persons())
+        self.assertNotIn("Ghost", names, "importer shell swept")
+        self.assertIn("KeepMe", names, "user person untouched")
+
+    def test_rescue_overlay_feeds_matching(self):
+        """§8.6: hashes rescued by the path map overlay the staging images
+        in memory — the staging DB itself is never written (H1/H2)."""
+        import hashlib
+        img = self.s_image(None, path="/moved/nowhere/a.jpg")  # hashless
+        # stage a face; without a rescue it is hash-missing
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.con.commit()
+        st = sqlite3.connect(self.staging)
+        ch0 = st.execute("SELECT content_hash FROM images WHERE id=?",
+                         (img,)).fetchone()[0]
+        st.close()
+        self.assertIsNone(ch0)
+        # the overlay supplies a hash that matches the fixture H1 image
+        rep = ih.Report()
+        stcon = ih.open_ro(self.staging)
+        try:
+            dbcon = sqlite3.connect(self.faces_db)
+            dbcon.row_factory = sqlite3.Row
+            try:
+                plan = ih.plan_import(stcon, dbcon, 0.60, False, rep,
+                                      rescues={img: H1})
+                self.assertGreater(rep.counters["matched"], 0)
+            finally:
+                dbcon.close()
+        finally:
+            stcon.close()
+        st = sqlite3.connect(self.staging)
+        ch1 = st.execute("SELECT content_hash FROM images WHERE id=?",
+                         (img,)).fetchone()[0]
+        st.close()
+        self.assertIsNone(ch1, "staging DB untouched by the overlay (H1)")
+
+
+# --------------------------------------- coverage warning & paths (#83/#85)
+
+class CoverageWarningImportTests(Fixture):
+    """§8.6 (#83): >20% unusable staging faces => stderr warning, never
+    -q-suppressed; #85: full stated paths, one line per image."""
+
+    def run_main(self, *args):
+        import contextlib, io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = ih.main(list(args))
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_warning_on_poor_coverage(self):
+        # one pathless, unhashable staging face -> 100% unusable
+        img = self.s_image(None, path=None)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.con.commit()
+        rc, out, err = self.run_main(str(self.staging),
+                                     "--faces-db", str(self.faces_db),
+                                     "--dry-run")
+        self.assertEqual(rc, 0)
+        self.assertIn("WARNING:", err)
+        self.assertIn("100% of staging faces unusable", err)
+        # percentage also always in the summary (§8.6)
+        self.assertIn("usable faces", out)
+        self.assertIn("0/1 (0%)", out)
+
+    def test_warning_survives_quiet(self):
+        img = self.s_image(None, path=None)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.con.commit()
+        rc, out, err = self.run_main(str(self.staging),
+                                     "--faces-db", str(self.faces_db),
+                                     "--dry-run", "-q")
+        self.assertEqual(rc, 0)
+        self.assertIn("WARNING:", err)         # stderr, never -q-suppressed
+        self.assertNotIn("rescue", out)         # (no path map here anyway)
+
+    def test_details_carry_full_path_once_per_image(self):
+        """#85: hash-missing / image-not-in-db details name the full
+        stated path, deduplicated per image — not per face."""
+        # two hashless images with stated paths; image A has two faces
+        a = self.s_image(None, path="/old/moved/first.JPG")
+        b = self.s_image(None, path="/old/moved/second.JPG", w=200, h=200)
+        self.s_face(a, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(a, "Winnie Pelser", 50, 50, 20, 20)
+        self.s_face(b, "Winnie Pelser", 20, 20, 40, 40)
+        self.con.commit()
+        rep = ih.Report()
+        stcon = ih.open_ro(self.staging)
+        try:
+            dbcon = sqlite3.connect(self.faces_db)
+            dbcon.row_factory = sqlite3.Row
+            try:
+                ih.plan_import(stcon, dbcon, 0.60, False, rep)
+            finally:
+                dbcon.close()
+        finally:
+            stcon.close()
+        self.assertEqual(rep.counters["hash-missing"], 3)   # counted per face
+        details = [d for d in rep.details if d.startswith("hash-missing")]
+        self.assertEqual(len(details), 2)                   # reported per image
+        joined = "\n".join(details)
+        self.assertIn("/old/moved/first.JPG", joined)       # full path
+        self.assertIn("/old/moved/second.JPG", joined)
+        self.assertNotIn("staging face", joined)            # no face-noise
+
+    def test_image_not_in_db_details_path(self):
+        # a hashed staging image that faces.db lacks
+        img = self.s_image("c" * 64, path="/archive/unimported/never-seen.jpg")
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.con.commit()
+        rep = ih.Report()
+        stcon = ih.open_ro(self.staging)
+        try:
+            dbcon = sqlite3.connect(self.faces_db)
+            dbcon.row_factory = sqlite3.Row
+            try:
+                ih.plan_import(stcon, dbcon, 0.60, False, rep)
+            finally:
+                dbcon.close()
+        finally:
+            stcon.close()
+        self.assertEqual(rep.counters["image-not-in-db"], 1)
+        det = [d for d in rep.details if d.startswith("image-not-in-db")]
+        self.assertEqual(len(det), 1)
+        self.assertIn("/archive/unimported/never-seen.jpg", det[0])
+
+
 if __name__ == "__main__":
     unittest.main()
