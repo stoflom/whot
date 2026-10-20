@@ -10,8 +10,12 @@ a freshly recreated + re-imported database, matching faces exactly first and
 falling back to rectangle IoU on the same image.
 
 Usage:
-  annotation_snapshot.py export  [db]                > annotations.json
-  annotation_snapshot.py restore annotations.json [db] [--iou 0.75]
+  annotation_snapshot.py export  [db] [-q]           > annotations.json
+  annotation_snapshot.py restore annotations.json [db] [--iou 0.75] [-q]
+
+Console (scripts-design §10): startup header, status updates and a final
+summary on **stderr** (stdout is the JSON data channel); -q/--quiet prints
+only the header and the final summary.
 
 Export never writes to the database (read-only connection). Restore requires
 a schema v1.5 target (schema_version gate), runs in one transaction and
@@ -27,6 +31,8 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+
+import cli_console  # shared header/status/quiet console (scripts-design §10)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # must match database/schema.sql and scripts/import_roll.py / db.rs
@@ -411,35 +417,64 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    # -q accepted before AND after the subcommand: the sub-level flag must
+    # not clobber a top-level True, hence default=SUPPRESS (§10.5)
+    cli_console.add_quiet_arg(ap)
     ex = sub.add_parser("export", help="old DB -> JSON (read-only)")
     ex.add_argument("db", nargs="?", type=Path, default=None)
+    ex.add_argument("-q", "--quiet", action="store_true",
+                    default=argparse.SUPPRESS,
+                    help="quiet: print only the startup header and the "
+                         "final summary (no status updates)")
     re = sub.add_parser("restore", help="JSON -> recreated + re-imported DB")
     re.add_argument("snapshot", type=Path)
     re.add_argument("db", nargs="?", type=Path, default=None)
+    re.add_argument("-q", "--quiet", action="store_true",
+                    default=argparse.SUPPRESS,
+                    help="quiet: print only the startup header and the "
+                         "final summary (no status updates)")
     re.add_argument("--iou", type=float, default=0.75,
                     help="min rectangle IoU for fuzzy face matching (default 0.75)")
     args = ap.parse_args(argv)
 
+    # stdout is the data channel (export JSON) — console goes to stderr (§10.6)
+    ui = cli_console.Console(quiet=getattr(args, "quiet", False),
+                             use_stderr=True)
+
     if args.cmd == "export":
         db = args.db or default_db()
+        ui.header("WhoT annotation_snapshot — export", f"database  : {db}")
         if not db.is_file():
-            sys.exit(f"no database at {db}")
+            ui.error(f"no database at {db}")
+            return 1
+        ui.start_beat("exporting")
         data = do_export(db)
+        ui.stop_beat()
         json.dump(data, sys.stdout, indent=1)
         print()
-        print(f"# {db}: schema {data['source_schema']}, "
-              f"{len(data['persons'])} persons, {len(data['faces'])} faces, "
-              f"{len(data['pins'])} pins", file=sys.stderr)
+        # final summary — always printed (§10.1)
+        ui.summary(f"# {db}: schema {data['source_schema']}, "
+                   f"{len(data['persons'])} persons, {len(data['faces'])} faces, "
+                   f"{len(data['pins'])} pins")
         return 0
 
     db = args.db or default_db()
+    ui.header("WhoT annotation_snapshot — restore",
+              f"snapshot  : {args.snapshot}",
+              f"database  : {db}",
+              f"iou       : {args.iou}")
     if not db.is_file():
-        sys.exit(f"no database at {db}")
+        ui.error(f"no database at {db}")
+        return 1
+    ui.start_beat("restoring")
     stats = do_restore(json.loads(args.snapshot.read_text()), db, args.iou)
-    print(f"restored into {db}: " + ", ".join(f"{k}={v}" for k, v in stats.items()))
+    ui.stop_beat()
+    # final summary — always printed (§10.1)
+    ui.summary(f"restored into {db}: "
+               + ", ".join(f"{k}={v}" for k, v in stats.items()))
     if stats["unmatched_faces"] or stats["unmatched_pins"]:
-        print("WARNING: some exported records could not be matched — review them "
-              "(detector jitter? try --iou lower)", file=sys.stderr)
+        ui.error("WARNING: some exported records could not be matched — review "
+                 "them (detector jitter? try --iou lower)")
         return 1
     return 0
 

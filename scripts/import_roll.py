@@ -4,7 +4,9 @@
 Pipeline (see docs/gui-design.md §4 and README.md):
   scan -> BLAKE3 hash -> skip existing / detect+embed -> associate -> store
 
-Usage: import_roll.py [--dry-run] [--recursive] [--threshold F] ROLL_DIR
+Usage: import_roll.py [--dry-run] [--recursive] [--threshold F] [-q] ROLL_DIR
+Console (scripts-design §10): startup header, status updates, final summary;
+-q/--quiet prints only the header and the final summary.
 Run with the insight_env venv python (insightface, cv2, rawpy, blake3).
 """
 from __future__ import annotations
@@ -20,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+import cli_console  # shared header/status/quiet console (scripts-design §10)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_TAG = "insightface:buffalo_l"
@@ -475,50 +479,49 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cpu", action="store_true", help="force CPU provider (skip MIGraphX)")
     ap.add_argument("--threshold", type=float, default=THRESHOLD_DEFAULT)
     ap.add_argument("--recursive", action="store_true")
+    cli_console.add_quiet_arg(ap)
     args = ap.parse_args(argv)
 
-    # line-buffered stdout so progress is visible even when piped/redirected
-    try:
-        sys.stdout.reconfigure(line_buffering=True)
-    except (AttributeError, ValueError, OSError):
-        pass
+    ui = cli_console.Console(quiet=args.quiet)
 
     env = load_env(PROJECT_ROOT / ".env")
-    inject_insightface_venv(env)            # must precede Detector creation
     db_path = PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
 
     mode = "DRY RUN — no writes" if args.dry_run else "import"
-    print("=" * 64)
-    print(f"WhoT import_roll — {mode}")
-    print(f"  roll dir  : {args.roll_dir}")
-    print(f"  recursive : {'yes' if args.recursive else 'no'}")
-    print(f"  threshold : {args.threshold}  (model {MODEL_TAG})")
-    print(f"  database  : {db_path}")
-    print("=" * 64, flush=True)
+    ui.header(f"WhoT import_roll — {mode}",
+               f"roll dir  : {args.roll_dir}",
+               f"recursive : {'yes' if args.recursive else 'no'}",
+               f"threshold : {args.threshold}  (model {MODEL_TAG})",
+               f"database  : {db_path}")
+
+    inject_insightface_venv(env)            # must precede Detector creation
 
     # non-recursive by default; --recursive walks subdirectories (design §3.1, #48)
-    print(f"scanning {args.roll_dir} ...", flush=True)
+    ui.status(f"scanning {args.roll_dir} ...")
     walk = args.roll_dir.rglob("*") if args.recursive else args.roll_dir.glob("*")
     files = sorted(p for p in (walk if args.roll_dir.is_dir() else [])
                    if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
     if not files:
-        print(f"no image files in {args.roll_dir}")
+        ui.summary(f"no image files in {args.roll_dir}")
         return 1
-    print(f"found {len(files)} image file(s)", flush=True)
+    ui.status(f"found {len(files)} image file(s)")
 
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA foreign_keys = ON")
     check_schema(con, db_path)   # refuse a mismatched schema up-front
-    print(f"loading face model {MODEL_TAG} (first run may take a moment)...", flush=True)
+    ui.status(f"loading face model {MODEL_TAG} (first run may take a moment)...")
+    ui.start_beat("loading face model")
     detector = Detector(cpu=args.cpu)   # dry-run still detects; it only suppresses writes
-    print("face model ready", flush=True)
-    print("loading match corpus from database...", flush=True)
+    ui.stop_beat()
+    ui.status("face model ready")
+    ui.status("loading match corpus from database...")
+    ui.start_beat("loading match corpus")
     unknowns = load_unknown_corpus(con)   # existing UnknownN are matchable (design 3.2)
     corpus = load_known_corpus(con)
     # every UnknownN name owns its number, incl. faceless/rejected-only (#45)
     numbering_names = load_unknown_numbering_names(con)
-    print(f"corpus ready: {len(corpus)} known group(s), {len(unknowns)} unknown group(s)",
-          flush=True)
+    ui.stop_beat()
+    ui.status(f"corpus ready: {len(corpus)} known group(s), {len(unknowns)} unknown group(s)")
 
     # #40: UTC, same convention as persons (datetime('now')) — one clock,
     # one format, for the whole import
@@ -528,19 +531,21 @@ def main(argv: list[str] | None = None) -> int:
                           (str(args.roll_dir), now))
         import_id = cur.lastrowid
         con.commit()               # record the run up-front, even if it adds nothing (#47)
-        print(f"import run #{import_id} started at {now} UTC", flush=True)
+        ui.status(f"import run #{import_id} started at {now} UTC")
 
     failures: list[tuple[Path, str]] = []
     n_new = n_existing = n_noface = n_faces = 0
+    ui.start_beat("importing")          # a single slow image must not go silent
     for i, path in enumerate(files, 1):
         n_stub = len(unknowns)     # run-created stubs before this file (dropped on failure)
-        print(f"[{i}/{len(files)}] {path.name}", flush=True)
+        ui.set_phase(f"importing [{i}/{len(files)}]")
+        ui.status(f"[{i}/{len(files)}] {path.name}")
         try:
             hash_ = blake3_hex(path)
             existing = con.execute("SELECT id FROM images WHERE content_hash = ?", (hash_,)).fetchone()
             if existing:
                 n_existing += 1
-                print("  already in database — skipping", flush=True)
+                ui.status("  already in database — skipping")
                 if not args.dry_run:      # dry-run must not write
                     con.execute("INSERT OR IGNORE INTO image_paths(image_id, path) VALUES (?, ?)",
                                 (existing[0], str(path)))
@@ -552,7 +557,7 @@ def main(argv: list[str] | None = None) -> int:
             plan = plan_image(path, detector)
             if not plan.detections and not args.all:
                 n_noface += 1
-                print(f"  no faces: {path.name}")
+                ui.status(f"  no faces: {path.name}")
                 continue
             pairs = associate(plan.detections, corpus, unknowns, args.threshold, numbering_names)
             if not args.dry_run:
@@ -563,10 +568,10 @@ def main(argv: list[str] | None = None) -> int:
             n_new += 1
             n_faces += len(plan.detections)
             if plan.detections:
-                print(f"  imported {path.name}: {len(plan.detections)} face(s), "
-                      f"{len(set(id(s) for _, s in pairs))} person(s)")
+                ui.status(f"  imported {path.name}: {len(plan.detections)} face(s), "
+                          f"{len(set(id(s) for _, s in pairs))} person(s)")
             else:
-                print(f"  imported {path.name}: no faces (state no-face, bulk)")
+                ui.status(f"  imported {path.name}: no faces (state no-face, bulk)")
         except Exception as exc:
             # isolate the failure to THIS file (#47): discard its partial rows
             # and any person stubs it created, then continue with the batch
@@ -574,20 +579,20 @@ def main(argv: list[str] | None = None) -> int:
                 con.rollback()
             del unknowns[n_stub:]
             failures.append((path, str(exc)))
-            print(f"  FAILED {path.name}: {exc}", file=sys.stderr)
+            ui.error(f"  FAILED {path.name}: {exc}")
+    ui.stop_beat()
 
     if not args.dry_run:
         assign_missing_primaries(con)   # machine-initial primaries (req 3.2.2, issue #10)
         con.commit()
     con.close()
-    print("-" * 64)
-    print(f"{'would import' if args.dry_run else 'imported'} {n_new} image(s) "
-          f"({n_faces} faces), skipped {n_existing} existing, {n_noface} without faces")
+    ui.summary("-" * 64,
+               f"{'would import' if args.dry_run else 'imported'} {n_new} image(s) "
+               f"({n_faces} faces), skipped {n_existing} existing, {n_noface} without faces")
     if failures:
-        print(f"failed {len(failures)} file(s) (the rest of the batch was imported):",
-              file=sys.stderr)
+        ui.error(f"failed {len(failures)} file(s) (the rest of the batch was imported):")
         for p, err in failures:
-            print(f"  {p}: {err}", file=sys.stderr)
+            ui.error(f"  {p}: {err}")
     return 1 if failures else 0
 
 

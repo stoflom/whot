@@ -47,6 +47,9 @@ Usage:
       --lr-root 'D:/LIVE/=/run/media/.../LIVE'
   scripts/harvest_legacy.py --list-sources
   scripts/harvest_legacy.py --dry-run            # parse+count, nothing written
+
+All commands accept -q/--quiet: only the startup header and the final
+summary are printed (scripts-design §10); errors always go to stderr.
 """
 from __future__ import annotations
 
@@ -59,6 +62,8 @@ import sys
 import time
 import urllib.parse
 from pathlib import Path
+
+import cli_console  # shared header/status/quiet console (scripts-design §10)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "database" / "harvest_schema.sql"
@@ -81,8 +86,13 @@ ALL_SOURCES: tuple[str, ...] = tuple(CANON_SOURCES)
 TAG_SEP = "|"
 
 
+# module-level console: library callers (tests) get plain status output;
+# main() swaps in the -q-aware instance (scripts-design §10.7)
+_CONSOLE = cli_console.Console()
+
+
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    _CONSOLE.status(msg)
 
 
 def now() -> str:
@@ -1177,9 +1187,15 @@ def main(argv=None) -> int:
                     help="print the canonical source vocabulary and exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="parse and count person names; write nothing")
+    cli_console.add_quiet_arg(ap)
     args = ap.parse_args(argv)
 
+    global _CONSOLE
+    _CONSOLE = ui = cli_console.Console(quiet=args.quiet)
+
     if args.list_sources:
+        # requested data, not status: printed even under -q (§10.5)
+        ui.header("WhoT harvest_legacy — list sources")
         for name, kind in sorted(CANON_SOURCES.items()):
             print(f"  {name:<22} kind={kind}")
         print(f"\n{len(CANON_SOURCES)} canonical harvest sources (design §8)")
@@ -1206,24 +1222,34 @@ def main(argv=None) -> int:
               or Path("~/.config/digikam/recognition.db").expanduser())
     catalog = Path(args.lightroom_catalog).expanduser() if args.lightroom_catalog \
         else (env_path("LR_CATALOG") or env_path("LIGHTROOM_CATALOG"))
+
+    sources = tuple(s.strip() for s in args.sources.split(",") if s.strip())
+    mode = "DRY RUN — nothing written" if args.dry_run else "harvest"
+    ui.header(f"WhoT harvest_legacy — {mode}",
+              f"sources   : {', '.join(sources)}",
+              f"images    : {', '.join(str(d) for d in images_dirs) or '(none)'}",
+              f"digikam   : {digikam_db}",
+              f"recognition: {recognition_db}",
+              f"catalog   : {catalog or '(none)'}")
+
     try:
         lr_roots = parse_lr_roots(args.lr_root)
     except ValueError as e:
-        log(f"error: {e}")
+        ui.error(f"error: {e}")
         return 1
 
-    sources = tuple(s.strip() for s in args.sources.split(",") if s.strip())
     try:
         check = [s for s in sources if s not in ALL_SOURCES]
         if check:
             raise StagingError(
                 f"not a harvest source: {check}. Known: {', '.join(ALL_SOURCES)}")
+        ui.start_beat("scanning sources")
         if args.dry_run:
             stats = harvest(None, images_dirs=images_dirs,
                             digikam_db=digikam_db, recognition_db=recognition_db,
                             sources=sources, lightroom_catalog=catalog,
                             lr_roots=lr_roots)
-            log("[dry-run] nothing written")
+            ui.status("[dry-run] nothing written")
         else:
             t0 = time.time()
             out = Path(args.out).expanduser() if args.out else \
@@ -1243,7 +1269,7 @@ def main(argv=None) -> int:
                     "lightroom-catalog": str(catalog) if catalog else None,
                     "lr-root": args.lr_root,
                 }))
-                log(f"staging: {out}  (run {st.run_id})")
+                ui.status(f"staging: {out}  (run {st.run_id})")
                 stats = harvest(st, images_dirs=images_dirs,
                                 digikam_db=digikam_db,
                                 recognition_db=recognition_db,
@@ -1253,18 +1279,20 @@ def main(argv=None) -> int:
                 finish_run(con, st.run_id, stats)
             except (ValueError, StagingError) as e:
                 con.close()
-                log(f"error: {e}")
+                ui.stop_beat()
+                ui.error(f"error: {e}")
                 return 1
             finally:
                 con.close()
-            log(f"elapsed: {time.time() - t0:.1f}s")
+            ui.stop_beat()
+            ui.status(f"elapsed: {time.time() - t0:.1f}s")
     except (ValueError, StagingError) as e:
-        log(f"error: {e}")
+        ui.stop_beat()
+        ui.error(f"error: {e}")
         return 1
 
-    log("")
-    for k in sorted(stats):
-        log(f"  {k:<26} {stats[k]}")
+    ui.stop_beat()
+    ui.summary("", *(f"  {k:<26} {stats[k]}" for k in sorted(stats)))
     return 0
 
 

@@ -29,7 +29,10 @@ UnknownN clusters are merged whole only on unanimous evidence (§9.5).
 
 Usage:
   scripts/import_harvested.py STAGING.db [--faces-db data/faces.db]
-      [--min-overlap 0.60] [--overwrite] [--dry-run]
+      [--min-overlap 0.60] [--overwrite] [--dry-run] [-q]
+
+Console (scripts-design §10): startup header, status updates, final summary;
+-q/--quiet prints only the header and the final summary.
 """
 from __future__ import annotations
 
@@ -43,6 +46,8 @@ import time
 import urllib.parse
 from pathlib import Path
 
+import cli_console  # shared header/status/quiet console (scripts-design §10)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STAGING_SCHEMA_VERSION = "1.1"     # §8.2, exact-match (J3)
 FACES_SCHEMA_VERSION = "1.5"       # database/schema.sql, exact-match
@@ -50,8 +55,13 @@ GROUP_ROOTS = {"people", "person"}  # stripped from harvested paths (§9.4)
 UNKNOWN_NAME_RE = re.compile(r"^Unknown\d+$")
 
 
+# module-level console: library callers (tests) get plain status output;
+# main() swaps in the -q-aware instance (scripts-design §10.7)
+_CONSOLE = cli_console.Console()
+
+
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    _CONSOLE.status(msg)
 
 
 def now() -> str:
@@ -500,10 +510,14 @@ def main(argv=None) -> int:
                          "again (J5)")
     ap.add_argument("--dry-run", action="store_true",
                     help="full pipeline, no writes anywhere (no copy)")
+    cli_console.add_quiet_arg(ap)
     args = ap.parse_args(argv)
 
+    global _CONSOLE
+    _CONSOLE = ui = cli_console.Console(quiet=args.quiet)
+
     if not (0.0 < args.min_overlap <= 1.0):
-        log("error: --min-overlap must be in (0, 1]")
+        ui.error("error: --min-overlap must be in (0, 1]")
         return 1
 
     env = load_env(PROJECT_ROOT / ".env")
@@ -511,11 +525,19 @@ def main(argv=None) -> int:
         else PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
     if not faces_db.is_absolute():
         faces_db = (PROJECT_ROOT / faces_db).resolve()
+
+    mode = "DRY RUN — no copy, no writes" if args.dry_run else "import into copy"
+    ui.header(f"WhoT import_harvested — {mode}",
+              f"staging     : {args.staging}",
+              f"faces db    : {faces_db}",
+              f"min overlap : {args.min_overlap}",
+              f"overwrite   : {'yes' if args.overwrite else 'no'}")
+
     if not args.staging.exists():
-        log(f"error: staging DB not found: {args.staging}")
+        ui.error(f"error: staging DB not found: {args.staging}")
         return 1
     if not faces_db.exists():
-        log(f"error: faces.db not found: {faces_db}")
+        ui.error(f"error: faces.db not found: {faces_db}")
         return 1
 
     stcon = open_ro(args.staging)
@@ -531,33 +553,38 @@ def main(argv=None) -> int:
         if args.dry_run:
             dbcon = open_ro(faces_db)
             target = None
-            log(f"DRY RUN — no copy, no writes (source: {faces_db})")
+            ui.status(f"DRY RUN — no copy, no writes (source: {faces_db})")
         else:
+            ui.start_beat("vacuuming copy of faces.db")
             target = make_target_copy(faces_db)
-            log(f"target copy: {target}  (J1: the original is untouched)")
+            ui.stop_beat()
+            ui.status(f"target copy: {target}  (J1: the original is untouched)")
             dbcon = sqlite3.connect(target)
             dbcon.row_factory = sqlite3.Row
             dbcon.execute("PRAGMA foreign_keys = ON")
         try:
+            ui.start_beat("planning import")
             plan = plan_import(stcon, dbcon, args.min_overlap,
                                args.overwrite, rep)
+            ui.stop_beat()
             if not args.dry_run:
+                ui.start_beat("executing plan")
                 execute_plan(dbcon, plan, rep)
+                ui.stop_beat()
         finally:
+            ui.stop_beat()
             dbcon.close()
     finally:
         stcon.close()
 
-    # ---- report (§9.6)
-    log("")
-    for k in sorted(rep.counters):
-        log(f"  {k:<22} {rep.counters[k]}")
+    # ---- report (§9.6): the final summary — always printed (§10.1)
+    lines = [""]
+    lines += [f"  {k:<22} {rep.counters[k]}" for k in sorted(rep.counters)]
     if rep.details:
-        log(f"\ndetails ({len(rep.details)}):")
-        for d in rep.details[:40]:
-            log(f"  {d}")
+        lines.append(f"\ndetails ({len(rep.details)}):")
+        lines += [f"  {d}" for d in rep.details[:40]]
         if len(rep.details) > 40:
-            log(f"  … {len(rep.details) - 40} more (see the JSON report)")
+            lines.append(f"  … {len(rep.details) - 40} more (see the JSON report)")
     if target is not None:
         jpath = target.with_suffix(".import.json")
         lpath = target.with_suffix(".import.log")
@@ -568,9 +595,10 @@ def main(argv=None) -> int:
              f"  min_overlap={args.min_overlap}"] +
             [f"{k}={v}" for k, v in sorted(rep.counters.items())] +
             ["", *rep.details]) + "\n")
-        log(f"\nreport: {lpath}\n        {jpath}")
-        log("open the app against the copy (symlink) and decide whether to"
-            " promote it")
+        lines.append(f"\nreport: {lpath}\n        {jpath}")
+        lines.append("open the app against the copy (symlink) and decide"
+                     " whether to promote it")
+    ui.summary(*lines)
     return 0
 
 

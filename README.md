@@ -47,6 +47,14 @@ mkdir -p ../insightface && python3 -m venv ../insightface/insight_env
 
 ## Scripts
 
+**Console output** (all four scripts, `docs/scripts-design.md` §10): a
+startup header is printed immediately, status updates follow while the
+script works (plus a 10 s heartbeat during long silent phases), and a
+final summary always closes the run — errors go to stderr and are never
+suppressed. Pass **`-q` / `--quiet`** to print *only* the header and the
+final summary (requested data — export JSON, `--list-sources` — is never
+suppressed).
+
 ### Import a roll
 
 ```sh
