@@ -166,7 +166,10 @@ def strip_group_root(path: str, person: str | None = None) -> str | None:
     parts = [p for p in path.split("|") if p != ""]
     if parts and parts[0].casefold() in GROUP_ROOTS:
         parts = parts[1:]
-    if person is not None and parts and parts[-1] == person:
+    # v4.0 (#87): the name-leaf drop is case-insensitive too — the whole
+    # person/group identity compares casefold, so 'WINNIE PELSER' in a
+    # path is the leaf of person 'winnie pelser'
+    if person is not None and parts and parts[-1].casefold() == person.casefold():
         parts = parts[:-1]
     return "|".join(parts) if parts else None
 
@@ -177,6 +180,18 @@ def next_free_name(taken: set[str], name: str) -> str:
         return name
     n = 2
     while f"{name} {n}" in taken:
+        n += 1
+    return f"{name} {n}"
+
+
+def next_free_name_ci(taken_cf: set[str], name: str) -> str:
+    """Like next_free_name, but *taken_cf* holds casefolded names and the
+    comparison is case-insensitive (§9.4 v4.0, #87): 'Winnie Pelser' and
+    'winnie pelser' collide, and 'winnie pelser 2' shadows 'W. 2'."""
+    if name.casefold() not in taken_cf:
+        return name
+    n = 2
+    while f"{name} {n}".casefold() in taken_cf:
         n += 1
     return f"{name} {n}"
 
@@ -241,8 +256,9 @@ def load_staging(con: sqlite3.Connection):
     """(images, faces, persons, groups) out of the staging DB (read-only)."""
     images = {r["id"]: dict(r) for r in con.execute("SELECT * FROM images")}
     faces = [dict(r) for r in con.execute(
-        "SELECT f.*, p.name AS person_name FROM faces f"
-        " JOIN persons p ON p.id = f.person_id")]
+        "SELECT f.*, p.name AS person_name, s.name AS source_name FROM faces f"
+        " JOIN persons p ON p.id = f.person_id"
+        " JOIN sources s ON s.id = f.source_id")]
     persons = {r["id"]: r["name"] for r in con.execute(
         "SELECT id, name FROM persons")}
     groups: dict[int, set[str]] = {}
@@ -374,11 +390,11 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
     db_face_by_id = {f["id"]: f for fl in faces_by_image.values() for f in fl}
     sf_by_id = {sf["id"]: sf for sf in sfaces}
 
-    # ---- candidate pairs, per staging face (§9.2/9.3)
-    # hash-missing / image-not-in-db are reported ONCE PER IMAGE with the
-    # full stated path (#85): one image has many faces, and a path-less
-    # basename is not actionable.
-    pairs_by_image: dict[int, list[tuple[float, int, int]]] = {}
+    # ---- claims: every above-threshold rect against every db face (§9.3 v4.0)
+    # IoU is face identity, never a ranking criterion (#87): no greedy
+    # pass, no winner-picking. hash-missing / image-not-in-db are reported
+    # ONCE PER IMAGE with the full stated path (#85).
+    claims: dict[int, list[tuple[int, float]]] = {}   # dbfid -> [(sfid, iou)]
     reported_missing: set[int] = set()
     reported_absent: set[int] = set()
     for sf in sfaces:
@@ -410,7 +426,6 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
             rep.skip("degenerate-box",
                      f"staging face {sf['id']} person {sf['person_name']!r}")
             continue
-        sf["_box"] = box
         hits = [(iou(box, (f["x"], f["y"], f["w"], f["h"])), f["id"])
                 for f in faces_by_image.get(dbimg["id"], [])]
         hits = [h for h in hits if h[0] >= min_overlap]
@@ -422,137 +437,166 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
                      f" IoU {min_overlap:.2f}")
             continue
         for score, dbfid in hits:
-            pairs_by_image.setdefault(dbimg["id"], []).append(
-                (score, sf["id"], dbfid))
+            claims.setdefault(dbfid, []).append((sf["id"], score))
 
-    # ---- greedy one-to-one per image, eligibility gate (J4)
-    assigned: dict[int, int] = {}              # staging face id -> db face id
-    protected: set[int] = set()
-    for pairs in pairs_by_image.values():
-        pairs.sort(key=lambda t: (-t[0], t[2]))   # best IoU first, id tiebreak
-        used_sf: set[int] = set()
-        used_db: set[int] = set()
-        for score, sfid, dbfid in pairs:
-            if sfid in used_sf or dbfid in used_db:
-                continue
-            dbf = db_face_by_id[dbfid]
-            if not (overwrite or (dbf["link_status"] == "provisional"
-                                  and dbf["state"] != "discarded")):
-                # identity is identity: never fall back to a lesser match
-                used_sf.add(sfid)
-                used_db.add(dbfid)
-                protected.add(sfid)
-                rep.skip("status-protected",
-                         f"staging face {sfid} matched db face {dbfid}"
-                         f" (IoU {score:.2f}), but that face's link is"
-                         f" {dbf['link_status']}/{dbf['state']} — needs"
-                         f" --overwrite")
-                continue
-            used_sf.add(sfid)
-            used_db.add(dbfid)
-            assigned[sfid] = dbfid
-            rep.add("matched")
-        for sfid in {sf for _, sf, _ in pairs} - used_sf - protected:
-            rep.skip("already-claimed",
-                     f"staging face {sfid}: every candidate db face was"
-                     f" won by a better match")
-
-    # ---- person resolution (§9.4)
-    existing_by_name: dict[str, list[int]] = {}
-    # the importer's own suffixed generation: 'X 2'/'X 3' with
-    # state='imported' (only this script writes that state) is reachable
-    # by its BASE name — otherwise every re-run mints the next suffix (#82)
-    imported_by_base: dict[str, list[int]] = {}
-    for r in dbcon.execute("SELECT id, name, state FROM persons"):
-        existing_by_name.setdefault(r["name"], []).append(r["id"])
+    # ---- person resolution (§9.4, v4.0 #87): case-insensitive, whot wins,
+    # else first source (lowest staging persons.id = harvest load order)
+    person_name_by_id = {r["id"]: r["name"]
+                         for r in dbcon.execute("SELECT id, name FROM persons")}
+    existing_name_of: dict[int, str] = {}
+    existing_by_cf: dict[str, list[int]] = {}        # casefolded name -> ids
+    imported_by_cf_base: dict[str, list[int]] = {}   # casefolded base -> ids (#82)
+    for r in dbcon.execute("SELECT id, name, state FROM persons ORDER BY id"):
+        existing_name_of[r["id"]] = r["name"]
+        existing_by_cf.setdefault(r["name"].casefold(), []).append(r["id"])
         if r["state"] == "imported":
             m = re.match(r"^(.*) \d+$", r["name"])
             if m:
-                imported_by_base.setdefault(m.group(1), []).append(r["id"])
-    existing_groups: dict[int, set[str]] = {}
+                imported_by_cf_base.setdefault(m.group(1).casefold(), []) \
+                    .append(r["id"])
+    existing_groups_cf: dict[int, set[str]] = {}
     for r in dbcon.execute("SELECT person_id, path FROM person_groups"):
-        existing_groups.setdefault(r["person_id"], set()).add(r["path"])
+        existing_groups_cf.setdefault(r["person_id"], set()) \
+            .add(r["path"].casefold())
 
-    taken_names = set(existing_by_name)
-    target_of: dict[int, tuple] = {}           # staging person id -> (kind, key)
-    new_persons: dict[int, tuple] = {}         # spid -> (final name, groups)
-    reused: dict[int, int] = {}                # spid -> existing person id
-    for sfid in assigned:
-        spid = sf_by_id[sfid]["person_id"]
-        if spid in target_of:
-            continue
+    def translated_groups(spid: int) -> set[str]:
+        """§9.4 v2.1 translation: root stripped, name-leaf dropped."""
         name = spersons[spid]
-        groups_g = set()
-        for p in sgroups.get(spid, ()):        # root+leaf stripped (§9.4 v2.1)
-            stripped = strip_group_root(p, name)
+        out: set[str] = set()
+        for pth in sgroups.get(spid, ()):
+            stripped = strip_group_root(pth, name)
             if stripped:
-                groups_g.add(stripped)
+                out.add(stripped)
+        return out
+
+    claiming_spids = sorted({sf_by_id[sfid]["person_id"]
+                             for cl in claims.values() for sfid, _ in cl})
+    target_of: dict[int, tuple] = {}      # spid -> ('reused', pid) | ('new', rep_spid)
+    new_persons: dict[int, tuple] = {}    # rep spid -> (final name, groups, orig)
+    reused: dict[int, int] = {}           # spid -> existing person id
+    new_by_identity: dict[tuple, int] = {}  # (cf name, cf groups) -> rep spid
+    taken_cf = {n.casefold() for n in existing_name_of.values()}
+    for spid in claiming_spids:           # ascending id = first source wins
+        name = spersons[spid]
+        gs = translated_groups(spid)
+        n_cf, g_cf = name.casefold(), {g.casefold() for g in gs}
+        # 1) whot wins: case-insensitive name+group match (exact spelling first)
         hit = None
-        # exact (name, group) first, then this run's own previous
-        # generation (base name + groups + state='imported', §9.8)
-        for cid in existing_by_name.get(name, []) + \
-                imported_by_base.get(name, []):
-            if existing_groups.get(cid, set()) == groups_g:
-                hit = cid                      # exact (name, group) match only
-                break
+        matching = [cid for cid in existing_by_cf.get(n_cf, [])
+                    if existing_groups_cf.get(cid, set()) == g_cf]
+        if matching:
+            exact = [cid for cid in matching if existing_name_of[cid] == name]
+            hit = (exact or matching)[0]
+        # 2) this importer's own suffixed generation (#82, §9.8)
+        if hit is None:
+            for cid in imported_by_cf_base.get(n_cf, []):
+                if existing_groups_cf.get(cid, set()) == g_cf:
+                    hit = cid
+                    break
         if hit is not None:
             reused[spid] = hit
             target_of[spid] = ("reused", hit)
-        else:
-            final = next_free_name(taken_names, name)
-            taken_names.add(final)
-            new_persons[spid] = (final, groups_g, name)
+            continue
+        # 3) merge staging siblings with the same case-insensitive identity;
+        #    the first (lowest id = first source) defines the spelling
+        ident = (n_cf, frozenset(g_cf))
+        rep_spid = new_by_identity.get(ident)
+        if rep_spid is None:
+            new_by_identity[ident] = spid
+            final = next_free_name_ci(taken_cf, name)
+            taken_cf.add(final.casefold())
+            new_persons[spid] = (final, gs, name)
             target_of[spid] = ("new", spid)
+        else:
+            target_of[spid] = ("new", rep_spid)
 
-    # ---- cluster logic (§9.5): group the moves by the CURRENT person
-    by_current: dict[object, list[tuple[int, int]]] = {}
-    for sfid, dbfid in assigned.items():
-        by_current.setdefault(db_face_by_id[dbfid]["person_id"], []) \
-            .append((sfid, dbfid))
+    # ---- per-face decisions (§9.3 v4.0): agreement, not IoU, decides
+    hash_by_img = {v["id"]: k for k, v in hash2img.items()}
+
+    def claimant_desc(sfid: int, score: float) -> str:
+        sf = sf_by_id[sfid]
+        spid = sf["person_id"]
+        tgt = target_of.get(spid)
+        disp = spersons[spid]
+        if tgt is not None:
+            disp = (person_name_by_id.get(tgt[1]) if tgt[0] == "reused"
+                    else new_persons[tgt[1]][0])
+        gset = ", ".join(sorted(translated_groups(spid))) or "ungrouped"
+        return (f"'{disp}|{gset}' ({sf.get('source_name')}, IoU {score:.2f}"
+                f"{', picked' if sf.get('picked') else ''})")
 
     moves: list[dict] = []
     cluster_deletes: set[int] = set()
-    for current, pairs in by_current.items():
-        current_name = None
-        if current is not None:
-            row = dbcon.execute("SELECT name FROM persons WHERE id=?",
-                                (current,)).fetchone()
-            current_name = row[0] if row else None
-        is_unknown = current_name is not None and \
-            bool(UNKNOWN_NAME_RE.match(current_name))
-        targets = {target_of[sf_by_id[sfid]["person_id"]]
-                   for sfid, _ in pairs}
-        if is_unknown and len(targets) > 1:
-            # contradictory evidence: leave the whole cluster alone (§9.5)
-            rep.skip("cluster-disagreement",
-                     f"{current_name} (id {current}): matched faces resolve"
-                     f" to {len(targets)} different persons — cluster"
-                     f" skipped, nothing moved")
+    contested_clusters: set[int] = set()
+    for dbfid in sorted(claims):
+        dbf = db_face_by_id[dbfid]
+        cl = claims[dbfid]
+        descs = [claimant_desc(sfid, s) for sfid, s in cl]
+        if not (overwrite or (dbf["link_status"] == "provisional"
+                              and dbf["state"] != "discarded")):
+            # J4: user work is untouchable — the claims are recorded, not applied
+            rep.add("status-protected")
+            rep.details.append(
+                f"status-protected: db face {dbfid} (image hash "
+                f"{hash_by_img.get(dbf['image_id'], '?')[:12]}…): "
+                + " vs ".join(descs)
+                + f" — face is {dbf['link_status']}/{dbf['state']},"
+                  " needs --overwrite")
             continue
-        if is_unknown:
-            # as if the user assigned the whole group — but J4: only
-            # eligible faces may receive a person, so protected faces stay
-            # with the UnknownN (which then survives, not being empty)
-            for r in dbcon.execute(
-                    "SELECT id, link_status, state FROM faces"
-                    " WHERE person_id=?", (current,)):
-                if overwrite or (r["link_status"] == "provisional"
-                                 and r["state"] != "discarded"):
-                    moves.append({"db_face": r["id"],
-                                  "person": target_of[
-                                      sf_by_id[pairs[0][0]]["person_id"]],
-                                  "current": current})
-            cluster_deletes.add(current)
-        else:
-            for sfid, dbfid in pairs:
-                tgt = target_of[sf_by_id[sfid]["person_id"]]
-                # §9.8 (#82): a face already on its resolved target is a
-                # no-op — no relabel, no seq churn on re-runs
-                if tgt[0] == "reused" and \
-                        db_face_by_id[dbfid]["person_id"] == tgt[1]:
-                    rep.add("already-there")
-                    continue
-                moves.append({"db_face": dbfid, "person": tgt,
+        tgts = {target_of[sf_by_id[sfid]["person_id"]] for sfid, _ in cl}
+        if len(tgts) > 1:
+            # a face belongs to one person (#87 rule 3): log, touch nothing
+            rep.add("contested")
+            cur = person_name_by_id.get(dbf["person_id"]) or "nobody"
+            rep.details.append(
+                f"contested: db face {dbfid} (image hash "
+                f"{hash_by_img.get(dbf['image_id'], '?')[:12]}…): "
+                + " vs ".join(descs)
+                + f" — face left with {cur}")
+            if dbf["person_id"] is not None:
+                contested_clusters.add(dbf["person_id"])
+            continue
+        tgt = next(iter(tgts))
+        # §9.8 (#82): a face already on its resolved target is a no-op
+        if tgt[0] == "reused" and dbf["person_id"] == tgt[1]:
+            rep.add("already-there")
+            continue
+        moves.append({"db_face": dbfid, "person": tgt,
+                      "current": dbf["person_id"]})
+        rep.add("matched")
+        winner = (person_name_by_id.get(tgt[1]) if tgt[0] == "reused"
+                  else new_persons[tgt[1]][0])
+        rep.details.append(
+            f"linked: db face {dbfid} <- '{winner}' ({len(cl)} claim(s): "
+            + "; ".join(descs) + ")")
+
+    # ---- cluster co-move (§9.5 v4.0): post-pass over the decisions
+    by_current: dict[object, list[dict]] = {}
+    for mv in moves:
+        by_current.setdefault(mv["current"], []).append(mv)
+    for current, cms in by_current.items():
+        if current is None:
+            continue
+        cname = person_name_by_id.get(current)
+        if not (cname and UNKNOWN_NAME_RE.match(cname)):
+            continue                     # real/unowned faces decide alone
+        cluster_deletes.add(current)      # deleted in execute if emptied
+        if current in contested_clusters:
+            continue                     # contradictory evidence: no co-move
+        tgts = {mv["person"] for mv in cms}
+        if len(tgts) > 1:
+            continue                     # defensive; per-face rule prevents this
+        decided = {mv["db_face"] for mv in cms}
+        tgt = next(iter(tgts))
+        # as if the user assigned the whole group: unclaimed mates follow (J4)
+        for r in dbcon.execute(
+                "SELECT id, link_status, state FROM faces"
+                " WHERE person_id=?", (current,)):
+            if r["id"] in decided or r["id"] in claims:
+                continue
+            if overwrite or (r["link_status"] == "provisional"
+                             and r["state"] != "discarded"):
+                moves.append({"db_face": r["id"], "person": tgt,
                               "current": current})
     return {"new_persons": new_persons, "reused": reused,
             "moves": moves, "cluster_deletes": cluster_deletes}
