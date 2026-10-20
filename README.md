@@ -117,6 +117,27 @@ Import flags: `--faces-db` (default `FACES_DB` from `.env`),
 faces you already confirmed/rejected — they become provisional again),
 `--dry-run` (full pipeline, no copy, no writes).
 
+**Path map** (both scripts; `docs/scripts-design.md` §8.6): legacy
+sources state roots that no longer exist (`D:/LIVE/...`). Point both
+scripts at one text file — `PATH_MAP=config/pathmap.txt` in `.env`, or
+`--path-map FILE` (repeatable):
+
+```text
+# legacy root                = local root
+D:/images/PicFiles           = /run/media/stoflom/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
+D:/LIVE                      = /run/media/stoflom/Seagate Expansion Drive/LIVE
+```
+
+One `OLD = NEW` prefix rewrite per line (`#` comments, blank lines
+ignored, longest prefix wins, case-insensitive, no globbing). The map
+is a *lookup aid only* — identity stays the BLAKE3 hash; at import time
+it also drives a **rescue pass** that re-hashes staging images whose
+file is reachable again under a mapped root, so a moved archive does not
+force a full re-harvest. When more than 20% of a run's rows are
+unusable (unmapped roots / missing hashes), the scripts end with a
+prominent `stderr` warning naming the top unmapped roots — it is never
+suppressed by `-q`.
+
 `test/archive-fixture/` (gitignored) holds a small hand-picked photo set
 with real Lightroom/digiKam/darktable person data for trying the pipeline
 end to end before pointing it at the full archive.
