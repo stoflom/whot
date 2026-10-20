@@ -137,11 +137,25 @@ def convert_box(x: float, y: float, w: float, h: float, unit: str,
     return (x, y, w, h)
 
 
-def strip_group_root(path: str) -> str | None:
-    """'People|Family|X' -> 'Family|X' (§9.4). None when nothing remains."""
+def strip_group_root(path: str, person: str | None = None) -> str | None:
+    """Staging keyword path -> faces.db group path (§9.4).
+
+    'People|Family|X' -> 'Family|X'. None when nothing remains.
+
+    v2.1 (#80): staging paths are keyword/tag paths whose LAST segment
+    is the person's own name by construction (§8); faces.db group
+    paths name the groups ABOVE the person, never the person itself
+    (gui-design §3/§4.1). With the person's name given, a trailing
+    segment equal to it is dropped: 'People|Family|Winnie Pelser' ->
+    'Family', 'People|Winnie Pelser' -> ungrouped (None). A trailing
+    segment that does not equal the name is kept (capture, never
+    guessed — §8 H4).
+    """
     parts = [p for p in path.split("|") if p != ""]
     if parts and parts[0].casefold() in GROUP_ROOTS:
         parts = parts[1:]
+    if person is not None and parts and parts[-1] == person:
+        parts = parts[:-1]
     return "|".join(parts) if parts else None
 
 
@@ -336,12 +350,12 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
         spid = sf_by_id[sfid]["person_id"]
         if spid in target_of:
             continue
+        name = spersons[spid]
         groups_g = set()
-        for p in sgroups.get(spid, ()):        # root stripped (§9.4)
-            stripped = strip_group_root(p)
+        for p in sgroups.get(spid, ()):        # root+leaf stripped (§9.4 v2.1)
+            stripped = strip_group_root(p, name)
             if stripped:
                 groups_g.add(stripped)
-        name = spersons[spid]
         hit = None
         for cid in existing_by_name.get(name, []):
             if existing_groups.get(cid, set()) == groups_g:
@@ -488,6 +502,23 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
                 " != ?", (fid, moved_to[fid]))
             rep.add("refcrops_cleared",
                     cur.rowcount if cur.rowcount > 0 else 0)
+
+    # primary backfill (§9.5 v2.1, #80): the §4.5 machine rule — the same
+    # statement as import_roll.assign_missing_primaries (duplicated,
+    # stdlib-only, like annotation_snapshot); fills every empty slot so
+    # the copy opens with usable person icons. User picks elsewhere are
+    # pinned/untouched: only NULL slots are filled.
+    dbcon.execute("""
+        UPDATE persons SET primary_face_id = (
+            SELECT f.id FROM faces f
+             WHERE f.person_id = persons.id AND f.state != 'discarded'
+               AND f.link_status != 'rejected'
+             ORDER BY f.confidence DESC, f.id LIMIT 1)
+        WHERE primary_face_id IS NULL
+          AND EXISTS (SELECT 1 FROM faces f
+                       WHERE f.person_id = persons.id AND f.state != 'discarded'
+                         AND f.link_status != 'rejected')
+    """)
     dbcon.commit()
 
 
