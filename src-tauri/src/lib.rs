@@ -1,4 +1,5 @@
-//! WhoT Face Manager — Tauri command surface (docs/gui-design.md §5).
+//! WhoT Face Manager — Tauri command surface (README.md "Tauri commands";
+//! architecture: docs/backend-design.md, behaviour rules: docs/gui-design.md §4).
 
 pub mod db;
 

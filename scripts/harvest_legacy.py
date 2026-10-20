@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """harvest_legacy.py — capture face & person data from the archival sources.
 
-Design: docs/gui-design.md §8 (v2.0).  Replaces the legacy duo under
+Design: docs/scripts-design.md §8 (v2.0).  Replaces the legacy duo under
 scripts/legacy/ with one self-contained script.  Invariants:
 
   H1  every source is read-only — external DBs open with SQLite ``mode=ro``
@@ -47,6 +47,9 @@ Usage:
       --lr-root 'D:/LIVE/=/run/media/.../LIVE'
   scripts/harvest_legacy.py --list-sources
   scripts/harvest_legacy.py --dry-run            # parse+count, nothing written
+
+All commands accept -q/--quiet: only the startup header and the final
+summary are printed (scripts-design §10); errors always go to stderr.
 """
 from __future__ import annotations
 
@@ -59,6 +62,9 @@ import sys
 import time
 import urllib.parse
 from pathlib import Path
+
+import cli_console  # shared header/status/quiet console (scripts-design §10)
+import pathmap      # legacy path-map file (scripts-design §8.6, #85)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "database" / "harvest_schema.sql"
@@ -81,8 +87,26 @@ ALL_SOURCES: tuple[str, ...] = tuple(CANON_SOURCES)
 TAG_SEP = "|"
 
 
+# module-level console: library callers (tests) get plain status output;
+# main() swaps in the -q-aware instance (scripts-design §10.7)
+_CONSOLE = cli_console.Console()
+
+UNUSABLE_THRESHOLD = 0.20      # >20% unusable rows => loud warning (#83)
+
+
+def coverage_pct(unusable: int, total: int,
+                 threshold: float = UNUSABLE_THRESHOLD) -> float | None:
+    """Share of unusable rows in percent, or None while healthy (#8.6).
+
+    Pure function so the threshold logic is testable without a harvest.
+    """
+    if total <= 0 or unusable * (1.0 / threshold) <= total:
+        return None
+    return 100.0 * unusable / total
+
+
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    _CONSOLE.status(msg)
 
 
 def now() -> str:
@@ -766,7 +790,8 @@ def harvest_digikam_core(st: Staging, db_path: Path, stats: dict,
 def harvest_digikam_faces(st: Staging, db_path: Path, src_id: int,
                           stats: dict,
                           index: dict[tuple[str, int], list[str]],
-                          hasher: "Hasher"):
+                          hasher: "Hasher",
+                          path_map: list | None = None):
     """digiKam ImageTagProperties tagRegion -> faces (pixel boxes, tag = person)."""
     if not db_path.exists():
         log(f"  (digikam core db not found: {db_path})")
@@ -777,8 +802,14 @@ def harvest_digikam_faces(st: Staging, db_path: Path, src_id: int,
     resolved: dict[str, int] = {}
     try:
         recon = _digikam_reconstructed_paths(con2)
+        if path_map:
+            # legacy album roots rewritten through the path map (#85, §8.6);
+            # an unmapped recon path stays as the source stated it (H3)
+            recon = {k: (pathmap.apply_path_map(v, path_map) or v)
+                     for k, v in recon.items()}
         meta = {r[0]: (r[1], r[2]) for r in
                 con2.execute("SELECT id, name, fileSize FROM Images")}
+        unresolved: list[str] = []       # samples for the coverage warning (#85)
         for r in con2.execute(
                 "SELECT itp.imageid, t.name, itp.value "
                 "FROM ImageTagProperties itp "
@@ -796,6 +827,9 @@ def harvest_digikam_faces(st: Staging, db_path: Path, src_id: int,
             name, fsize = meta.get(img_id, (None, None))
             path, origin = resolve_dk_image(img_id, name, fsize, recon, index)
             resolved[origin] = resolved.get(origin, 0) + 1
+            if origin == "unknown" and len(unresolved) < 10:
+                unresolved.append(f"{name!r} ({fsize} bytes,"
+                                  f" digikam-image:{img_id})")
             ch = hasher.hex(path) if path and Path(path).is_file() else None
             iid = st.image(source_id=src_id, path=path,
                            path_origin=origin if path else None,
@@ -815,6 +849,8 @@ def harvest_digikam_faces(st: Staging, db_path: Path, src_id: int,
     for how in ("source", "name-size", "ambiguous", "unknown"):
         if how in resolved:
             stats[f"dk_faces_resolved_{how}"] = resolved[how]
+    if unresolved:
+        stats["dk_unresolved_samples"] = unresolved   # coverage warning (#85)
 
 
 def harvest_lightroom_catalog(st: Staging, catalog: Path,
@@ -838,6 +874,7 @@ def harvest_lightroom_catalog(st: Staging, catalog: Path,
     n_persons = n_paths = n_refs = n_groups = 0
     n_faces = n_dup = 0
     n_unmapped = n_missing = n_nodims = n_degenerate = n_on_group = 0
+    unmapped_roots: dict[str, tuple[int, str]] = {}   # root -> (count, example) (#85)
     try:
         # person keywords: leaves become persons, group nodes do not
         kw = {r[0]: (r[1], r[2], r[3]) for r in con2.execute(
@@ -888,6 +925,13 @@ def harvest_lightroom_catalog(st: Staging, catalog: Path,
             local = map_lr_path(ap, pfr, fn or "", roots)
             if local is None:
                 n_unmapped += 1
+                # remember the root nobody mapped, with one example (#85)
+                cat_path = "/".join(p for p in ((ap or "").rstrip("/"),
+                                                (pfr or "").strip("/"),
+                                                fn or "") if p)
+                root_key = "/".join(cat_path.split("/")[:2]).casefold()
+                n_prev = unmapped_roots.get(root_key, (0, ""))[0]
+                unmapped_roots[root_key] = (n_prev + 1, cat_path)
                 continue
             if not Path(local).exists():
                 n_missing += 1
@@ -914,6 +958,10 @@ def harvest_lightroom_catalog(st: Staging, catalog: Path,
         st.con.commit()
     finally:
         con2.close()
+    if unmapped_roots:
+        stats["lr_unmapped_roots"] =             {r: {"count": c, "example": ex}
+             for r, (c, ex) in sorted(unmapped_roots.items(),
+                                      key=lambda kv: -kv[1][0])}
     stats.update({"lr_persons": n_persons, "lr_group_nodes": n_groups,
                   "lr_people_paths": n_paths, "lr_person_refs": n_refs,
                   "lr_faces": n_faces, "lr_faces_dup": n_dup,
@@ -1011,7 +1059,8 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
             sources: tuple[str, ...] = ALL_SOURCES,
             lightroom_catalog: Path | None = None,
             lr_roots: list[tuple[str, Path]] | None = None,
-            hasher: "Hasher | None" = None) -> dict:
+            hasher: "Hasher | None" = None,
+            path_map: list | None = None) -> dict:
     """Run the requested loaders; returns the stats dict.
 
     Load order is the legacy order minus the dropped Lap source, and it
@@ -1029,7 +1078,7 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
             "--lightroom-catalog <file.lrcat> (or set LR_CATALOG). "
             "A missing catalog is never treated as an empty one")
     enabled = set(sources)
-    roots = lr_roots or []
+    roots = list(lr_roots or [])
 
     if st is None:
         # dry-run: parse + count only, nothing written anywhere (H1/H2/H3)
@@ -1043,11 +1092,22 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
     known: set[str] = set()
     src = ensure_sources(st.con, sources)
 
+    # path map (#85, §8.6): extra LR roots + seeded index + recon rewrites —
+    # a lookup aid only, never a guess (H3/J2)
+    pm = list(path_map or [])
+    # the map extends the LR roots (§8.6 — same shape, consulted in order);
+    # `roots` was set to lr_roots at the top of this function
+    roots += [(old_n, Path(new)) for old_n, _od, new in pm]
+
     index: dict[tuple[str, int], list[str]] = {}
     needs_index = "digikam-faces" in enabled
     if needs_index:
-        log(f"  indexing image files under {', '.join(str(d) for d in images_dirs)}")
-        index, n_idx = build_file_index(images_dirs)
+        idx_dirs = list(images_dirs)
+        for d in pathmap.local_roots(pm):
+            if d not in idx_dirs:
+                idx_dirs.append(d)
+        log(f"  indexing image files under {', '.join(str(d) for d in idx_dirs)}")
+        index, n_idx = build_file_index(idx_dirs)
         stats["indexed_files"] = n_idx
 
     if enabled & {"sidecars-mwgrs", "sidecars-mpri", "sidecars-catsets"}:
@@ -1064,13 +1124,13 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
 
     if "digikam-faces" in sources:
         harvest_digikam_faces(st, digikam_db, src["digikam-faces"], stats,
-                              index, hasher)
+                              index, hasher, path_map=pm)
 
     if "lightroom-catalog" in sources:
         log(f"  lightroom catalog: {lightroom_catalog}")
         known |= harvest_lightroom_catalog(
-            st, lightroom_catalog, roots, src["lightroom-catalog"], stats,
-            hasher)
+            st, lightroom_catalog, roots,
+            src["lightroom-catalog"], stats, hasher)
 
     if "lightroom-sidecars" in sources:
         log(f"  scanning Lightroom sidecars under "
@@ -1177,9 +1237,19 @@ def main(argv=None) -> int:
                     help="print the canonical source vocabulary and exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="parse and count person names; write nothing")
+    ap.add_argument("--path-map", action="append", metavar="FILE", default=[],
+                    help="path-map file: 'OLD_PREFIX = NEW_PREFIX' lines "
+                         "rewriting legacy roots onto the local archive "
+                         "(§8.6, #85; also PATH_MAP in .env)")
+    cli_console.add_quiet_arg(ap)
     args = ap.parse_args(argv)
 
+    global _CONSOLE
+    _CONSOLE = ui = cli_console.Console(quiet=args.quiet)
+
     if args.list_sources:
+        # requested data, not status: printed even under -q (§10.5)
+        ui.header("WhoT harvest_legacy — list sources")
         for name, kind in sorted(CANON_SOURCES.items()):
             print(f"  {name:<22} kind={kind}")
         print(f"\n{len(CANON_SOURCES)} canonical harvest sources (design §8)")
@@ -1206,24 +1276,46 @@ def main(argv=None) -> int:
               or Path("~/.config/digikam/recognition.db").expanduser())
     catalog = Path(args.lightroom_catalog).expanduser() if args.lightroom_catalog \
         else (env_path("LR_CATALOG") or env_path("LIGHTROOM_CATALOG"))
+
+    sources = tuple(s.strip() for s in args.sources.split(",") if s.strip())
+    mode = "DRY RUN — nothing written" if args.dry_run else "harvest"
+    ui.header(f"WhoT harvest_legacy — {mode}",
+              f"sources   : {', '.join(sources)}",
+              f"images    : {', '.join(str(d) for d in images_dirs) or '(none)'}",
+              f"digikam   : {digikam_db}",
+              f"recognition: {recognition_db}",
+              f"catalog   : {catalog or '(none)'}")
+
+    # path map (#85, §8.6): --path-map files + PATH_MAP in .env; a broken
+    # file is an error, never silently ignored
+    path_map: list = []
+    try:
+        for spec in [*args.path_map,
+                     *[s for s in (env.get("PATH_MAP") or "").split(os.pathsep)
+                       if s]]:
+            path_map += pathmap.load_path_map(Path(spec.strip()).expanduser())
+    except (OSError, ValueError) as e:
+        ui.error(f"error: path map: {e}")
+        return 1
+
     try:
         lr_roots = parse_lr_roots(args.lr_root)
     except ValueError as e:
-        log(f"error: {e}")
+        ui.error(f"error: {e}")
         return 1
 
-    sources = tuple(s.strip() for s in args.sources.split(",") if s.strip())
     try:
         check = [s for s in sources if s not in ALL_SOURCES]
         if check:
             raise StagingError(
                 f"not a harvest source: {check}. Known: {', '.join(ALL_SOURCES)}")
+        ui.start_beat("scanning sources")
         if args.dry_run:
             stats = harvest(None, images_dirs=images_dirs,
                             digikam_db=digikam_db, recognition_db=recognition_db,
                             sources=sources, lightroom_catalog=catalog,
-                            lr_roots=lr_roots)
-            log("[dry-run] nothing written")
+                            lr_roots=lr_roots, path_map=path_map)
+            ui.status("[dry-run] nothing written")
         else:
             t0 = time.time()
             out = Path(args.out).expanduser() if args.out else \
@@ -1243,28 +1335,52 @@ def main(argv=None) -> int:
                     "lightroom-catalog": str(catalog) if catalog else None,
                     "lr-root": args.lr_root,
                 }))
-                log(f"staging: {out}  (run {st.run_id})")
+                ui.status(f"staging: {out}  (run {st.run_id})")
                 stats = harvest(st, images_dirs=images_dirs,
                                 digikam_db=digikam_db,
                                 recognition_db=recognition_db,
                                 sources=sources, lightroom_catalog=catalog,
                                 lr_roots=lr_roots,
-                                hasher=Hasher(enabled=not args.no_hash))
+                                hasher=Hasher(enabled=not args.no_hash),
+                                path_map=path_map)
                 finish_run(con, st.run_id, stats)
             except (ValueError, StagingError) as e:
                 con.close()
-                log(f"error: {e}")
+                ui.stop_beat()
+                ui.error(f"error: {e}")
                 return 1
             finally:
                 con.close()
-            log(f"elapsed: {time.time() - t0:.1f}s")
+            ui.stop_beat()
+            ui.status(f"elapsed: {time.time() - t0:.1f}s")
     except (ValueError, StagingError) as e:
-        log(f"error: {e}")
+        ui.stop_beat()
+        ui.error(f"error: {e}")
         return 1
 
-    log("")
-    for k in sorted(stats):
-        log(f"  {k:<26} {stats[k]}")
+    ui.stop_beat()
+
+    # coverage warning (#83, §8.6): >20% unusable rows scream — stderr,
+    # never -q-suppressed, with the roots nobody mapped (#85)
+    unusable = stats.get("lr_root_unmapped", 0) + \
+        stats.get("dk_faces_resolved_unknown", 0)
+    total_rows = unusable + stats.get("lr_faces", 0) + \
+        stats.get("dk_faces", 0) + stats.get("dk_faces_dup", 0)
+    pct = coverage_pct(unusable, total_rows)
+    if pct is not None:
+        ui.error(f"WARNING: {pct:.0f}% of archive rows unusable"
+                 f" ({unusable} of {total_rows}): images could not be"
+                 f" resolved to a path, so their faces can never match"
+                 f" the import (J2). Map the missing roots in your"
+                 f" --path-map file (§8.6) or extend --images/--lr-root.")
+        for root, info in list(stats.get("lr_unmapped_roots", {}).items())[:5]:
+            ui.error(f"  unmapped root {root!r}: {info['count']} row(s),"
+                     f" e.g. {info['example']}")
+        for sample in stats.get("dk_unresolved_samples", [])[:5]:
+            ui.error(f"  unresolved digiKam image: {sample}")
+
+    ui.summary("", *(f"  {k:<26} {stats[k]}" for k in sorted(stats)
+                     if not isinstance(stats[k], (dict, list))))
     return 0
 
 

@@ -74,6 +74,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .dim { color: var(--dim); }
 .center-msg { display: flex; align-items: center; justify-content: center; height: 100%; }
 .fatal { padding: 2rem; }
+/* §4.26 (#81): the fatal error text is selectable and wraps */
+.fatal-text {
+  user-select: text;
+  -webkit-user-select: text;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-width: 70ch;
+}
 
 /* ---------------------------------------------------------------- layout */
 
@@ -411,6 +419,8 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 
 /* ---------------------------------------------------------------- toast */
 
+/* §4.26 (#81): errors are copyable — selectable text, wraps instead of
+   clipping, Copy + explicit ✕ buttons; a plain click never dismisses. */
 .toast {
   position: fixed;
   bottom: 58px;
@@ -422,8 +432,40 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   border-radius: 8px;
   padding: 0.55rem 1rem;
   max-width: 80vw;
-  cursor: pointer;
   z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  user-select: text;
+  -webkit-user-select: text;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.toast-text { flex: 1 1 auto; min-width: 0; }
+
+.err-copy,
+.err-dismiss {
+  flex: 0 0 auto;
+  border: 1px solid rgba(16, 20, 26, 0.45);
+  background: rgba(16, 20, 26, 0.12);
+  color: #10141a;
+  font: inherit;
+  font-size: 0.8em;
+  font-weight: 700;
+  border-radius: 5px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+.err-copy:hover,
+.err-dismiss:hover { background: rgba(16, 20, 26, 0.28); }
+.err-dismiss { line-height: 1.2; }
+
+.fatal .err-copy {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--text);
+  margin-top: 0.75rem;
 }
 
 /* center-pane toolbar (#23) */

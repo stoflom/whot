@@ -29,7 +29,10 @@ UnknownN clusters are merged whole only on unanimous evidence (§9.5).
 
 Usage:
   scripts/import_harvested.py STAGING.db [--faces-db data/faces.db]
-      [--min-overlap 0.60] [--overwrite] [--dry-run]
+      [--min-overlap 0.60] [--overwrite] [--dry-run] [-q]
+
+Console (scripts-design §10): startup header, status updates, final summary;
+-q/--quiet prints only the header and the final summary.
 """
 from __future__ import annotations
 
@@ -43,6 +46,9 @@ import time
 import urllib.parse
 from pathlib import Path
 
+import cli_console  # shared header/status/quiet console (scripts-design §10)
+import pathmap      # legacy path-map file (scripts-design §8.6, #85)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STAGING_SCHEMA_VERSION = "1.1"     # §8.2, exact-match (J3)
 FACES_SCHEMA_VERSION = "1.5"       # database/schema.sql, exact-match
@@ -50,8 +56,24 @@ GROUP_ROOTS = {"people", "person"}  # stripped from harvested paths (§9.4)
 UNKNOWN_NAME_RE = re.compile(r"^Unknown\d+$")
 
 
+# module-level console: library callers (tests) get plain status output;
+# main() swaps in the -q-aware instance (scripts-design §10.7)
+_CONSOLE = cli_console.Console()
+
+UNUSABLE_THRESHOLD = 0.20      # >20% unusable staging faces => loud warning (#83)
+
+
+def coverage_pct(unusable: int, total: int,
+                 threshold: float = UNUSABLE_THRESHOLD) -> float | None:
+    """Share of unusable staging faces in percent, or None while healthy
+    (§8.6).  Pure function — threshold logic testable without a run."""
+    if total <= 0 or unusable * (1.0 / threshold) <= total:
+        return None
+    return 100.0 * unusable / total
+
+
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    _CONSOLE.status(msg)
 
 
 def now() -> str:
@@ -127,11 +149,25 @@ def convert_box(x: float, y: float, w: float, h: float, unit: str,
     return (x, y, w, h)
 
 
-def strip_group_root(path: str) -> str | None:
-    """'People|Family|X' -> 'Family|X' (§9.4). None when nothing remains."""
+def strip_group_root(path: str, person: str | None = None) -> str | None:
+    """Staging keyword path -> faces.db group path (§9.4).
+
+    'People|Family|X' -> 'Family|X'. None when nothing remains.
+
+    v2.1 (#80): staging paths are keyword/tag paths whose LAST segment
+    is the person's own name by construction (§8); faces.db group
+    paths name the groups ABOVE the person, never the person itself
+    (gui-design §3/§4.1). With the person's name given, a trailing
+    segment equal to it is dropped: 'People|Family|Winnie Pelser' ->
+    'Family', 'People|Winnie Pelser' -> ungrouped (None). A trailing
+    segment that does not equal the name is kept (capture, never
+    guessed — §8 H4).
+    """
     parts = [p for p in path.split("|") if p != ""]
     if parts and parts[0].casefold() in GROUP_ROOTS:
         parts = parts[1:]
+    if person is not None and parts and parts[-1] == person:
+        parts = parts[:-1]
     return "|".join(parts) if parts else None
 
 
@@ -215,15 +251,118 @@ def load_staging(con: sqlite3.Connection):
     return images, faces, persons, groups
 
 
+def _img_where(img_row: dict | None) -> str:
+    """Full, actionable location of a staging image (#85): the stated path
+    when the source gave one, else name + size + source reference."""
+    if not img_row:
+        return "<image row missing>"
+    if img_row.get("path"):
+        return str(img_row["path"])
+    return (f"{img_row.get('name')!r} ({img_row.get('file_size')} bytes,"
+            f" {img_row.get('source_ref')})")
+
+
+def rescue_hashes(stcon: sqlite3.Connection, rules: list,
+                  ui: cli_console.Console | None = None,
+                  rep: "Report | None" = None) -> dict[int, str]:
+    """Re-hash staging images whose file is reachable now (§8.6, #85).
+
+    Two rescue classes, both lookup aids — identity stays the BLAKE3 hash
+    (J2/H3), ambiguity is skipped, never guessed:
+
+    1. image has a stated path but no hash (file moved since the harvest,
+       or `--no-hash`): try the path as-is, then through the path map;
+    2. image is pathless (digiKam never resolved it): resolve
+       `(name, file_size)` uniquely under the path map's local roots.
+
+    Returns `{staging_image_id: hash}` — an in-memory overlay; the staging
+    DB is never written (H1/H2).
+    """
+    rows = stcon.execute(
+        "SELECT id, path, name, file_size FROM images"
+        " WHERE content_hash IS NULL").fetchall()
+    if not rows:
+        return {}
+    rescued: dict[int, str] = {}
+
+    def _hash(path: str) -> str | None:
+        try:
+            from blake3 import blake3          # same lazy import as harvest
+        except ImportError:
+            return None
+        h = blake3()
+        try:
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            return None
+        return h.hexdigest()
+
+    def _note(kind: str, iid: int, where: str, digest: str) -> None:
+        rescued[iid] = digest
+        if rep is not None:
+            rep.add(kind)
+            rep.details.append(f"{kind}: image {where} -> hash {digest[:12]}…")
+        if ui is not None:
+            ui.status(f"  rescued {where} -> {digest[:12]}…")
+
+    # 1) stated paths (original, then through the path map)
+    n_walk = 0
+    for iid, path, name, size in rows:
+        if path is None:
+            n_walk += 1
+            continue
+        for cand in dict.fromkeys(
+                [path, pathmap.apply_path_map(path, rules or [])]):
+            if cand and Path(cand).is_file():
+                digest = _hash(cand)
+                if digest:
+                    _note("rescued-path", iid, cand, digest)
+                break
+
+    # 2) pathless: (name, size) index over the path map's local roots,
+    #    unique match only — exactly the harvester's name-size rule (§8.3)
+    if n_walk and rules:
+        idx: dict[tuple[str, int], list[str]] = {}
+        for root in pathmap.local_roots(rules):
+            if not root.is_dir():
+                continue
+            for dirpath, _dirs, files in os.walk(root):
+                for fn in files:
+                    fp = str(Path(dirpath) / fn)
+                    try:
+                        sz = os.stat(fp).st_size
+                    except OSError:
+                        continue
+                    idx.setdefault((fn.casefold(), sz), []).append(fp)
+        for iid, path, name, size in rows:
+            if path is not None or iid in rescued or not name or size is None:
+                continue
+            cands = idx.get((name.casefold(), size), [])
+            if len(cands) == 1:
+                digest = _hash(cands[0])
+                if digest:
+                    _note("rescued-name-size", iid, cands[0], digest)
+    return rescued
+
+
 def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
                 min_overlap: float, overwrite: bool,
-                rep: Report) -> dict:
+                rep: Report,
+                rescues: dict[int, str] | None = None) -> dict:
     """Match + resolve everything read-only; returns the execution plan.
 
     Nothing here writes: the plan is executed against the target copy (or
     discarded by --dry-run), which keeps dry runs byte-for-byte honest.
+
+    `rescues` (§8.6, #85) overlays hashes recovered by `rescue_hashes`
+    onto the pathless/unhashed staging images before matching.
     """
     images, sfaces, spersons, sgroups = load_staging(stcon)
+    for iid, digest in (rescues or {}).items():
+        if iid in images and not images[iid].get("content_hash"):
+            images[iid]["content_hash"] = digest
 
     hash2img = {r["content_hash"]: dict(r) for r in dbcon.execute(
         "SELECT id, content_hash, width, height, inversion FROM images"
@@ -236,24 +375,32 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
     sf_by_id = {sf["id"]: sf for sf in sfaces}
 
     # ---- candidate pairs, per staging face (§9.2/9.3)
+    # hash-missing / image-not-in-db are reported ONCE PER IMAGE with the
+    # full stated path (#85): one image has many faces, and a path-less
+    # basename is not actionable.
     pairs_by_image: dict[int, list[tuple[float, int, int]]] = {}
+    reported_missing: set[int] = set()
+    reported_absent: set[int] = set()
     for sf in sfaces:
         rep.add("staging_faces")
         img_row = images.get(sf["image_id"])
         ch = (img_row or {}).get("content_hash")
         if not ch:
-            where = (img_row or {}).get("path") or \
-                f"{(img_row or {}).get('name')!r} " \
-                f"({(img_row or {}).get('source_ref')})"
-            rep.skip("hash-missing",
-                     f"staging face {sf['id']} (image {where}) — never"
-                     f" certainly resolved, so not hashable (J2)")
+            rep.add("hash-missing")
+            if sf["image_id"] not in reported_missing:
+                reported_missing.add(sf["image_id"])
+                rep.details.append(
+                    f"hash-missing: image {_img_where(img_row)} — never"
+                    f" certainly resolved, so not hashable (J2)")
             continue
         dbimg = hash2img.get(ch)
         if dbimg is None:
-            rep.skip("image-not-in-db",
-                     f"staging face {sf['id']} person {sf['person_name']!r}:"
-                     f" hash {ch[:12]}… not in faces.db (J2)")
+            rep.add("image-not-in-db")
+            if sf["image_id"] not in reported_absent:
+                reported_absent.add(sf["image_id"])
+                rep.details.append(
+                    f"image-not-in-db: image {_img_where(img_row)} hash"
+                    f" {ch[:12]}… not in faces.db (J2)")
             continue
         box = convert_box(sf["x"], sf["y"], sf["w"], sf["h"], sf["unit"],
                           sf["img_w"], sf["img_h"],
@@ -312,8 +459,16 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
 
     # ---- person resolution (§9.4)
     existing_by_name: dict[str, list[int]] = {}
-    for r in dbcon.execute("SELECT id, name FROM persons"):
+    # the importer's own suffixed generation: 'X 2'/'X 3' with
+    # state='imported' (only this script writes that state) is reachable
+    # by its BASE name — otherwise every re-run mints the next suffix (#82)
+    imported_by_base: dict[str, list[int]] = {}
+    for r in dbcon.execute("SELECT id, name, state FROM persons"):
         existing_by_name.setdefault(r["name"], []).append(r["id"])
+        if r["state"] == "imported":
+            m = re.match(r"^(.*) \d+$", r["name"])
+            if m:
+                imported_by_base.setdefault(m.group(1), []).append(r["id"])
     existing_groups: dict[int, set[str]] = {}
     for r in dbcon.execute("SELECT person_id, path FROM person_groups"):
         existing_groups.setdefault(r["person_id"], set()).add(r["path"])
@@ -326,14 +481,17 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
         spid = sf_by_id[sfid]["person_id"]
         if spid in target_of:
             continue
+        name = spersons[spid]
         groups_g = set()
-        for p in sgroups.get(spid, ()):        # root stripped (§9.4)
-            stripped = strip_group_root(p)
+        for p in sgroups.get(spid, ()):        # root+leaf stripped (§9.4 v2.1)
+            stripped = strip_group_root(p, name)
             if stripped:
                 groups_g.add(stripped)
-        name = spersons[spid]
         hit = None
-        for cid in existing_by_name.get(name, []):
+        # exact (name, group) first, then this run's own previous
+        # generation (base name + groups + state='imported', §9.8)
+        for cid in existing_by_name.get(name, []) + \
+                imported_by_base.get(name, []):
             if existing_groups.get(cid, set()) == groups_g:
                 hit = cid                      # exact (name, group) match only
                 break
@@ -387,8 +545,14 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
             cluster_deletes.add(current)
         else:
             for sfid, dbfid in pairs:
-                moves.append({"db_face": dbfid,
-                              "person": target_of[sf_by_id[sfid]["person_id"]],
+                tgt = target_of[sf_by_id[sfid]["person_id"]]
+                # §9.8 (#82): a face already on its resolved target is a
+                # no-op — no relabel, no seq churn on re-runs
+                if tgt[0] == "reused" and \
+                        db_face_by_id[dbfid]["person_id"] == tgt[1]:
+                    rep.add("already-there")
+                    continue
+                moves.append({"db_face": dbfid, "person": tgt,
                               "current": current})
     return {"new_persons": new_persons, "reused": reused,
             "moves": moves, "cluster_deletes": cluster_deletes}
@@ -478,6 +642,33 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
                 " != ?", (fid, moved_to[fid]))
             rep.add("refcrops_cleared",
                     cur.rowcount if cur.rowcount > 0 else 0)
+
+    # importer-shell sweep (§9.8 v3.0, #82): persons THIS script created
+    # (state='imported') that ended up with zero faces — emptied by a
+    # later re-run, or left behind by an interrupted one.  User persons
+    # (state='created') are never touched.
+    cur = dbcon.execute(
+        "DELETE FROM persons WHERE state='imported' AND NOT EXISTS ("
+        "  SELECT 1 FROM faces f WHERE f.person_id = persons.id)")
+    if cur.rowcount:
+        rep.add("importer_shells_deleted", cur.rowcount)
+
+    # primary backfill (§9.5 v2.1, #80): the §4.5 machine rule — the same
+    # statement as import_roll.assign_missing_primaries (duplicated,
+    # stdlib-only, like annotation_snapshot); fills every empty slot so
+    # the copy opens with usable person icons. User picks elsewhere are
+    # pinned/untouched: only NULL slots are filled.
+    dbcon.execute("""
+        UPDATE persons SET primary_face_id = (
+            SELECT f.id FROM faces f
+             WHERE f.person_id = persons.id AND f.state != 'discarded'
+               AND f.link_status != 'rejected'
+             ORDER BY f.confidence DESC, f.id LIMIT 1)
+        WHERE primary_face_id IS NULL
+          AND EXISTS (SELECT 1 FROM faces f
+                       WHERE f.person_id = persons.id AND f.state != 'discarded'
+                         AND f.link_status != 'rejected')
+    """)
     dbcon.commit()
 
 
@@ -500,22 +691,52 @@ def main(argv=None) -> int:
                          "again (J5)")
     ap.add_argument("--dry-run", action="store_true",
                     help="full pipeline, no writes anywhere (no copy)")
+    ap.add_argument("--path-map", action="append", metavar="FILE", default=[],
+                    help="path-map file: 'OLD_PREFIX = NEW_PREFIX' lines "
+                         "rewriting legacy roots onto the local archive "
+                         "(§8.6, #85; also PATH_MAP in .env) — enables the"
+                         " rescue pass for unhashable staging images")
+    cli_console.add_quiet_arg(ap)
     args = ap.parse_args(argv)
 
+    global _CONSOLE
+    _CONSOLE = ui = cli_console.Console(quiet=args.quiet)
+
     if not (0.0 < args.min_overlap <= 1.0):
-        log("error: --min-overlap must be in (0, 1]")
+        ui.error("error: --min-overlap must be in (0, 1]")
         return 1
 
     env = load_env(PROJECT_ROOT / ".env")
+
     faces_db = Path(args.faces_db).expanduser() if args.faces_db \
         else PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
     if not faces_db.is_absolute():
         faces_db = (PROJECT_ROOT / faces_db).resolve()
+
+    mode = "DRY RUN — no copy, no writes" if args.dry_run else "import into copy"
+    ui.header(f"WhoT import_harvested — {mode}",
+              f"staging     : {args.staging}",
+              f"faces db    : {faces_db}",
+              f"min overlap : {args.min_overlap}",
+              f"overwrite   : {'yes' if args.overwrite else 'no'}")
+
+    # path map (#85, §8.6): --path-map files + PATH_MAP in .env; a broken
+    # file is an error, never silently ignored
+    path_map: list = []
+    try:
+        for spec in [*args.path_map,
+                     *[s for s in (env.get("PATH_MAP") or "").split(os.pathsep)
+                       if s]]:
+            path_map += pathmap.load_path_map(Path(spec.strip()).expanduser())
+    except (OSError, ValueError) as e:
+        ui.error(f"error: path map: {e}")
+        return 1
+
     if not args.staging.exists():
-        log(f"error: staging DB not found: {args.staging}")
+        ui.error(f"error: staging DB not found: {args.staging}")
         return 1
     if not faces_db.exists():
-        log(f"error: faces.db not found: {faces_db}")
+        ui.error(f"error: faces.db not found: {faces_db}")
         return 1
 
     stcon = open_ro(args.staging)
@@ -531,33 +752,62 @@ def main(argv=None) -> int:
         if args.dry_run:
             dbcon = open_ro(faces_db)
             target = None
-            log(f"DRY RUN — no copy, no writes (source: {faces_db})")
+            ui.status(f"DRY RUN — no copy, no writes (source: {faces_db})")
         else:
+            ui.start_beat("vacuuming copy of faces.db")
             target = make_target_copy(faces_db)
-            log(f"target copy: {target}  (J1: the original is untouched)")
+            ui.stop_beat()
+            ui.status(f"target copy: {target}  (J1: the original is untouched)")
             dbcon = sqlite3.connect(target)
             dbcon.row_factory = sqlite3.Row
             dbcon.execute("PRAGMA foreign_keys = ON")
         try:
+            rescues: dict[int, str] = {}
+            if path_map:
+                ui.status("rescue pass: re-hashing reachable staging images"
+                          " (§8.6, #85) ...")
+                ui.start_beat("rescue pass")
+                rescues = rescue_hashes(stcon, path_map, ui, rep)
+                ui.stop_beat()
+                ui.status(f"rescued {len(rescues)} staging image(s)")
+            ui.start_beat("planning import")
             plan = plan_import(stcon, dbcon, args.min_overlap,
-                               args.overwrite, rep)
+                               args.overwrite, rep, rescues=rescues)
+            ui.stop_beat()
             if not args.dry_run:
+                ui.start_beat("executing plan")
                 execute_plan(dbcon, plan, rep)
+                ui.stop_beat()
         finally:
+            ui.stop_beat()
             dbcon.close()
     finally:
         stcon.close()
 
-    # ---- report (§9.6)
-    log("")
-    for k in sorted(rep.counters):
-        log(f"  {k:<22} {rep.counters[k]}")
+    # coverage warning (#83, §8.6): >20% unusable staging faces scream —
+    # stderr, never -q-suppressed; percentages always in the summary
+    staging_total = rep.counters.get("staging_faces", 0)
+    unusable = (rep.counters.get("hash-missing", 0) +
+                rep.counters.get("image-not-in-db", 0))
+    pct = coverage_pct(unusable, staging_total)
+    if pct is not None:
+        ui.error(f"WARNING: {pct:.0f}% of staging faces unusable"
+                 f" ({unusable} of {staging_total}): hash-missing or not in"
+                 f" faces.db — re-run the harvest with fuller --images/"
+                 f" --lr-root coverage, or extend --path-map (§8.6).")
+
+    # ---- report (§9.6): the final summary — always printed (§10.1)
+    lines = [""]
+    if staging_total:
+        lines.append(
+            f"  {'usable faces':<22} {staging_total - unusable}/{staging_total}"
+            f" ({100.0 * (staging_total - unusable) / staging_total:.0f}%)")
+    lines += [f"  {k:<22} {rep.counters[k]}" for k in sorted(rep.counters)]
     if rep.details:
-        log(f"\ndetails ({len(rep.details)}):")
-        for d in rep.details[:40]:
-            log(f"  {d}")
+        lines.append(f"\ndetails ({len(rep.details)}):")
+        lines += [f"  {d}" for d in rep.details[:40]]
         if len(rep.details) > 40:
-            log(f"  … {len(rep.details) - 40} more (see the JSON report)")
+            lines.append(f"  … {len(rep.details) - 40} more (see the JSON report)")
     if target is not None:
         jpath = target.with_suffix(".import.json")
         lpath = target.with_suffix(".import.log")
@@ -568,9 +818,10 @@ def main(argv=None) -> int:
              f"  min_overlap={args.min_overlap}"] +
             [f"{k}={v}" for k, v in sorted(rep.counters.items())] +
             ["", *rep.details]) + "\n")
-        log(f"\nreport: {lpath}\n        {jpath}")
-        log("open the app against the copy (symlink) and decide whether to"
-            " promote it")
+        lines.append(f"\nreport: {lpath}\n        {jpath}")
+        lines.append("open the app against the copy (symlink) and decide"
+                     " whether to promote it")
+    ui.summary(*lines)
     return 0
 
 

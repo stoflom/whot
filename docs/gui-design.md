@@ -1,7 +1,8 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.15** (major.minor per `AGENTS.md`; major = new feature, minor =
-change/correction)
+**Version: 3.17** (major.minor per `AGENTS.md`; major = new feature, minor =
+change/correction; this document is the primary design document — the app
+version in `package.json` tracks it)
 
 Revision history is not kept in this document — it lives in the GitHub
 issues. The version above is bumped with every change and referenced in
@@ -10,14 +11,11 @@ the closing comment of the issue(s) it implements.
 Tauri-based desktop app for reviewing, naming, accepting, rejecting and
 annotating faces imported by `scripts/import_roll.py` into `data/faces.db`.
 
-Since v2.0 the design also covers `scripts/harvest_legacy.py` (§8): the
-read-only harvester that captures face & person knowledge from the archival
-sources (sidecar XMP files, the Lightroom catalog and its sidecars, digiKam's
-core and recognition databases) into a *staging database* for a subsequent
-importer to merge into `faces.db`.  Since v3.0 that importer is specified:
-`scripts/import_harvested.py` (§9) attaches harvested persons to the faces
-insightface already detected — recovery of legacy work, never new images,
-faces or detections — and writes only to a vacuumed **copy** of `faces.db`.
+v3.16 **split** this document: the script sections (formerly §8/§9) moved
+to `docs/scripts-design.md` *keeping their section numbers*, the Tauri
+command reference and repository layout moved to `README.md`, and the
+database and Rust backend designs live in `docs/schema-design.md` and
+`docs/backend-design.md` (§5 below lists every document).
 
 ## 1. Goals
 
@@ -37,6 +35,11 @@ user:
 
 All panes re-sync after every mutation.
 
+Non-goals (v1): moving faces between *known* persons by drag & drop,
+deleting faces (persons *can* be removed — §4.13; their faces become
+rejected, unowned records), editing embeddings, multi-group membership UI
+(one group path per person), i18n.
+
 ## 2. Stack
 
 | Layer | Choice | Why |
@@ -48,7 +51,7 @@ All panes re-sync after every mutation.
 | Embeddings | Rust float32 dot product on `face_embeddings.vector` (512-d, L2-normalised ⇒ cosine) | trivial cost up to ~10k faces |
 | Images | served from DB **BLOBs** (`faces.preview`, `images.thumbnail/preview`) as base64 data URLs, lazy + cached in the frontend | GUI works even if source files move; no file-system access needed |
 | Python | **none** at runtime | insightface only runs in the import and
-  harvest scripts (§8) |
+  harvest scripts (scripts-design §8) |
 
 App root = repository root (`package.json`, `src/`, `src-tauri/`).
 DB path resolved like `import_roll.py`: parse `.env` (`FACES_DB`, default
@@ -557,319 +560,38 @@ Double-click opens the full-image focus mode (§3).
     step starts from the person under the cursor (tree rows expose
     `data-person-id`), falling back to the list's start/end when the
     cursor is over no tree row.
+26. **Copyable errors** (#81) ⇒ every error surfaced by the app — the
+    fatal `loadError` screen and the runtime error toast — must be
+    cleanly copyable for filing issues:
+    - error text is selectable (`user-select: text`) and **wraps/scrolls**
+      instead of clipping at `max-width`;
+    - a **Copy** button writes the full, untruncated message to the
+      clipboard (one click; includes the operation that failed and the
+      raw error string);
+    - the toast no longer dismisses on a plain click (which swallowed
+      selections): dismissal is an explicit **✕** button, or the toast
+      stays until replaced/cleared; selecting text inside it never
+      dismisses it.
+27. **Stale-shell sweep** (#84) ⇒ on every `get_snapshot()`, persons
+    matching `name LIKE 'Unknown%'` with **zero faces** are deleted
+    (leftovers from pre-v1.9 runs or external writers — no code path
+    ever revisits them otherwise). Named persons are never swept: an
+    empty *named* person is a legitimate future assignment target.
+    The sweep is one statement inside the snapshot transaction, cheap
+    and idempotent.
 
-## 5. Tauri commands (Rust)
 
-**Reads**
+## 5. Related documents
 
-- `get_snapshot()` → `{ persons: [{id, name, state, note, primary_face_id,
-  primary_pinned, groups[], counts{total, provisional, confirmed, rejected}}],
-  faces: [{id, image_id, person_id, x, y, w, h, name, seq, description,
-  confidence, link_status, state, import_id, created_at}],
-  images: [{id, primary_path, width, height, orientation, type, state,
-  roll_id, first_import_id}], imports: [{id, path, started_at}],
-  settings {cluster_threshold, refcrop_n, show_rejected} }`
-- `get_face_preview(face_id) → String` (base64 JPEG from `faces.preview`)
-- `get_image_thumb(image_id) → Option<String>`,
-  `get_image_preview(image_id) → Option<String>`
-- `get_refcrops(person_id) → [{seq, description, pinned, face_id, image: base64}]
-  grouped by appearance (§4.6)`
-- `open_image(image_id) → ()` — write `images.preview` to a temp file and
-  open it with the system viewer (opener plugin; §3 context menus)
-- `person_face_clusters(person_id, threshold) →
-  [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
-  similarity clusters inside each (§4.9)
+| Document | Contents |
+| --- | --- |
+| `README.md` | user-facing setup & usage, **Tauri command reference** (the former §5), **repository layout** (the former §6), run/build (the former §7) |
+| `docs/scripts-design.md` | Python tooling: **§8** legacy harvest (staging DB), **§9** harvest import (staging → copy of `faces.db`) — section numbers unchanged from this document's v2.0/v3.0 |
+| `docs/schema-design.md` | `faces.db` DDL design: tables, identities, schema-version gate, drop & recreate |
+| `docs/backend-design.md` | Rust backend architecture: `lib.rs` command surface, `db.rs` data layer, path/env resolution, derived-state maintenance |
+| `AGENTS.md` | agent conventions: branching, versioning, testing |
 
-**Mutations** (each ends with refcrops recompute + primary backfill for all
-affected persons; all return an error string on constraint violation)
-
-- `assign_person(face_ids, name, group_path)` — §4.1
-- `accept_faces(face_ids)` — §4.3
-- `reject_faces(face_ids)` — §4.2
-- `set_face_description(face_id, description)` — §4.4
-- `set_primary_face(person_id, face_id)` — §4.5
-- `set_person_name(person_id, name)` / `set_person_group(person_id, path)` /
-  `set_person_note(person_id, note)`
-- `add_refcrop(person_id, face_id)` (manual, pinned) /
-  `remove_refcrop(person_id, face_id)`
-- `remove_persons(person_ids)` — §4.13 (reject + detach + delete, no undo)
-- `rename_group(old_path, new_path)` / `delete_group(path)` /
-  `move_persons_to_group(person_ids, group)` — §4.16 (#50) group
-  membership: prefix rewrite / subtree drop to Ungrouped / per-person
-  replace; normalised (#42), `Ungrouped` segment reserved
-- `get_settings()` / `set_settings(json)` — `config/whotrc.json`
-
-## 6. File layout
-
-```
-whot/
-  package.json  vite.config.ts  index.html      # frontend
-  src/                              # React app
-    main.tsx  App.tsx  api.ts      # api.ts = typed tauri invoke wrapper
-    components/  PersonTree.tsx  FaceCard.tsx  FaceGrid.tsx
-                 RuleBar.tsx  DetailPane.tsx  RollsPane.tsx  AssignDialog.tsx
-                 GroupDialog.tsx  FaceOverlay.tsx   # active rectangles on full-size images
-    styles.css
-  src-tauri/
-    tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde, base64
-    src/main.rs  src/lib.rs        # lib.rs: #[tauri::command] surface (§5)
-    src/db.rs                      # db.rs: queries + embeddings + refcrops
-    tests/                         # Rust integration tests (self-built fixture DB)
-  scripts/                         # Python tooling (dev-time only)
-    import_roll.py                 # roll import into data/faces.db
-    annotation_snapshot.py         # annotation export/restore across drop&recreate
-    harvest_legacy.py              # §8: read-only archival harvester
-    import_harvested.py            # §9: attach harvested persons (copy-only)
-    legacy/                        # archived importers, superseded by harvest_legacy.py
-  database/
-    schema.sql                     # faces.db DDL (v1.5)
-    harvest_schema.sql             # staging DDL for harvest_legacy.py (§8, v1.0)
-  test/                            # Python unit tests (import + harvest helpers)
-  docs/                            # design + review documents
-  config/whotrc.json              # created at runtime
-  data/faces.db                   # (existing; never touched by §8/§9 scripts)
-```
-
-## 7. Run / build
-
-- dev: `npm run tauri dev`
-- prod: `npm run tauri build` → `src-tauri/target/release/bundle/`
-
-Non-goals (v1): moving faces between *known* persons by drag & drop,
-deleting faces (persons *can* be removed — §4.13; their faces become
-rejected, unowned records), editing embeddings, multi-group membership UI
-(one group path per person), i18n.
-
-## 8. Legacy harvest — staging database (v2.0)
-
-`scripts/harvest_legacy.py` is one self-contained script that replaces the
-legacy duo under `scripts/legacy/` (`import_common.py`, `import_harvest.py`
-and the old review DB they were written against). It captures what the
-archive already knows about **faces and persons** and writes it into a
-**staging database it creates itself**. Importing that staging DB into
-`faces.db` is the job of a *separate, later* script (§8.5) — the harvester
-and `faces.db` never meet.
-
-The three source families (each enabled by canonical name):
-
-| Source | What is read | Canonical names |
-| --- | --- | --- |
-| darktable-style sidecars (`<image.ext>.xmp`) | MWG-RS face regions, `People|…` hierarchical tags | `sidecars-mwgrs`, `sidecars-catsets` |
-| Lightroom catalog (`.lrcat`) + Lightroom's own sidecars (`<stem>.xmp`) | person keyword tree, face regions (`userPick` kept as a flag), MWG-RS regions + `People|…` tags | `lightroom-catalog`, `lightroom-sidecars` |
-| digiKam core + recognition databases | tag paths (group info), face rectangles (`tagRegion`), identity names + UUIDs | `digikam-core`, `digikam-faces`, `digikam-recognition` |
-
-### 8.1 Invariants
-
-- **H1 — sources are read-only.** Every external database is opened with
-  SQLite `mode=ro` (`&immutable=1` for the `.lrcat`, which is checkpointed);
-  sidecar files are opened for reading only. The archive
-  (`/run/media/…/Seagate Expansion Drive`) is mounted strictly read-only;
-  the harvester must never write there — or create WAL/SHM files next to a
-  source DB.
-- **H2 — `faces.db` is never touched.** Not read, not seeded from, not
-  written. The only write target is the staging DB, created fresh per run
-  (`O_EXCL` create; refusing to overwrite an existing file is an error).
-- **H3 — no image content is imported.** Images are not decoded,
-  thumbnailled or copied. The harvester captures the **fs path of the
-  image as the source states it**, plus any dimensions the source states
-  (`images.width/height`). The one deliberate read of image bytes is
-  hashing: whenever an image is **certainly** resolved — the sidecar's own
-  sibling, an existing mapped catalog path, a digiKam reconstructed path,
-  or a unique (basename, byte size) match — its **BLAKE3** hash is stored
-  in `images.content_hash`, the same identity `faces.db.images` keys on,
-  so the importer can match by content instead of by path. An ambiguous or
-  absent resolution gets no hash, never a guessed one; `--no-hash` skips
-  hashing entirely (e.g. a quick first pass over the archive). The tree
-  walk that feeds digiKam's size-based resolution (§8.3) stats files only.
-- **H4 — capture, not judgement.** Rows are stored as the source said, with
-  provenance: canonical `sources.name`, the source's own reference where it
-  has one (`faces.source_ref`, `person_refs.ref`), the source's own user
-  confirmation where it records one (`faces.picked` — Lightroom `userPick`),
-  and the harvest run (`harvest_run_id` → `harvest_runs.started_at`) on
-  every captured row. No cross-source deduplication, no ambiguous guessing:
-  an unresolvable image is counted in the run stats, never guessed.
-
-### 8.2 Staging schema (`database/harvest_schema.sql`, v1.1)
-
-Deliberately modelled on `faces.db` v1.5 naming so the importer is a
-translation, not a redesign — but without content: no `content_hash`, no
-BLOBs, no embeddings, no link statuses (review decisions happen in the GUI,
-after import).
-
-- `harvest_runs(id, started_at, finished_at, sources, roots, stats)` — one
-  row per harvest invocation; `sources`/`roots`/`stats` are JSON.
-- `sources(id, name UNIQUE, kind)` — the canonical vocabulary above,
-  `kind` ∈ `sidecars|lightroom|digikam`.
-- `persons(id, name UNIQUE, created_at, harvest_run_id)`.
-- `person_groups(person_id, path, source_id, harvest_run_id)` — `|`-paths
-  (`People|Friends|Pelsers`), one leaf-name person per path, same shape as
-  `faces.db.person_groups`.
-- `person_refs(person_id, kind, ref, source_id, harvest_run_id)` — external
-  identity references: digiKam recognition UUIDs, Lightroom keyword UUIDs
-  (`keyword:<id_global>`).
-- `images(id, path, path_origin, content_hash, name, file_size, source_ref,
-  source_id, width, height, harvest_run_id)` — **one row per distinct image
-  path as stated by a source**; `path_origin` records how the path was
-  obtained: `source` (the source states it) or `name-size` (uniquely
-  resolved against the scanned tree — digiKam's album-less images, §8.3).
-  `content_hash` is the BLAKE3 of the file, set **only when the image was
-  certainly resolved and read for hashing** (H3); `name`/`file_size`/
-  `source_ref` keep the source's own identifiers for the importer's
-  matching.
-- `faces(id, image_id, person_id, x, y, w, h, unit, img_w, img_h,
-  source_id, source_ref, picked, harvest_run_id)` — corner-origin boxes as
-  the source states them: `unit` ∈ `normalized|pixels` plus the source's
-  image dimensions (`img_w/img_h`) when given. Normalised→pixel conversion
-  is deferred to the importer, because only it will know the canonical
-  decode dimensions (schema v1.5 `images.width/height`, design #18).
-  Lightroom's pixel rounding is banker's `round()` — contract, not choice,
-  because the legacy keys were built on it. `UNIQUE(image_id, person_id,
-  x, y, w, h, source_id)` dedupes digiKam's duplicate `Images` rows.
-- **v1.1 correction (§9):** rectangle-less capture is gone. Only faces
-  *with geometry* are harvested — the import (§9) attaches persons by
-  rectangle overlap, so presence rows (MPRI display names, digiKam/catset
-  tag→image hits, the former `image_persons` table and the
-  `sidecars-mpri` source) can never be used and are no longer recorded.
-  Tag/catset paths still contribute `person_groups` (group info, §9.4).
-- `schema_version(version, updated_at)` — single row `'1.0'`, exact-match
-  check like `faces.db`; no migrations (AGENTS.md).
-
-### 8.3 Image resolution (digiKam)
-
-digiKam reconstructs an exact path only when `Images.album` is set (rare in
-this archive: ~14k of ~145k rows). Where it is not, the harvester resolves
-on **(basename, byte size)** against a stat-index of the `--images` trees —
-never basename alone (basenames collide archive-wide). An ambiguous match
-is counted and skipped, never guessed; the digiKam image id, name and size
-stay in `images.source_ref/name/file_size` either way.
-
-### 8.4 CLI
-
-```
-scripts/harvest_legacy.py --out STAGING.db \
-    [--images DIR …] [--digikam-db P] [--recognition-db P] \
-    [--lightroom-catalog P] [--lr-root 'D:/LIVE/=/mnt/…/LIVE' …] \
-    [--sources sidecars-mwgrs,…] [--list-sources] [--dry-run]
-```
-
-Defaults come from `.env` (`DEFAULT_IMAGES_DIR`, `ARCHIVE_DIR`,
-`DIGIKAM_DB`, `DIGIKAM_RECOGNITION_DB`, `LR_CATALOG`, `LR_SIDECARS_DIR`);
-without `--out` the staging DB is created as
-`~/.cache/whot/harvest/harvest-<YYYYmmdd-HHMMSS>.db`. `--lr-root` maps a
-catalog root onto disk, tried **in order** (map the live tree first), and
-the *mapped* path is the path of record. `--dry-run` parses and counts
-without writing anything at all; `--no-hash` skips the BLAKE3 reads (H3).
-
-### 8.5 Import hand-off
-
-Merged into `faces.db` by `scripts/import_harvested.py` — full spec in
-§9.
-
-## 9. Harvest import — attaching legacy persons to existing faces (v3.0)
-
-`scripts/import_harvested.py` merges one harvest staging DB (§8) into a
-**working copy** of `faces.db`. It is a *recovery* tool, not an import: it
-never creates images or faces and never adds detections. It attaches the
-persons the archive knew to the faces insightface already detected — as if
-the user had assigned them by hand in the GUI (§4.1), just automatically
-and in bulk.
-
-### 9.1 Invariants
-
-- **J1 — the original `faces.db` is never written.** The target is a fresh
-  **vacuumed copy** (`VACUUM INTO` → `data/faces-YYYYmmdd-HHMMSS.db`), so
-  the user can open the app against the copy (e.g. via a symlink) and
-  decide whether to promote it. All report files are written next to the
-  copy.
-- **J2 — image identity is the BLAKE3 hash, exactly.** A harvested face
-  participates only when its staging image's `content_hash` **equals**
-  `faces.db images.content_hash`. No path or size fallbacks; staging rows
-  without a hash (never certainly resolved, §8 H3) are report-only.
-- **J3 — only faces with geometry.** The staging schema (v1.1) contains
-  only rectangles (§8.2); the importer refuses any other staging version.
-- **J4 — user work is untouchable by default.** Only faces that are
-  `link_status='provisional'` **and** `state != 'discarded'` may receive a
-  person. `--overwrite` makes every face eligible (the user's prior link
-  is assumed invalid) but changes **only `person_id`** — no user entity is
-  ever deleted, and their primaries/refcrops elsewhere are retained.
-- **J5 — links stay provisional.** A face the script assigns gets
-  `link_status='provisional'`, `reassigned=0`: the harvested link is a
-  suggestion the user confirms in the GUI. Nothing is ever confirmed or
-  rejected by the script.
-
-### 9.2 Coordinate space
-
-Harvested rectangles are converted into the canonical decode space of
-`faces.db` before any overlap is computed: normalised boxes are multiplied
-by the file dimensions (the source-stated `img_w/img_h` when given, else
-`images.width/height` — equal to the file dims while `inversion='none'`,
-which is what `import_roll.py` writes, since cv2/rawpy decode without EXIF
-rotation); pixel boxes (digiKam, Lightroom) are already file-space. If a
-target image ever carries `inversion != 'none'`, the box is mapped through
-the inverse flip (`lr`: `x' = W−(x+w)`; `tb`: `y' = H−(y+h)`) — kept for
-forward compatibility with design #18.
-
-### 9.3 Matching (IoU)
-
-`overlap = |A∩B| / |A∪B| ≥ --min-overlap` (default **0.60**, configurable).
-Per image, matching is greedy one-to-one: all (harvested, db) pairs above
-the threshold are sorted by IoU descending (ties: lower `faces.id` first);
-each harvested face and each db face may win at most once. Below-threshold
-and already-claimed leftovers are logged, never guessed.
-
-### 9.4 Person resolution
-
-Per staging person with at least one accepted assignment:
-
-- Strip the leading `People`/`Person` root segment from its group paths
-  (case-insensitive; an empty remainder is dropped) — `People|Family|X`
-  becomes `Family|X` in `person_groups`.
-- Reuse an existing `faces.db` person **only** when its name matches *and*
-  its group set matches the harvested set exactly. The script never guesses
-  identity; otherwise it creates a new person (`state='imported'`) and the
-  user merges later via the GUI's assign semantics (§4.1).
-- On a name collision the new person gets the smallest free seq suffix:
-  `Winnie Pelser 2`, `Winnie Pelser 3`, …
-
-### 9.5 UnknownN cluster merge
-
-Assignments are grouped by the *current* person of the matched db face —
-exactly the shape a GUI group-assign works on (§4.1):
-
-- The current person is an `UnknownN` and **all** its matched faces resolve
-  to the **same** new person ⇒ move **all** of the cluster's faces (matched
-  or not) to that person — as if the user had assigned the whole group —
-  then delete the emptied UnknownN (stale shell, §4.13).
-- The cluster's matches resolve to **different** persons ⇒ leave the whole
-  UnknownN untouched and log it: the script must not break things where
-  the evidence is contradictory.
-- The current person is a real (user/importer) person, or no person
-  (`person_id IS NULL`) ⇒ move only that face; an emptied person that is
-  not an UnknownN is **never** deleted.
-
-Every moved face is re-labelled like a GUI move (§4.7): `seq` becomes the
-next free seq of its new `(person, description)` group and `name` is re-
-derived. Housekeeping after moves (§4.5/§4.6 consistency): clear any
-`persons.primary_face_id` that points at a moved face (`primary_pinned=0`)
-and delete `person_refcrops` rows that reference a moved face under its
-old person. No refcrop recompute runs — provisional faces are not refcrop
-material (§4.6); the GUI recomputes on the next mutation.
-
-### 9.6 Report
-
-Every non-import is logged with reason and ids: `hash-missing`,
-`image-not-in-db`, `degenerate-box`, `below-threshold`,
-`already-claimed`, `status-protected`, `cluster-disagreement`. A JSON
-summary plus a human-readable log are written next to the target copy.
-No `imports` row is created — this is recovery, not an import; the log
-files are the provenance.
-
-### 9.7 CLI
-
-```
-scripts/import_harvested.py STAGING.db [--faces-db data/faces.db]
-    [--min-overlap 0.60] [--overwrite] [--dry-run]
-```
-
-`--faces-db` defaults to `FACES_DB` from `.env`. `--dry-run` runs the full
-pipeline read-only (no copy, no writes anywhere; report to stdout).
+Behaviour rules (§4) are normative for every implementation of them —
+`src-tauri/src/db.rs`, the scripts and the frontend all follow §4; the
+backend and schema documents describe *structure*, not rules, and point
+back here where a rule is needed.

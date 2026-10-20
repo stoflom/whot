@@ -10,6 +10,7 @@ import * as api from "./api";
 import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Snapshot } from "./api";
 import AssignDialog from "./components/AssignDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
+import { ErrorToast, FatalError } from "./components/ErrorNotice";
 import FaceAssignDialog from "./components/FaceAssignDialog";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
@@ -871,12 +872,7 @@ export default function App() {
   }, [dialogFaceIds, facesById, personsById]);
 
   if (loadError) {
-    return (
-      <div className="fatal">
-        <h2>Could not load database</h2>
-        <p>{loadError}</p>
-      </div>
-    );
+    return <FatalError title="Could not load database" message={loadError} />;
   }
   if (!snap) {
     return <div className="dim center-msg">loading…</div>;
@@ -1223,11 +1219,7 @@ export default function App() {
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
-      {error && (
-        <div className="toast" onClick={() => setError(null)} title="click to dismiss">
-          {error}
-        </div>
-      )}
+      {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
     </div>
   );
 }

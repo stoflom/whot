@@ -413,6 +413,64 @@ fn clusters_partitioned_by_appearance() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// §4.27 (#84) — snapshot sweeps zero-face UnknownN leftovers (pre-v1.9
+/// runs / external writers); named empty persons are legitimate and stay.
+#[test]
+fn snapshot_sweeps_stale_unknown_shells() {
+    let p = fixture_paths("sweep");
+    {
+        let con = rusqlite::Connection::open(&p.db).unwrap();
+        con.execute(
+            "INSERT INTO persons(id, name, state, created_at) VALUES (80, 'Unknown80', 'created', ?)",
+            params![NOW],
+        ).unwrap();
+        con.execute(
+            "INSERT INTO persons(id, name, state, created_at) VALUES (81, 'Keeper', 'created', ?)",
+            params![NOW],
+        ).unwrap();
+        // Unknown80 has zero faces; Keeper too — but Keeper is named
+        let n = con
+            .query_row("SELECT COUNT(*) FROM persons", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(n, 5, "seeded two zero-face persons");
+    }
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().all(|x| x.name != "Unknown80"),
+            "zero-face UnknownN must be swept: {:?}",
+            s.persons.iter().map(|x| &x.name).collect::<Vec<_>>());
+    assert!(s.persons.iter().any(|x| x.name == "Keeper"),
+            "a zero-face NAMED person must never be swept");
+    // idempotent: a second snapshot changes nothing
+    let s2 = db::snapshot(&p).unwrap();
+    assert_eq!(s.persons.len(), s2.persons.len());
+    // and it actually deleted the row (not just hid it)
+    {
+        let con = rusqlite::Connection::open(&p.db).unwrap();
+        let n = con
+            .query_row("SELECT COUNT(*) FROM persons WHERE name='Unknown80'", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(n, 0, "the sweep must DELETE, not filter");
+    }
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #80 — persons.primary_face_id is nullable (freshly imported/harvested
+/// person, or one whose faces are all rejected): the is_primary column must
+/// be NULL-safe, not crash with "Invalid column type Null at index 2".
+#[test]
+fn clusters_tolerate_null_primary() {
+    let p = fixture_paths("nullprim");
+    // raw fixture: no person has a primary_face_id (all NULL)
+    let cl = db::person_face_clusters(&p, 1, 0.4).unwrap();
+    assert!(!cl.is_empty(), "faces still cluster without a primary");
+    // highest-confidence face stands in as reference (fallback, §4.9)
+    let ids: Vec<i64> = cl.iter().flat_map(|g| g.clusters.iter().flatten()).map(|c| c.face_id).collect();
+    assert!(ids.contains(&1), "face 1 (conf .90) present: {ids:?}");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// §4.13/#35 — remove_persons: faces rejected + detached, person and its
 /// groups/refcrops deleted, other persons untouched, unowned faces are
 /// still addressable (assign moves them back into the fold).

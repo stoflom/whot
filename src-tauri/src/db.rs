@@ -288,6 +288,16 @@ pub struct Snapshot {
 pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
     let con = connect(paths)?;
 
+    // §4.27 (#84) — stale-shell sweep: zero-face UnknownN persons are
+    // leftovers no other code path revisits (assign_person only deletes
+    // shells it empties itself). Named persons are never swept — an empty
+    // named person is a legitimate future assignment target.
+    con.execute(
+        "DELETE FROM persons WHERE name GLOB 'Unknown*'
+           AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
+        [],
+    )?;
+
     // grouped queries — one pass for all face counts, one for all group paths
     // (F20: previously 2 extra queries per person)
     let mut counts: HashMap<i64, PersonCounts> = HashMap::new();
@@ -1268,7 +1278,11 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
     let con = connect(paths)?;
     let faces: Vec<(i64, f64, bool, String)> = {
         let mut st = con.prepare(
-            "SELECT id, confidence, (id = (SELECT primary_face_id FROM persons WHERE id = ?)) AS is_primary,
+            // NULL-safe (#80): persons.primary_face_id is nullable — a
+            // freshly imported/harvested person, or one whose faces are all
+            // rejected — and `id = NULL` is NULL, not 0, which broke
+            // r.get::<_, i64>.  coalesce keeps 1/0 semantics.
+            "SELECT id, confidence, COALESCE(id = (SELECT primary_face_id FROM persons WHERE id = ?), 0) AS is_primary,
                     COALESCE(description, '')
                FROM faces
               WHERE person_id = ? AND state != 'discarded' AND link_status != 'rejected'
