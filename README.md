@@ -138,6 +138,47 @@ unusable (unmapped roots / missing hashes), the scripts end with a
 prominent `stderr` warning naming the top unmapped roots — it is never
 suppressed by `-q`.
 
+#### Recovery workflow: harvest → import → promote
+
+The loop is safe to repeat end to end (#82): re-importing the same
+staging DB converges (`faces_moved=0`, `persons_created=0`) instead of
+duplicating persons, so extend the path map and iterate until the
+coverage warning settles.
+
+1. **Harvest** with the full `--images` trees and `--lr-root`/path map
+   covering where the archive actually lives. If the run ends with
+   `WARNING: …% of archive rows unusable`, the log names the top
+   unmapped roots with an example path each — add them to the path map
+   (or extend `--images`) and re-harvest. The harvest writes a fresh
+   staging DB per run under `~/.cache/whot/harvest/` (or `--out`).
+2. **Dry-run the import** (`--dry-run`) and read the summary:
+   - `usable faces  N/M (P%)` — how much of the harvest can actually
+     match; drive it up with the path map before the real run;
+   - `faces-*.import.log` / `.json` list every non-import with the
+     **full stated path** (or digiKam name + size + image id) — one
+     line per *image* — so unverifiable files can be hunted down
+     directly;
+   - a `WARNING: …% of staging faces unusable` line means re-harvest
+     with fuller coverage / a fuller map first.
+   The import's **rescue pass** (active whenever a path map is
+   configured) re-hashes staging images whose files are reachable under
+   a mapped root before matching — on a large archive the initial index
+   walk takes a few minutes (the §10 heartbeat keeps it visibly alive).
+3. **Import for real** (same command without `--dry-run`). It writes a
+   new **copy** `data/faces-<YYYYmmdd-HHMMSS>.db` plus its
+   `.import.log`/`.import.json`; `data/faces.db` is never written (J1).
+   **Import from the source `data/faces.db`, not from a copy** — a copy
+   that already received a harvest import is the wrong base for the
+   next one.
+4. **Review the copy** in the app: point `FACES_DB` in `.env` at the
+   copy (or symlink `data/faces.db` over it), start the GUI, spot-check
+   the imported persons (they arrive `provisional` — confirm in the GUI
+   as usual).
+5. **Promote or discard**: happy → keep the `FACES_DB` pointer at the
+   copy (or `mv` the copy over `data/faces.db` after backing the
+   original up); not happy → re-point `FACES_DB` at the original and
+   delete the copy. Nothing else references the copy's filename.
+
 `test/archive-fixture/` (gitignored) holds a small hand-picked photo set
 with real Lightroom/digiKam/darktable person data for trying the pipeline
 end to end before pointing it at the full archive.
@@ -230,6 +271,8 @@ whot/
     src/db.rs                      # db.rs: queries + embeddings + refcrops
     tests/                         # Rust integration tests (self-built fixture DB)
   scripts/                         # Python tooling (dev-time only)
+    cli_console.py                 # shared header/status/quiet console (scripts-design §10)
+    pathmap.py                     # legacy path-map file (scripts-design §8.6)
     import_roll.py                 # roll import into data/faces.db
     annotation_snapshot.py         # annotation export/restore across drop&recreate
     harvest_legacy.py              # scripts-design §8: read-only archival harvester
