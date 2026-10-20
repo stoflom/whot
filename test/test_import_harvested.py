@@ -180,11 +180,25 @@ class GeometryTests(unittest.TestCase):
                                          100, 100))
 
     def test_strip_group_root(self):
+        # without a person name: root stripped only (legacy behaviour)
         self.assertEqual(ih.strip_group_root("People|Family|X"), "Family|X")
         self.assertEqual(ih.strip_group_root("Person|X"), "X")
         self.assertEqual(ih.strip_group_root("people|X"), "X")
         self.assertEqual(ih.strip_group_root("Family|X"), "Family|X")
         self.assertIsNone(ih.strip_group_root("People"))
+
+    def test_strip_group_root_drops_name_leaf(self):
+        """§9.4 v2.1 (#80): staging paths end in the person's own name;
+        faces.db group paths never do — the leaf is dropped."""
+        self.assertEqual(ih.strip_group_root("People|Family|Winnie Pelser",
+                                             "Winnie Pelser"), "Family")
+        # leaf kept when it is NOT the person's name (capture, no guessing)
+        self.assertEqual(ih.strip_group_root("People|Family|Winnie Pelser",
+                                             "Koos Kat"), "Family|Winnie Pelser")
+        self.assertEqual(ih.strip_group_root("Family|Mary", "Mary"), "Family")
+        # name directly under the root -> ungrouped
+        self.assertIsNone(ih.strip_group_root("People|Winnie Pelser",
+                                              "Winnie Pelser"))
 
     def test_next_free_name(self):
         self.assertEqual(ih.next_free_name(set(), "Winnie"), "Winnie")
@@ -275,7 +289,7 @@ class ScenarioTests(Fixture):
                         " JOIN persons p ON p.id=pg.person_id"
                         " WHERE p.name='Winnie Pelser'")
         self.assertEqual([g["path"] for g in groups],
-                         ["Family|Winnie Pelser"])       # root stripped
+                         ["Family"])   # root+name-leaf stripped (§9.4 v2.1)
 
     def test_cluster_merges_unmatched_faces_too(self):
         """§9.5: as if the user assigned the whole group — an unmatched
@@ -369,7 +383,7 @@ class ScenarioTests(Fixture):
         self.assertEqual(names, {"Mary", "Mary 2"})
         g = self.q("SELECT path FROM person_groups pg JOIN persons p"
                    " ON p.id=pg.person_id WHERE p.name='Mary 2'")
-        self.assertEqual([x["path"] for x in g], ["Family|Mary"])
+        self.assertEqual([x["path"] for x in g], ["Family"])  # leaf dropped
 
     def test_known_person_emptied_not_deleted(self):
         img = self.s_image(H2, w=200, h=200)
@@ -444,6 +458,54 @@ class ScenarioTests(Fixture):
         row = self.q("SELECT p.name FROM faces f JOIN persons p"
                      " ON p.id=f.person_id WHERE f.id=1")[0]
         self.assertEqual(row["name"], "Winnie Pelser")      # the exact match
+
+    # ---------------------------------------------------- #80 regressions
+
+    def test_name_leaf_only_path_is_ungrouped(self):
+        """§9.4 v2.1 (#80): 'People|<name>' leaves no group above the
+        person -> ungrouped, never a same-named twig in the tree."""
+        img = self.s_image(H1)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
+                    groups=("People|Winnie Pelser",))
+        self.con.commit()
+        self.run_plan()
+        groups = self.q("SELECT path FROM person_groups pg"
+                        " JOIN persons p ON p.id=pg.person_id"
+                        " WHERE p.name='Winnie Pelser'")
+        self.assertEqual(groups, [])                       # ungrouped
+
+    def test_harvested_persons_get_machine_primary(self):
+        """§9.5 v2.1 (#80): the §4.5 machine rule backfills every empty
+        primary in the copy — the person view must not rely on NULL."""
+        img = self.s_image(H1)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20)
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters["faces_moved"], 3)   # cluster merge
+        rows = self.q("SELECT p.name, p.primary_face_id FROM persons p"
+                      " WHERE p.name='Winnie Pelser'")
+        self.assertEqual(len(rows), 1)
+        self.assertIsNotNone(rows[0]["primary_face_id"],
+                             "machine primary backfilled (§4.5 rule)")
+
+    def test_reuse_matches_gui_group_after_correction(self):
+        """§9.4 v2.1 (#80): a harvested 'People|Family|Winnie Pelser'
+        matches a GUI person grouped 'Family' (before the correction the
+        trailing name leaf defeated the reuse rule)."""
+        con = sqlite3.connect(self.faces_db)
+        con.execute("UPDATE persons SET name='Winnie Pelser' WHERE id=9")
+        con.execute("INSERT INTO person_groups(person_id, path)"
+                    " VALUES (9, 'Family')")
+        con.commit()
+        con.close()
+        img = self.s_image(H1)
+        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
+                    groups=("People|Family|Winnie Pelser",))
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters["persons_reused"], 1)
+        self.assertEqual(rep.counters.get("persons_created", 0), 0)
 
 
 if __name__ == "__main__":
