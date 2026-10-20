@@ -1,4 +1,4 @@
--- harvest staging DB — faces.db design §8.2 (docs/gui-design.md v3.0, schema v1.1)
+-- harvest staging DB — staging design §8.2 (docs/scripts-design.md, schema v1.1)
 -- Created fresh by scripts/harvest_legacy.py; never migrated, never mixed
 -- with faces.db, and the harvester's only write target (invariants H1-H4).
 -- v1.1: rectangle-less capture removed — only faces with geometry are

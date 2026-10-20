@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """import_roll.py — import a film-roll directory into data/faces.db.
 
-Pipeline (see docs/gui-design.md):
+Pipeline (see docs/gui-design.md §4 and README.md):
   scan -> BLAKE3 hash -> skip existing / detect+embed -> associate -> store
 
 Usage: import_roll.py [--dry-run] [--recursive] [--threshold F] ROLL_DIR

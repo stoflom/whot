@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """harvest_legacy.py — capture face & person data from the archival sources.
 
-Design: docs/gui-design.md §8 (v2.0).  Replaces the legacy duo under
+Design: docs/scripts-design.md §8 (v2.0).  Replaces the legacy duo under
 scripts/legacy/ with one self-contained script.  Invariants:
 
   H1  every source is read-only — external DBs open with SQLite ``mode=ro``

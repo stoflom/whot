@@ -18,8 +18,8 @@ sidecars is available today — see [Legacy recovery](#legacy-recovery-harvest--
 |---|---|---|
 | Schema | `database/schema.sql` | single source of truth; DB is dropped & recreated on schema changes |
 | Roll import | `scripts/import_roll.py` | scans a roll, detects faces, clusters (single-linkage ≥ 0.40), writes `data/faces.db` |
-| Legacy harvest | `scripts/harvest_legacy.py` | read-only scan of sidecars/Lightroom/digiKam into a staging DB (§8) |
-| Harvest import | `scripts/import_harvested.py` | attaches harvested persons to existing faces in a **copy** of `faces.db` (§9) |
+| Legacy harvest | `scripts/harvest_legacy.py` | read-only scan of sidecars/Lightroom/digiKam into a staging DB (`docs/scripts-design.md` §8) |
+| Harvest import | `scripts/import_harvested.py` | attaches harvested persons to existing faces in a **copy** of `faces.db` (`docs/scripts-design.md` §9) |
 | Annotation snapshot | `scripts/annotation_snapshot.py` | export/restore manual annotations across drop & recreate |
 | Staging schema | `database/harvest_schema.sql` | harvest staging DB, created by `harvest_legacy.py` |
 | GUI | repo root (Tauri 2 + React + TS, Rust backend in `src-tauri/`) | review/naming/annotation; serves images from DB BLOBs, no Python at runtime |
@@ -64,7 +64,7 @@ Every cluster becomes an `UnknownN` person; all faces start `provisional`.
 Recaptures work already done in legacy applications (digiKam, Lightroom,
 darktable sidecars) by **attaching persons to the faces insightface has
 already detected** — it never imports new images, faces or detections
-(design `docs/gui-design.md` §8/§9).
+(design `docs/scripts-design.md` §8/§9).
 
 Two steps, both safe by construction:
 
@@ -137,6 +137,84 @@ Main flows: rename an `UnknownN` group (accepts & names it, moving it into a
 group path, e.g. family|Smith, friends|college), assign selected faces to an existing or new person, reject or
 re-accept faces, per-face descriptions (beard|sun_glasses, baby, side), primary face, reference faces per-face descriptions.
 
+## Tauri commands (Rust)
+
+The full `#[tauri::command]` surface (signature reference — behaviour
+rules are `docs/gui-design.md` §4, architecture is
+`docs/backend-design.md`):
+
+**Reads**
+
+- `get_snapshot()` → `{ persons: [{id, name, state, note, primary_face_id,
+  primary_pinned, groups[], counts{total, provisional, confirmed, rejected}}],
+  faces: [{id, image_id, person_id, x, y, w, h, name, seq, description,
+  confidence, link_status, state, import_id, created_at}],
+  images: [{id, primary_path, width, height, orientation, type, state,
+  roll_id, first_import_id}], imports: [{id, path, started_at}],
+  settings {cluster_threshold, refcrop_n, show_rejected} }`
+- `get_face_preview(face_id) → String` (base64 JPEG from `faces.preview`)
+- `get_image_thumb(image_id) → Option<String>`,
+  `get_image_preview(image_id) → Option<String>`
+- `get_refcrops(person_id) → [{seq, description, pinned, face_id, image: base64}]
+  grouped by appearance (§4.6)`
+- `open_image(image_id) → ()` — write `images.preview` to a temp file and
+  open it with the system viewer (opener plugin; §3 context menus)
+- `person_face_clusters(person_id, threshold) →
+  [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
+  similarity clusters inside each (§4.9)
+
+**Mutations** (each ends with refcrops recompute + primary backfill for all
+affected persons; all return an error string on constraint violation)
+
+- `assign_person(face_ids, name, group_path)` — §4.1
+- `accept_faces(face_ids)` — §4.3
+- `reject_faces(face_ids)` — §4.2
+- `set_face_description(face_id, description)` — §4.4
+- `set_primary_face(person_id, face_id)` — §4.5
+- `set_person_name(person_id, name)` / `set_person_group(person_id, path)` /
+  `set_person_note(person_id, note)`
+- `add_refcrop(person_id, face_id)` (manual, pinned) /
+  `remove_refcrop(person_id, face_id)`
+- `remove_persons(person_ids)` — §4.13 (reject + detach + delete, no undo)
+- `rename_group(old_path, new_path)` / `delete_group(path)` /
+  `move_persons_to_group(person_ids, group)` — §4.16 (#50) group
+  membership: prefix rewrite / subtree drop to Ungrouped / per-person
+  replace; normalised (#42), `Ungrouped` segment reserved
+- `get_settings()` / `set_settings(json)` — `config/whotrc.json`
+
+Section numbers (`§4.x`) refer to `docs/gui-design.md`.
+
+## Repository layout
+
+```
+whot/
+  package.json  vite.config.ts  index.html      # frontend
+  src/                              # React app
+    main.tsx  App.tsx  api.ts      # api.ts = typed tauri invoke wrapper
+    components/  PersonTree.tsx  FaceCard.tsx  FaceGrid.tsx
+                 RuleBar.tsx  DetailPane.tsx  RollsPane.tsx  AssignDialog.tsx
+                 GroupDialog.tsx  FaceOverlay.tsx   # active rectangles on full-size images
+    styles.css
+  src-tauri/
+    tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde, base64
+    src/main.rs  src/lib.rs        # lib.rs: #[tauri::command] surface
+    src/db.rs                      # db.rs: queries + embeddings + refcrops
+    tests/                         # Rust integration tests (self-built fixture DB)
+  scripts/                         # Python tooling (dev-time only)
+    import_roll.py                 # roll import into data/faces.db
+    annotation_snapshot.py         # annotation export/restore across drop&recreate
+    harvest_legacy.py              # scripts-design §8: read-only archival harvester
+    import_harvested.py            # scripts-design §9: attach harvested persons (copy-only)
+    legacy/                        # archived importers, superseded by harvest_legacy.py
+  database/
+    schema.sql                     # faces.db DDL (v1.5)
+    harvest_schema.sql             # staging DDL for harvest_legacy.py (v1.0)
+  test/                            # Python unit tests (import + harvest helpers)
+  docs/                            # design documents (see Docs below)
+  config/whotrc.json              # created at runtime
+  data/faces.db                   # (existing; never touched by the §8/§9 scripts)
+```
+
 ## Tests
 
 ```sh
@@ -152,4 +230,8 @@ Note: `cargo test` compiles the Tauri context, which embeds `dist/` — run
 ## Docs
 
 - `AGENTS.md` — agent conventions (branching, versioning, testing)
-- `docs/gui-design.md` — GUI design document (versioned)
+- `README.md` (this file) — setup, usage, Tauri command reference, repository layout
+- `docs/gui-design.md` — GUI design document (versioned; the primary design doc — app version tracks it)
+- `docs/scripts-design.md` — Python tooling: §8 harvest, §9 harvest import
+- `docs/schema-design.md` — `faces.db` DDL design: identities, version gate, drop & recreate
+- `docs/backend-design.md` — Rust backend architecture (`lib.rs`/`db.rs`)
