@@ -1,7 +1,7 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 1.0** (major.minor per `AGENTS.md`; major = new feature, minor =
-change/correction)
+**Version: 2.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+change/correction) — v2.0: §10 CLI console contract (issue #79)
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -261,3 +261,73 @@ scripts/import_harvested.py STAGING.db [--faces-db data/faces.db]
 
 `--faces-db` defaults to `FACES_DB` from `.env`. `--dry-run` runs the full
 pipeline read-only (no copy, no writes anywhere; report to stdout).
+
+## 10. CLI console contract — header, status, quiet (v2.0, issue #79)
+
+Every script must *show it is alive*: a header immediately on startup,
+regular status output while it works, and a final summary — with a
+`-q` / `--quiet` escape hatch for quiet runs.
+
+### 10.1 Ordering guarantee
+
+1. Parse arguments, line-buffer stdout.
+2. Resolve cheap inputs (`.env`, path defaults) — milliseconds, file
+   reads only.
+3. **Print the header — before any operation that can take a moment**
+   (model load, archive walk, `VACUUM INTO`, DB scan, export/restore).
+   The header is the first output the script produces after argument
+   parsing.
+4. Work, with status updates.
+5. Print the **final summary** — always, whatever the exit code
+   (including error exits with partial results).
+
+### 10.2 Header
+
+A `=`×64 banner, the script name, optional key parameters (mode, input
+paths, thresholds) and the UTC start time (#40 convention), closed by the
+same banner. Printed **even with `-q`**.
+
+### 10.3 Status updates
+
+- Phase lines (`scanning …`, `found N files`, `[i/N] file`, `staging:
+  …`) while work proceeds — suppressed by `-q`.
+- **Heartbeat**: while a script is inside a long operation that prints
+  nothing by itself (model load, corpus build, big walks, `VACUUM`),
+  a background ticker prints `… <phase> — <N>s` at most every **10 s**,
+  and only when nothing else was printed in that interval. Suppressed by
+  `-q`. The ticker is a daemon thread, stopped before the summary.
+
+### 10.4 Errors and warnings
+
+Go to **stderr**, are never suppressed by `-q`, and never carry the
+banner — the header/summary on stdout, diagnostics on stderr, so
+`script.py … > log` still records the outcome and the log stays
+governed by the shell redirect.
+
+### 10.5 `-q` / `--quiet`
+
+- Accepted by **all four scripts** (`add_argument("-q", "--quiet",
+  action="store_true")`, same help text); `annotation_snapshot.py`
+  accepts it before *and* after the subcommand.
+- With `-q`: **only the header and the final summary are printed**
+  (both on the normal output stream), plus anything that *is* the
+  requested data (`annotation_snapshot export` JSON, `--list-sources`
+  listing) — those are outputs, not status, and are never suppressed.
+- Default (no flag): full status output as above.
+
+### 10.6 Data channel vs console channel
+
+`annotation_snapshot.py export` writes JSON to **stdout**; its console
+output (header/status/summary) therefore goes to **stderr** — as does
+the whole console channel of `restore`, so the script has one rule. All
+other scripts print header/status/summary to **stdout**, errors to
+stderr (§10.4).
+
+### 10.7 Shared implementation
+
+`scripts/cli_console.py` — one `Console` class (`header`, `status`,
+`summary`, `error`, heartbeat `start_beat`/`stop_beat`) plus
+`add_quiet_arg(parser)` so the flag is parsed identically everywhere.
+A module-level default instance keeps the existing `log()` helpers in
+`harvest_legacy.py` / `import_harvested.py` working unchanged for
+library callers (tests); `main()` swaps in the configured instance.
