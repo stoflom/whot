@@ -1,7 +1,8 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 2.0** (major.minor per `AGENTS.md`; major = new feature, minor =
-change/correction) — v2.0: §10 CLI console contract (issue #79)
+**Version: 2.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
+group-path correction + §9.5 primary backfill (#80)
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -209,13 +210,30 @@ and already-claimed leftovers are logged, never guessed.
 
 Per staging person with at least one accepted assignment:
 
-- Strip the leading `People`/`Person` root segment from its group paths
-  (case-insensitive; an empty remainder is dropped) — `People|Family|X`
-  becomes `Family|X` in `person_groups`.
+- **v2.1 correction (#80):** staging paths are *keyword/tag paths* — by
+  construction (§8) their **last segment is the person's own name**.
+  They are translated to `faces.db` **group paths, which name the groups
+  *above* the person, never the person itself** (gui-design §3/§4.1):
+  1. strip the leading `People`/`Person` root segment (case-insensitive),
+     then
+  2. drop the **trailing segment when it equals the staging person's
+     name** (the legacy leaf). An empty remainder means *ungrouped* —
+     no `person_groups` row is written.
+
+  `People|Family|Winnie Pelser` → `Family`; `People|Winnie Pelser` →
+  ungrouped. A trailing segment that does *not* equal the person's name
+  is kept as-is (defensive: paths are capture, §8 H4 — never guessed).
+  Before v2.1 the trailing name was kept (`Family|Winnie Pelser`), which
+  rendered in the tree as a branch named after the person, containing
+  only that person (a twig above a same-named leaf) — and made the
+  reuse rule below never match an existing GUI person.
 - Reuse an existing `faces.db` person **only** when its name matches *and*
-  its group set matches the harvested set exactly. The script never guesses
-  identity; otherwise it creates a new person (`state='imported'`) and the
-  user merges later via the GUI's assign semantics (§4.1).
+  its group set matches the harvested set exactly (post-§9.4-correction
+  sets — so a harvested `Winnie Pelser` with `People|Family|Winnie
+  Pelser` correctly reuses a GUI person grouped `Family`). The script
+  never guesses identity; otherwise it creates a new person
+  (`state='imported'`) and the user merges later via the GUI's assign
+  semantics (§4.1).
 - On a name collision the new person gets the smallest free seq suffix:
   `Winnie Pelser 2`, `Winnie Pelser 3`, …
 
@@ -242,6 +260,16 @@ derived. Housekeeping after moves (§4.5/§4.6 consistency): clear any
 and delete `person_refcrops` rows that reference a moved face under its
 old person. No refcrop recompute runs — provisional faces are not refcrop
 material (§4.6); the GUI recomputes on the next mutation.
+
+**Primary backfill (v2.1, #80):** after the plan executes, the machine
+rule of §4.5 (same statement as `import_roll.py`'s
+`assign_missing_primaries`: highest-confidence, non-discarded,
+non-rejected face, `primary_pinned=0`) fills every still-empty
+`persons.primary_face_id` in the copy. The harvester-created persons
+otherwise have no primary at all, and any caller that derives a boolean
+from `primary_face_id` must still be NULL-safe — a person can legitimately
+have no primary (all faces rejected/discarded); see
+`docs/schema-design.md` §5.
 
 ### 9.6 Report
 
