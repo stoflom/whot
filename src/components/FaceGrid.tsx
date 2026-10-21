@@ -1,7 +1,26 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
 import { selectAll } from "../autoText";
+
+// #93 — a blur whose focus target is still inside the same section
+// heading (name → group → apply) is NOT a context change: the heading's
+// fields wait for Enter/apply. Leaving for another card, the tree or
+// another heading — or nowhere (click-away on a card/page area, which
+// keeps click-away-to-apply) — commits as before.
+export function focusLeftHeading(
+  related: EventTarget | null,
+  heading: Pick<HTMLElement, "contains"> | null
+): boolean {
+  if (related == null || heading == null) return true;
+  return !heading.contains(related as Node);
+}
 
 export interface Section {
   key: string;
@@ -48,6 +67,7 @@ interface GridProps {
 function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps, "sections">) {
   const [name, setName] = useState(section.ruleDefaultName ?? "");
   const [group, setGroup] = useState(section.ruleDefaultGroup ?? "");
+  const headingRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (section.ruleDefaultName !== undefined) setName(section.ruleDefaultName);
   }, [section.ruleDefaultName]);
@@ -74,16 +94,20 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
       nameChanged,
       groupChanged
     );
-  // commit on Enter/blur like every other field — changing the header
-  // inputs *is* the operation, no apply click required; guarded so an
-  // untouched field never re-fires on blur
+  // commit on Enter/apply, or a blur that actually *leaves* the heading
+  // (#93) — name → group → apply inside one heading waits: firing on the
+  // sibling blur dissolved the UnknownN cluster mid-click and took the
+  // group input with it; guarded so an untouched field never re-fires
   const commit = () => {
     if (nameChanged || groupChanged) apply();
+  };
+  const commitOnBlur = (e: ReactFocusEvent<HTMLInputElement>) => {
+    if (focusLeftHeading(e.relatedTarget, headingRef.current)) commit();
   };
 
   return (
     <section className="face-section" data-section-key={section.key}>
-      <div className="face-section-header">
+      <div className="face-section-header" ref={headingRef}>
         <label className="select-all" title="Select whole group">
           <input
             type="checkbox"
@@ -100,24 +124,24 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             className="rule-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onBlur={commit}
+            onBlur={commitOnBlur}
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
             placeholder="person name"
-            title="Name to assign — the whole selection if any (groups included), else every face in this group (Enter or click away to apply)"
+            title="Name to assign — the whole selection if any (groups included), else every face in this group (Enter, apply, or click away from this heading to apply)"
           />
           <input
             className="rule-group input-group"
             value={group}
             onChange={(e) => setGroup(e.target.value)}
-            onBlur={commit}
+            onBlur={commitOnBlur}
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
-            title="Group — '|' separated, e.g. family|lombards (empty = ungrouped); applied to the whole selection if any, else the whole group (Enter or click away to apply)"
+            title="Group — '|' separated, e.g. family|lombards (empty = ungrouped); applied to the whole selection if any, else the whole group (Enter, apply, or click away from this heading to apply)"
             placeholder="group e.g. family|lombards"
             onFocus={selectAll}
             onClick={selectAll}

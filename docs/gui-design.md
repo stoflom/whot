@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.20** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.21** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -449,6 +449,17 @@ Double-click opens the full-image focus mode (§3).
     group *is* moving persons into it (option 3 of #54) — the entry is
     disabled when no persons are selected; virtual `Unknown`/`Ungrouped`
     nodes do not offer it.
+
+    **Append mode** (#92): a `|`-terminated prefill — what a root/branch
+    right-click produces — opens the input in *append* mode: the text is
+    kept, the caret is placed after the pipe and **no select-all** fires.
+    The user right-clicked that branch precisely to type a new twig after
+    it; the #67 wholesale-replacement rule (select the structural path)
+    stays for every non-`|`-terminated prefill — rename/move a branch,
+    move persons to a group, and the empty top-level prefill where
+    selecting nothing is a no-op. `groupInputMode()` in `src/autoText.ts`
+    derives the mode from the prefill itself, so the dialog cannot open
+    in the wrong one.
 19. **Full-image focus mode** (#55) ⇒ opening a full image (card
     double-click or *Open full image*) turns the center pane into a
     focused workspace: the annotated image spans the pane's full width
@@ -548,6 +559,19 @@ Double-click opens the full-image focus mode (§3).
     never validates names, while `assign_person` rejects `Unknown*`.
     An empty name field counts as "not changed"; unowned faces surface
     a toast instead of failing silently.
+
+    **Blur commits only when focus leaves the heading** (#93): moving
+    name → group → apply *inside one section heading* is not a context
+    change — the heading's fields must wait for **Enter / apply**. It
+    did not: clicking the group input after typing the name blurred the
+    name input, the assign ran, the `UnknownN` cluster left the review
+    view and the group input with it — the group could never be typed.
+    So both inputs commit on blur only through `focusLeftHeading()`:
+    focus target outside the heading (another card, the tree, another
+    heading — that is when "change context to the next cluster"
+    applies) or nowhere (clicking a card/page area, which keeps
+    click-away-to-apply). Enter and the apply button commit as before,
+    both changed fields together (#77).
 25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
     selection the mouse cursor decides the target: a face-card context
     menu opened on an **empty selection selects that card first**
