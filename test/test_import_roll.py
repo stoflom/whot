@@ -1,16 +1,24 @@
 """Unit tests for the pure parts of scripts/import_roll.py.
 
 Run: python3 -m unittest discover -s test
-No insightface/cv2 needed: only load_env, numbering, assign_seq,
-assign_missing_primaries and associate are exercised.
+No insightface/cv2/rawpy needed: load_env, numbering, assign_seq,
+assign_missing_primaries, associate, the schema gate, the #89 decode
+normalisation and fallback chain (fake cv2/rawpy modules) and the #90
+database helpers are exercised. Tests needing the *real* decoders
+(cv2/Pillow/tifffile) skip themselves when those are absent — CI
+installs numpy only.
 """
 from __future__ import annotations
 
+import importlib.util
+import io
 import os
 import sqlite3
 import sys
 import tempfile
+import types
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import numpy as np
@@ -185,10 +193,6 @@ class AssociateTest(unittest.TestCase):
         self.assertEqual(pairs[0][1].name, "Bob")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 # ---------------------------------------------------------------- schema gate
 
 class SchemaCheckTest(unittest.TestCase):
@@ -212,8 +216,17 @@ class SchemaCheckTest(unittest.TestCase):
         con = sqlite3.connect(":memory:")  # no schema_version table at all
         with self.assertRaises(SystemExit):
             ir.check_schema(con, Path(":memory:"))
-        with self.assertRaises(SystemExit):
-            ir.check_schema(self._con(None), Path(":memory:"))  # empty table
+        with self.assertRaises(SystemExit) as cm:   # empty table: its own
+            ir.check_schema(self._con(None), Path(":memory:"))  # message (#90)
+        self.assertIn("empty schema_version table", str(cm.exception.code))
+        self.assertNotIn("does not match", str(cm.exception.code))
+
+    def test_messages_point_at_create_db(self):     # #90
+        with self.assertRaises(SystemExit) as cm:
+            ir.check_schema(self._con("1.4"), Path("data/faces.db"))
+        msg = str(cm.exception.code)
+        self.assertIn("schema v1.4 does not match", msg)
+        self.assertIn("--create-db", msg)
 
 
 # ---------------------------------------------------------------- §4.12 inheritance
@@ -299,3 +312,226 @@ class AppearanceCorpusTest(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row, (1, "beard", 2, "Alice-beard-2"),
                          "inherited desc, group-scoped seq (beard had seq 1), derived label")
+
+
+# ---------------------------------------------------------------- decode (#89)
+
+def _has(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+class ToUint8Test(unittest.TestCase):
+    """§4.29 sample normalisation — pure numpy, runs everywhere."""
+
+    def test_uint8_passes_through(self):
+        a = np.array([[1, 2]], np.uint8)
+        self.assertIs(ir._to_uint8(a), a)
+
+    def test_uint16_scales_over_dtype_range(self):        # ÷257
+        out = ir._to_uint8(np.array([[0, 65535, 32768]], np.uint16))
+        np.testing.assert_array_equal(out, [[0, 255, 128]])
+
+    def test_linear_float_is_gamma_encoded_to_srgb(self):
+        out = ir._to_uint8(np.array([[0.0, 0.5, 1.0]], np.float32))
+        np.testing.assert_array_equal(out, [[0, 188, 255]])
+
+    def test_8bit_range_float_kept_nan_becomes_zero(self):
+        out = ir._to_uint8(np.array([[10.4, 200.6, np.nan]], np.float32))
+        np.testing.assert_array_equal(out, [[10, 201, 0]])
+
+    def test_negative_and_infinite_values_clamped(self):
+        out = ir._to_uint8(np.array([[-0.2, np.inf]], np.float32))
+        np.testing.assert_array_equal(out, [[0, 255]])
+
+
+class ApplyOrientationTest(unittest.TestCase):
+    """EXIF orientation mapping used by the tifffile path (§4.29)."""
+
+    SRC = np.arange(6, dtype=np.uint8).reshape(2, 3, 1)   # [[0 1 2] [3 4 5]]
+
+    def _ch(self, orientation: int) -> np.ndarray:
+        return ir._apply_orientation(self.SRC, orientation)[:, :, 0]
+
+    def test_orientation_1_is_identity(self):
+        np.testing.assert_array_equal(self._ch(1), [[0, 1, 2], [3, 4, 5]])
+
+    def test_orientation_6_rotates_90_clockwise(self):
+        np.testing.assert_array_equal(self._ch(6), [[3, 0], [4, 1], [5, 2]])
+
+    def test_orientation_8_rotates_90_counter_clockwise(self):
+        np.testing.assert_array_equal(self._ch(8), [[2, 5], [1, 4], [0, 3]])
+
+
+class _FakeThumbError(Exception):     # mimics rawpy.LibRawUnsupportedThumbnailError
+    pass
+
+
+def _fake_cv2():                      # imread finds nothing → fallbacks run
+    mod = types.ModuleType("cv2")
+    mod.IMREAD_COLOR = 1
+    mod.COLOR_RGB2BGR = 4
+    mod.imread = lambda *a, **k: None
+    mod.imdecode = lambda buf, flag: np.zeros((4, 6, 3), np.uint8)
+    mod.cvtColor = lambda img, code: np.ascontiguousarray(img[:, :, ::-1])
+    return mod
+
+
+def _fake_rawpy(thumb_raises: bool):
+    mod = types.ModuleType("rawpy")
+    mod.ThumbFormat = types.SimpleNamespace(JPEG="JPEG")
+    mod.LibRawError = _FakeThumbError
+
+    class _Raw:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_thumb(self):
+            if thumb_raises:
+                raise _FakeThumbError(b"Unsupported thumbnail format")
+            return types.SimpleNamespace(format=mod.ThumbFormat.JPEG, data=b"jpg")
+
+        def postprocess(self, **kw):
+            return np.full((3, 5, 3), 7, np.uint8)   # marker: full decode
+
+    mod.imread = lambda path: _Raw()
+    return mod
+
+
+class DecodeFallbackTest(unittest.TestCase):
+    """#89: any rawpy thumbnail error falls through to postprocess(), an
+    unreadable file fails alone. Fake cv2/rawpy — no native deps needed."""
+
+    def setUp(self):
+        self._saved = {n: sys.modules.get(n) for n in ("cv2", "rawpy")}
+        sys.modules["cv2"] = _fake_cv2()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.raw = Path(self.tmp.name) / "shot.PEF"
+        self.raw.write_bytes(b"\x00")
+        self.bad = Path(self.tmp.name) / "notimage.jpg"
+        self.bad.write_bytes(b"no decoder in the chain can read this bytes blob")
+
+    def tearDown(self):
+        for name, prev in self._saved.items():
+            if prev is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prev
+        self.tmp.cleanup()
+
+    def test_unsupported_thumbnail_falls_through_to_postprocess(self):
+        sys.modules["rawpy"] = _fake_rawpy(thumb_raises=True)
+        img = ir._decode(self.raw)
+        self.assertEqual(img.shape, (3, 5, 3))
+        self.assertEqual(int(img.max()), 7)          # marker → postprocess won
+
+    def test_jpeg_thumbnail_is_used_when_available(self):
+        sys.modules["rawpy"] = _fake_rawpy(thumb_raises=False)
+        img = ir._decode(self.raw)
+        self.assertEqual(img.shape, (4, 6, 3))
+        self.assertEqual(int(img.max()), 0)          # zeros → thumb won
+
+    def test_undecodable_file_raises_cannot_decode(self):
+        sys.modules["rawpy"] = _fake_rawpy(thumb_raises=True)
+        with self.assertRaises(ValueError) as cm:
+            ir._decode(self.bad)
+        self.assertIn("cannot decode", str(cm.exception))
+
+
+@unittest.skipUnless(all(_has(m) for m in ("cv2", "PIL", "tifffile")),
+                     "needs the real decoders (cv2, Pillow, tifffile)")
+class RealDecoderFallbackTest(unittest.TestCase):
+    """Synthetic twins of the files that failed in the full #89 import."""
+
+    def test_tiff_with_exif_orientation_decodes_via_pillow(self):
+        # OpenCV refuses any TIFF carrying an Orientation tag (#89)
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "orient6.tif"
+            im = Image.fromarray(np.full((4, 8, 3), 60, np.uint8))
+            exif = im.getexif()
+            exif[274] = 6
+            im.save(p, exif=exif)
+            img = ir._decode(p)
+        self.assertEqual(img.dtype, np.uint8)
+        self.assertEqual(img.shape[:2], (8, 4))      # stored 4×8 → EXIF 6 ⇒ 8×4
+
+    def test_float32_tiff_decodes_via_tifffile(self):
+        # 32-bit linear-float export: cv2 "can not handle 32-bit samples",
+        # Pillow cannot identify it — tifffile + gamma encode must win
+        import tifffile
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "linear.tif"
+            src = np.full((6, 5, 3), 0.25, np.float32)
+            src[2, 2, 0] = 0.5
+            tifffile.imwrite(p, src)
+            img = ir._decode(p)
+        self.assertEqual(img.dtype, np.uint8)
+        self.assertEqual(img.shape, (6, 5, 3))
+        self.assertEqual(int(img[2, 2, 2]), 188)     # linear 0.5 → sRGB 188
+        self.assertEqual(int(img[2, 2, 0]), 137)     # linear 0.25 → sRGB 137
+        self.assertEqual(int(img[0, 0, 0]), 137)
+
+
+# ---------------------------------------------------------------- database (#90)
+
+class MissingDbMessageTest(unittest.TestCase):
+    def test_missing_file_reports_not_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            msg = ir.missing_db_message(Path(tmp) / "faces.db")
+        self.assertIsNotNone(msg)
+        self.assertIn("database not found", msg)
+        self.assertIn("--create-db", msg)
+
+    def test_existing_file_has_no_message(self):
+        with tempfile.NamedTemporaryFile() as fh:
+            self.assertIsNone(ir.missing_db_message(Path(fh.name)))
+
+
+class CreateDatabaseTest(unittest.TestCase):
+    """--create-db: built from schema.sql, refuses a real database, replaces
+    the stray 0-byte file sqlite3.connect() leaves behind (#90)."""
+
+    def _ui(self):
+        return ir.cli_console.Console(quiet=True)
+
+    def test_creates_parents_and_schema_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "nested" / "faces.db"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertTrue(ir.create_database(db, self._ui()))
+            self.assertIn(f"WhoT schema v{ir.SCHEMA_VERSION}", out.getvalue())
+            con = sqlite3.connect(db)
+            row = con.execute("SELECT version FROM schema_version").fetchone()
+            con.close()
+            self.assertEqual(row[0], ir.SCHEMA_VERSION)
+
+    def test_existing_database_is_kept_and_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "faces.db"
+            db.write_bytes(b"existing content")
+            err, out = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                kept = ir.create_database(db, self._ui())
+            self.assertFalse(kept)
+            self.assertIn("already exists", err.getvalue())
+            self.assertIn("nothing to do", out.getvalue())
+            self.assertEqual(db.read_bytes(), b"existing content")
+
+    def test_zero_byte_leftover_is_replaced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "faces.db"
+            db.write_bytes(b"")                    # the #90 artifact
+            with redirect_stdout(io.StringIO()):
+                self.assertTrue(ir.create_database(db, self._ui()))
+            self.assertGreater(db.stat().st_size, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
