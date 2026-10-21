@@ -1,18 +1,25 @@
 """Tests for scripts/cli_console.py and the §10 console contract (#79).
 
 Run: python3 -m unittest discover -s test
-No heavy deps: exercises Console primitives, the heartbeat, and the -q
+No heavy deps: exercises Console primitives, the heartbeat, the -q
 flag of all four scripts (import_roll only up to the empty-directory
-exit, which runs before any model load).
+exit, which runs before any model load), and the §10.3 one-full-path-
+per-item verdict contract (#94) over import_roll's whole file loop
+(Detector/plan_image/blake3_hex patched, temp project DB).
 """
 from __future__ import annotations
 
 import contextlib
 import io
+import shutil
+import sqlite3
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
@@ -21,6 +28,8 @@ import annotation_snapshot as ansi  # noqa: E402
 import harvest_legacy as hl  # noqa: E402
 import import_harvested as ih  # noqa: E402
 import import_roll as ir  # noqa: E402
+
+REAL_ROOT = ir.PROJECT_ROOT        # captured before any test patches it (#94)
 
 
 def run_captured(fn, *args, **kw):
@@ -259,6 +268,111 @@ class AnnotationSnapshotConsoleTests(unittest.TestCase):
         self.assertEqual(out.getvalue(), "")      # nothing on stdout
         self.assertIn(BANNER, err.getvalue())     # header still first
         self.assertIn("no database at", err.getvalue())  # error, not silenced
+
+
+# ------------------------------------------- §10.3 one full path per item (#94)
+
+class ItemOutputContractTests(unittest.TestCase):
+    """import_roll's file loop prints `[i/N] <full path>` once; the verdict
+    that follows (no faces / imported / skipped / FAILED) never repeats the
+    path, while diagnostics outside the loop (the closing failure list)
+    keep it. main() runs against a miniature PROJECT_ROOT with Detector,
+    plan_image and blake3_hex patched — no model, no decoding, and a
+    throwaway database."""
+
+    def _project(self) -> Path:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "database").mkdir()
+        (tmp / "data").mkdir()
+        (tmp / ".env").write_text("FACES_DB=data/faces.db\n")
+        schema = (REAL_ROOT / "database" / "schema.sql").read_text()
+        (tmp / "database" / "schema.sql").write_text(schema)
+        con = sqlite3.connect(tmp / "data" / "faces.db")
+        con.executescript(schema)
+        con.close()
+        roll = tmp / "roll"
+        roll.mkdir()
+        (roll / "shot.jpg").write_bytes(b"never decoded - plan_image is patched")
+        return tmp
+
+    def _run(self, *args: str, faces: int = 0, plan_exc: Exception | None = None,
+             digest: str = "a" * 64, seed: bool = False):
+        tmp = self._project()
+        roll = tmp / "roll"
+        img = roll / "shot.jpg"
+        if seed:                       # an image already in the DB → skip branch
+            con = sqlite3.connect(tmp / "data" / "faces.db")
+            con.execute(
+                "INSERT INTO images(content_hash, width, height, primary_path,"
+                " state, created_at) VALUES (?,?,?,?,?,?)",
+                (digest, 8, 8, str(img), "scanned", "t"))
+            con.commit()
+            con.close()
+        plan = ir.ImportPlan(
+            content_hash=digest, path=str(img), state="scanned", width=8, height=8,
+            orientation="landscape", type="processed", icon_jpeg=b"i",
+            preview_jpeg=b"p",
+            detections=[
+                ir.Detection(
+                    box=(1, 1, 4, 4), det_score=0.9,
+                    embedding=np.array([1.0, 0.0, 0.0, 0.0], np.float32),
+                    crop_jpeg=b"c")
+                for _ in range(faces)
+            ])
+        patches = [
+            mock.patch.object(ir, "PROJECT_ROOT", tmp),
+            mock.patch.object(ir, "blake3_hex", return_value=digest),
+            mock.patch.object(ir, "Detector", return_value=object()),
+            mock.patch.object(
+                ir, "plan_image",
+                **({"side_effect": plan_exc} if plan_exc
+                   else {"return_value": plan})),
+        ]
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            rc, out, err = run_captured(ir.main, [*args, str(roll)])
+        return rc, out, err, img
+
+    @staticmethod
+    def _path_lines(out: str, img: Path) -> list[str]:
+        return [l for l in out.splitlines() if str(img) in l]
+
+    def test_progress_line_is_the_only_path_on_stdout(self):
+        rc, out, err, img = self._run(faces=1)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._path_lines(out, img), [f"[1/1] {img}"], out)
+        self.assertIn("  imported: 1 face(s), 1 person(s)", out)
+        self.assertFalse([l for l in out.splitlines()
+                          if l.startswith("  ") and str(img) in l], out)
+
+    def test_no_faces_verdict_without_path(self):
+        rc, out, err, img = self._run(faces=0)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._path_lines(out, img), [f"[1/1] {img}"], out)
+        self.assertIn("  no faces", out.splitlines())
+        self.assertIn("1 without faces", out)          # summary unchanged
+
+    def test_skip_verdict_without_path(self):
+        rc, out, err, img = self._run(digest="b" * 64, seed=True)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self._path_lines(out, img), [f"[1/1] {img}"], out)
+        self.assertIn("  already in database — skipping", out)
+
+    def test_failed_verdict_is_pathless_but_closing_list_keeps_the_path(self):
+        rc, out, err, img = self._run(plan_exc=RuntimeError("boom"))
+        self.assertEqual(rc, 1)
+        self.assertEqual(self._path_lines(out, img), [f"[1/1] {img}"], out)
+        self.assertIn("  FAILED: boom", err)            # verdict only, in-loop
+        self.assertIn("failed 1 file(s)", err)
+        self.assertIn(f"  {img}: boom", err)            # closing list: full path
+
+    def test_failed_under_quiet_still_identifies_the_file(self):
+        rc, out, err, img = self._run("-q", plan_exc=RuntimeError("boom"))
+        self.assertEqual(rc, 1)
+        self.assertNotIn(str(img), out)                 # -q: no status at all
+        self.assertIn(f"  {img}: boom", err)            # §10.4: errors survive
 
 
 if __name__ == "__main__":
