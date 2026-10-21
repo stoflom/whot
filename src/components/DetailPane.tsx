@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
+import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
+import type { SuggestOption } from "./SuggestInput";
 import { selectAll } from "../autoText";
 
 interface Props {
@@ -27,6 +29,7 @@ function Editable({
   variant,
   onCommit,
   persons,
+  pathOptions,
   title,
   selectAllOnFocus,
 }: {
@@ -40,6 +43,8 @@ function Editable({
   onCommit: (v: string) => void;
   /** #67: existing persons → name suggestions (Name field only) */
   persons?: Person[];
+  /** #97: existing group paths → path suggestions (Group field only) */
+  pathOptions?: SuggestOption[];
   /** #65/#67: hint shown on hover; select-all-on-focus (group paths) */
   title?: string;
   selectAllOnFocus?: boolean;
@@ -56,7 +61,13 @@ function Editable({
       {multiline ? (
         <textarea rows={2} className={cls} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} placeholder={placeholder} title={title} />
       ) : persons ? (
-        <NameTypeahead value={v} onChange={setV} persons={persons} onSubmit={commit} title={title} />
+        <NameTypeahead value={v} onChange={setV} persons={persons} onSubmit={commit}
+          // #97: click-away commits — a typed-but-unsubmitted name used to
+          // be discarded silently when focus moved elsewhere
+          onLeave={commit} title={title} />
+      ) : pathOptions ? (
+        <PathTypeahead className={cls} value={v} onChange={setV} options={pathOptions}
+          onSubmit={commit} onLeave={commit} placeholder={placeholder} title={title} />
       ) : (
         <input
           className={cls}
@@ -95,6 +106,7 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
 
 function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
+  const pathOptions = useGroupPathOptions(snapshot?.persons ?? []);   // #97
   return (
     <div className="dp-person" key={person.id}>
       <div className="dp-avatar" title="Click to make this the primary face" onClick={() => person.primary_face_id && onSetPrimary(person.primary_face_id)}>
@@ -112,6 +124,7 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
         value={person.groups[0] ?? ""}
         placeholder="e.g. family|lombards (empty = ungrouped)"
         variant="group"
+        pathOptions={pathOptions}
         title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped)"
         selectAllOnFocus
         onCommit={(v) => onGroup(person.id, v)}

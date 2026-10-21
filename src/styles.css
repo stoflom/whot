@@ -710,6 +710,16 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   font-size: 0.8rem;
 }
 
+/* #97: the suggestion widget keeps the field layout of its flex row —
+   the wrapper span becomes the flex item, the input fills it */
+.face-meta > .typeahead,
+.tree-person > .typeahead { flex: 1; min-width: 0; }
+.face-meta .typeahead input,
+.tree-person .typeahead input { width: 100%; }
+/* heading fields keep their fixed widths (the input's classes still apply,
+   but the span must not shrink below them) */
+.face-section-header .rule .typeahead { flex: none; }
+
 /* keyboard shortcuts reference in the settings popover (#31) */
 .shortcuts { border-top: 1px solid var(--border); padding-top: 0.5rem; }
 .shortcuts h4 { margin: 0 0 0.3rem; font-size: 0.8rem; color: var(--dim); }

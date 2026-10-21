@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
-import type { Face } from "../api";
+import type { Face, Person } from "../api";
 import { useFaceImage } from "../hooks";
-import { selectAllIfAuto } from "../autoText";
+import NameTypeahead from "./NameTypeahead";
 
 interface Props {
   face: Face;
@@ -20,6 +20,8 @@ interface Props {
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
   /** person's name — the face-meta input assigns that person (#29) */
   personName?: string;
+  /** #97 (§4.21) — suggestions for the card's name field */
+  personOptions: Person[];
   /** total selection size — ★/◈ are single-face actions and grey out
       while this card is part of a multi-selection (#49, §4.14) */
   selSize: number;
@@ -43,6 +45,7 @@ export default function FaceCard({
   onOpen,
   onContextMenu,
   personName,
+  personOptions,
   selSize,
   onAssignName,
   onDescription,
@@ -126,26 +129,22 @@ export default function FaceCard({
         </span>
       </div>
       <div className="face-meta">
-        <input
+        <NameTypeahead
           className="face-person-name"
           value={pname}
+          onChange={setPname}
+          persons={personOptions}
           placeholder="person name"
           title={
             scopeMulti
               ? `Assigning applies to all ${selSize} selected faces`
               : "Name"
           }
-          onChange={(e) => setPname(e.target.value)}
-          onFocus={selectAllIfAuto} // #67: UnknownN is replaced wholesale
-          onClick={selectAllIfAuto}
-          onBlur={commitName}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            if (e.key === "Escape") {
-              setPname(personName ?? "");
-              (e.target as HTMLInputElement).blur();
-            }
-          }}
+          // #97: click-away commits (typed values used to need Enter);
+          // Esc cancels the edit instead — no same-tick blur, so the
+          // stale-closure commit can't fire
+          onLeave={commitName}
+          onEscape={() => setPname(personName ?? "")}
         />
         <span className="face-conf" title="Confidence — recognizer match score (read-only)">{Math.round(face.confidence * 100)}%</span>
       </div>

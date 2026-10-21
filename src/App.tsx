@@ -15,6 +15,7 @@ import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
 import { acceptAdvancePlan } from "./reviewFlow";
+import { groupPathOptions } from "./components/PathTypeahead";
 import FaceAssignDialog from "./components/FaceAssignDialog";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
@@ -521,6 +522,10 @@ export default function App() {
   const gridHandlers = {
     faces: facesById,
     persons: personsById,
+    // #97 (§4.21): suggestion sources for every value field, one option
+    // list per snapshot (memoised wholesale in the #98 pass)
+    personOptions: snap?.persons ?? [],
+    pathOptions: groupPathOptions(snap?.persons ?? []),
     sel,
     hoverId,
     onHover: setHoverId,

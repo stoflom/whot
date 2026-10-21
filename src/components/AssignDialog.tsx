@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
-import { selectAll } from "../autoText";
+import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
 
 interface Props {
   count: number;
@@ -16,6 +16,7 @@ interface Props {
 export default function AssignDialog({ count, defaultName, defaultGroup, persons, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(defaultName);
   const [group, setGroup] = useState(defaultGroup);
+  const pathOptions = useGroupPathOptions(persons);   // #97
   useEffect(() => {
     setName(defaultName);
     setGroup(defaultGroup);
@@ -48,15 +49,15 @@ export default function AssignDialog({ count, defaultName, defaultGroup, persons
         </label>
         <label>
           Group
-          <input value={group} className="input-group" onChange={(e) => setGroup(e.target.value)}
+          <PathTypeahead
+            className="input-group"
+            value={group}
+            onChange={setGroup}
+            options={pathOptions}
             title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped); picking a name above copies its group here"
             placeholder="e.g. family|lombards (empty = ungrouped)"
-            onFocus={selectAll}
-            onClick={selectAll}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter" && name.trim()) onSubmit(name, group);
-            }} />
+            onSubmit={() => name.trim() && onSubmit(name, group)}
+          />
         </label>
         <div className="dialog-actions">
           <button className="secondary" onClick={onCancel}>cancel</button>

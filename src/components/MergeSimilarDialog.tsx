@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Person, Settings } from "../api";
 import { aliasesToText, clusterPersons, textToAliases, type MergeCluster } from "../nameCluster";
+import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
 
 // #88 (gui-design §4.28) — the Merge Similar Persons triage view:
 // clusters of near-identical names with per-pair link evidence, bulk
@@ -44,6 +45,7 @@ export default function MergeSimilarDialog({
   const [dist, setDist] = useState(settings.merge_name_distance);
   const [aliasText, setAliasText] = useState(aliasesToText(settings.merge_suffix_aliases));
   const [group, setGroup] = useState("");
+  const pathOptions = useGroupPathOptions(persons);   // #97
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   // detection is pure and cheap, but only runs while this dialog is open
   const clusters = useMemo(
@@ -214,15 +216,15 @@ export default function MergeSimilarDialog({
             {sel.size} person(s) · {faceCount} face(s) selected
           </span>
           <span className="merge-spacer" />
-          <input
+          <PathTypeahead
             className="input-group"
             value={group}
+            onChange={setGroup}
+            options={pathOptions}
             placeholder="group path (empty = ungrouped)"
             title="Apply one group path to every selected person (§4.16) — reversible, faces untouched"
-            onChange={(e) => setGroup(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter" && sel.size > 0) {
+            onSubmit={() => {
+              if (sel.size > 0) {
                 onApplyGroup([...sel], group);
                 setGroup("");
               }
