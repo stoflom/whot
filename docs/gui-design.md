@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.19** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.20** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -690,6 +690,21 @@ Double-click opens the full-image focus mode (§3).
     `--dry-run` ⇒ argparse error (creation is a write). `ROLL_DIR`
     becomes optional with it: omitted ⇒ create and exit 0; given ⇒
     create when needed, then continue with the import.
+
+    **Provider selection** (#91): **CPU is the default** — MIGraphX over
+    this machine's amdgpu wedges the GPU (verified 2026-10-21 09:37:
+    `ring gfx_0.0.0 timeout` → `MES unrecoverable` → every reset fails →
+    gnome-shell SIGABRT kills the session; the then-running app died
+    afterwards as a victim in WebKit's `createEGLFence`), so the unsafe
+    path must be requested: `--gpu` opts in to MIGraphX (keeping the
+    existing automatic CPU fallback when the provider fails to initialise
+    or probe), while `--cpu` stays accepted as a **deprecated no-op** —
+    it now *is* the default, so old invocations keep working. The
+    startup header reports the selected provider (always printed, even
+    under `-q`), so every run's log states which one executed.
+    `build_parser()` / `validate_args()` are extracted from `main()` so
+    the flag contract is unit-testable without a database or the face
+    model.
 
 
 ## 5. Related documents
