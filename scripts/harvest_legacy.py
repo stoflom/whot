@@ -9,7 +9,9 @@ scripts/legacy/ with one self-contained script.  Invariants:
       for reading only; the archive mount is strictly read-only.
   H2  data/faces.db is never touched — not read, not seeded from, not
       written.  The only write target is a NEW staging database this script
-      creates itself (O_EXCL; an existing --out file is an error).
+      creates itself (O_EXCL; an existing --out file is an error) — unless
+      --resume reopens the staging DB an earlier run created (§8.7), which
+      never overwrites a recorded hash (they only move NULL → a value).
   H3  no image content is imported — images are not decoded, thumbnailled
       or copied.  What is captured is the fs path of the image *as the
       source states it*, plus any dimensions the source states.  The ONE
@@ -45,6 +47,8 @@ Usage:
       --images '/run/media/.../PicFiles' \\
       --lightroom-catalog /run/media/.../StofLomPictures-v13-3.lrcat \\
       --lr-root 'D:/LIVE/=/run/media/.../LIVE'
+  scripts/harvest_legacy.py --out /tmp/harvest.db --resume  # rerun: reuse
+                                                    # the recorded hashes (§8.7)
   scripts/harvest_legacy.py --list-sources
   scripts/harvest_legacy.py --dry-run            # parse+count, nothing written
 
@@ -168,6 +172,24 @@ class Hasher:
         self.cache: dict[str, str] = {}
         self.n = 0
         self.failed = 0
+        self.seeded = 0          # reused from an earlier run (§8.7 resume)
+
+    def seed(self, con: sqlite3.Connection) -> int:
+        """Reuse the hashes an earlier run recorded in a staging DB
+        (§8.7): full paths already hashed are never read again.  A no-op
+        when hashing is disabled."""
+        if not self.enabled:
+            return 0
+        n = 0
+        rows = con.execute("SELECT path, content_hash FROM images"
+                           " WHERE path IS NOT NULL"
+                           " AND content_hash IS NOT NULL")
+        for r in rows:
+            if r["path"] not in self.cache:
+                self.cache[r["path"]] = r["content_hash"]
+                n += 1
+        self.seeded += n
+        return n
 
     def hex(self, path: str) -> str | None:
         if not self.enabled:
@@ -469,6 +491,40 @@ def create_staging(out: Path, faces_db: Path | None = None) -> sqlite3.Connectio
         con.close()
         raise StagingError(
             f"staging schema version mismatch in {SCHEMA_PATH}: "
+            f"want {HARVEST_SCHEMA_VERSION}, got {row[0] if row else None}")
+    return con
+
+
+def open_staging_resume(out: Path, faces_db: Path | None = None) -> sqlite3.Connection:
+    """Reopen the staging DB an earlier run created (--resume, §8.7).
+
+    Refuses the faces.db path outright (H2), a missing file, and anything
+    that is not a harvest staging DB at the current schema version.  The
+    caller seeds the hasher from the DB's recorded hashes (Hasher.seed).
+    """
+    out = out.expanduser()
+    if faces_db is not None and out.resolve() == faces_db.expanduser().resolve():
+        raise StagingError(
+            f"refusing to resume {out}: that is faces.db (invariant H2).")
+    if not out.exists():
+        raise StagingError(
+            f"--resume: {out} does not exist — point --out at the staging "
+            f"DB of the run to resume (§8.7), or drop --resume to create "
+            f"a fresh one")
+    con = sqlite3.connect(out)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    try:
+        row = con.execute("SELECT version FROM schema_version").fetchone()
+    except sqlite3.Error:
+        con.close()
+        raise StagingError(
+            f"--resume: {out} is not a harvest staging DB "
+            f"(no schema_version)") from None
+    if row is None or row[0] != HARVEST_SCHEMA_VERSION:
+        con.close()
+        raise StagingError(
+            f"--resume: schema version mismatch in {out}: "
             f"want {HARVEST_SCHEMA_VERSION}, got {row[0] if row else None}")
     return con
 
@@ -1184,6 +1240,8 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
     stats["known_persons"] = len(known)
     stats["hashed"] = hasher.n
     stats["hash_failed"] = hasher.failed
+    if hasher.seeded:
+        stats["hash_reused"] = hasher.seeded     # §8.7 resume
     return stats
 
 
@@ -1256,7 +1314,9 @@ def main(argv=None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", metavar="PATH",
-                    help="staging DB to CREATE (must not exist); default "
+                    help="staging DB to CREATE (must not exist); with "
+                         "--resume: must EXIST — the staging DB of the run "
+                         "to resume (§8.7); default "
                          "~/.cache/whot/harvest/harvest-<stamp>.db")
     ap.add_argument("--images", action="append", metavar="DIR", default=[],
                     help="image tree to scan for sidecars and to stat-index "
@@ -1276,6 +1336,12 @@ def main(argv=None) -> int:
                     help="skip BLAKE3 hashing of certainly-resolved images "
                          "(faster first pass; the importer then matches on "
                          "path / name+size only)")
+    ap.add_argument("--resume", action="store_true",
+                    help="reuse the staging DB named by --out (which must "
+                         "exist and be a harvest staging DB): full paths "
+                         "already hashed in it are skipped, never read "
+                         "again (§8.7) — for reruns after fixing a "
+                         "--path-map/--lr-root")
     ap.add_argument("--list-sources", action="store_true",
                     help="print the canonical source vocabulary and exit")
     ap.add_argument("--dry-run", action="store_true",
@@ -1297,6 +1363,15 @@ def main(argv=None) -> int:
             print(f"  {name:<22} kind={kind}")
         print(f"\n{len(CANON_SOURCES)} canonical harvest sources (design §8)")
         return 0
+
+    if args.resume and not args.out:
+        ui.error("error: --resume needs --out pointing at the staging DB"
+                 " of the run to resume (§8.7)")
+        return 1
+    if args.resume and args.dry_run:
+        ui.error("error: --resume cannot be combined with --dry-run"
+                 " (nothing is written, so there is nothing to resume)")
+        return 1
 
     env = load_env(PROJECT_ROOT / ".env")
 
@@ -1373,7 +1448,10 @@ def main(argv=None) -> int:
             faces_db = env_path("FACES_DB")
             if faces_db and not faces_db.is_absolute():
                 faces_db = PROJECT_ROOT / faces_db
-            con = create_staging(out, faces_db=faces_db)
+            if args.resume:
+                con = open_staging_resume(out, faces_db=faces_db)
+            else:
+                con = create_staging(out, faces_db=faces_db)
             try:
                 st = Staging(con, start_run(con, list(sources), {
                     "images": [str(d) for d in images_dirs],
@@ -1383,12 +1461,17 @@ def main(argv=None) -> int:
                     "lr-root": args.lr_root,
                 }))
                 ui.status(f"staging: {out}  (run {st.run_id})")
+                hasher = Hasher(enabled=not args.no_hash)
+                if args.resume:
+                    n = hasher.seed(con)
+                    ui.status(f"resume: {n} recorded hash(es) reused —"
+                              f" those paths will not be read again")
                 stats = harvest(st, images_dirs=images_dirs,
                                 digikam_db=digikam_db,
                                 recognition_db=recognition_db,
                                 sources=sources, lightroom_catalog=catalog,
                                 lr_roots=lr_roots,
-                                hasher=Hasher(enabled=not args.no_hash),
+                                hasher=hasher,
                                 path_map=path_map,
                                         path_excludes=path_excludes)
                 finish_run(con, st.run_id, stats)
