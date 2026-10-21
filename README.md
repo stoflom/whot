@@ -63,7 +63,17 @@ suppressed).
 
 Flags: `--dry-run` (detect only, no writes), `--all` (also import faceless
 images), `--recursive`, `--cpu` (skip the MIGraphX GPU provider),
-`--threshold F` (cosine similarity, default 0.40).
+`--threshold F` (cosine similarity, default 0.40), `--create-db` (build the
+database named by `FACES_DB` in `.env` from `database/schema.sql`, creating
+missing parent directories; refuses an existing non-empty database and
+exits 1; `ROLL_DIR` is optional with it — omit it to create only, pass it to
+create and then import).
+
+Progress lines print the **full path** of every file (`-q` still prints
+only the header and the final summary). A missing database is reported as
+`database not found: <path>` instead of a schema-version error, and is
+never created implicitly — use `--create-db` (design `docs/gui-design.md`
+§4.29).
 
 Every cluster becomes an `UnknownN` person; all faces start `provisional`.
 

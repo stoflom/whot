@@ -1,12 +1,14 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 4.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 4.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
 group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
 file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
 §9.3 per-face claim model replacing greedy IoU matching (#87); v4.1:
 §8.6 coverage attribution — source tags, subtree breakdown, in-scope
-threshold, `!` exclude directive (#86)
+threshold, `!` exclude directive (#86); v4.2: §9.2 decode-space rationale
+correction — the decoders **apply** the EXIF orientation, so the canonical
+space is the displayed image (gui-design §4.29, #89)
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -257,9 +259,11 @@ and in bulk.
 Harvested rectangles are converted into the canonical decode space of
 `faces.db` before any overlap is computed: normalised boxes are multiplied
 by the file dimensions (the source-stated `img_w/img_h` when given, else
-`images.width/height` — equal to the file dims while `inversion='none'`,
-which is what `import_roll.py` writes, since cv2/rawpy decode without EXIF
-rotation); pixel boxes (digiKam, Lightroom) are already file-space. If a
+`images.width/height` — the **decode** dims: `import_roll.py` stores what
+the decoder returned, and cv2/rawpy **apply** the EXIF orientation, so the
+canonical space is the *displayed* image; v4.2 corrects the former
+"cv2/rawpy decode without EXIF rotation" claim — gui-design §4.29); pixel
+boxes (digiKam, Lightroom) are already in that same displayed space. If a
 target image ever carries `inversion != 'none'`, the box is mapped through
 the inverse flip (`lr`: `x' = W−(x+w)`; `tb`: `y' = H−(y+h)`) — kept for
 forward compatibility with design #18.
