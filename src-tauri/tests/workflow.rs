@@ -296,6 +296,35 @@ fn settings_show_rejected_default_and_roundtrip() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #88 (§4.28) — Merge Similar Persons settings: legacy whotrc.json
+/// files keep loading with serde defaults; distance clamps to 1..=3.
+#[test]
+fn merge_settings_defaults_and_clamp() {
+    let p = fixture_paths("merge-settings");
+    // legacy whotrc without the merge keys
+    std::fs::write(&p.config, r#"{ "cluster_threshold": 0.5, "refcrop_n": 3 }"#).unwrap();
+    let s = db::get_settings(&p).unwrap();
+    assert_eq!(s.merge_name_distance, 2, "missing key must default to 2");
+    assert!(s.merge_suffix_aliases.is_empty(), "aliases default off");
+    // round-trip both fields
+    let mut s2 = s.clone();
+    s2.merge_name_distance = 1;
+    s2.merge_suffix_aliases = vec![vec!["J".into(), "Jr".into(), "Junior".into()]];
+    db::set_settings(&p, s2).unwrap();
+    let s3 = db::get_settings(&p).unwrap();
+    assert_eq!(s3.merge_name_distance, 1);
+    assert_eq!(s3.merge_suffix_aliases[0], ["J", "Jr", "Junior"]);
+    // hand-edited out-of-range values clamp on read
+    std::fs::write(&p.config, r#"{ "cluster_threshold": 0.5, "refcrop_n": 3, "merge_name_distance": 99 }"#).unwrap();
+    assert_eq!(db::get_settings(&p).unwrap().merge_name_distance, 3);
+    std::fs::write(&p.config, r#"{ "cluster_threshold": 0.5, "refcrop_n": 3, "merge_name_distance": 0 }"#).unwrap();
+    assert_eq!(db::get_settings(&p).unwrap().merge_name_distance, 1);
+    // snapshot carries the settings through
+    std::fs::write(&p.config, r#"{ "cluster_threshold": 0.5, "refcrop_n": 3 }"#).unwrap();
+    assert_eq!(db::snapshot(&p).unwrap().settings.merge_name_distance, 2);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// v1.5 — refcrops are rebuilt per appearance group: one top-N list per
 /// distinct (person, description), seq 1..n inside each group (§4.6).
 #[test]

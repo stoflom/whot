@@ -26,6 +26,13 @@ dist/
 # local scratch area (annotation exports etc. — never commit)
 scratch/
 
+# runtime data: faces.db, import copies, import reports — never commit
+/data/
+
 # runtime GUI settings (defaults apply when absent)
 config/whotrc.json
+
+# machine-specific path map (legacy roots -> local archive; #85) — the
+# *.txt catch-all above covers it, named explicitly so it survives that
+config/pathmap*.txt
 /test/archive-fixture/

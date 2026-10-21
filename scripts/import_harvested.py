@@ -280,7 +280,8 @@ def _img_where(img_row: dict | None) -> str:
 
 def rescue_hashes(stcon: sqlite3.Connection, rules: list,
                   ui: cli_console.Console | None = None,
-                  rep: "Report | None" = None) -> dict[int, str]:
+                  rep: "Report | None" = None,
+                  excludes: list[str] | None = None) -> dict[int, str]:
     """Re-hash staging images whose file is reachable now (§8.6, #85).
 
     Two rescue classes, both lookup aids — identity stays the BLAKE3 hash
@@ -323,11 +324,14 @@ def rescue_hashes(stcon: sqlite3.Connection, rules: list,
         if ui is not None:
             ui.status(f"  rescued {where} -> {digest[:12]}…")
 
-    # 1) stated paths (original, then through the path map)
+    # 1) stated paths (original, then through the path map); excluded
+    #    prefixes (#86) are never rescued
     n_walk = 0
     for iid, path, name, size in rows:
         if path is None:
             n_walk += 1
+            continue
+        if pathmap.is_excluded(path, excludes or []):
             continue
         for cand in dict.fromkeys(
                 [path, pathmap.apply_path_map(path, rules or [])]):
@@ -354,7 +358,7 @@ def rescue_hashes(stcon: sqlite3.Connection, rules: list,
                     idx.setdefault((fn.casefold(), sz), []).append(fp)
         for iid, path, name, size in rows:
             if path is not None or iid in rescued or not name or size is None:
-                continue
+                continue   # pathless: nothing to exclude against (#86)
             cands = idx.get((name.casefold(), size), [])
             if len(cands) == 1:
                 digest = _hash(cands[0])
@@ -767,11 +771,14 @@ def main(argv=None) -> int:
     # path map (#85, §8.6): --path-map files + PATH_MAP in .env; a broken
     # file is an error, never silently ignored
     path_map: list = []
+    path_excludes: list[str] = []
     try:
         for spec in [*args.path_map,
                      *[s for s in (env.get("PATH_MAP") or "").split(os.pathsep)
                        if s]]:
-            path_map += pathmap.load_path_map(Path(spec.strip()).expanduser())
+            rules, excl = pathmap.load_path_map(Path(spec.strip()).expanduser())
+            path_map += rules
+            path_excludes += excl
     except (OSError, ValueError) as e:
         ui.error(f"error: path map: {e}")
         return 1
@@ -811,7 +818,8 @@ def main(argv=None) -> int:
                 ui.status("rescue pass: re-hashing reachable staging images"
                           " (§8.6, #85) ...")
                 ui.start_beat("rescue pass")
-                rescues = rescue_hashes(stcon, path_map, ui, rep)
+                rescues = rescue_hashes(stcon, path_map, ui, rep,
+                                        excludes=path_excludes)
                 ui.stop_beat()
                 ui.status(f"rescued {len(rescues)} staging image(s)")
             ui.start_beat("planning import")

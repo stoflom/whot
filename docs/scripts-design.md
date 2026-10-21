@@ -1,10 +1,12 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 4.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 4.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
 group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
 file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
-§9.3 per-face claim model replacing greedy IoU matching (#87)
+§9.3 per-face claim model replacing greedy IoU matching (#87); v4.1:
+§8.6 coverage attribution — source tags, subtree breakdown, in-scope
+threshold, `!` exclude directive (#86)
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -189,6 +191,34 @@ catalog roots / unresolved digiKam albums with one example path each**
 (harvest) or the full stated path per unverifiable image, one line per
 *image*, not per face (#85). Unusable share and percentages also appear
 in every final summary, quiet or not.
+
+**Coverage attribution (v4.1, #86)** — a deliberately scoped run must
+not read as a catastrophe:
+
+1. **Source tags** — every warning entry and every harvested
+   `unmapped`/`unresolved` detail carries its canonical source name
+   (`lightroom-catalog: …`, `digikam-faces: …`), so mixed blocks are
+   attributable at a glance.
+2. **Subtree breakdown** — unmapped rows sharing a root are grouped by
+   the catalog subtree under that root with counts and one example each
+   (`PICTURES/PicFiles/SourcePictures  9,696   e.g. D:/LIVE/…`),
+   collapsing to the root itself when the root has no common subtree.
+   Pure function, tested without a harvest.
+3. **In-scope classification** — an unmapped LR row is *in scope* iff
+   its basename appears in the resolution index built from the
+   `--images` trees (classification only — never identity, never
+   hashing; the catalog has no file size, so name-in-index is the
+   signal). The **20% threshold counts only in-scope unusable rows**;
+   out-of-scope rows are reported as informational context (`… of which
+   out of scope`). When no index exists (digiKam-faces disabled) the
+   split is omitted and the old all-rows behaviour applies — stated in
+   the warning.
+4. **`!` exclude directive** — a path-map line starting with `!` marks a
+   catalog prefix as deliberately ignored:
+   `!D:/LIVE/PICTURES/PicFiles/SourcePictures`. Rows under it are
+   counted `excluded` (own stat, never a warning), skipped before
+   unmapped/missing accounting, and never rescued at import time. Same
+   prefix rules as rewrites (longest-first, case-insensitive).
 
 ## 9. Harvest import — attaching legacy persons to existing faces (v3.0)
 

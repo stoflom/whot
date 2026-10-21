@@ -506,7 +506,7 @@ class PathMapHarvestTests(HarvestFixture):
     def test_path_map_resolves_lr_root(self):
         """The same run, mapped through a path-map file, resolves and
         hashes the image — no --lr-root flag involved."""
-        rules = pathmap.parse_path_map(
+        rules, _ex = pathmap.parse_path_map(
             f"D:/LIVE/PICTURES/PicFiles = {self.pics}")
         stats = self.run_harvest(lr_roots=[], path_map=rules)
         self.assertEqual(stats["lr_root_unmapped"], 0)
@@ -522,7 +522,7 @@ class PathMapHarvestTests(HarvestFixture):
         # pics so the seeded index gains nothing new — the invariant to
         # pin is: indexing runs over images_dirs + mapped roots without
         # duplication or crash.
-        rules = pathmap.parse_path_map(f"D:/somewhere/else = {self.pics}")
+        rules, _ex = pathmap.parse_path_map(f"D:/somewhere/else = {self.pics}")
         stats = self.run_harvest(path_map=rules)
         # same unique name-size hit as the standard run
         self.assertEqual(stats["dk_faces_resolved_name-size"], 1)
