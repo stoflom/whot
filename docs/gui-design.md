@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.23** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.24** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -67,7 +67,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 `CONFIG_FILE` in `.env`):
 
 ```json
-{ "cluster_threshold": 0.40, "refcrop_n": 5, "show_rejected": true }
+{ "cluster_threshold": 0.40, "refcrop_n": 5, "face_filter": "all", "cluster_group": "accuracy" }
 ```
 
 ## 3. Layout
@@ -120,15 +120,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     thumbnails per roll; clicking an image opens its faces (same face cards,
     same operations) plus the image preview **annotated with its detected
     face rectangles** (see below).
-- **Rejected visibility** (§4.10): a `show_rejected` toggle in the center
-  pane's toolbar hides rejected faces wherever they surface — the person
-  view's `Rejected` section, rejected cards in image grids, rejected
-  rectangles in full-image views, **the left-pane person counts and the
-  right-pane overview totals** (#28). A rejected face is *not up for
-  review*: when the toggle is off, **a person whose faces are all rejected
-  disappears from the tree and the overview person count** (an `UnknownN`
-  whose only face was rejected vanishes; it stays as long as any face
-  remains).
+- **Status filter + cluster group** (§4.10/§4.9, #99): the center pane's
+  toolbar carries `Show [All | Provisional | Accepted | Rejected]` — the
+  face-status filter applied by every view (default All) — and, to its
+  left, the persons-mode cluster-group toggle
+  `[Description | Accuracy]`.
 - **Full-image views** (§4.11): every full-size image — the Rolls image
   detail and the card double-click split — always draws one **active,
   name-labelled rectangle** per visible face of that image, colour-coded by
@@ -339,14 +335,32 @@ Double-click opens the full-image focus mode (§3).
    (§4.9/§3), so another legitimate appearance reads as its own appearance
    section instead of an impostor cluster — and a true impostor still shows
    as a low-similarity cluster inside the appearance it impersonates.
-10. **Rejected-face visibility** ⇒ the `show_rejected` setting (default
-    `true`, persisted in `whotrc.json`). When off: the person view's
-    `Rejected` section and rejected cards/rectangles in image grids and
-    full-image views are hidden, the **left-pane person counts and the
-    right-pane overview exclude rejected faces** (#28), and any *selected*
-    rejected faces are deselected at toggle time — hidden faces can never
-    be bulk-acted on. `link_status` itself is unchanged; the toggle is
-    pure display (§3).
+   A **cluster-group toggle** sits in the top bar, left of the status
+   filter (#99): `Accuracy` (default) keeps the rule above; `Description`
+   collapses each appearance to **one section per distinct description**
+   over the visible faces — no similarity split: the threshold is not
+   consulted and `person_face_clusters` is not called (no IPC). Sections
+   are ordered by first appearance with the empty description last,
+   titled `(no description)` (Ungrouped convention), and make no
+   similarity claims in this mode. The choice persists as
+   `cluster_group` in `whotrc.json` (`accuracy` default).
+10. **Status filter** (`face_filter`, #99 — generalises #23/#28) ⇒
+    `Show [All | Provisional | Accepted | Rejected]` in the top bar: one
+    setting (whotrc `face_filter`: `all` (default) | `provisional` |
+    `confirmed` — UI label **Accepted** — | `rejected`) replacing
+    `show_rejected` (whose default `true` *was* `all`; the legacy key is
+    ignored on read). The chosen status decides **every view's**
+    visibility: the person view's cluster sections and its Rejected
+    section, image grids and full-image rectangles, the review grid, the
+    **left-pane person presence and counts** — a person with no matching
+    face leaves the tree and the surviving bucket drives its counts (#28
+    generalised) — and the **right-pane overview totals**. `link_status`
+    never changes: the filter is pure display. Switching it **drops
+    non-matching faces from the selection** (§4.10's original rule,
+    generalised): faces the filter hides can never be bulk-acted on.
+    **Review special case**: `All`/`Provisional` show the pending set
+    (provisional — the default review is unchanged), `Accepted` shows
+    confirmed faces, `Rejected` shows rejected faces.
 11. **Full-image annotation** ⇒ every full-size image draws one rectangle
     per visible face from `faces.x/y/w/h` against the canonical
     `images.width/height` coordinate space, percentage-scaled so it stays
@@ -374,7 +388,8 @@ Double-click opens the full-image focus mode (§3).
     in the DB as rejected, unowned records and can be re-claimed by an
     explicit accept (§4.3), optionally followed by an assignment; a section
     rule can name them but cannot un-reject them (sticky rule, §4.2).
-    With `show_rejected` off the removed persons vanish
+    With `face_filter` set to anything but `all` (§4.10) the removed
+    persons — rejected now — vanish
     immediately; the image-detail grid titles unowned faces
     "unassigned". Available from the person-tile context menu (also for a
     multi-selection), the reference-set pane and — batched — from tree

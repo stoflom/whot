@@ -1,6 +1,7 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.1** (#84: stale-shell sweep in `snapshot()` — gui-design §4.27) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.2** (#99: whotrc keys `face_filter` + `cluster_group`
+replace `show_rejected`) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -54,8 +55,11 @@ src-tauri/tests/
 
 GUI settings are **not** in the database: `get_settings`/`set_settings`
 read and write `config/whotrc.json`
-(`{cluster_threshold, refcrop_n, show_rejected}` with defaults
-`0.40 / 5 / true`), creating it on first write.
+(`{cluster_threshold, refcrop_n, face_filter, cluster_group,
+merge_name_distance, merge_suffix_aliases}` with defaults
+`0.40 / 5 / "all" / "accuracy" / 2 / []`), creating it on first write.
+A legacy `show_rejected` key is ignored (unknown field — §4.10 of
+gui-design became the 4-state `face_filter` in #99).
 
 ## 3. Connection & schema gate
 
