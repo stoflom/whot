@@ -163,7 +163,7 @@ fn check_schema(con: &Connection, db: &Path) -> Result<()> {
 
 // ---------------------------------------------------------------- settings
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Settings {
     pub cluster_threshold: f64,
     pub refcrop_n: i64,
@@ -171,10 +171,24 @@ pub struct Settings {
     /// key is absent from an existing whotrc.json.
     #[serde(default = "default_show_rejected")]
     pub show_rejected: bool,
+    /// Merge Similar Persons (#88, §4.28): max Damerau-Levenshtein
+    /// distance for name clustering. Default 2, clamped to 1..=3 on read;
+    /// serde default keeps existing whotrc.json files loading.
+    #[serde(default = "default_merge_name_distance")]
+    pub merge_name_distance: u32,
+    /// Generational-suffix equivalence groups (#88, §4.28), e.g.
+    /// [["J","Jr","Junior"],["S","Sr","Senior"]] — stripped before
+    /// comparing. Default empty = off.
+    #[serde(default)]
+    pub merge_suffix_aliases: Vec<Vec<String>>,
 }
 
 fn default_show_rejected() -> bool {
     true
+}
+
+fn default_merge_name_distance() -> u32 {
+    2
 }
 
 impl Default for Settings {
@@ -183,6 +197,8 @@ impl Default for Settings {
             cluster_threshold: DEFAULT_THRESHOLD,
             refcrop_n: DEFAULT_REFCROP_N,
             show_rejected: true,
+            merge_name_distance: default_merge_name_distance(),
+            merge_suffix_aliases: Vec::new(),
         }
     }
 }
@@ -190,7 +206,11 @@ impl Default for Settings {
 pub fn get_settings(paths: &Paths) -> Result<Settings> {
     match std::fs::read_to_string(&paths.config) {
         Ok(text) => match serde_json::from_str::<Settings>(&text) {
-            Ok(s) => Ok(s),
+            Ok(mut s) => {
+                // #88: hand-edited values may sit outside 1..=3
+                s.merge_name_distance = s.merge_name_distance.clamp(1, 3);
+                Ok(s)
+            }
             Err(e) => {
                 // #44: a malformed whotrc.json must not vanish silently —
                 // warn and fall back to defaults so the app keeps working
@@ -231,6 +251,9 @@ pub struct Person {
     pub note: Option<String>,
     pub primary_face_id: Option<i64>,
     pub primary_pinned: i64,
+    /// creation timestamp (UTC, #40) — provenance for the #88 triage view:
+    /// persons minted by one import run share it
+    pub created_at: String,
     pub groups: Vec<String>,
     pub counts: PersonCounts,
 }
@@ -337,7 +360,8 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
     let mut persons = Vec::new();
     {
         let mut st = con.prepare(
-            "SELECT p.id, p.name, p.state, p.note, p.primary_face_id, p.primary_pinned
+            "SELECT p.id, p.name, p.state, p.note, p.primary_face_id, p.primary_pinned,
+                    p.created_at
                FROM persons p
               ORDER BY (p.name GLOB 'Unknown*') DESC, p.name COLLATE NOCASE, p.id",
         )?;
@@ -349,6 +373,7 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
                 note: r.get(3)?,
                 primary_face_id: r.get(4)?,
                 primary_pinned: r.get(5)?,
+                created_at: r.get(6)?,
                 groups: Vec::new(),
                 counts: PersonCounts { total: 0, provisional: 0, confirmed: 0, rejected: 0 },
             })

@@ -110,6 +110,13 @@ interface Props {
   onMovePersons: (ids: number[], path: string) => void;
   /** drag-drop validation errors surface as toast */
   onError?: (msg: string) => void;
+  /** #88 (§4.28) — open the Merge Similar Persons triage dialog */
+  onOpenMerge: () => void;
+  /** #88 (§4.28) — merge a (multi-)selection into a person: context menu
+      (no targetId → typeahead in the dialog) and DnD (targetId set) */
+  onMergeInto: (ids: number[], targetId?: number) => void;
+  /** #88 (§4.28) — rename-merge a multi-selection via AssignDialog */
+  onRenameSelection?: (ids: number[]) => void;
 }
 
 function PersonRow({
@@ -117,6 +124,7 @@ function PersonRow({
   selected,
   multi,
   renaming,
+  dropTarget,
   onSelect,
   onStartRename,
   onRename,
@@ -124,11 +132,16 @@ function PersonRow({
   onContextMenu,
   onDragStart,
   onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: {
   person: Person;
   selected: boolean;
   multi: boolean;
   renaming: boolean;
+  /** #88: highlighted as the merge target while persons are dragged over it */
+  dropTarget: boolean;
   onSelect: (e: ReactMouseEvent) => void;
   onStartRename: () => void;
   onRename: (id: number, name: string) => void;
@@ -137,6 +150,10 @@ function PersonRow({
   /** #50: drag the person — or the whole selection when part of one */
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
+  /** #88: merge-on-drop target */
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (e: React.DragEvent) => void;
 }) {
   const img = useFaceImage(person.primary_face_id);
   const [name, setName] = useState(person.name);
@@ -149,13 +166,16 @@ function PersonRow({
   return (
     <button
       data-person-id={person.id} // #76: cursor hit-test for ←/→ stepping
-      className={`tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}`}
+      className={`tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}${dropTarget ? " merge-target" : ""}`}
       onClick={onSelect}
       onDoubleClick={onStartRename}
       onContextMenu={onContextMenu}
       draggable={!renaming}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       title={`${person.groups.join(", ") || "Ungrouped"} — double-click to rename`}
     >
       <span className="tree-avatar">
@@ -198,7 +218,7 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onError }: Props) {
+export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onError, onOpenMerge, onMergeInto, onRenameSelection }: Props) {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: number } | null>(null);
   const [branchMenu, setBranchMenu] = useState<{
@@ -227,6 +247,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     { kind: "persons"; ids: number[] } | { kind: "branch"; path: string } | null
   >(null);
   const [dropPath, setDropPath] = useState<string | null>(null); // '' = Ungrouped node
+  const [dropPerson, setDropPerson] = useState<number | null>(null); // #88 merge target
   const tree = useMemo(() => buildTree(persons), [persons]);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -300,6 +321,33 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   const clearDrag = () => {
     dragRef.current = null;
     setDropPath(null);
+    setDropPerson(null);
+  };
+  // #88 (§4.28): dragging persons ONTO a person row = merge into it —
+  // a new drop-target type beside #50's branch/Ungrouped drops. Branch
+  // drags deliberately fall through (no stopPropagation) so hovering a
+  // person row inside a branch still targets that branch.
+  const dragOverPerson = (e: React.DragEvent, id: number) => {
+    if (!dragRef.current || dragRef.current.kind !== "persons") return;
+    e.preventDefault();
+    e.stopPropagation(); // the branch under this row must not highlight
+    e.dataTransfer.dropEffect = "move";
+    if (dropPerson !== id) setDropPerson(id);
+  };
+  const dragLeavePerson = (id: number) => {
+    if (dragRef.current?.kind === "persons" && dropPerson === id) {
+      setDropPerson(null);
+    }
+  };
+  const acceptPersonDrop = (e: React.DragEvent, id: number) => {
+    const d = dragRef.current;
+    if (!d || d.kind !== "persons") return; // branch drags bubble to the branch
+    e.preventDefault();
+    e.stopPropagation();
+    const ids = d.ids;
+    clearDrag();
+    // validation + confirmation live in App (shared with menu/dialog, §4.28)
+    onMergeInto(ids, id);
   };
   const acceptDrop = (e: React.DragEvent, target: string) => {
     // target '' = the Ungrouped node: persons drop ungrouped, a branch
@@ -413,6 +461,10 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                   }}
                   onDragStart={(e) => startDragPerson(e, p.id)}
                   onDragEnd={clearDrag}
+                  dropTarget={dropPerson === p.id}
+                  onDragOver={(e) => dragOverPerson(e, p.id)}
+                  onDragLeave={() => dragLeavePerson(p.id)}
+                  onDrop={(e) => acceptPersonDrop(e, p.id)}
                 />
               ))}
             </div>
@@ -457,6 +509,13 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
           />
+          <button
+            className="ghost merge-open"
+            onClick={onOpenMerge}
+            title="Merge Similar Persons — find and combine near-identical names (§4.28, #88)"
+          >
+            ⧉ merge similar
+          </button>
         </div>
         <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}
           title="Open the Review view — all unreviewed (provisional) faces, UnknownN first">
@@ -492,6 +551,25 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                         : "Move to group…",
                     onClick: () => setGroupDialog({ kind: "move-persons", ids: menuTargets }),
                   },
+                  {
+                    // #88 (§4.28): shared confirmation dialog, target via typeahead
+                    label:
+                      menuTargets.length > 1
+                        ? `Merge ${menuTargets.length} persons into…`
+                        : "Merge into…",
+                    onClick: () => onMergeInto(menuTargets),
+                    hint: "§4.28",
+                  },
+                  // #88 (§4.28): rename-merge over all their faces (§4.1);
+                  // a single person already has inline rename (double-click)
+                  ...(menuTargets.length > 1 && onRenameSelection
+                    ? [
+                        {
+                          label: `Rename ${menuTargets.length} persons to…`,
+                          onClick: () => onRenameSelection(menuTargets),
+                        },
+                      ]
+                    : []),
                   {
                     label:
                       menuTargets.length > 1

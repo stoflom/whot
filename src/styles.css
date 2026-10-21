@@ -782,3 +782,93 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ------------------------------------------------- Merge Similar Persons (#88, §4.28) */
+
+/* header button in the tree tools row */
+button.merge-open { font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+
+/* person-row drop target: SOLID outline — distinct from a branch's
+   dashed drop highlight (§4.28: person/branch/Ungrouped must be
+   visually unambiguous before the confirmation dialog opens) */
+.tree-person.merge-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 30%, var(--panel2));
+}
+
+.merge-dialog { width: 720px; }
+
+.merge-opts {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.merge-opts select {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+.merge-aliases { flex: 1 1 16rem; }
+.merge-aliases input { font-family: monospace; font-size: 0.8rem; }
+
+.merge-cluster {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.merge-cluster-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--panel2);
+  padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
+}
+.merge-cluster-head input { accent-color: var(--accent); }
+
+/* .dialog label is column-direction; member rows are rows */
+.dialog label.merge-member {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--text);
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.dialog label.merge-member:hover { background: var(--panel2); }
+.dialog label.merge-member input { accent-color: var(--accent); }
+.merge-name { font-weight: 600; white-space: nowrap; }
+.merge-prov { background: var(--tag); }
+.merge-counts, .merge-groups, .merge-when { font-size: 0.72rem; }
+.merge-groups { font-family: monospace; }
+.merge-evidence { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-left: auto; }
+
+.ev-chip {
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  padding: 0 6px;
+  font-size: 0.7rem;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.merge-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.merge-chips .ev-chip { border-style: solid; color: var(--text); }
+
+.merge-foot {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 0.7rem;
+}
+.merge-foot .input-group { flex: 1 1 12rem; min-width: 0; }
+.merge-spacer { flex: 1; }

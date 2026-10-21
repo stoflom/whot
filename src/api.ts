@@ -13,6 +13,8 @@ export interface Person {
   note: string | null;
   primary_face_id: number | null;
   primary_pinned: number;
+  /** creation timestamp (UTC, #40) — provenance for the #88 triage view */
+  created_at: string;
   groups: string[];
   counts: PersonCounts;
 }
@@ -54,6 +56,10 @@ export interface Settings {
   cluster_threshold: number;
   refcrop_n: number;
   show_rejected: boolean;
+  /** Merge Similar Persons (#88): max Damerau-Levenshtein distance, 1..3 */
+  merge_name_distance: number;
+  /** #88: generational-suffix alias groups, e.g. [["J","Jr","Junior"]] */
+  merge_suffix_aliases: string[][];
 }
 export interface Snapshot {
   persons: Person[];

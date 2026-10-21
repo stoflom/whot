@@ -7,10 +7,13 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
-import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Snapshot } from "./api";
+import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import AssignDialog from "./components/AssignDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { ErrorToast, FatalError } from "./components/ErrorNotice";
+import MergeSimilarDialog from "./components/MergeSimilarDialog";
+import MergeIntoDialog from "./components/MergeIntoDialog";
+import { faceIdsOf } from "./nameCluster";
 import FaceAssignDialog from "./components/FaceAssignDialog";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
@@ -67,6 +70,11 @@ export default function App() {
   // when nothing is hovered
   const lastSelRef = useRef<number | null>(null);
   const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
+  // #88 (§4.28): Merge Similar Persons triage + shared merge confirmation
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeInto, setMergeInto] = useState<
+    { sourceIds: number[]; targetId?: number } | null
+  >(null);
   const [faceAssign, setFaceAssign] = useState<{
     faceId: number;
     personId: number | null; // null = unowned face (§4.13)
@@ -158,7 +166,9 @@ export default function App() {
       faceAssign != null ||
       confirmRemove != null ||
       menu != null ||
-      settingsOpen
+      settingsOpen ||
+      mergeOpen ||
+      mergeInto != null
     )
       return;
     const onKey = (e: KeyboardEvent) => {
@@ -166,7 +176,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [splitImageId, dialogFaceIds, faceAssign, confirmRemove, menu, settingsOpen]);
+  }, [splitImageId, dialogFaceIds, faceAssign, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto]);
 
   const mutate = useCallback(
     async (fn: () => Promise<unknown>, clearSel = false) => {
@@ -785,7 +795,14 @@ export default function App() {
           tgt.tagName === "SELECT" || tgt.isContentEditable)
       )
         return;
-      if (dialogFaceIds != null || faceAssign != null || confirmRemove != null || menu != null)
+      if (
+        dialogFaceIds != null ||
+        faceAssign != null ||
+        confirmRemove != null ||
+        menu != null ||
+        mergeOpen ||
+        mergeInto != null
+      )
         return;
       // #53 (§4.17): Ctrl-G toggles the whole section — the one under
       // the mouse cursor first (#74), else the hovered card's, else the
@@ -855,7 +872,7 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sectionsForImage, sel, splitImageId]);
+  }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sectionsForImage, sel, splitImageId, mergeOpen, mergeInto]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -870,6 +887,86 @@ export default function App() {
     }
     return { name: "", group: "" };
   }, [dialogFaceIds, facesById, personsById]);
+
+  // ------------------------------------------------- #88 Merge Similar Persons
+
+  const saveMergeSettings = useCallback(
+    async (patch: Partial<Settings>) => {
+      if (!snap) return;
+      try {
+        await api.setSettings({ ...snap.settings, ...patch });
+        await refresh().catch((e) => setError(String(e)));
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [snap, refresh],
+  );
+
+  /** menu / DnD path: open the shared confirmation (§4.28). Refuses an
+      UnknownN *target* up-front (also refused server-side) and treats a
+      drop onto the only selection as the designed no-op. */
+  const openMergeInto = useCallback(
+    (sourceIds: number[], targetId?: number) => {
+      if (!snap) return;
+      if (targetId != null) {
+        const target = snap.persons.find((p) => p.id === targetId);
+        if (target && /^unknown/i.test(target.name)) {
+          setError(
+            "cannot merge into an UnknownN cluster — it is an importer placeholder, not a person (§4.28)",
+          );
+          return;
+        }
+        if (sourceIds.every((id) => id === targetId)) {
+          setError("already merged — the drop target is the only selection");
+          return;
+        }
+      }
+      setMergeInto({ sourceIds, targetId });
+    },
+    [snap],
+  );
+
+  const confirmMerge = useCallback(
+    async (target: Person) => {
+      if (!snap || !mergeInto) return;
+      const sourceIds = mergeInto.sourceIds.filter((id) => id !== target.id);
+      // target's own faces stay put: only the sources' faces move (§4.28)
+      const faceIds = snap.faces
+        .filter((f) => f.person_id != null && sourceIds.includes(f.person_id))
+        .map((f) => f.id);
+      setMergeInto(null);
+      if (faceIds.length === 0) {
+        setError("nothing to merge — the selected persons have no faces");
+        return;
+      }
+      // one assign_person call = one transaction, §4.1 merge semantics
+      // (sticky rejected, emptied shells deleted, derived state recomputed)
+      await mutate(() => api.assignPerson(faceIds, target.name, target.groups[0] ?? ""));
+    },
+    [snap, mergeInto, mutate],
+  );
+
+  /** bulk rename/merge over a person selection: open the existing
+      AssignDialog over all their faces (§4.1 rename-merge) */
+  const renamePersons = useCallback(
+    (ids: number[]) => {
+      if (!snap) return;
+      const faceIds = faceIdsOf(snap.faces, new Set(ids));
+      if (faceIds.length === 0) {
+        setError("no faces to rename — the selection has no faces");
+        return;
+      }
+      setDialogFaceIds(faceIds);
+    },
+    [snap],
+  );
+
+  /** bulk group apply from the review dialog (§4.16, reversible) */
+  const applyGroupToSelection = useCallback((ids: number[], group: string) => {
+    if (ids.length === 0) return;
+    void mutate(() => api.movePersonsToGroup(ids, group));
+  }, [mutate]);
 
   if (loadError) {
     return <FatalError title="Could not load database" message={loadError} />;
@@ -956,6 +1053,9 @@ export default function App() {
             onDeleteGroup={(path) => mutate(() => api.deleteGroup(path))}
             onMovePersons={(ids, path) => mutate(() => api.movePersonsToGroup(ids, path))}
             onError={setError}
+            onOpenMerge={() => setMergeOpen(true)}
+            onMergeInto={openMergeInto}
+            onRenameSelection={renamePersons}
             onSelectPending={(id) => {
               const ids = snap.faces
                 .filter((f) => f.person_id === id && f.link_status === "provisional")
@@ -1133,6 +1233,33 @@ export default function App() {
         onClear={() => setSel(new Set())}
       />
 
+      {mergeOpen && snap && (
+        <MergeSimilarDialog
+          persons={snap.persons}
+          settings={snap.settings}
+          onSaveSettings={saveMergeSettings}
+          onMergeInto={(ids) => openMergeInto(ids)}
+          onApplyGroup={applyGroupToSelection}
+          onRename={renamePersons}
+          onClose={() => setMergeOpen(false)}
+          escActive={mergeInto == null && dialogFaceIds == null}
+        />
+      )}
+      {mergeInto && snap && (
+        <MergeIntoDialog
+          sources={mergeInto.sourceIds
+            .map((id) => personsById.get(id))
+            .filter((p): p is Person => !!p)}
+          defaultTarget={
+            mergeInto.targetId != null
+              ? personsById.get(mergeInto.targetId) ?? null
+              : null
+          }
+          persons={snap.persons}
+          onConfirm={confirmMerge}
+          onCancel={() => setMergeInto(null)}
+        />
+      )}
       {dialogFaceIds && (
         <AssignDialog
           count={dialogFaceIds.length}

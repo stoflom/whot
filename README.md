@@ -213,6 +213,14 @@ Main flows: rename an `UnknownN` group (accepts & names it, moving it into a
 group path, e.g. family|Smith, friends|college), assign selected faces to an existing or new person, reject or
 re-accept faces, per-face descriptions (beard|sun_glasses, baby, side), primary face, reference faces per-face descriptions.
 
+**Merge Similar Persons** (`⧉ merge similar` in the person-tree header,
+§4.28/#88): triages clusters of near-identical names (case, seq
+suffixes, Damerau-Levenshtein ≤ 2 — configurable with optional
+generational-suffix aliases) with per-pair evidence, then merge / bulk
+rename / bulk group the selection — merging always goes through a
+confirmation dialog (from the dialog, the context menu **or** by
+dragging a selection onto a person row) because it cannot be undone.
+
 ## Tauri commands (Rust)
 
 The full `#[tauri::command]` surface (signature reference — behaviour
@@ -222,12 +230,13 @@ rules are `docs/gui-design.md` §4, architecture is
 **Reads**
 
 - `get_snapshot()` → `{ persons: [{id, name, state, note, primary_face_id,
-  primary_pinned, groups[], counts{total, provisional, confirmed, rejected}}],
+  primary_pinned, created_at, groups[], counts{total, provisional, confirmed, rejected}}],
   faces: [{id, image_id, person_id, x, y, w, h, name, seq, description,
   confidence, link_status, state, import_id, created_at}],
   images: [{id, primary_path, width, height, orientation, type, state,
   roll_id, first_import_id}], imports: [{id, path, started_at}],
-  settings {cluster_threshold, refcrop_n, show_rejected} }`
+  settings {cluster_threshold, refcrop_n, show_rejected,
+  merge_name_distance, merge_suffix_aliases} }`
 - `get_face_preview(face_id) → String` (base64 JPEG from `faces.preview`)
 - `get_image_thumb(image_id) → Option<String>`,
   `get_image_preview(image_id) → Option<String>`
