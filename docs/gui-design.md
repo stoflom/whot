@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.17** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.18** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -579,6 +579,62 @@ Double-click opens the full-image focus mode (§3).
     empty *named* person is a legitimate future assignment target.
     The sweep is one statement inside the snapshot transaction, cheap
     and idempotent.
+28. **Merge Similar Persons** (#88) ⇒ a triage workflow for same-name
+    duplicates (the importer's deliberate `X 2` generations, §9.4 of
+    `docs/scripts-design.md`, plus case variants and misspellings):
+
+    **Detection** (pure frontend over `get_snapshot`, no backend path):
+    normalize names — `casefold`, collapse whitespace, strip trailing
+    ` N` — then cluster by **Damerau-Levenshtein (OSA) distance ≤
+    `merge_name_distance`** (whotrc, default **2**, range 1–3) with
+    single-linkage. OSA, not plain Levenshtein: a transposition is one
+    edit, so the commonest typo class counts as "1 diff". Optional
+    **suffix aliases** (`merge_suffix_aliases`, whotrc, default off) —
+    equivalence groups (`J,Jr,Junior`) stripped before comparing.
+    **`Unknown*` persons are excluded from detection** (`Unknown7` vs
+    `Unknown8` is distance 1) and refused as merge targets (§4.1
+    `validate_person_name` already enforces the latter server-side).
+    Each cluster carries per-pair **link evidence** (same-after-fold /
+    seq-suffix / distance-N / suffix-alias) because single-linkage
+    chains (A~B, B~C ⇒ {A,B,C} even if A⊀C) must stay explainable.
+    Zero-face members are listed but contribute no faces to a merge.
+
+    **Three equivalent entry points**, all feeding one confirmation
+    dialog:
+    - *review dialog* (tree-header button): cluster list with member
+      facts (face counts, group paths, `state='imported'` badge,
+      created_at), multi-select, `Merge into…` / bulk group / bulk
+      rename;
+    - *person context menu*: `Merge into…` (typeahead), `Apply group to
+      selection…`, `Rename selection to…` on a (multi-)selection;
+    - *drag-and-drop*: dragging a selected set **onto a person row**
+      merges into that person — a **new drop-target type** beside the
+      existing #50 branch/Ungrouped drops. Drop-target highlighting must
+      distinguish person vs branch vs Ungrouped unambiguously.
+
+    **Confirmation is mandatory for every merge path** — menu, dialog
+    and especially DnD (an accidental drop must not silently destroy):
+    one shared dialog spelling `N person(s), M face(s) → <target>`,
+    sources emptied and deleted, **no undo** (faces themselves are never
+    deleted; §4.13). #50's branch drops stay dialog-free — moving
+    between groups is reversible.
+
+    **Execution = existing §4 commands, zero new SQL paths**: merge is
+    one `assign_person(face_ids_of_all_sources, target.name,
+    target.group)` (§4.1 semantics: sticky rejected, emptied shells
+    deleted, derived state recomputed); bulk group is
+    `move_persons_to_group` (§4.16); bulk rename is the rename-merge
+    helper (§4.1) — identical resulting names merge. Self-merge is a
+    no-op; `UnknownN` targets are refused (server-side and pre-validated
+    in the UI, including on drop).
+
+    **Settings**: `whotrc.json` gains `merge_name_distance` (default 2,
+    clamped 1–3) and `merge_suffix_aliases` (default `[]`), with serde
+    defaults so existing files keep loading; editable from the review
+    dialog. The detection functions live in one pure TS module,
+    unit-tested with **vitest** (the repo's only JS test runner —
+    added as a devDependency; a Python mirror is explicitly rejected:
+    two implementations of one rule is how they drift).
 
 
 ## 5. Related documents
