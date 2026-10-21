@@ -579,5 +579,111 @@ class CoverageWarningTests(HarvestFixture):
         self.assertNotIn("WARNING:", err)
 
 
+class ResumeTests(HarvestFixture):
+    """--resume rerun over an existing staging DB (§8.7, #104): recorded
+    hashes are reused, already-hashed full paths are never read again,
+    rows converge."""
+
+    def run_resume(self, **kw):
+        """Mirror main()'s --resume wiring: reopen, seed, harvest."""
+        args = dict(images_dirs=[self.pics, self.pics2],
+                    digikam_db=self.digikam,
+                    recognition_db=self.recognition,
+                    lightroom_catalog=self.lrcat,
+                    lr_roots=[("d:/live/pictures/picfiles", self.pics)])
+        args.update(kw)
+        con = hl.open_staging_resume(self.out)
+        try:
+            hasher = hl.Hasher()
+            reused = hasher.seed(con)
+            run_id = hl.start_run(con, list(hl.ALL_SOURCES), {})
+            st = hl.Staging(con, run_id)
+            stats = hl.harvest(st, hasher=hasher, **args)
+            hl.finish_run(con, run_id, stats)
+        finally:
+            con.close()
+        return stats, reused
+
+    def test_resume_reuses_hashes_and_adds_no_rows(self):
+        first = self.run_harvest()
+        self.assertGreater(first["hashed"], 0)
+        before = {r["path"]: (r["content_hash"], r["harvest_run_id"])
+                  for r in self.q("SELECT * FROM images")}
+        n_faces = len(self.q("SELECT * FROM faces"))
+        n_images = len(self.q("SELECT * FROM images"))
+        n_persons = len(self.q("SELECT * FROM persons"))
+
+        stats, reused = self.run_resume()
+        # every path hashed by run 1 is seeded -> nothing read again
+        self.assertEqual(reused, first["hashed"])
+        self.assertEqual(stats["hashed"], 0)
+        self.assertEqual(stats["hash_reused"], reused)
+        self.assertEqual(stats["hash_failed"], 0)
+        # convergence: an unchanged archive adds no rows …
+        self.assertEqual(len(self.q("SELECT * FROM faces")), n_faces)
+        self.assertEqual(len(self.q("SELECT * FROM images")), n_images)
+        self.assertEqual(len(self.q("SELECT * FROM persons")), n_persons)
+        # … and no recorded hash is changed or lost
+        after = {r["path"]: (r["content_hash"], r["harvest_run_id"])
+                 for r in self.q("SELECT * FROM images")}
+        self.assertEqual(after, before)
+        # the resume is its own harvest_runs row
+        runs = self.q("SELECT * FROM harvest_runs")
+        self.assertEqual(len(runs), 2)
+        self.assertEqual(runs[1]["id"], 2)
+
+    def test_resume_picks_up_new_files(self):
+        self.run_harvest()
+        (self.pics / "e.jpg").write_bytes(b"n" * 4321)
+        (self.pics / "e.jpg.xmp").write_text(MWG_ELEMENT + HIER + MPRI)
+        a_path = self.pics / "a.jpg"
+        a_hash = self.q(
+            f"SELECT content_hash FROM images"
+            f" WHERE path='{a_path}'")[0]["content_hash"]
+
+        stats, reused = self.run_resume()
+        self.assertGreater(reused, 0)          # old paths reused …
+        self.assertEqual(stats["hashed"], 1)   # … only e.jpg read
+        e = self.q(f"SELECT * FROM images"
+                   f" WHERE path='{self.pics / 'e.jpg'}'")[0]
+        self.assertEqual(len(e["content_hash"]), 64)
+        # the previously recorded hash is untouched (COALESCE)
+        self.assertEqual(self.q(
+            f"SELECT content_hash FROM images"
+            f" WHERE path='{a_path}'")[0]["content_hash"],
+            a_hash)
+
+    def test_resume_refuses_missing_file(self):
+        with self.assertRaises(hl.StagingError) as cm:
+            hl.open_staging_resume(self.out)
+        self.assertIn("does not exist", str(cm.exception))
+
+    def test_resume_refuses_non_staging_db(self):
+        sqlite3.connect(self.out).close()       # plain file, no schema_version
+        with self.assertRaises(hl.StagingError) as cm:
+            hl.open_staging_resume(self.out)
+        self.assertIn("not a harvest staging DB", str(cm.exception))
+
+    def test_resume_refuses_faces_db_path(self):
+        self.run_harvest()
+        with self.assertRaises(hl.StagingError) as cm:
+            hl.open_staging_resume(self.out, faces_db=self.out)
+        self.assertIn("faces.db", str(cm.exception))
+
+    def test_resume_needs_explicit_out(self):
+        import contextlib, io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = hl.main(["--resume"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--resume needs --out", err.getvalue())
+
+    def test_existing_out_without_resume_still_refuses(self):
+        """A resume is always explicit (§8.7 guard 4)."""
+        self.run_harvest()
+        with self.assertRaises(hl.StagingError):
+            hl.create_staging(self.out)
+
+
 if __name__ == "__main__":
     unittest.main()
