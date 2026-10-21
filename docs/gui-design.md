@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.24** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.25** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -517,9 +517,9 @@ Double-click opens the full-image focus mode (§3).
       *or clicking into it* selects the whole value (for as long as it
       stays auto-generated), so the first keystroke replaces it
       wholesale. User-entered values keep normal caret behaviour.
-      Applied everywhere such a value can appear: the face-card name
-      input, the tree inline rename, the detail-pane Name field and the
-      AssignDialog's pre-filled name. **Group-path inputs** go further
+      Applied everywhere such a value can appear: the §4.24 Edit
+      dialog's pre-filled fields, the tree inline rename, the detail-pane
+      Name field. **Group-path inputs** go further
       and always select all on focus, user-entered value or not — a
       group path is a structural value that is replaced wholesale,
       never edited in place (#67 follow-up, confirmed in testing) — on
@@ -533,23 +533,19 @@ Double-click opens the full-image focus mode (§3).
       dropdown before it touches anything else. In the AssignDialog a
       pick mirrors the target's group into the group field (unless the
       user already typed one).
-    - **Every value field suggests** (#97, v3.23 — the user rule: "all
-      input fields have type-ahead assist"): the name typeahead reaches
-      **every person-name input** — the section-header heading (review
-      mode's main input; it was a plain field, which read as *broken* to
-      a user who had seen suggestions elsewhere), the face-card name and
-      the tree inline rename (lifting the deferral above). **Group-path
-      inputs** get the same dropdown over the existing group paths plus
-      an `ungrouped` entry: section-header Group, detail-pane Group,
-      AssignDialog Group, the merge dialog's bulk-group field and
-      `GroupDialog`. One shared widget backs both (options + hint), so
-      navigation/Enter/Esc behave identically everywhere. A
-      typed-but-unsubmitted value now **commits on blur** wherever the
-      field used to (the detail-pane Name field silently discarded it
-      on click-away), while picking from the dropdown never counts as
-      leaving (mousedown keeps focus). Free text stays plain:
-      descriptions, notes, the tree filter, the alias list, settings
-      numbers.
+    - **Every value field suggests** (#97 → #101 hosts): the name
+      typeahead (existing persons, `UnknownN` excluded, pick = merge
+      target) and the group-path suggestions (+ an `ungrouped` entry)
+      live wherever a value is typed: **the §4.24 Edit dialog** (name
+      and group; description stays free text), the detail-pane
+      Name/Group, the tree inline rename, `GroupDialog` and the merge
+      dialog's bulk-group field — the grid's own fields are labels now
+      (#101). One shared widget backs all of it (options + label +
+      hint — navigation/Enter/Esc behave identically everywhere); a
+      pick never counts as leaving (mousedown keeps focus), and
+      click-away still commits where fields stayed inline. Free text
+      stays plain: descriptions, notes, the tree filter, the alias
+      list, settings numbers.
 22. **Keyboard shortcut set** (#68, extends #53) ⇒ shortcuts act on the
     selection, or on the hovered/last-selected card when nothing is
     selected (the Ctrl-G rule): **Ctrl-G** toggles the section **under
@@ -576,41 +572,53 @@ Double-click opens the full-image focus mode (§3).
     anchor when it selects; Space follows the hovered card. A vanished
     anchor (filtered/removed card) degrades shift-click to a plain
     select. Double-click-to-open is unaffected.
-24. **Section-header rule inputs** (#72/#73) ⇒ the name/group inputs in
-    a section header are the *direct* assignment path: they commit on
-    **Enter or blur** like every other field (change-guarded against the
-    section's defaults) as well as via the explicit **apply** button —
-    changing them is the operation itself, no button click required.
-    Scope precedence: **an active selection wins, whatever its extent**
-    — a cross-group selection is applied in full and never narrowed to
-    the header's own section (narrowing to `section∩selection` used to
-    drop the other groups' cards silently); only with **no selection**
-    do the inputs fall back to **every face of their own section**.
-    Tooltips state the precedence. Commit distinguishes the two fields
-    (#77): a **name change** keeps the `assign_person` path (accept +
-    name; group applied on create/UnknownN-rename — and when the target
-    person pre-existed, an *explicitly typed* group is applied
-    afterwards via `set_person_group`, since F2 only guards implicit
-    merges); a **group-only change** skips `assign_person` entirely and
-    calls `set_person_group` on the persons owning the scope — which
-    also enables filing an **UnknownN** cluster into a group *without*
-    naming it (remember the face, not the name): `set_person_group`
-    never validates names, while `assign_person` rejects `Unknown*`.
-    An empty name field counts as "not changed"; unowned faces surface
-    a toast instead of failing silently.
-
-    **Blur commits only when focus leaves the heading** (#93): moving
-    name → group → apply *inside one section heading* is not a context
-    change — the heading's fields must wait for **Enter / apply**. It
-    did not: clicking the group input after typing the name blurred the
-    name input, the assign ran, the `UnknownN` cluster left the review
-    view and the group input with it — the group could never be typed.
-    So both inputs commit on blur only through `focusLeftHeading()`:
-    focus target outside the heading (another card, the tree, another
-    heading — that is when "change context to the next cluster"
-    applies) or nowhere (clicking a card/page area, which keeps
-    click-away-to-apply). Enter and the apply button commit as before,
-    both changed fields together (#77).
+24. **Grid editing: labels + one Edit dialog** (#101 — replaces the
+    inline rule inputs of #72/#73 and their blur rules of #93) ⇒
+    - **Cards and cluster headers show labels, not inputs**: the three
+      value fields — **name, group, description** (headers gain the
+      description label; cards show all three) — are per-object,
+      **live labels** (H1: an empty group/description renders as a dim
+      `–`) plus one **Edit…** button. Labels are display only: they
+      update per object when an apply/accept changed some cards and not
+      others, and a pending preview marks them (accent underline, H2)
+      until accepted.
+    - **One shared dialog**: three labelled fields — name, group,
+      description — each carrying the §4.21 suggestions (a picked name
+      mirrors its group unless one was typed), plus a scope selector
+      `Card | Group | Selection` with a live face count (H3). Opening
+      it follows the selection rules (Q1/G3): on an object **inside**
+      the current selection the selection is kept; **outside**, the
+      selection becomes that card (header → that cluster); `Selection`
+      is the default scope choice.
+    - **Buttons**: `Apply` = stage + close (screen preview), `Accept` =
+      stage + commit (the shortcut — “Accept is what makes my changes
+      permanent”, Q3), `Cancel`/Esc = discard. **Enter = Accept**,
+      **Esc = Cancel** — inside the dialog only (G2).
+    - **Scope**: every action targets the **selection**; bottom-bar
+      buttons and plain keys never confirm (Q2/Q9), and the dialog's
+      selector is the *only* object-vs-selection disambiguation,
+      chosen before anything runs — the confirmation dialog the Q2
+      alignment circled around is unnecessary.
+    - **Stage / preview state**: one pending
+      `{faceIds, name?, group?, desc?}` bound to its selection; a new
+      Apply replaces it; **Undo** (bottom bar, greyed without a
+      preview) and **Esc** revert it directly (F1); a **selection
+      change while staged asks escape-or-accept** (Q4). Text is never
+      dropped silently (Q3).
+    - Commit keeps the #77 field routing — a name change through
+      `assign_person` (group applied on create/UnknownN-rename, later
+      explicit groups via `set_person_group`), a group-only change
+      through `set_person_group`, a description change through its own
+      setter — an empty field counts as unchanged, unowned faces
+      surface a toast. **Rejected faces stay sticky** (§4.2): a stage
+      may display on them, the commit skips them (F2).
+    - **Retired**: inline inputs on cards and headers, the header
+      `apply` button, the #29 FaceAssignDialog, the AssignDialog as a
+      separate component (`Assign name…` opens this dialog with scope
+      preset to Selection), the #93 `focusLeftHeading` machinery, and
+      every auto-apply-on-focus rule. The right-panel DetailPane and
+      the tree inline rename **stay inline** (G4: a single person, no
+      scope ambiguity).
 25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
     selection the mouse cursor decides the target: a face-card context
     menu opened on an **empty selection selects that card first**
@@ -775,30 +783,33 @@ Double-click opens the full-image focus mode (§3).
     the flag contract is unit-testable without a database or the face
     model.
 
-30. **Review mode flow: apply / accept / Enter** (#96) ⇒ the two commit
-    levels are explicit, and only Review mode moves context:
-    - **Apply** (§4.24 button, or Enter *inside* a heading field) —
-      assigns the typed name/group; the faces stay `provisional` and
-      the **context stays on the cluster**: the screen updates, nothing
-      is final, nothing moves.
-    - **Accept** (rule-bar Accept, `A`) — confirms (`confirmed`) **and
-      advances the context**: if the acted-on section still has faces
-      (partial accept) they become the selection — the cluster stays
-      under work; otherwise the **next section in rendered order
-      becomes the selection** (all of its faces) and is scrolled into
-      view (`data-face-id` + `scrollIntoView({block:'nearest'})`,
-      double-rAF so React has painted); with no next section the
-      selection is cleared. The plan is computed from the pre-accept
-      sections (`acceptAdvancePlan`), which stay valid afterwards:
+30. **Review mode flow: apply / accept** (#96, matrix finalised #101) ⇒
+    two commit levels, and only Review mode moves context:
+    - **Apply** (dialog `Apply`, bottom-bar `Apply`) — stages on the
+      selection: the labels preview, **no DB write, no regrouping**;
+      Undo/Esc revert it (§4.24) and the context never moves.
+    - **Accept** (dialog `Accept`, bottom-bar `Accept`, `A`, global
+      `Enter` — F3/G2: keys and the bar **never open a dialog**) —
+      stage-then-commit: the DB is written, the screen reorganises,
+      **and in Review the context advances**: a partial accept keeps the
+      acted-on section's remaining faces as the selection, a fully
+      accepted section hands over to the next section (all of its
+      faces, scrolled into view via `data-face-id` + double-rAF
+      `scrollIntoView({block:'nearest'})`), and the last section clears
+      the selection — the plan comes from the pre-accept sections
+      (`acceptAdvancePlan`), which stay valid afterwards because
       accepting never changes another section's members.
-    - **Enter with no field focused** = Accept & next — **Review mode
-      only**. In-field Enter keeps its §4.24/§4.21 meaning (commit the
-      field); the global handler ignores inputs, so the two never
-      collide.
     - **Person mode and focus mode: context never moves by itself**
-      (explicit user requirement) — accept/reject/apply only update the
-      clusters and the selection; stepping, opening and closing stay
-      explicit (←/→, clicks, tree).
+      (Q10) — same selection rules, same dialog, same stage/commit;
+      only the advance disappears, and the right panel stays extra.
+    - **Bottom bar** (Q9): `Apply · Accept · Undo° · Assign name… ·
+      Reject · clear` — every action scoped to the selection with no
+      confirmation dialog; selection actions grey out at N = 0 and
+      `Undo` greys out without a preview. `Assign name…` opens the
+      shared Edit dialog with scope preset to Selection.
+    - Rejected faces stay sticky (F2); the Esc ordering of Q8 holds:
+      dropdown → menus and dialogs → preview-undo → cancel field edit →
+      split close.
 31. **Render-performance contract** (#98) ⇒ Review mode must stay
     interactive over thousands of cards (4116 faces in ~1226 sections,
     ~70k DOM nodes today):
