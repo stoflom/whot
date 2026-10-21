@@ -120,11 +120,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     thumbnails per roll; clicking an image opens its faces (same face cards,
     same operations) plus the image preview **annotated with its detected
     face rectangles** (see below).
-- **Status filter + cluster group** (§4.10/§4.9, #99): the center pane's
-  toolbar carries `Show [All | Provisional | Accepted | Rejected]` — the
-  face-status filter applied by every view (default All) — and, to its
-  left, the persons-mode cluster-group toggle
-  `[Description | Accuracy]`.
+- **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
+  pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
+  face-status filter applied by every view (default All; **New** is the
+  `provisional` status, spelled the way the face-card badge spells it) —
+  and, to its left, the persons-mode cluster-group toggle
+  `[Description | Accuracy]`. While a mutation is in flight the bar's
+  right side shows an animated **busy roller** beside `working…` (the
+  `busy` state; `prefers-reduced-motion` disables the spin).
 - **Full-image views** (§4.11): every full-size image — the Rolls image
   detail and the card double-click split — always draws one **active,
   name-labelled rectangle** per visible face of that image, colour-coded by
@@ -345,9 +348,10 @@ Double-click opens the full-image focus mode (§3).
    similarity claims in this mode. The choice persists as
    `cluster_group` in `whotrc.json` (`accuracy` default).
 10. **Status filter** (`face_filter`, #99 — generalises #23/#28) ⇒
-    `Show [All | Provisional | Accepted | Rejected]` in the top bar: one
-    setting (whotrc `face_filter`: `all` (default) | `provisional` |
-    `confirmed` — UI label **Accepted** — | `rejected`) replacing
+    `Show [All | New | Accepted | Rejected]` in the top bar: one
+    setting (whotrc `face_filter`: `all` (default) | `provisional` — UI
+    label **New**, the face-card badge's word (#100) — | `confirmed` —
+    UI label **Accepted** — | `rejected`) replacing
     `show_rejected` (whose default `true` *was* `all`; the legacy key is
     ignored on read). The chosen status decides **every view's**
     visibility: the person view's cluster sections and its Rejected
