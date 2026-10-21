@@ -125,7 +125,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   face-status filter applied by every view (default All; **New** is the
   `provisional` status, spelled the way the face-card badge spells it) —
   and, to its left, the persons-mode cluster-group toggle
-  `[Description | Accuracy]`. While a mutation is in flight the bar's
+  `[Description | Accuracy]`, both grouped at the bar's right side. The
+  toolbar is the center pane's **fixed header**: the sections scroll
+  beneath it in their own, shorter scroll area — nothing can scroll past
+  above it (#100; sticky pinning was clamped by the pane's padding and
+  left that strip). While a mutation is in flight the bar's
   right side shows an animated **busy roller** beside `working…` (the
   `busy` state; `prefers-reduced-motion` disables the spin).
 - **Full-image views** (§4.11): every full-size image — the Rolls image
