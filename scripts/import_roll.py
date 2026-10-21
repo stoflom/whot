@@ -763,8 +763,8 @@ def main(argv: list[str] | None = None) -> int:
             plan = plan_image(path, detector)
             if not plan.detections and not args.all:
                 n_noface += 1
-                ui.status(f"  no faces: {path}")
-                continue
+                ui.status("  no faces")        # verdict only — path is on
+                continue                       # the [i/N] line (#94)
             pairs = associate(plan.detections, corpus, unknowns, args.threshold, numbering_names)
             if not args.dry_run:
                 store_image(con, plan, pairs, unknowns, import_id, now)
@@ -774,10 +774,10 @@ def main(argv: list[str] | None = None) -> int:
             n_new += 1
             n_faces += len(plan.detections)
             if plan.detections:
-                ui.status(f"  imported {path}: {len(plan.detections)} face(s), "
+                ui.status(f"  imported: {len(plan.detections)} face(s), "
                           f"{len(set(id(s) for _, s in pairs))} person(s)")
             else:
-                ui.status(f"  imported {path}: no faces (state no-face, bulk)")
+                ui.status("  imported: no faces (state no-face, bulk)")
         except Exception as exc:
             # isolate the failure to THIS file (#47): discard its partial rows
             # and any person stubs it created, then continue with the batch
@@ -785,7 +785,8 @@ def main(argv: list[str] | None = None) -> int:
                 con.rollback()
             del unknowns[n_stub:]
             failures.append((path, str(exc)))
-            ui.error(f"  FAILED {path}: {exc}")
+            ui.error(f"  FAILED: {exc}")      # path only on the [i/N] line
+            # and in the closing failure list (#94)
     ui.stop_beat()
 
     if not args.dry_run:
