@@ -578,10 +578,18 @@ Double-click opens the full-image focus mode (§3).
       value fields — **name, group, description** (headers gain the
       description label; cards show all three) — are per-object,
       **live labels** (H1: an empty group/description renders as a dim
-      `–`) plus one **Edit…** button. Labels are display only: they
-      update per object when an apply/accept changed some cards and not
-      others, and a pending preview marks them (accent underline, H2)
-      until accepted.
+      `–`) plus one **Edit…** button. The fields stay **visually
+      distinct**: name plain, group accent-coloured, description in the
+      tag colour (#102). Card order top to bottom (#102): the **name
+      strip inside the image frame at the top**, the image, **group**
+      and **description** as full-width rows, then **accuracy + Edit…**
+      (and the ★/◈/✗ action row). Labels are display only: they update
+      per object when an apply/accept changed some cards and not others,
+      and a pending preview marks them — **unmistakably** (accent tint
+      + underline + weight, #103), echoed by a `staged: …` strip on the
+      bottom bar while a stage is live. Apply with **no changed field**
+      raises the "nothing to apply" toast; Accept with no changes still
+      accepts the scope (#103, §4.30).
     - **One shared dialog**: three labelled fields — name, group,
       description — each carrying the §4.21 suggestions (a picked name
       mirrors its group unless one was typed), plus a scope selector
