@@ -1,0 +1,54 @@
+// #99 (gui-design §4.10 / §4.9) — the two persons-mode display switches,
+// as pure helpers: the 4-state face-status filter that replaces
+// show_rejected, and the Description-mode grouping.
+
+import type { Face, PersonCounts } from "./api";
+
+/** whotrc `face_filter` — 'confirmed' is labelled **Accepted** in the UI */
+export type FaceFilter = "all" | "provisional" | "confirmed" | "rejected";
+/** whotrc `cluster_group` — how the person view forms sections */
+export type ClusterGroup = "accuracy" | "description";
+
+/** does a face of this link_status survive the filter? ('all' = everything) */
+export function matchesStatusFilter(status: string, filter: FaceFilter): boolean {
+  return filter === "all" || status === filter;
+}
+
+/** Tree presence/counts under a filter (#28 generalised): only the
+    matching bucket survives — a zero-total person leaves the tree. */
+export function filterCounts(counts: PersonCounts, filter: FaceFilter): PersonCounts {
+  if (filter === "all") return counts;
+  const n = counts[filter]; // filter is now provisional | confirmed | rejected
+  return {
+    total: n,
+    provisional: filter === "provisional" ? n : 0,
+    confirmed: filter === "confirmed" ? n : 0,
+    rejected: filter === "rejected" ? n : 0,
+  };
+}
+
+/** Description mode (#99): one cluster per distinct description over the
+    faces given (already visibility-filtered by the caller) — ordered by
+    first appearance, the empty description last (Ungrouped convention). */
+export function groupByDescription(
+  faces: Pick<Face, "id" | "description">[],
+): { description: string; faceIds: number[] }[] {
+  const order: string[] = [];
+  const byDesc = new Map<string, number[]>();
+  for (const f of faces) {
+    const d = f.description ?? "";
+    let ids = byDesc.get(d);
+    if (!ids) {
+      ids = [];
+      byDesc.set(d, ids);
+      order.push(d);
+    }
+    ids.push(f.id);
+  }
+  const named = order.filter((d) => d !== "");
+  const unnamed = order.filter((d) => d === "");
+  return [...named, ...unnamed].map((d) => ({
+    description: d,
+    faceIds: byDesc.get(d)!,
+  }));
+}

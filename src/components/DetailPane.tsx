@@ -4,14 +4,15 @@ import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
 import type { SuggestOption } from "./SuggestInput";
+import { matchesStatusFilter, type FaceFilter } from "../viewFilters";
 import { selectAll } from "../autoText";
 
 interface Props {
   person: Person | null;
   refcrops: Refcrop[];
   snapshot: Snapshot | null;
-  /** respect the show_rejected toggle in the overview totals (#28) */
-  showRejected: boolean;
+  /** #99: face-status filter in the overview totals (#28 generalised) */
+  faceFilter: FaceFilter;
   onName: (id: number, name: string) => void;
   onGroup: (id: number, group: string) => void;
   onNote: (id: number, note: string) => void;
@@ -178,15 +179,13 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
 }
 
 export default function DetailPane(props: Props) {
-  const { person, snapshot, showRejected } = props;
+  const { person, snapshot, faceFilter } = props;
   if (person) {
     return <PersonView {...props} person={person} />;
   }
   if (!snapshot) return <div className="dim">loading…</div>;
   const t = { total: 0, provisional: 0, confirmed: 0, rejected: 0 };
-  const faces = showRejected
-    ? snapshot.faces
-    : snapshot.faces.filter((f) => f.link_status !== "rejected");
+  const faces = snapshot.faces.filter((f) => matchesStatusFilter(f.link_status, faceFilter));
   for (const f of faces) {
     t.total++;
     t[f.link_status as keyof typeof t]++;
@@ -201,12 +200,8 @@ export default function DetailPane(props: Props) {
       </p>
       <p>
         {t.total} faces: <span className="c-prov">{t.provisional} new</span> ·{" "}
-        <span className="c-conf">{t.confirmed} confirmed</span>
-        {showRejected && (
-          <>
-            · <span className="c-rej">{t.rejected} rejected</span>
-          </>
-        )}
+        <span className="c-conf">{t.confirmed} confirmed</span> ·{" "}
+        <span className="c-rej">{t.rejected} rejected</span>
       </p>
       <p className="dim">
         Select a person in the tree, or work through the Review grid. After any change all panes

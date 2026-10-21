@@ -100,6 +100,17 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .topbar h1 { font-size: 1.05rem; margin: 0; font-weight: 600; white-space: nowrap; }
 .topbar nav { display: flex; gap: 0.4rem; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 0.75rem; }
+/* #99: cluster-group toggle + status filter in the top bar */
+.topbar-right .seg { display: inline-flex; gap: 2px; }
+.topbar-right label { display: inline-flex; align-items: center; gap: 0.35rem; }
+.topbar-right select {
+  font: inherit;
+  background: var(--panel2);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 4px;
+}
 .pill {
   background: var(--warn);
   color: #10141a;

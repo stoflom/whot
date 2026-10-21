@@ -15,6 +15,13 @@ import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
 import { acceptAdvancePlan } from "./reviewFlow";
+import {
+  filterCounts,
+  groupByDescription,
+  matchesStatusFilter,
+  type ClusterGroup,
+  type FaceFilter,
+} from "./viewFilters";
 import { groupPathOptions } from "./components/PathTypeahead";
 import FaceAssignDialog from "./components/FaceAssignDialog";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
@@ -126,29 +133,35 @@ export default function App() {
     [snap]
   );
   const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
-  // #28: with show_rejected off, a rejected face is not up for review —
-  // persons whose faces are ALL rejected disappear from the tree entirely
-  // (an UnknownN with a single rejected face vanishes; #28 clarification)
+  // #99 (§4.10): the status filter — one value drives every view's
+  // visibility, tree presence/counts (#28 generalised) and the review set
+  const faceFilter = (snap?.settings.face_filter ?? "all") as FaceFilter;
+  const clusterGroup = snap?.settings.cluster_group ?? "accuracy";
+  const faceVisible = (f: Face) => matchesStatusFilter(f.link_status, faceFilter);
+  // a person with no matching face disappears from the tree; the
+  // surviving bucket drives its counts (an UnknownN whose only face is
+  // filtered out vanishes; #28 clarification)
   const treePersons = useMemo(() => {
     if (!snap) return [];
-    if (snap.settings.show_rejected) return snap.persons;
+    if (faceFilter === "all") return snap.persons;
     return snap.persons
-      .filter((p) => p.counts.total - p.counts.rejected > 0)
-      .map((p) => ({
-        ...p,
-        counts: { ...p.counts, total: p.counts.total - p.counts.rejected, rejected: 0 },
-      }));
-  }, [snap]);
+      .map((p) => ({ ...p, counts: filterCounts(p.counts, faceFilter) }))
+      .filter((p) => p.counts.total > 0);
+  }, [snap, faceFilter]);
   const displayPerson = useMemo(
     () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
     [treePersons, personId]
   );
-  const showRejected = snap?.settings.show_rejected ?? true;
-  const faceVisible = (f: Face) => showRejected || f.link_status !== "rejected";
 
-  // similarity clusters for the person view (recomputed on threshold/snap change)
+  // similarity clusters for the person view (Accuracy mode only —
+  // Description mode needs no IPC at all, #99)
   useEffect(() => {
-    if (view === "person" && personId != null && snap) {
+    if (
+      view === "person" &&
+      personId != null &&
+      snap &&
+      snap.settings.cluster_group === "accuracy"
+    ) {
       api
         .personFaceClusters(personId, snap.settings.cluster_threshold)
         .then(setClusters)
@@ -357,29 +370,34 @@ export default function App() {
     doAssign(ids, name, renameGroup(p));
   };
 
-  // #23 — show/hide rejected faces; faces hidden this way leave the
-  // selection so they can never be bulk-acted on invisibly (§4.10)
-  const toggleShowRejected = () => {
-    if (!snap) return;
-    const next = !snap.settings.show_rejected;
-    if (!next) {
-      const hidden = new Set(
-        snap.faces.filter((f) => f.link_status === "rejected").map((f) => f.id)
-      );
-      setSel((prev) => {
-        let hit = false;
-        for (const id of prev)
-          if (hidden.has(id)) {
-            hit = true;
-            break;
-          }
-        if (!hit) return prev;
-        const n = new Set(prev);
-        for (const id of hidden) n.delete(id);
-        return n;
-      });
-    }
-    mutate(() => api.setSettings({ ...snap.settings, show_rejected: next }));
+  // #23/#99 — change the status filter; faces the new filter hides leave
+  // the selection so they can never be bulk-acted on invisibly (§4.10)
+  const changeFaceFilter = (next: FaceFilter) => {
+    if (!snap || next === snap.settings.face_filter) return;
+    const visible = new Set(
+      snap.faces
+        .filter((f) => matchesStatusFilter(f.link_status, next))
+        .map((f) => f.id)
+    );
+    setSel((prev) => {
+      let hit = false;
+      for (const id of prev)
+        if (!visible.has(id)) {
+          hit = true;
+          break;
+        }
+      if (!hit) return prev;
+      const n = new Set(prev);
+      for (const id of [...n]) if (!visible.has(id)) n.delete(id);
+      return n;
+    });
+    mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
+  };
+  // #99 (§4.9): persons-view cluster grouping — accuracy (default) or one
+  // section per description; display-only, the selection is untouched
+  const setClusterGroup = (next: ClusterGroup) => {
+    if (!snap || next === snap.settings.cluster_group) return;
+    mutate(() => api.setSettings({ ...snap.settings, cluster_group: next }));
   };
 
   // #32 — tile context menus; full images keep the default webview menu (#33)
@@ -466,9 +484,7 @@ export default function App() {
   const imageAreaMenu = (e: ReactMouseEvent, imageId: number) => {
     if (!snap) return;
     const faces = snap.faces.filter(
-      (f) =>
-        f.image_id === imageId &&
-        (snap.settings.show_rejected || f.link_status !== "rejected")
+      (f) => f.image_id === imageId && faceVisible(f)
     );
     openMenu(e, [
       {
@@ -487,9 +503,7 @@ export default function App() {
   const imageMenu = (image: ImageRow, e: ReactMouseEvent) => {
     if (!snap) return;
     const faces = snap.faces.filter(
-      (f) =>
-        f.image_id === image.id &&
-        (snap.settings.show_rejected || f.link_status !== "rejected")
+      (f) => f.image_id === image.id && faceVisible(f)
     );
     const pending = faces.filter((f) => f.link_status === "provisional").map((f) => f.id);
     openMenu(e, [
@@ -690,9 +704,7 @@ export default function App() {
       if (!snap) return [];
       const byPerson = new Map<number | null, Face[]>();
       for (const f of snap.faces.filter(
-        (x) =>
-          x.image_id === imgId &&
-          (snap.settings.show_rejected || x.link_status !== "rejected")
+        (x) => x.image_id === imgId && matchesStatusFilter(x.link_status, faceFilter)
       )) {
         const arr = byPerson.get(f.person_id) ?? [];
         arr.push(f);
@@ -710,7 +722,7 @@ export default function App() {
         };
       });
     },
-    [snap, personsById, renameGroup]
+    [snap, personsById, renameGroup, faceFilter]
   );
 
   // #98 (§4.31): memoised — computed once per snapshot/view/person/focus
@@ -724,31 +736,65 @@ export default function App() {
     if (view === "person" && personId != null) {
       const out: Section[] = [];
       const pname = selectedPerson?.name ?? "";
-      const groups = clusters ?? [];
-      const multi = groups.length > 1;
-      let n = 0;
-      groups.forEach((g, gi) => {
-        g.clusters.forEach((cl, ci) => {
-          if (cl.length === 0) return;
-          n += 1;
-          const minSim = Math.min(...cl.map((c) => c.sim));
-          // appearance prefix only when the person has more than one (§4.9)
-          const prefix = multi && g.description ? `${g.description} — ` : "";
+      const rg = renameGroup(selectedPerson ?? undefined);
+      if (clusterGroup === "description") {
+        // #99 Description mode: one section per distinct description over
+        // the visible faces — no similarity split, no clusters IPC
+        const visible = snap.faces.filter(
+          (f) =>
+            f.person_id === personId &&
+            f.state !== "discarded" &&
+            f.link_status !== "rejected" &&
+            matchesStatusFilter(f.link_status, faceFilter)
+        );
+        groupByDescription(visible).forEach((g) => {
           out.push({
-            key: `cl-${gi}-${ci}`,
-            title:
-              n === 1
-                ? `${prefix}Group 1 — closest to primary`
-                : `${prefix}Group ${n}`,
-            subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
-            faceIds: cl.map((c) => c.face_id),
+            key: `pd-${personId}-${g.description}`,
+            title: g.description || "(no description)",
+            faceIds: g.faceIds,
             ruleDefaultName: pname,
             // #38: an UnknownN must leave the Unknown branch on rename
-            ruleDefaultGroup: renameGroup(selectedPerson ?? undefined),
+            ruleDefaultGroup: rg,
           });
         });
-      });
-      if (snap.settings.show_rejected) {
+      } else {
+        const groups = clusters ?? [];
+        const multi = groups.length > 1;
+        let n = 0;
+        groups.forEach((g, gi) => {
+          g.clusters.forEach((cl, ci) => {
+            // #99: the filter may empty a cluster — drop it and recompute
+            // the similarity claim over the faces that survive
+            const ids = cl
+              .map((c) => c.face_id)
+              .filter((id) => {
+                const f = facesById.get(id);
+                return f != null && matchesStatusFilter(f.link_status, faceFilter);
+              });
+            if (ids.length === 0) return;
+            n += 1;
+            const kept = new Set(ids);
+            const minSim = Math.min(
+              ...cl.filter((c) => kept.has(c.face_id)).map((c) => c.sim)
+            );
+            // appearance prefix only when the person has more than one (§4.9)
+            const prefix = multi && g.description ? `${g.description} — ` : "";
+            out.push({
+              key: `cl-${gi}-${ci}`,
+              title:
+                n === 1
+                  ? `${prefix}Group 1 — closest to primary`
+                  : `${prefix}Group ${n}`,
+              subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
+              faceIds: ids,
+              ruleDefaultName: pname,
+              // #38: an UnknownN must leave the Unknown branch on rename
+              ruleDefaultGroup: rg,
+            });
+          });
+        });
+      }
+      if (matchesStatusFilter("rejected", faceFilter)) {
         const rej = snap.faces.filter(
           (f) => f.person_id === personId && f.link_status === "rejected"
         );
@@ -757,9 +803,12 @@ export default function App() {
       }
       return out;
     }
-    // review: all provisional faces, grouped by importer person, UnknownN first
+    // review: the pending set under All/Provisional (#99), or the status
+    // picked in the filter — grouped by importer person, UnknownN first
+    const reviewStatus =
+      faceFilter === "confirmed" || faceFilter === "rejected" ? faceFilter : "provisional";
     const byPerson = new Map<number | null, Face[]>();
-    for (const f of snap.faces.filter((x) => x.link_status === "provisional")) {
+    for (const f of snap.faces.filter((x) => x.link_status === reviewStatus)) {
       const arr = byPerson.get(f.person_id) ?? [];
       arr.push(f);
       byPerson.set(f.person_id, arr);
@@ -783,7 +832,7 @@ export default function App() {
         ruleDefaultGroup: renameGroup(p),
       }));
   }, [snap, view, imageId, personId, selectedPerson, clusters,
-      sectionsForImage, renameGroup]);
+      sectionsForImage, renameGroup, facesById, faceFilter, clusterGroup]);
   sectionsRef.current = sections;
   sectionsForImageRef.current = sectionsForImage;
 
@@ -1241,9 +1290,35 @@ export default function App() {
                 ›
               </button>
             </span>
-            <label title="Show/hide rejected faces in every view">
-              <input type="checkbox" checked={showRejected} onChange={toggleShowRejected} />
-              show rejected
+            {/* #99: cluster group (persons mode) left of the status filter */}
+            <span
+              className="seg"
+              title="Person view: how faces form sections — Accuracy = similarity clusters within each description (§4.9); Description = one section per description (threshold ignored)"
+            >
+              <button
+                className={clusterGroup === "description" ? "active" : ""}
+                onClick={() => setClusterGroup("description")}
+              >
+                Description
+              </button>
+              <button
+                className={clusterGroup === "accuracy" ? "active" : ""}
+                onClick={() => setClusterGroup("accuracy")}
+              >
+                Accuracy
+              </button>
+            </span>
+            <label title="Status filter — every view shows only faces with this status (#99, §4.10); switching it drops hidden faces from the selection">
+              show
+              <select
+                value={faceFilter}
+                onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
+              >
+                <option value="all">All</option>
+                <option value="provisional">Provisional</option>
+                <option value="confirmed">Accepted</option>
+                <option value="rejected">Rejected</option>
+              </select>
             </label>
           </div>
           <div className={splitRow ? "center-focus" : undefined}>
@@ -1351,7 +1426,7 @@ export default function App() {
             person={displayPerson}
             refcrops={refcrops}
             snapshot={snap}
-            showRejected={showRejected}
+            faceFilter={faceFilter}
             onName={renameOrMerge}
             onGroup={(id, g) => mutate(() => api.setPersonGroup(id, g))}
             onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}

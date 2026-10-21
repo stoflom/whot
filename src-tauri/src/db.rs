@@ -163,14 +163,46 @@ fn check_schema(con: &Connection, db: &Path) -> Result<()> {
 
 // ---------------------------------------------------------------- settings
 
+/// #99 (gui-design §4.10) — which face statuses every view shows.
+/// Serialized lowercase: "all" | "provisional" | "confirmed" | "rejected"
+/// (the UI labels `confirmed` **Accepted**); `accepted` is accepted as an
+/// alias so a hand-edited whotrc.json in UI vocabulary still parses.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FaceFilter {
+    /// everything — equivalent to the retired show_rejected: true
+    #[default]
+    All,
+    Provisional,
+    #[serde(alias = "accepted")]
+    Confirmed,
+    Rejected,
+}
+
+/// #99 (gui-design §4.9) — how the person view groups faces into sections.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ClusterGroup {
+    /// similarity clusters within each description (§4.9, default)
+    #[default]
+    Accuracy,
+    /// one section per description — no similarity split, no IPC
+    Description,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Settings {
     pub cluster_threshold: f64,
     pub refcrop_n: i64,
-    /// Show rejected faces in the UI (§4.10). Defaults to true when the
-    /// key is absent from an existing whotrc.json.
-    #[serde(default = "default_show_rejected")]
-    pub show_rejected: bool,
+    /// face-status filter for every view (#99); defaults to `all`, which
+    /// is exactly the old show_rejected: true — a legacy `show_rejected`
+    /// key in whotrc.json is an unknown field and is ignored.
+    #[serde(default)]
+    pub face_filter: FaceFilter,
+    /// persons-view cluster grouping (#99): Accuracy (default) or
+    /// Description — one section per distinct description.
+    #[serde(default)]
+    pub cluster_group: ClusterGroup,
     /// Merge Similar Persons (#88, §4.28): max Damerau-Levenshtein
     /// distance for name clustering. Default 2, clamped to 1..=3 on read;
     /// serde default keeps existing whotrc.json files loading.
@@ -183,10 +215,6 @@ pub struct Settings {
     pub merge_suffix_aliases: Vec<Vec<String>>,
 }
 
-fn default_show_rejected() -> bool {
-    true
-}
-
 fn default_merge_name_distance() -> u32 {
     2
 }
@@ -196,7 +224,8 @@ impl Default for Settings {
         Self {
             cluster_threshold: DEFAULT_THRESHOLD,
             refcrop_n: DEFAULT_REFCROP_N,
-            show_rejected: true,
+            face_filter: FaceFilter::All,
+            cluster_group: ClusterGroup::Accuracy,
             merge_name_distance: default_merge_name_distance(),
             merge_suffix_aliases: Vec::new(),
         }
