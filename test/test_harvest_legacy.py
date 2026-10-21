@@ -308,9 +308,11 @@ class StagingLifecycleTests(unittest.TestCase):
     def test_refuses_existing_file(self):
         p = self.base / "s.db"
         p.write_text("precious")
-        with self.assertRaises(hl.StagingError):
+        with self.assertRaises(hl.StagingError) as cm:
             hl.create_staging(p)
         self.assertEqual(p.read_text(), "precious")     # untouched
+        # the refusal points at the way out (§8.7)
+        self.assertIn("--resume", str(cm.exception))
 
     def test_refuses_faces_db_path(self):
         faces_db = self.base / "faces.db"

@@ -481,7 +481,8 @@ def create_staging(out: Path, faces_db: Path | None = None) -> sqlite3.Connectio
     except FileExistsError:
         raise StagingError(
             f"{out} already exists — a staging DB is created fresh per run "
-            f"(H2); give a new --out path or move the old file away") from None
+            f"(H2); give a new --out path, move the old file away, or add "
+            f"--resume to rerun against it (§8.7)") from None
     con = sqlite3.connect(out)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
