@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.18** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.20** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -635,6 +635,76 @@ Double-click opens the full-image focus mode (§3).
     unit-tested with **vitest** (the repo's only JS test runner —
     added as a devDependency; a Python mirror is explicitly rejected:
     two implementations of one rule is how they drift).
+29. **import_roll decode & CLI contract** (#89/#90) ⇒ one canonical
+    decode space, full paths in the log, and honest database errors:
+
+    **Decode chain** (`_decode`, #89) — try decoders in order until one
+    produces an image; if all fail, the file is a *per-file* failure and
+    the batch continues (#47):
+    - **RAW** (`.pef/.dng/.cr2/.cr3/.nef/.arw/.rw2/.orf`): `rawpy` —
+      use the embedded JPEG thumbnail when present, otherwise
+      `postprocess(half_size=True, use_camera_wb=True)`. *Any*
+      `rawpy.LibRawError` raised by the thumbnail step (missing **and**
+      unsupported/bitmap thumbnails — merged Pano/HDR DNGs raise
+      `LibRawUnsupportedThumbnailError`) falls through to the full
+      decode instead of failing the file.
+    - **everything else**: `cv2.imread` → **Pillow** (`Image.open` +
+      `ImageOps.exif_transpose`, converted to RGB) → **tifffile**
+      (`.tif/.tiff`, first page). Pillow covers OpenCV's TIFF blind
+      spots (crashes on any TIFF carrying an EXIF Orientation tag;
+      refuses 32-bit samples), tifffile the formats Pillow refuses.
+
+    **EXIF orientation is applied by every branch** — OpenCV by default,
+    LibRaw for the RAW output and the stored JPEG thumbnails, and the
+    fallbacks explicitly — so `images.width/height`, `images.thumbnail`,
+    `images.preview` and every face box describe the **displayed** image,
+    never depending on which decoder won (scripts-design §9.2, v4.2).
+
+    **Sample normalisation to `uint8`** (tifffile path, #89): `uint8`
+    passes through; integers scale over their dtype range (`uint16` ⇒
+    ÷257); floats with `max ≤ 1.5` are treated as **0..1 linear** and
+    gamma-encoded to sRGB (so face detection sees JPEG-like tones for
+    32-bit float TIFF exports of raw development), `≤ 255` are kept,
+    larger values are treated as 16-bit; NaN/±inf ⇒ 0/255.
+
+    **Status lines print the full path** of every scanned, skipped,
+    imported and failed file (#90) — with 36 k files in same-named roll
+    folders a bare filename is useless. `-q` still yields exactly
+    header + summary (scripts-design §10), so the path detail is quieted
+    by `-q` and never by anything else.
+
+    **Database handling** (#90): a missing `FACES_DB` file is reported
+    as `database not found: <path>` (+ how to create it) and exits 1
+    *before* connecting — `sqlite3.connect()` would otherwise create an
+    empty file, which the schema gate then rejected with a bogus
+    "wrong schema version" style message. The gate's
+    empty-`schema_version`-table case gets its own message instead of
+    `schema vempty schema_version table …`.
+
+    **`--create-db`** (#90): builds the database at the `.env`
+    `FACES_DB` path from `database/schema.sql`, creating missing parent
+    directories. An existing **non-empty** database ⇒ warning on
+    stderr, exit 1, nothing written; a stray **0-byte** file (exactly
+    what `sqlite3.connect()` leaves behind) counts as absent and is
+    replaced, so the #90 artifact heals itself. Combined with
+    `--dry-run` ⇒ argparse error (creation is a write). `ROLL_DIR`
+    becomes optional with it: omitted ⇒ create and exit 0; given ⇒
+    create when needed, then continue with the import.
+
+    **Provider selection** (#91): **CPU is the default** — MIGraphX over
+    this machine's amdgpu wedges the GPU (verified 2026-10-21 09:37:
+    `ring gfx_0.0.0 timeout` → `MES unrecoverable` → every reset fails →
+    gnome-shell SIGABRT kills the session; the then-running app died
+    afterwards as a victim in WebKit's `createEGLFence`), so the unsafe
+    path must be requested: `--gpu` opts in to MIGraphX (keeping the
+    existing automatic CPU fallback when the provider fails to initialise
+    or probe), while `--cpu` stays accepted as a **deprecated no-op** —
+    it now *is* the default, so old invocations keep working. The
+    startup header reports the selected provider (always printed, even
+    under `-q`), so every run's log states which one executed.
+    `build_parser()` / `validate_args()` are extracted from `main()` so
+    the flag contract is unit-testable without a database or the face
+    model.
 
 
 ## 5. Related documents

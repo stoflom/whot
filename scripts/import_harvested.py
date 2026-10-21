@@ -130,9 +130,10 @@ def convert_box(x: float, y: float, w: float, h: float, unit: str,
 
     Normalised fractions are multiplied by the file dimensions (the
     source-stated img_w/img_h when given, else the db's decode dims —
-    equal to the file dims while inversion='none', which is what
-    import_roll writes).  Pixel boxes are already file-space.  A recorded
-    inversion maps file space -> decode space via the inverse flip.
+    what import_roll stored: the *displayed* image, EXIF orientation
+    applied by the decoder, gui-design §4.29).  Pixel boxes are already
+    in that displayed space.  A recorded inversion maps it -> decode
+    space via the inverse flip.
     """
     if unit == "normalized":
         W = float(img_w or db_w)
