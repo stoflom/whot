@@ -314,6 +314,45 @@ class AppearanceCorpusTest(unittest.TestCase):
                          "inherited desc, group-scoped seq (beard had seq 1), derived label")
 
 
+# ---------------------------------------------------------------- CLI contract (#90/#91)
+
+class ParserTest(unittest.TestCase):
+    def test_cpu_provider_is_the_default(self):          # #91
+        args = ir.build_parser().parse_args(["/tmp/roll"])
+        self.assertFalse(args.gpu)
+        self.assertFalse(args.cpu)
+
+    def test_gpu_is_opt_in(self):
+        self.assertTrue(ir.build_parser().parse_args(["/tmp/roll", "--gpu"]).gpu)
+
+    def test_cpu_flag_is_a_deprecated_no_op(self):       # old invocations keep working
+        args = ir.build_parser().parse_args(["/tmp/roll", "--cpu"])
+        self.assertFalse(args.gpu)                       # never switches the GPU on
+
+    def test_roll_dir_is_optional_with_create_db(self):  # #90
+        args = ir.build_parser().parse_args(["--create-db"])
+        self.assertTrue(args.create_db)
+        self.assertIsNone(args.roll_dir)
+
+
+class ValidateArgsTest(unittest.TestCase):
+    def test_create_db_with_dry_run_refused(self):
+        ap = ir.build_parser()
+        args = ap.parse_args(["--create-db", "--dry-run"])
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            ir.validate_args(ap, args)
+
+    def test_roll_dir_required_unless_create_db(self):
+        ap = ir.build_parser()
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            ir.validate_args(ap, ap.parse_args([]))
+        ir.validate_args(ap, ap.parse_args(["--create-db"]))    # no raise
+
+    def test_ordinary_import_passes(self):
+        ap = ir.build_parser()
+        ir.validate_args(ap, ap.parse_args(["/tmp/roll"]))       # no raise
+
+
 # ---------------------------------------------------------------- decode (#89)
 
 def _has(module: str) -> bool:
