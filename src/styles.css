@@ -100,6 +100,32 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .topbar h1 { font-size: 1.05rem; margin: 0; font-weight: 600; white-space: nowrap; }
 .topbar nav { display: flex; gap: 0.4rem; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 0.75rem; }
+/* #99: cluster-group toggle + status filter in the top bar */
+.topbar-right .seg { display: inline-flex; gap: 2px; }
+.topbar-right label { display: inline-flex; align-items: center; gap: 0.35rem; }
+/* #100: busy roller — animated ring beside 'working…' while a mutation
+   is in flight; the spin stops for users who asked for less motion */
+.busy-roller {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid var(--dim);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: busy-spin 0.8s linear infinite;
+}
+@keyframes busy-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .busy-roller { animation: none; border-top-color: var(--dim); }
+}
+.topbar-right select {
+  font: inherit;
+  background: var(--panel2);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 4px;
+}
 .pill {
   background: var(--warn);
   color: #10141a;
@@ -119,7 +145,18 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
   overflow-y: auto;
   padding: 0.5rem;
 }
-.center { flex: 1; overflow-y: auto; min-width: 0; padding: 0.75rem; }
+/* #100: the toolbar is the pane's real header — .center is a plain
+   column and only .center-scroll scrolls. (Sticky pinning was clamped by
+   .center's padding: a strip stayed above the bar through which the
+   sections scrolled.) */
+.center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.center-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 0.75rem 0.75rem; }
 .right {
   width: 290px;
   flex: none;
@@ -470,18 +507,20 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 
 /* center-pane toolbar (#23) */
 .center-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 3;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.15rem 0 0.35rem;
-  margin-bottom: 0.35rem;
+  flex: none;
+  /* #100: at the very top of the pane — no sticky pin, no gap above */
+  padding: 0.6rem 0.75rem 0.4rem;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 .toolbar-left { display: flex; align-items: center; gap: 2px; }
+/* #99/#100: cluster toggle + status filter sit together at the right */
+.center-toolbar .toolbar-right { display: flex; align-items: center; gap: 0.5rem; }
+/* focus mode keeps its inner flex chain — the scroll area IS the pane */
+.center.focus .center-scroll { display: flex; flex-direction: column; overflow: hidden; }
 .nav-pos { font-size: 0.75rem; color: var(--dim); min-width: 2.6em; text-align: center; }
 .center-toolbar label {
   display: flex;
@@ -520,7 +559,8 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .face-rect.status-confirmed { border-color: var(--ok); }
 .face-rect.status-rejected { border-color: var(--bad); opacity: 0.6; }
 .face-rect:hover,
-.face-rect.hover {
+.face-rect.hover,
+.face-rect[data-sync-hover] {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   z-index: 2;
 }
@@ -547,7 +587,10 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 
 /* hover link between overlay rectangles and face cards (#26) */
-.face-card.hovered { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* #98: highlight = pure CSS :hover + the data-sync-hover attribute the
+   delegated mousemove listener toggles (card ↔ overlay rect, no state) */
+.face-card:hover,
+.face-card[data-sync-hover] { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* full-image focus mode (#55, §4.19): image on top at full pane width,
    film roll of this image's faces below; replaces the old side-by-side
@@ -709,6 +752,16 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   padding: 2px 6px;
   font-size: 0.8rem;
 }
+
+/* #97: the suggestion widget keeps the field layout of its flex row —
+   the wrapper span becomes the flex item, the input fills it */
+.face-meta > .typeahead,
+.tree-person > .typeahead { flex: 1; min-width: 0; }
+.face-meta .typeahead input,
+.tree-person .typeahead input { width: 100%; }
+/* heading fields keep their fixed widths (the input's classes still apply,
+   but the span must not shrink below them) */
+.face-section-header .rule .typeahead { flex: none; }
 
 /* keyboard shortcuts reference in the settings popover (#31) */
 .shortcuts { border-top: 1px solid var(--border); padding-top: 0.5rem; }

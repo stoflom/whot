@@ -4,8 +4,9 @@ import { useImagePreviewImg } from "../hooks";
 
 // Full-size image with one active, name-labelled rectangle per visible face
 // (design §4.11): percentage-scaled from the canonical images.width/height
-// space, status-coloured, hover highlights rect + card (shared hover state),
-// click toggles selection.
+// space, status-coloured, click toggles selection. The card ↔ rect hover
+// highlight is synced imperatively via data-sync-hover (App's delegated
+// mousemove listener, #98) — no hover props, no re-render.
 
 interface Props {
   imageId: number;
@@ -15,8 +16,6 @@ interface Props {
   /** already visibility-filtered by the caller (§4.10 — hidden faces excluded) */
   faces: Face[];
   sel: Set<number>;
-  hoverId: number | null;
-  onHover: (id: number | null) => void;
   onToggle: (id: number) => void;
   /** right-click menu on the face rectangles; the image area gets its own
       functional menu (open in system viewer) because the webkit default
@@ -31,8 +30,6 @@ export default function FaceOverlay({
   height,
   faces,
   sel,
-  hoverId,
-  onHover,
   onToggle,
   onFaceContextMenu,
   onImageContextMenu,
@@ -48,11 +45,8 @@ export default function FaceOverlay({
           <button
             key={f.id}
             type="button"
-            className={
-              `face-rect status-${f.link_status}` +
-              (sel.has(f.id) ? " selected" : "") +
-              (hoverId === f.id ? " hover" : "")
-            }
+            data-overlay-face={f.id}         // #98: sync-hover target
+            className={`face-rect status-${f.link_status}${sel.has(f.id) ? " selected" : ""}`}
             style={{
               left: `${(f.x / width) * 100}%`,
               top: `${(f.y / height) * 100}%`,
@@ -64,8 +58,6 @@ export default function FaceOverlay({
               e.stopPropagation();
               onToggle(f.id);
             }}
-            onMouseEnter={() => onHover(f.id)}
-            onMouseLeave={() => onHover(null)}
             onContextMenu={(e) => onFaceContextMenu?.(f.id, e)}
           >
             <span className="face-rect-label">{f.name}</span>

@@ -55,7 +55,10 @@ export interface ImportRow {
 export interface Settings {
   cluster_threshold: number;
   refcrop_n: number;
-  show_rejected: boolean;
+  /** #99 (§4.10): status filter for every view — replaces show_rejected */
+  face_filter: "all" | "provisional" | "confirmed" | "rejected";
+  /** #99 (§4.9): persons-view cluster grouping */
+  cluster_group: "accuracy" | "description";
   /** Merge Similar Persons (#88): max Damerau-Levenshtein distance, 1..3 */
   merge_name_distance: number;
   /** #88: generational-suffix alias groups, e.g. [["J","Jr","Junior"]] */

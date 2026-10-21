@@ -7,7 +7,9 @@ import {
 } from "react";
 import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
-import { selectAll } from "../autoText";
+import NameTypeahead from "./NameTypeahead";
+import PathTypeahead from "./PathTypeahead";
+import type { SuggestOption } from "./SuggestInput";
 
 // #93 — a blur whose focus target is still inside the same section
 // heading (name → group → apply) is NOT a context change: the heading's
@@ -36,12 +38,15 @@ interface GridProps {
   faces: Map<number, Face>;
   sel: Set<number>;
   primaryFaceId: number | null;
-  hoverId: number | null;
-  onHover: (id: number | null) => void;
   onOpen: (id: number) => void;
   /** right-click menu on face tiles (#32) */
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
   persons: Map<number, Person>;
+  /** #97 (§4.21) — every value field suggests: the heading's name field
+      over all persons, its group field over the existing paths (both
+      precomputed once per snapshot in App) */
+  personOptions: Person[];
+  pathOptions: SuggestOption[];
   onAssignName: (faceId: number, name: string) => void;
   onToggle: (id: number) => void;
   /** #69: plain click — select just this card and drop the range anchor */
@@ -101,7 +106,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
   const commit = () => {
     if (nameChanged || groupChanged) apply();
   };
-  const commitOnBlur = (e: ReactFocusEvent<HTMLInputElement>) => {
+  const commitOnBlur = (e: ReactFocusEvent<HTMLElement>) => {
     if (focusLeftHeading(e.relatedTarget, headingRef.current)) commit();
   };
 
@@ -120,32 +125,29 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
         <span className="face-section-count">{section.faceIds.length} face(s)</span>
         {section.subtitle && <span className="face-section-sub">{section.subtitle}</span>}
         <span className="rule">
-          <input
-            className="rule-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={commitOnBlur}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-            placeholder="person name"
-            title="Name to assign — the whole selection if any (groups included), else every face in this group (Enter, apply, or click away from this heading to apply)"
-          />
-          <input
-            className="rule-group input-group"
-            value={group}
-            onChange={(e) => setGroup(e.target.value)}
-            onBlur={commitOnBlur}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-            title="Group — '|' separated, e.g. family|lombards (empty = ungrouped); applied to the whole selection if any, else the whole group (Enter, apply, or click away from this heading to apply)"
-            placeholder="group e.g. family|lombards"
-            onFocus={selectAll}
-            onClick={selectAll}
-          />
+          {/* #97 (§4.21): the heading — review mode's main input —
+              suggests persons/paths; the #93 leave-check rides the
+              wrapper so focus into the dropdown stays inside the heading */}
+          <span onBlur={commitOnBlur}>
+            <NameTypeahead
+              className="rule-name"
+              value={name}
+              onChange={setName}
+              persons={grid.personOptions}
+              placeholder="person name"
+              title="Name to assign — the whole selection if any (groups included), else every face in this group (Enter, apply, or click away from this heading to apply)"
+            />
+          </span>
+          <span onBlur={commitOnBlur}>
+            <PathTypeahead
+              className="rule-group input-group"
+              value={group}
+              onChange={setGroup}
+              options={grid.pathOptions}
+              title="Group — '|' separated, e.g. family|lombards (empty = ungrouped); applied to the whole selection if any, else the whole group (Enter, apply, or click away from this heading to apply)"
+              placeholder="group e.g. family|lombards"
+            />
+          </span>
           <button onClick={apply} title="Assign name+group — to the whole selection if any (even across groups), else to every face in this group">
             apply
           </button>
@@ -159,10 +161,9 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             <FaceCard
               key={id}
               face={face}
+              personOptions={grid.personOptions}
               selected={grid.sel.has(id)}
-              hovered={grid.hoverId === id}
               isPrimary={grid.primaryFaceId === id}
-              onHover={grid.onHover}
               onOpen={grid.onOpen}
               onContextMenu={grid.onContextMenu}
               selSize={grid.sel.size}

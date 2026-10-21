@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
-import { selectAllIfAuto } from "../autoText";
+import NameTypeahead from "./NameTypeahead";
+import { groupPathOptions } from "./PathTypeahead";
 import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
 import GroupDialog from "./GroupDialog";
@@ -121,6 +122,7 @@ interface Props {
 
 function PersonRow({
   person,
+  personOptions,
   selected,
   multi,
   renaming,
@@ -137,6 +139,8 @@ function PersonRow({
   onDrop,
 }: {
   person: Person;
+  /** #97: name suggestions for the inline rename */
+  personOptions: Person[];
   selected: boolean;
   multi: boolean;
   renaming: boolean;
@@ -182,26 +186,17 @@ function PersonRow({
         {img ? <img src={img} alt="" /> : person.name[0]}
       </span>
       {renaming ? (
-        <input
+        <NameTypeahead
           className="tree-rename"
           autoFocus
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={setName}
+          persons={personOptions}
           title="Rename — an existing person merges into (Enter commits, Esc cancels)"
-          onFocus={selectAllIfAuto} // #67: UnknownN is replaced wholesale
-          onClick={(e) => {
-            e.stopPropagation();
-            selectAllIfAuto(e);
-          }}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            if (e.key === "Escape") {
-              setName(person.name);
-              (e.target as HTMLInputElement).blur();
-            }
-          }}
+          // #97: suggestions everywhere; click-away commits, Esc (list
+          // closed) cancels — the dropdown's Esc closes it first (§4.21)
+          onLeave={commit}
+          onEscape={() => setName(person.name)}
         />
       ) : (
         <span className="tree-name">{person.name}</span>
@@ -238,6 +233,9 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   >(null);
   // #54: 'Add group…' from the tree root (empty space) as well
   const [rootMenu, setRootMenu] = useState<{ x: number; y: number } | null>(null);
+  // #97 (§4.21) — one path-suggestion list per persons snapshot, shared
+  // by every group-path field opened from the tree
+  const pathOptions = useMemo(() => groupPathOptions(persons), [persons]);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<{
     path: string;
     count: number;
@@ -447,6 +445,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                 <PersonRow
                   key={p.id}
                   person={p}
+                  personOptions={persons}
                   selected={selectedId === p.id}
                   multi={selectedIds.has(p.id)}
                   renaming={renamingId === p.id}
@@ -669,6 +668,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
       )}
       {groupDialog && (
         <GroupDialog
+          options={pathOptions}
           title={
             groupDialog.kind === "rename-branch"
               ? "Rename / move group"

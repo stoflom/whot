@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
+import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
+import type { SuggestOption } from "./SuggestInput";
+import { matchesStatusFilter, type FaceFilter } from "../viewFilters";
 import { selectAll } from "../autoText";
 
 interface Props {
   person: Person | null;
   refcrops: Refcrop[];
   snapshot: Snapshot | null;
-  /** respect the show_rejected toggle in the overview totals (#28) */
-  showRejected: boolean;
+  /** #99: face-status filter in the overview totals (#28 generalised) */
+  faceFilter: FaceFilter;
   onName: (id: number, name: string) => void;
   onGroup: (id: number, group: string) => void;
   onNote: (id: number, note: string) => void;
@@ -27,6 +30,7 @@ function Editable({
   variant,
   onCommit,
   persons,
+  pathOptions,
   title,
   selectAllOnFocus,
 }: {
@@ -40,6 +44,8 @@ function Editable({
   onCommit: (v: string) => void;
   /** #67: existing persons → name suggestions (Name field only) */
   persons?: Person[];
+  /** #97: existing group paths → path suggestions (Group field only) */
+  pathOptions?: SuggestOption[];
   /** #65/#67: hint shown on hover; select-all-on-focus (group paths) */
   title?: string;
   selectAllOnFocus?: boolean;
@@ -56,7 +62,13 @@ function Editable({
       {multiline ? (
         <textarea rows={2} className={cls} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} placeholder={placeholder} title={title} />
       ) : persons ? (
-        <NameTypeahead value={v} onChange={setV} persons={persons} onSubmit={commit} title={title} />
+        <NameTypeahead value={v} onChange={setV} persons={persons} onSubmit={commit}
+          // #97: click-away commits — a typed-but-unsubmitted name used to
+          // be discarded silently when focus moved elsewhere
+          onLeave={commit} title={title} />
+      ) : pathOptions ? (
+        <PathTypeahead className={cls} value={v} onChange={setV} options={pathOptions}
+          onSubmit={commit} onLeave={commit} placeholder={placeholder} title={title} />
       ) : (
         <input
           className={cls}
@@ -95,6 +107,7 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
 
 function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
+  const pathOptions = useGroupPathOptions(snapshot?.persons ?? []);   // #97
   return (
     <div className="dp-person" key={person.id}>
       <div className="dp-avatar" title="Click to make this the primary face" onClick={() => person.primary_face_id && onSetPrimary(person.primary_face_id)}>
@@ -112,6 +125,7 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
         value={person.groups[0] ?? ""}
         placeholder="e.g. family|lombards (empty = ungrouped)"
         variant="group"
+        pathOptions={pathOptions}
         title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped)"
         selectAllOnFocus
         onCommit={(v) => onGroup(person.id, v)}
@@ -165,15 +179,13 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
 }
 
 export default function DetailPane(props: Props) {
-  const { person, snapshot, showRejected } = props;
+  const { person, snapshot, faceFilter } = props;
   if (person) {
     return <PersonView {...props} person={person} />;
   }
   if (!snapshot) return <div className="dim">loading…</div>;
   const t = { total: 0, provisional: 0, confirmed: 0, rejected: 0 };
-  const faces = showRejected
-    ? snapshot.faces
-    : snapshot.faces.filter((f) => f.link_status !== "rejected");
+  const faces = snapshot.faces.filter((f) => matchesStatusFilter(f.link_status, faceFilter));
   for (const f of faces) {
     t.total++;
     t[f.link_status as keyof typeof t]++;
@@ -188,12 +200,8 @@ export default function DetailPane(props: Props) {
       </p>
       <p>
         {t.total} faces: <span className="c-prov">{t.provisional} new</span> ·{" "}
-        <span className="c-conf">{t.confirmed} confirmed</span>
-        {showRejected && (
-          <>
-            · <span className="c-rej">{t.rejected} rejected</span>
-          </>
-        )}
+        <span className="c-conf">{t.confirmed} confirmed</span> ·{" "}
+        <span className="c-rej">{t.rejected} rejected</span>
       </p>
       <p className="dim">
         Select a person in the tree, or work through the Review grid. After any change all panes

@@ -138,7 +138,7 @@ fn full_workflow() {
     // 6) settings round-trip
     db::set_settings(&p, Settings { cluster_threshold: 0.5, refcrop_n: 3, ..Settings::default() }).unwrap();
     assert_eq!(db::get_settings(&p).unwrap().refcrop_n, 3);
-    assert!(db::get_settings(&p).unwrap().show_rejected);
+    assert_eq!(db::get_settings(&p).unwrap().face_filter, db::FaceFilter::All);
 
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
@@ -277,22 +277,43 @@ fn env_process_fallback() {
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// #23 — show_rejected defaults to true when the key is absent and round-trips.
+/// #99 — face_filter defaults to all when the key is absent (the retired
+/// show_rejected key is ignored), both new keys round-trip, and the UI's
+/// "accepted" vocabulary parses as Confirmed via serde alias.
 #[test]
-fn settings_show_rejected_default_and_roundtrip() {
+fn settings_face_filter_and_cluster_group_defaults_and_roundtrip() {
     let p = fixture_paths("settings");
-    // legacy whotrc.json without the key
-    std::fs::write(&p.config, r#"{ "cluster_threshold": 0.5, "refcrop_n": 3 }"#).unwrap();
+    // legacy whotrc.json: no new keys, retired show_rejected present
+    std::fs::write(
+        &p.config,
+        r#"{ "cluster_threshold": 0.5, "refcrop_n": 3, "show_rejected": false }"#,
+    )
+    .unwrap();
     let s = db::get_settings(&p).unwrap();
-    assert!(s.show_rejected, "missing key must default to true");
-    assert_eq!(s.refcrop_n, 3);
+    assert_eq!(
+        s.face_filter,
+        db::FaceFilter::All,
+        "missing key must default to all; the legacy key must be ignored"
+    );
+    assert_eq!(s.cluster_group, db::ClusterGroup::Accuracy);
+    assert_eq!(s.refcrop_n, 3, "unrelated keys keep loading");
     let mut s2 = s;
-    s2.show_rejected = false;
+    s2.face_filter = db::FaceFilter::Confirmed;
+    s2.cluster_group = db::ClusterGroup::Description;
     db::set_settings(&p, s2).unwrap();
-    assert!(!db::get_settings(&p).unwrap().show_rejected, "must round-trip");
+    let s3 = db::get_settings(&p).unwrap();
+    assert_eq!(s3.face_filter, db::FaceFilter::Confirmed, "must round-trip");
+    assert_eq!(s3.cluster_group, db::ClusterGroup::Description, "must round-trip");
+    // UI vocabulary alias: a hand-edited "accepted" parses as Confirmed
+    std::fs::write(
+        &p.config,
+        r#"{ "cluster_threshold": 0.4, "refcrop_n": 5, "face_filter": "accepted" }"#,
+    )
+    .unwrap();
+    assert_eq!(db::get_settings(&p).unwrap().face_filter, db::FaceFilter::Confirmed);
     // no whotrc.json at all
     std::fs::remove_file(&p.config).ok();
-    assert!(db::get_settings(&p).unwrap().show_rejected);
+    assert_eq!(db::get_settings(&p).unwrap().face_filter, db::FaceFilter::All);
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
@@ -590,8 +611,7 @@ fn corrupt_settings_file_falls_back_to_defaults() {
     std::fs::write(&p.config, "{ not json !").unwrap();
     assert_eq!(db::get_settings(&p).unwrap(), db::Settings::default());
     // a well-formed file still wins
-    let mut s2 = db::Settings::default();
-    s2.refcrop_n = 7;
+    let s2 = db::Settings { refcrop_n: 7, ..db::Settings::default() };
     db::set_settings(&p, s2).unwrap();
     assert_eq!(db::get_settings(&p).unwrap().refcrop_n, 7);
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();

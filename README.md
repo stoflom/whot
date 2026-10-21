@@ -247,7 +247,7 @@ rules are `docs/gui-design.md` §4, architecture is
   confidence, link_status, state, import_id, created_at}],
   images: [{id, primary_path, width, height, orientation, type, state,
   roll_id, first_import_id}], imports: [{id, path, started_at}],
-  settings {cluster_threshold, refcrop_n, show_rejected,
+  settings {cluster_threshold, refcrop_n, face_filter, cluster_group,
   merge_name_distance, merge_suffix_aliases} }`
 - `get_face_preview(face_id) → String` (base64 JPEG from `faces.preview`)
 - `get_image_thumb(image_id) → Option<String>`,
