@@ -76,6 +76,7 @@ export default function FaceCard({
   return (
     <div
       className={`face-card status-${face.link_status}${selected ? " selected" : ""}${hovered ? " hovered" : ""}`}
+      data-face-id={face.id}              // #96: accept-&-next scroll target
       title={face.name}
       onMouseEnter={() => onHover(face.id)}
       onMouseLeave={() => onHover(null)}

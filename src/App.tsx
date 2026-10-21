@@ -14,6 +14,7 @@ import { ErrorToast, FatalError } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
+import { acceptAdvancePlan } from "./reviewFlow";
 import FaceAssignDialog from "./components/FaceAssignDialog";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
@@ -723,6 +724,40 @@ export default function App() {
       }));
   })();
 
+  // #96 (§4.30) — Review mode: accept advances the context; person and
+  // focus mode route to the plain accept (context only ever moves by the
+  // user's own hand there). The plan comes from the pre-accept sections,
+  // which stay valid across the refresh — see reviewFlow.ts.
+  const acceptAndNext = useCallback(
+    async (ids: number[]) => {
+      if (!snap) return;
+      if (view !== "review" || splitImageId != null) {
+        await mutate(() => api.acceptFaces(ids), true);
+        return;
+      }
+      const anchor = lastSelRef.current ?? hoverId ?? ids[0] ?? null;
+      const actedKey =
+        anchor == null
+          ? null
+          : sections.find((s) => s.faceIds.includes(anchor))?.key ?? null;
+      const plan = acceptAdvancePlan(sections, actedKey, ids);
+      await mutate(() => api.acceptFaces(ids), false);
+      setSel(new Set(plan?.faceIds ?? []));
+      const first = plan?.faceIds[0];
+      if (first != null) {
+        // double-rAF: the refreshed snapshot must have painted first
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            document
+              .querySelector(`[data-face-id="${first}"]`)
+              ?.scrollIntoView({ block: "nearest" });
+          })
+        );
+      }
+    },
+    [snap, view, splitImageId, sections, hoverId, mutate]
+  );
+
   // #31 — person stepping: ‹ › and ← → walk the persons in the tree's
   // current (filtered) display order; the shortcut set is listed in the
   // settings popover
@@ -792,7 +827,10 @@ export default function App() {
       if (
         tgt &&
         (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" ||
-          tgt.tagName === "SELECT" || tgt.isContentEditable)
+          tgt.tagName === "SELECT" || tgt.isContentEditable ||
+          // #96: Enter/Space activate a focused button natively — never
+          // double them with the shortcuts below
+          tgt.tagName === "BUTTON")
       )
         return;
       if (
@@ -846,7 +884,17 @@ export default function App() {
             sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
           if (ids.length > 0) {
             e.preventDefault();
-            doAccept(ids);
+            acceptAndNext(ids);          // #96: advances in review mode
+          }
+        } else if (e.key === "Enter" && view === "review") {
+          // #96 (§4.30): Enter with no field focused = Accept & next —
+          // in-field Enter keeps its commit meaning (the guard above
+          // already keeps inputs out of this handler)
+          const ids =
+            sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
+          if (ids.length > 0) {
+            e.preventDefault();
+            acceptAndNext(ids);
           }
         } else if (e.key === "r" || e.key === "R") {
           const ids =
@@ -855,15 +903,16 @@ export default function App() {
             e.preventDefault();
             doReject(ids);
           }
+        } else if (e.key === "ArrowLeft") {
+          // #95: plain arrows step persons (§4.22/#31) — they were dead
+          // because this block returned before the arrow checks
+          e.preventDefault();
+          stepPerson(-1);
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          stepPerson(1);
         }
         return;
-      }
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        stepPerson(-1);
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        stepPerson(1);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -872,7 +921,7 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sectionsForImage, sel, splitImageId, mergeOpen, mergeInto]);
+  }, [stepPerson, acceptAndNext, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -1228,7 +1277,7 @@ export default function App() {
       <RuleBar
         count={sel.size}
         onAssign={() => setDialogFaceIds([...sel])}
-        onAccept={() => doAccept([...sel])}
+        onAccept={() => acceptAndNext([...sel])}   // #96: advances in review
         onReject={() => doReject([...sel])}
         onClear={() => setSel(new Set())}
       />
