@@ -62,8 +62,10 @@ suppressed).
 ```
 
 Flags: `--dry-run` (detect only, no writes), `--all` (also import faceless
-images), `--recursive`, `--cpu` (skip the MIGraphX GPU provider),
-`--threshold F` (cosine similarity, default 0.40), `--create-db` (build the
+images), `--recursive`, `--gpu` (opt in to the MIGraphX GPU provider —
+**CPU is the default**: MIGraphX has hung this machine's AMD GPU and taken
+the desktop session down with it, #91; `--cpu` is still accepted as a
+no-op), `--threshold F` (cosine similarity, default 0.40), `--create-db` (build the
 database named by `FACES_DB` in `.env` from `database/schema.sql`, creating
 missing parent directories; refuses an existing non-empty database and
 exits 1; `ROLL_DIR` is optional with it — omit it to create only, pass it to
