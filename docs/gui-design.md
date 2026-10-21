@@ -588,8 +588,13 @@ Double-click opens the full-image focus mode (§3).
       `Card | Group | Selection` with a live face count (H3). Opening
       it follows the selection rules (Q1/G3): on an object **inside**
       the current selection the selection is kept; **outside**, the
-      selection becomes that card (header → that cluster); `Selection`
-      is the default scope choice.
+      selection becomes that card (header → that cluster). The
+      **scope default follows the invocation site** (final #101
+      answer): Edit on a **card → `Card`**, Edit on a **header →
+      `Group`**, bottom bar → **`Selection`** (greyed at N = 0); the
+      selector switches scope explicitly and **Apply binds the stage to
+      the chosen scope's faceIds**, which Accept then commits (the
+      review advance works off those ids too).
     - **Buttons**: `Apply` = stage + close (screen preview), `Accept` =
       stage + commit (the shortcut — “Accept is what makes my changes
       permanent”, Q3), `Cancel`/Esc = discard. **Enter = Accept**,
