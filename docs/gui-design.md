@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.22** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.23** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -509,8 +509,24 @@ Double-click opens the full-image focus mode (§3).
       Enter without a highlight submits as before, Esc closes the
       dropdown before it touches anything else. In the AssignDialog a
       pick mirrors the target's group into the group field (unless the
-      user already typed one). Face-card and tree-rename typeahead are
-      deferred until this interaction proves itself.
+      user already typed one).
+    - **Every value field suggests** (#97, v3.23 — the user rule: "all
+      input fields have type-ahead assist"): the name typeahead reaches
+      **every person-name input** — the section-header heading (review
+      mode's main input; it was a plain field, which read as *broken* to
+      a user who had seen suggestions elsewhere), the face-card name and
+      the tree inline rename (lifting the deferral above). **Group-path
+      inputs** get the same dropdown over the existing group paths plus
+      an `ungrouped` entry: section-header Group, detail-pane Group,
+      AssignDialog Group, the merge dialog's bulk-group field and
+      `GroupDialog`. One shared widget backs both (options + hint), so
+      navigation/Enter/Esc behave identically everywhere. A
+      typed-but-unsubmitted value now **commits on blur** wherever the
+      field used to (the detail-pane Name field silently discarded it
+      on click-away), while picking from the dropdown never counts as
+      leaving (mousedown keeps focus). Free text stays plain:
+      descriptions, notes, the tree filter, the alias list, settings
+      numbers.
 22. **Keyboard shortcut set** (#68, extends #53) ⇒ shortcuts act on the
     selection, or on the hovered/last-selected card when nothing is
     selected (the Ctrl-G rule): **Ctrl-G** toggles the section **under
@@ -735,6 +751,47 @@ Double-click opens the full-image focus mode (§3).
     `build_parser()` / `validate_args()` are extracted from `main()` so
     the flag contract is unit-testable without a database or the face
     model.
+
+30. **Review mode flow: apply / accept / Enter** (#96) ⇒ the two commit
+    levels are explicit, and only Review mode moves context:
+    - **Apply** (§4.24 button, or Enter *inside* a heading field) —
+      assigns the typed name/group; the faces stay `provisional` and
+      the **context stays on the cluster**: the screen updates, nothing
+      is final, nothing moves.
+    - **Accept** (rule-bar Accept, `A`) — confirms (`confirmed`) **and
+      advances the context**: if the acted-on section still has faces
+      (partial accept) they become the selection — the cluster stays
+      under work; otherwise the **next section in rendered order
+      becomes the selection** (all of its faces) and is scrolled into
+      view (`data-face-id` + `scrollIntoView({block:'nearest'})`,
+      double-rAF so React has painted); with no next section the
+      selection is cleared. The plan is computed from the pre-accept
+      sections (`acceptAdvancePlan`), which stay valid afterwards:
+      accepting never changes another section's members.
+    - **Enter with no field focused** = Accept & next — **Review mode
+      only**. In-field Enter keeps its §4.24/§4.21 meaning (commit the
+      field); the global handler ignores inputs, so the two never
+      collide.
+    - **Person mode and focus mode: context never moves by itself**
+      (explicit user requirement) — accept/reject/apply only update the
+      clusters and the selection; stepping, opening and closing stay
+      explicit (←/→, clicks, tree).
+31. **Render-performance contract** (#98) ⇒ Review mode must stay
+    interactive over thousands of cards (4116 faces in ~1226 sections,
+    ~70k DOM nodes today):
+    - **Hover is not app state**: the pointer crossing cards must not
+      re-render the tree — a `hoverRef` feeds the cursor-as-target
+      shortcuts (#75) and the highlight is pure CSS
+      (`.face-card:hover`, replacing the `.hovered` class path).
+    - **Cards and handlers are stable**: `React.memo(FaceCard)` over
+      `useCallback`/`useMemo` grid handlers — handler-identity churn
+      would defeat the memo instantly.
+    - **`sections` is computed once per input change** (`useMemo` over
+      snapshot/view/person/focus inputs), never per render.
+    - Deferred to the planned Review-Mode requirements review:
+      section/window virtualisation (IntersectionObserver, no new
+      dependency) and snapshot payload size — decide after measuring
+      1–3, not before.
 
 
 ## 5. Related documents
