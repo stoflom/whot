@@ -8,7 +8,7 @@ import {
 } from "react";
 import * as api from "./api";
 import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
-import AssignDialog from "./components/AssignDialog";
+import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { ErrorToast, FatalError } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
@@ -23,7 +23,15 @@ import {
   type FaceFilter,
 } from "./viewFilters";
 import { groupPathOptions } from "./components/PathTypeahead";
-import FaceAssignDialog from "./components/FaceAssignDialog";
+import {
+  buildStage,
+  objectInsideSelection,
+  sameIdSet,
+  stageSummary,
+  type Prefill,
+  type Stage,
+  type StageScope,
+} from "./stage";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
 import FaceGrid, { type Section } from "./components/FaceGrid";
@@ -88,17 +96,25 @@ export default function App() {
   // #53 (§4.17): most recently selected card — Ctrl-G's fallback target
   // when nothing is hovered
   const lastSelRef = useRef<number | null>(null);
-  const [dialogFaceIds, setDialogFaceIds] = useState<number[] | null>(null);
   // #88 (§4.28): Merge Similar Persons triage + shared merge confirmation
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeInto, setMergeInto] = useState<
     { sourceIds: number[]; targetId?: number } | null
   >(null);
-  const [faceAssign, setFaceAssign] = useState<{
-    faceId: number;
-    personId: number | null; // null = unowned face (§4.13)
-    name: string;
+  // #101 (§4.24): grid editing lives in one dialog; Apply stages a single
+  // pending change on a scope of faces (screen only), Accept commits it
+  const [edit, setEdit] = useState<{
+    defaultScope: StageScope;
+    card: number[];
+    group: number[];
+    prefills: Record<StageScope, Prefill>;
   } | null>(null);
+  const [stage, setStage] = useState<Stage | null>(null);
+  const stageRef = useRef<Stage | null>(null);
+  stageRef.current = stage;
+  /** Q4: a live stage makes a selection change ask escape-or-accept —
+      the pending Set applies after the choice */
+  const [stageConfirm, setStageConfirm] = useState<Set<number> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -182,13 +198,11 @@ export default function App() {
 
   // #25 — Esc closes the double-click image split
   useEffect(() => {
-    // #47: overlay layers own the first Esc — the split view must not close
-    // while a dialog, the context menu or the settings popover is open
-    // (the ones with their own Esc handlers close first, in sequence)
+    // #47/#101 (§4.19 + the Q8 stack): dialogs/menus/popovers own Esc
+    // first, then a live stage's preview-undo (F1), then the split —
+    // while typing, Esc always cancels the field itself
     if (
-      splitImageId == null ||
-      dialogFaceIds != null ||
-      faceAssign != null ||
+      edit != null ||
       confirmRemove != null ||
       menu != null ||
       settingsOpen ||
@@ -197,11 +211,26 @@ export default function App() {
     )
       return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSplitImageId(null);
+      if (e.key !== "Escape") return;
+      const tgt = e.target as HTMLElement | null;
+      const typing =
+        !!tgt &&
+        (tgt.tagName === "INPUT" ||
+          tgt.tagName === "TEXTAREA" ||
+          tgt.tagName === "SELECT" ||
+          tgt.isContentEditable);
+      if (stageRef.current) {
+        if (!typing) {
+          setStage(null);
+          e.preventDefault();
+        }
+        return;
+      }
+      if (splitImageId != null) setSplitImageId(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [splitImageId, dialogFaceIds, faceAssign, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto]);
+  }, [edit, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto, splitImageId]);
 
   const mutate = useCallback(
     async (fn: () => Promise<unknown>, clearSel = false) => {
@@ -219,6 +248,16 @@ export default function App() {
     },
     [refresh]
   );
+
+  // #101/Q4: with a live stage, a selection change first asks
+  // escape-or-accept — the pending Set applies after the choice
+  const changeSel = useCallback((next: Set<number>) => {
+    if (stageRef.current && !sameIdSet(next, selRef.current)) {
+      setStageConfirm(next);
+      return;
+    }
+    setSel(next);
+  }, []);
 
   // ------------------------------------------------------------ selection
 
@@ -238,26 +277,25 @@ export default function App() {
     (id: number) => {
       anchorRef.current = id; // #69: the toggled card becomes the range anchor
       closeSplitForFaces([id]);
-      setSel((prev) => {
-        const n = new Set(prev);
-        if (n.has(id)) n.delete(id);
-        else {
-          n.add(id);
-          lastSelRef.current = id;
-        }
-        return n;
-      });
+      const n = new Set(selRef.current);
+      if (n.has(id)) n.delete(id);
+      else {
+        n.add(id);
+        lastSelRef.current = id;
+      }
+      changeSel(n);
     },
-    [closeSplitForFaces]
+    [closeSplitForFaces, changeSel]
   );
-  const toggleMany = useCallback((ids: number[], on: boolean) => {
-    if (on && ids.length > 0) lastSelRef.current = ids[ids.length - 1];
-    setSel((prev) => {
-      const n = new Set(prev);
+  const toggleMany = useCallback(
+    (ids: number[], on: boolean) => {
+      if (on && ids.length > 0) lastSelRef.current = ids[ids.length - 1];
+      const n = new Set(selRef.current);
       ids.forEach((i) => (on ? n.add(i) : n.delete(i)));
-      return n;
-    });
-  }, []);
+      changeSel(n);
+    },
+    [changeSel]
+  );
 
   // #49 (§4.14) — effective action scope: the active selection when the
   // invoked card is part of it, otherwise just that card. Reads selRef so
@@ -287,13 +325,6 @@ export default function App() {
   // selection; applied sequentially because each call re-assigns seq
   // within its new (person, description) group (§4.4) and concurrent
   // transactions could compute the same next seq
-  const doDesc = useCallback(
-    (id: number, d: string) =>
-      mutate(async () => {
-        for (const i of actionScope(id)) await api.setFaceDescription(i, d);
-      }),
-    [actionScope, mutate]
-  );
   const doPrimary = useCallback(
     (id: number) => {
       const f = facesById.get(id);
@@ -379,18 +410,8 @@ export default function App() {
         .filter((f) => matchesStatusFilter(f.link_status, next))
         .map((f) => f.id)
     );
-    setSel((prev) => {
-      let hit = false;
-      for (const id of prev)
-        if (!visible.has(id)) {
-          hit = true;
-          break;
-        }
-      if (!hit) return prev;
-      const n = new Set(prev);
-      for (const id of [...n]) if (!visible.has(id)) n.delete(id);
-      return n;
-    });
+    const kept = [...selRef.current].filter((id) => visible.has(id));
+    if (kept.length !== selRef.current.size) changeSel(new Set(kept));
     mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
   };
   // #99 (§4.9): persons-view cluster grouping — accuracy (default) or one
@@ -408,6 +429,67 @@ export default function App() {
   }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
 
+  // #101 (§4.24): the dialog engine — openEdit reads the sections via
+  // the latest-value ref (it only fires on events), so the memoised
+  // grid handlers and faceMenu can share it without ordering traps
+  const prefillFor = useCallback(
+    (ids: number[]): Prefill => {
+      if (ids.length === 0) return {};
+      const names = new Set<string>();
+      const groups = new Set<string>();
+      const descs = new Set<string>();
+      for (const id of ids) {
+        const f = facesById.get(id);
+        const p = f?.person_id != null ? personsById.get(f.person_id) : undefined;
+        names.add(p?.name ?? "");
+        groups.add(p?.groups[0] ?? "");
+        descs.add(f?.description ?? "");
+      }
+      const mixed: Prefill["mixed"] = [];
+      if (names.size > 1) mixed.push("name");
+      if (groups.size > 1) mixed.push("group");
+      if (descs.size > 1) mixed.push("desc");
+      return {
+        ...(names.size === 1 ? { name: [...names][0] } : {}),
+        ...(groups.size === 1 ? { group: [...groups][0] } : {}),
+        ...(descs.size === 1 ? { desc: [...descs][0] } : {}),
+        ...(mixed.length ? { mixed } : {}),
+      };
+    },
+    [facesById, personsById]
+  );
+
+  /** Q1/G3 + invocation-site defaults (§4.24): Edit on a card → Card,
+      header → Group, bottom bar → Selection */
+  const openEdit = useCallback(
+    (defaultScope: StageScope, target?: { card?: number; group?: number[] }) => {
+      if (!snap) return;
+      const card = target?.card != null ? [target.card] : [];
+      const group =
+        target?.group ??
+        (target?.card != null
+          ? sectionsRef.current.find((s) => s.faceIds.includes(target.card!))?.faceIds ?? []
+          : []);
+      const objIds = target?.group ?? card;
+      const reselect =
+        objIds.length > 0 && !objectInsideSelection(objIds, selRef.current);
+      // selection rules: inside keeps the selection, outside becomes the object
+      if (reselect) changeSel(new Set(objIds));
+      const selIds = reselect ? objIds : [...selRef.current];
+      setEdit({
+        defaultScope,
+        card,
+        group,
+        prefills: {
+          card: prefillFor(card),
+          group: prefillFor(group),
+          selection: prefillFor(selIds),
+        },
+      });
+    },
+    [snap, changeSel, prefillFor]
+  );
+
   const faceMenu = useCallback((id: number, e: ReactMouseEvent) => {
     const f = facesById.get(id);
     if (!f) return;
@@ -417,7 +499,7 @@ export default function App() {
     if (selRef.current.size === 0) {
       anchorRef.current = id;
       lastSelRef.current = id;
-      setSel(new Set([id]));
+      changeSel(new Set([id]));
     }
     const section = sectionsRef.current.find((s) => s.faceIds.includes(id));
     // #49: actions hit the whole selection when this card is part of it
@@ -440,7 +522,7 @@ export default function App() {
             onClick: () => section && toggleMany(section.faceIds, true),
             disabled: !section,
           },
-          { label: "Clear selection", onClick: () => setSel(new Set()), disabled: selRef.current.size === 0 },
+          { label: "Clear selection", onClick: () => changeSel(new Set()), disabled: selRef.current.size === 0 },
         ],
       },
       {
@@ -470,7 +552,7 @@ export default function App() {
             onClick: () => doRefcrop(id),
             disabled: f.link_status !== "confirmed" || f.person_id == null || multi,
           },
-          { label: label("Assign to person…"), onClick: () => setDialogFaceIds(scope) },
+          { label: label("Assign to person…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
           // #51: pointless while this very image is already open in the split
           ...(f.image_id === splitImageId
             ? []
@@ -479,7 +561,7 @@ export default function App() {
       },
     ]);
   }, [facesById, actionScope, toggle, toggleMany, doAccept, doReject,
-     doPrimary, doRefcrop, splitImageId, openMenu]);
+     doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel]);
 
   const imageAreaMenu = (e: ReactMouseEvent, imageId: number) => {
     if (!snap) return;
@@ -492,7 +574,7 @@ export default function App() {
           { label: "Open in system viewer", onClick: () => api.openImage(imageId) },
           {
             label: "Select all faces",
-            onClick: () => setSel(new Set(faces.map((f) => f.id))),
+            onClick: () => changeSel(new Set(faces.map((f) => f.id))),
             disabled: faces.length === 0,
           },
         ],
@@ -524,10 +606,10 @@ export default function App() {
         items: [
           {
             label: "Select all",
-            onClick: () => setSel(new Set(faces.map((f) => f.id))),
+            onClick: () => changeSel(new Set(faces.map((f) => f.id))),
             disabled: faces.length === 0,
           },
-          { label: "Clear selection", onClick: () => setSel(new Set()), disabled: sel.size === 0 },
+          { label: "Clear selection", onClick: () => changeSel(new Set()), disabled: sel.size === 0 },
           {
             label: "Accept all pending",
             onClick: () => doAccept(pending),
@@ -557,9 +639,9 @@ export default function App() {
       anchorRef.current = id;
       closeSplitForFaces([id]);
       lastSelRef.current = id;
-      setSel(new Set([id]));
+      changeSel(new Set([id]));
     },
-    [closeSplitForFaces]
+    [closeSplitForFaces, changeSel]
   );
   // shift-click: the contiguous range anchor…clicked card; the anchor
   // stays put so repeated shift-clicks re-anchor the same start, the
@@ -576,9 +658,9 @@ export default function App() {
       }
       const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
       lastSelRef.current = id;
-      setSel(new Set(ids.slice(lo, hi + 1)));
+      changeSel(new Set(ids.slice(lo, hi + 1)));
     },
-    [renderedIds, selectOnly]
+    [renderedIds, selectOnly, changeSel]
   );
 
   // #97/#98: one suggestion source per snapshot — stable identity
@@ -592,42 +674,7 @@ export default function App() {
   const gridHandlers = useMemo(() => ({
     faces: facesById,
     persons: personsById,
-    personOptions,
-    pathOptions,
     onContextMenu: faceMenu,
-    onAssignName: (faceId: number, name: string) => {
-      if (!snap) return;
-      const f = facesById.get(faceId);
-      if (!f) return;
-      // #58/#59 (§4.14): per-card inputs honour the selection scope —
-      // an active selection *of any size* is the disambiguation, so the
-      // just-this-face/whole-group dialog is skipped and the assign
-      // applies to the whole selection (group paths: unowned faces have
-      // none, the rest keep their current person's path); the dialog is
-      // left to its original role — cards outside any selection
-      const scope = actionScope(faceId);
-      if (selRef.current.has(faceId)) {
-        doAssign(
-          scope,
-          name,
-          f.person_id != null ? renameGroup(personsById.get(f.person_id)) : ""
-        );
-        return;
-      }
-      if (f.person_id == null) {
-        // unowned face (§4.13): nothing to disambiguate — assign directly
-        doAssign([faceId], name, "");
-        return;
-      }
-      const groupCount = snap.faces.filter((x) => x.person_id === f.person_id).length;
-      if (groupCount <= 1) {
-        // single-face group: whole group == this face — short-circuit the
-        // dialog, but keep the person's group path (rename-in-place, §1.10)
-        doAssign([faceId], name, renameGroup(personsById.get(f.person_id)));
-        return;
-      }
-      setFaceAssign({ faceId, personId: f.person_id, name });
-    },
     onToggle: toggle,
     onSelectOne: selectOnly,
     onRangeSelect: rangeSelect,
@@ -636,66 +683,18 @@ export default function App() {
       if (f) setSplitImageId(f.image_id);
     },
     onToggleMany: toggleMany,
-    onDescription: doDesc,
     onPrimary: doPrimary,
     onRefcrop: doRefcrop,
-    // #49 (§4.14): the card's ✗/undo honours the effective scope — the
-    // same ids the rule-bar buttons act on
+    // #49/#101: the card's actions honour the effective scope — the
+    // selection when the card is part of it (member-preserving), else
+    // just the card; bottom-bar/keys never confirm (Q2/Q9)
     onReject: (id: number) => doReject(actionScope(id)),
     onAccept: (id: number) => doAccept(actionScope(id)),
-    // #77 — the header rule inputs: name changes keep the assign_person
-    // path (accept + name, group applied on create/UnknownN-rename);
-    // *group-only* edits bypass it entirely — assign_person never
-    // touches an existing person's group (F2) and rejects UnknownN
-    // names, which is exactly what made the group input a no-op
-    onAssign: (
-      ids: number[],
-      name: string,
-      group: string,
-      nameChanged: boolean,
-      groupChanged: boolean
-    ) => {
-      if (!nameChanged && !groupChanged) return;
-      if (!nameChanged) {
-        // regroup the persons owning the scope directly — this also
-        // serves 'remember the face, not the name': an UnknownN cluster
-        // can be filed into a group as-is (set_person_group never
-        // validates names)
-        const pids = [
-          ...new Set(
-            ids
-              .map((id) => facesById.get(id)?.person_id)
-              .filter((p): p is number => p != null)
-          ),
-        ];
-        if (pids.length === 0) {
-          setError("type a name first — unowned faces have no person to group");
-          return;
-        }
-        const unowned = ids.length -
-          ids.filter((id) => facesById.get(id)?.person_id != null).length;
-        mutate(async () => {
-          for (const pid of pids) await api.setPersonGroup(pid, group);
-        }, true).then(() => {
-          if (unowned > 0)
-            setError(`${unowned} unowned face(s) skipped — assign a name to group them`);
-        });
-        return;
-      }
-      // name changed: an explicitly typed group must also land when the
-      // target person pre-existed (assign_person drops it, F2)
-      const target = [...personsById.values()].find(
-        (p) => p.name === name.trim()
-      );
-      mutate(async () => {
-        await api.assignPerson(ids, name, group);
-        if (groupChanged && target) await api.setPersonGroup(target.id, group);
-      }, true);
-    },
-  }), [snap, facesById, personsById, personOptions, pathOptions, actionScope,
-      toggle, toggleMany, selectOnly, rangeSelect, doAssign,
-      doAccept, doReject, doDesc, doPrimary, doRefcrop, faceMenu, renameGroup,
-      mutate]);
+    // #101: the grid's only editable surface — one dialog
+    onEditCard: (id: number) => openEdit("card", { card: id }),
+    onEditGroup: (ids: number[]) => openEdit("group", { group: ids }),
+  }), [facesById, personsById, faceMenu, toggle, selectOnly, rangeSelect,
+      toggleMany, doPrimary, doRefcrop, doReject, doAccept, actionScope, openEdit]);
 
   // one section per person over an image's faces — the Rolls image
   // detail and the #55 focus-mode film roll share it
@@ -751,6 +750,7 @@ export default function App() {
           out.push({
             key: `pd-${personId}-${g.description}`,
             title: g.description || "(no description)",
+            description: g.description || undefined,
             faceIds: g.faceIds,
             ruleDefaultName: pname,
             // #38: an UnknownN must leave the Unknown branch on rename
@@ -788,6 +788,10 @@ export default function App() {
               subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
               faceIds: ids,
               ruleDefaultName: pname,
+              // #101: the heading's description label shows the
+              // appearance (display only — the title stays cluster-derived,
+              // F6)
+              description: g.description || undefined,
               // #38: an UnknownN must leave the Unknown branch on rename
               ruleDefaultGroup: rg,
             });
@@ -841,10 +845,13 @@ export default function App() {
   // user's own hand there). The plan comes from the pre-accept sections,
   // which stay valid across the refresh — see reviewFlow.ts.
   const acceptAndNext = useCallback(
-    async (ids: number[]) => {
+    async (ids: number[], preCommit?: () => Promise<void>) => {
       if (!snap) return;
       if (view !== "review" || splitImageId != null) {
-        await mutate(() => api.acceptFaces(ids), true);
+        await mutate(async () => {
+          await preCommit?.();
+          await api.acceptFaces(ids);
+        }, true);
         return;
       }
       const anchor = lastSelRef.current ?? hoverRef.current ?? ids[0] ?? null;
@@ -853,7 +860,10 @@ export default function App() {
           ? null
           : sections.find((s) => s.faceIds.includes(anchor))?.key ?? null;
       const plan = acceptAdvancePlan(sections, actedKey, ids);
-      await mutate(() => api.acceptFaces(ids), false);
+      await mutate(async () => {
+        await preCommit?.();
+        await api.acceptFaces(ids);
+      }, false);
       setSel(new Set(plan?.faceIds ?? []));
       const first = plan?.faceIds[0];
       if (first != null) {
@@ -869,6 +879,71 @@ export default function App() {
     },
     [snap, view, splitImageId, sections, mutate]
   );
+
+  // #101 (§4.24) — stage/commit engine: Apply stages (no DB — the labels
+  // preview), Accept commits the stage ops through the shared
+  // accept-and-advance path; Esc/Undo revert (F1) and a selection change
+  // while staged asks escape-or-accept (Q4). The dialog-opening half
+  // (prefillFor/openEdit) lives above faceMenu, which needs it too.
+  const stageOps = useCallback(
+    async (st: Stage): Promise<void> => {
+      const ids = st.faceIds;
+      if (st.name != null) {
+        // #77 routing kept: the name path carries the group (create /
+        // UnknownN rename); an explicit group also lands when the target
+        // person pre-existed (F2: assign_person never touches its group)
+        const name = st.name.trim();
+        const target = [...personsById.values()].find((p) => p.name === name);
+        await api.assignPerson(ids, name, st.group ?? "");
+        if (st.group != null && target) await api.setPersonGroup(target.id, st.group);
+      } else if (st.group != null) {
+        // group-only: set_person_group never validates names — filing an
+        // UnknownN cluster into a group without naming it stays possible
+        const pids = [
+          ...new Set(
+            ids
+              .map((id) => facesById.get(id)?.person_id)
+              .filter((p): p is number => p != null)
+          ),
+        ];
+        if (pids.length === 0) {
+          setError("type a name first — unowned faces have no person to group");
+        } else {
+          const unowned =
+            ids.length - ids.filter((id) => facesById.get(id)?.person_id != null).length;
+          for (const pid of pids) await api.setPersonGroup(pid, st.group);
+          if (unowned > 0)
+            setError(`${unowned} unowned face(s) skipped — assign a name to group them`);
+        }
+      }
+      if (st.desc != null) {
+        // sequential: each call re-assigns seq in its (person, desc)
+        // group (§4.4) — same reason as the old per-card edits
+        for (const id of ids) await api.setFaceDescription(id, st.desc);
+      }
+    },
+    [facesById, personsById]
+  );
+
+  /** dialog Accept / bottom-bar Accept with a live stage (§4.30) */
+  const acceptStage = useCallback(
+    async (st: Stage) => {
+      setStage(null);
+      await acceptAndNext(st.faceIds, () => stageOps(st));
+    },
+    [acceptAndNext, stageOps]
+  );
+
+  /** bottom-bar Apply (Q2/Q9): a live stage is re-scoped to the whole
+      selection; otherwise the dialog opens on the selection */
+  const barApply = () => {
+    if (!snap) return;
+    if (stage && selRef.current.size > 0) {
+      setStage({ ...stage, faceIds: [...selRef.current] });
+      return;
+    }
+    openEdit("selection");
+  };
 
   // #31 — person stepping: ‹ › and ← → walk the persons in the tree's
   // current (filtered) display order; the shortcut set is listed in the
@@ -977,8 +1052,7 @@ export default function App() {
       )
         return;
       if (
-        dialogFaceIds != null ||
-        faceAssign != null ||
+        edit != null ||
         confirmRemove != null ||
         menu != null ||
         mergeOpen ||
@@ -1011,7 +1085,7 @@ export default function App() {
         e.preventDefault();
         const rendered =
           splitImageId != null ? sectionsForImage(splitImageId) : sections;
-        setSel(new Set(rendered.flatMap((s) => s.faceIds)));
+        changeSel(new Set(rendered.flatMap((s) => s.faceIds)));
         return;
       }
       if (!e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1064,21 +1138,9 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, acceptAndNext, dialogFaceIds, faceAssign, confirmRemove, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto]);
+  }, [stepPerson, acceptAndNext, edit, confirmRemove, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
-
-  // ------------------------------------------------------------ dialog prefill
-
-  const dialogPrefill = useMemo(() => {
-    if (!dialogFaceIds) return { name: "", group: "" };
-    const pids = new Set(dialogFaceIds.map((id) => facesById.get(id)?.person_id));
-    if (pids.size === 1) {
-      const p = personsById.get(pids.values().next().value as number);
-      if (p) return { name: p.name, group: p.groups[0] ?? "" };
-    }
-    return { name: "", group: "" };
-  }, [dialogFaceIds, facesById, personsById]);
 
   // ------------------------------------------------- #88 Merge Similar Persons
 
@@ -1139,8 +1201,8 @@ export default function App() {
     [snap, mergeInto, mutate],
   );
 
-  /** bulk rename/merge over a person selection: open the existing
-      AssignDialog over all their faces (§4.1 rename-merge) */
+  /** bulk rename/merge over a person selection: open the Edit dialog
+      over all their faces (§4.1 rename-merge, #101) */
   const renamePersons = useCallback(
     (ids: number[]) => {
       if (!snap) return;
@@ -1149,9 +1211,11 @@ export default function App() {
         setError("no faces to rename — the selection has no faces");
         return;
       }
-      setDialogFaceIds(faceIds);
+      // #101: rename-selection opens the shared dialog scoped to all
+      // faces of those persons (a synthetic Group scope)
+      openEdit("group", { group: faceIds });
     },
-    [snap],
+    [snap, openEdit],
   );
 
   /** bulk group apply from the review dialog (§4.16, reversible) */
@@ -1370,6 +1434,7 @@ export default function App() {
                   <FaceGrid
                     sections={sectionsForImage(splitRow.id)}
                     sel={sel}
+                    stage={stage}
                     {...gridHandlers}
                     primaryFaceId={displayPerson?.primary_face_id ?? null}
                   />
@@ -1411,12 +1476,13 @@ export default function App() {
                   onImageContextMenu={(e) => imageAreaMenu(e, imgRow.id)}
                 />
               </div>
-              <FaceGrid sections={sections} sel={sel} {...gridHandlers} primaryFaceId={null} />
+              <FaceGrid sections={sections} sel={sel} stage={stage} {...gridHandlers} primaryFaceId={null} />
             </div>
           ) : (
             <FaceGrid
               sections={sections}
               sel={sel}
+              stage={stage}
               {...gridHandlers}
               primaryFaceId={view === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />
@@ -1455,10 +1521,15 @@ export default function App() {
 
       <RuleBar
         count={sel.size}
-        onAssign={() => setDialogFaceIds([...sel])}
-        onAccept={() => acceptAndNext([...sel])}   // #96: advances in review
+        stageLive={stage != null}
+        onApply={barApply}
+        onAccept={() =>
+          stage ? void acceptStage(stage) : acceptAndNext([...selRef.current])
+        }
+        onUndo={() => setStage(null)}
+        onAssign={() => openEdit("selection")}
         onReject={() => doReject([...sel])}
-        onClear={() => setSel(new Set())}
+        onClear={() => changeSel(new Set())}
       />
 
       {mergeOpen && snap && (
@@ -1470,7 +1541,7 @@ export default function App() {
           onApplyGroup={applyGroupToSelection}
           onRename={renamePersons}
           onClose={() => setMergeOpen(false)}
-          escActive={mergeInto == null && dialogFaceIds == null}
+          escActive={mergeInto == null && edit == null}
         />
       )}
       {mergeInto && snap && (
@@ -1488,18 +1559,34 @@ export default function App() {
           onCancel={() => setMergeInto(null)}
         />
       )}
-      {dialogFaceIds && (
-        <AssignDialog
-          count={dialogFaceIds.length}
-          defaultName={dialogPrefill.name}
-          defaultGroup={dialogPrefill.group}
-          persons={snap?.persons ?? []}
-          onSubmit={(n, g) => {
-            const ids = dialogFaceIds;
-            setDialogFaceIds(null);
-            doAssign(ids, n, g);
+      {edit && snap && (
+        <EditDialog
+          defaultScope={edit.defaultScope}
+          counts={{
+            card: edit.card.length,
+            group: edit.group.length,
+            selection: sel.size,
           }}
-          onCancel={() => setDialogFaceIds(null)}
+          prefills={edit.prefills}
+          persons={personOptions}
+          pathOptions={pathOptions}
+          onDone={(r) => {
+            const ids =
+              r.scope === "card"
+                ? edit.card
+                : r.scope === "group"
+                  ? edit.group
+                  : [...selRef.current];
+            setEdit(null);
+            const st = buildStage(ids, r.values, r.touched);
+            if (!st) return;
+            if (r.kind === "apply") {
+              setStage(st); // §4.24: stage only — no DB write
+              return;
+            }
+            void acceptStage(st); // §4.30: stage + commit (+ review advance)
+          }}
+          onCancel={() => setEdit(null)}
         />
       )}
       {settingsOpen && snap && (
@@ -1513,32 +1600,32 @@ export default function App() {
           }}
         />
       )}
-      {faceAssign && (
-        <FaceAssignDialog
-          name={faceAssign.name}
-          groupCount={
-            faceAssign.personId != null
-              ? snap.faces.filter((f) => f.person_id === faceAssign.personId).length
-              : null
+      {stageConfirm && stage && (
+        <ConfirmDialog
+          title="Unapplied changes"
+          body={
+            `Staged: ${stageSummary(stage)} on ${stage.faceIds.length} face(s) — ` +
+            "accept writes it to the database, discard drops it; the selection " +
+            "changes either way (Q4)"
           }
-          onSingle={() => {
-            const a = faceAssign;
-            setFaceAssign(null);
-            doAssign([a.faceId], a.name, "");
+          confirmLabel="accept"
+          cancelLabel="discard"
+          onCancel={() => {
+            const next = stageConfirm;
+            setStage(null);
+            setStageConfirm(null);
+            setSel(next);
           }}
-          onGroup={() => {
-            const a = faceAssign;
-            setFaceAssign(null);
-            const ids = snap.faces
-              .filter((f) => f.person_id === a.personId)
-              .map((f) => f.id);
-            doAssign(
-              ids,
-              a.name,
-              renameGroup(a.personId != null ? personsById.get(a.personId) : undefined)
-            );
+          onConfirm={() => {
+            const st = stage;
+            const next = stageConfirm;
+            setStage(null);
+            setStageConfirm(null);
+            void mutate(async () => {
+              await stageOps(st);
+              await api.acceptFaces(st.faceIds);
+            }, false).then(() => setSel(next));
           }}
-          onCancel={() => setFaceAssign(null)}
         />
       )}
       {confirmRemove && (

@@ -7,12 +7,14 @@ interface Props {
   title: string;
   body: string;
   confirmLabel: string;
+  /** #101/Q4 — the non-default button's label (default "cancel") */
+  cancelLabel?: string;
   danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export default function ConfirmDialog({ title, body, confirmLabel, danger, onConfirm, onCancel }: Props) {
+export default function ConfirmDialog({ title, body, confirmLabel, cancelLabel, danger, onConfirm, onCancel }: Props) {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
@@ -26,7 +28,7 @@ export default function ConfirmDialog({ title, body, confirmLabel, danger, onCon
         <h3>{title}</h3>
         <p className="dim">{body}</p>
         <div className="dialog-actions">
-          <button className="secondary" onClick={onCancel}>cancel</button>
+          <button className="secondary" onClick={onCancel}>{cancelLabel ?? "cancel"}</button>
           <button className={danger ? "bad" : "ok"} onClick={onConfirm}>
             {confirmLabel}
           </button>

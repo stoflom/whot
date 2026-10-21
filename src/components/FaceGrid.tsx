@@ -1,28 +1,7 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type FocusEvent as ReactFocusEvent,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
+import { type MouseEvent as ReactMouseEvent } from "react";
 import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
-import NameTypeahead from "./NameTypeahead";
-import PathTypeahead from "./PathTypeahead";
-import type { SuggestOption } from "./SuggestInput";
-
-// #93 — a blur whose focus target is still inside the same section
-// heading (name → group → apply) is NOT a context change: the heading's
-// fields wait for Enter/apply. Leaving for another card, the tree or
-// another heading — or nowhere (click-away on a card/page area, which
-// keeps click-away-to-apply) — commits as before.
-export function focusLeftHeading(
-  related: EventTarget | null,
-  heading: Pick<HTMLElement, "contains"> | null
-): boolean {
-  if (related == null || heading == null) return true;
-  return !heading.contains(related as Node);
-}
+import { stagedFieldsForSection, type Stage } from "../stage";
 
 export interface Section {
   key: string;
@@ -31,88 +10,49 @@ export interface Section {
   faceIds: number[];
   ruleDefaultName?: string;
   ruleDefaultGroup?: string;
+  /** #101: the heading's description label (the appearance) — the title
+      itself stays derived from the clustering selector (F6) */
+  description?: string;
 }
 
 interface GridProps {
   sections: Section[];
   faces: Map<number, Face>;
   sel: Set<number>;
+  /** #101: the live stage — its fields preview on the covered labels */
+  stage: Stage | null;
   primaryFaceId: number | null;
   onOpen: (id: number) => void;
   /** right-click menu on face tiles (#32) */
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
   persons: Map<number, Person>;
-  /** #97 (§4.21) — every value field suggests: the heading's name field
-      over all persons, its group field over the existing paths (both
-      precomputed once per snapshot in App) */
-  personOptions: Person[];
-  pathOptions: SuggestOption[];
-  onAssignName: (faceId: number, name: string) => void;
   onToggle: (id: number) => void;
   /** #69: plain click — select just this card and drop the range anchor */
   onSelectOne: (id: number) => void;
   /** #69: shift-click — select the range anchor…clicked card */
   onRangeSelect: (id: number) => void;
   onToggleMany: (ids: number[], on: boolean) => void;
-  onDescription: (id: number, d: string) => void;
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
   onReject: (id: number) => void;
   onAccept: (id: number) => void;
-  onAssign: (
-    ids: number[],
-    name: string,
-    group: string,
-    /** which fields the user actually changed (#77) */
-    nameChanged: boolean,
-    groupChanged: boolean
-  ) => void;
+  /** #101 (§4.24): the grid's only editable surface — the Edit dialog */
+  onEditCard: (id: number) => void;
+  onEditGroup: (ids: number[]) => void;
 }
 
 function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps, "sections">) {
-  const [name, setName] = useState(section.ruleDefaultName ?? "");
-  const [group, setGroup] = useState(section.ruleDefaultGroup ?? "");
-  const headingRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (section.ruleDefaultName !== undefined) setName(section.ruleDefaultName);
-  }, [section.ruleDefaultName]);
-  useEffect(() => {
-    if (section.ruleDefaultGroup !== undefined) setGroup(section.ruleDefaultGroup);
-  }, [section.ruleDefaultGroup]);
-
   const allSelected =
     section.faceIds.length > 0 && section.faceIds.every((id) => grid.sel.has(id));
-
-  // #72/#73/#77 — header scope: an active selection wins, whatever its
-  // scope — a cross-group selection must never be narrowed to this
-  // section (that silently dropped the other groups' cards, #73);
-  // with no selection the header acts on its own group (#72). The
-  // change flags route group-only edits to set_person_group (#77)
-  const nameChanged =
-    name.trim() !== "" && name !== (section.ruleDefaultName ?? "");
-  const groupChanged = group !== (section.ruleDefaultGroup ?? "");
-  const apply = () =>
-    grid.onAssign(
-      grid.sel.size > 0 ? [...grid.sel] : section.faceIds,
-      name,
-      group,
-      nameChanged,
-      groupChanged
-    );
-  // commit on Enter/apply, or a blur that actually *leaves* the heading
-  // (#93) — name → group → apply inside one heading waits: firing on the
-  // sibling blur dissolved the UnknownN cluster mid-click and took the
-  // group input with it; guarded so an untouched field never re-fires
-  const commit = () => {
-    if (nameChanged || groupChanged) apply();
-  };
-  const commitOnBlur = (e: ReactFocusEvent<HTMLElement>) => {
-    if (focusLeftHeading(e.relatedTarget, headingRef.current)) commit();
-  };
+  // #101 (§4.24): labels, not inputs — a staged change previews on them
+  const staged = stagedFieldsForSection(grid.stage, section.faceIds);
+  const nameVal = staged.name ?? section.ruleDefaultName ?? "";
+  const groupVal = staged.group ?? section.ruleDefaultGroup ?? "";
+  const descVal = staged.desc ?? section.description ?? "";
 
   return (
     <section className="face-section" data-section-key={section.key}>
-      <div className="face-section-header" ref={headingRef}>
+      <div className="face-section-header">
         <label className="select-all" title="Select whole group">
           <input
             type="checkbox"
@@ -125,31 +65,32 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
         <span className="face-section-count">{section.faceIds.length} face(s)</span>
         {section.subtitle && <span className="face-section-sub">{section.subtitle}</span>}
         <span className="rule">
-          {/* #97 (§4.21): the heading — review mode's main input —
-              suggests persons/paths; the #93 leave-check rides the
-              wrapper so focus into the dropdown stays inside the heading */}
-          <span onBlur={commitOnBlur}>
-            <NameTypeahead
-              className="rule-name"
-              value={name}
-              onChange={setName}
-              persons={grid.personOptions}
-              placeholder="person name"
-              title="Name to assign — the whole selection if any (groups included), else every face in this group (Enter, apply, or click away from this heading to apply)"
-            />
+          {/* #101 (§4.24): the heading edits via one dialog — the labels
+              show the current values (staged ones underlined) */}
+          <span
+            className={`rule-label${staged.name != null ? " staged" : ""}${nameVal ? "" : " empty"}`}
+            title="Person name"
+          >
+            {nameVal || "–"}
           </span>
-          <span onBlur={commitOnBlur}>
-            <PathTypeahead
-              className="rule-group input-group"
-              value={group}
-              onChange={setGroup}
-              options={grid.pathOptions}
-              title="Group — '|' separated, e.g. family|lombards (empty = ungrouped); applied to the whole selection if any, else the whole group (Enter, apply, or click away from this heading to apply)"
-              placeholder="group e.g. family|lombards"
-            />
+          <span
+            className={`rule-label${staged.group != null ? " staged" : ""}${groupVal ? "" : " empty"}`}
+            title="Group"
+          >
+            {groupVal || "–"}
           </span>
-          <button onClick={apply} title="Assign name+group — to the whole selection if any (even across groups), else to every face in this group">
-            apply
+          <span
+            className={`rule-label${staged.desc != null ? " staged" : ""}${descVal ? "" : " empty"}`}
+            title="Description"
+          >
+            {descVal || "–"}
+          </span>
+          <button
+            className="ghost"
+            onClick={() => grid.onEditGroup(section.faceIds)}
+            title="Edit name/group/description — dialog, scope Group (#101, §4.24)"
+          >
+            Edit…
           </button>
         </span>
       </div>
@@ -161,7 +102,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
             <FaceCard
               key={id}
               face={face}
-              personOptions={grid.personOptions}
+              stage={grid.stage}
               selected={grid.sel.has(id)}
               isPrimary={grid.primaryFaceId === id}
               onOpen={grid.onOpen}
@@ -170,11 +111,15 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               personName={
                 face.person_id != null ? grid.persons.get(face.person_id)?.name : undefined
               }
-              onAssignName={grid.onAssignName}
+              personGroup={
+                face.person_id != null
+                  ? grid.persons.get(face.person_id)?.groups[0]
+                  : undefined
+              }
+              onEdit={grid.onEditCard}
               onToggle={grid.onToggle}
               onSelectOne={grid.onSelectOne}
               onRangeSelect={grid.onRangeSelect}
-              onDescription={grid.onDescription}
               onPrimary={grid.onPrimary}
               onRefcrop={grid.onRefcrop}
               onReject={grid.onReject}

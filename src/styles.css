@@ -754,11 +754,39 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 
 /* #97: the suggestion widget keeps the field layout of its flex row —
-   the wrapper span becomes the flex item, the input fills it */
-.face-meta > .typeahead,
+   (the tree rename still hosts one; the grid fields are labels now) */
 .tree-person > .typeahead { flex: 1; min-width: 0; }
-.face-meta .typeahead input,
 .tree-person .typeahead input { width: 100%; }
+/* #101 (§4.24): grid labels + Edit — display-only values with a staged
+   marker (accent underline) and one Edit… button per card/header */
+.card-label,
+.rule-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+.card-label.empty,
+.rule-label.empty { color: var(--dim); }
+.card-label.staged,
+.rule-label.staged {
+  border-bottom: 2px solid var(--accent);
+  color: var(--text);
+}
+.card-values {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 2px 7px 0;
+  min-width: 0;
+}
+.card-values .card-label { flex: 1; min-width: 0; }
+.card-edit { flex: none; font-size: 0.7rem; padding: 0 4px; }
+.rule-label { max-width: 14ch; color: var(--dim); }
+/* #101: the Edit dialog — scope segment + three labelled fields */
+.edit-dialog label { display: flex; flex-direction: column; gap: 2px; }
+.scope-seg { display: flex; gap: 4px; margin: 0.2rem 0 0.6rem; }
+.scope-seg button { flex: 1; font-size: 0.8rem; }
 /* heading fields keep their fixed widths (the input's classes still apply,
    but the span must not shrink below them) */
 .face-section-header .rule .typeahead { flex: none; }

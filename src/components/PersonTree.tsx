@@ -116,7 +116,7 @@ interface Props {
   /** #88 (§4.28) — merge a (multi-)selection into a person: context menu
       (no targetId → typeahead in the dialog) and DnD (targetId set) */
   onMergeInto: (ids: number[], targetId?: number) => void;
-  /** #88 (§4.28) — rename-merge a multi-selection via AssignDialog */
+  /** #88 (§4.28) — rename-merge a multi-selection via the Edit dialog (#101) */
   onRenameSelection?: (ids: number[]) => void;
 }
 
