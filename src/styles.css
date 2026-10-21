@@ -103,6 +103,21 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 /* #99: cluster-group toggle + status filter in the top bar */
 .topbar-right .seg { display: inline-flex; gap: 2px; }
 .topbar-right label { display: inline-flex; align-items: center; gap: 0.35rem; }
+/* #100: busy roller — animated ring beside 'working…' while a mutation
+   is in flight; the spin stops for users who asked for less motion */
+.busy-roller {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid var(--dim);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: busy-spin 0.8s linear infinite;
+}
+@keyframes busy-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .busy-roller { animation: none; border-top-color: var(--dim); }
+}
 .topbar-right select {
   font: inherit;
   background: var(--panel2);

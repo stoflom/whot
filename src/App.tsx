@@ -1209,7 +1209,13 @@ export default function App() {
           </button>
         </nav>
         <span className="topbar-right">
-          {busy && <span className="dim">working…</span>}
+          {busy && (
+            <>
+              {/* #100: an animated roller — a static word is too easy to miss */}
+              <span className="busy-roller" title="working…" />
+              <span className="dim">working…</span>
+            </>
+          )}
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}
@@ -1315,7 +1321,7 @@ export default function App() {
                 onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
               >
                 <option value="all">All</option>
-                <option value="provisional">Provisional</option>
+                <option value="provisional">New</option>
                 <option value="confirmed">Accepted</option>
                 <option value="rejected">Rejected</option>
               </select>
