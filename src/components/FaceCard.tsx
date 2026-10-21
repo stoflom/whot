@@ -109,6 +109,13 @@ function FaceCard({
       </label>
       <div className="face-img">
         {img ? <img src={img} alt="" /> : <div className="face-img-loading" />}
+        {/* #102: the name sits inside the frame, at the top — its own strip */}
+        <span
+          className={`card-label name${staged.name != null ? " staged" : ""}${nameVal ? "" : " empty"}`}
+          title="Person name"
+        >
+          {nameVal || "–"}
+        </span>
         {isPrimary && <span className="face-badge primary">★</span>}
         <span className={`face-badge status status-${face.link_status}`}>
           {face.link_status === "provisional"
@@ -118,32 +125,30 @@ function FaceCard({
               : "✗"}
         </span>
       </div>
-      <div className="face-meta">
+      {/* #102: group and description as full-width rows, then accuracy +
+          Edit… — the three fields stay visually distinct */}
+      <div className="card-row">
         <span
-          className={`card-label name${staged.name != null ? " staged" : ""}${nameVal ? "" : " empty"}`}
-          title="Person name"
+          className={`card-label group${staged.group != null ? " staged" : ""}${groupVal ? "" : " empty"}`}
+          title="Group"
         >
-          {nameVal || "–"}
+          {groupVal || "–"}
         </span>
+      </div>
+      <div className="card-row">
+        <span
+          className={`card-label desc${staged.desc != null ? " staged" : ""}${descVal ? "" : " empty"}`}
+          title="Description"
+        >
+          {descVal || "–"}
+        </span>
+      </div>
+      <div className="card-foot">
         <span
           className="face-conf"
           title="Confidence — recognizer match score (read-only)"
         >
           {Math.round(face.confidence * 100)}%
-        </span>
-      </div>
-      <div className="card-values">
-        <span
-          className={`card-label${staged.group != null ? " staged" : ""}${groupVal ? "" : " empty"}`}
-          title="Group"
-        >
-          {groupVal || "–"}
-        </span>
-        <span
-          className={`card-label${staged.desc != null ? " staged" : ""}${descVal ? "" : " empty"}`}
-          title="Description"
-        >
-          {descVal || "–"}
         </span>
         <button
           className="ghost card-edit"

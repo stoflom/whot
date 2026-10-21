@@ -7,6 +7,8 @@ interface Props {
   count: number;
   /** a staged (Apply) preview is live — Undo becomes available */
   stageLive: boolean;
+  /** #103: human summary of the live stage, shown beside the buttons */
+  stageText?: string;
   /** with a live stage: re-scope it to the selection; else open the dialog */
   onApply: () => void;
   /** commit the stage (if any) and accept the selection */
@@ -22,6 +24,7 @@ interface Props {
 export default function RuleBar({
   count,
   stageLive,
+  stageText,
   onApply,
   onAccept,
   onUndo,
@@ -65,6 +68,14 @@ export default function RuleBar({
       >
         Accept
       </button>
+      {stageText && (
+        <span
+          className="stage-strip"
+          title="staged preview — Accept commits it, Undo or Esc reverts it (#101, §4.24)"
+        >
+          staged: {stageText}
+        </span>
+      )}
       <button
         disabled={!stageLive}
         onClick={onUndo}

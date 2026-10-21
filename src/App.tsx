@@ -1522,6 +1522,11 @@ export default function App() {
       <RuleBar
         count={sel.size}
         stageLive={stage != null}
+        stageText={
+          stage
+            ? `${stageSummary(stage)} · ${stage.faceIds.length} face(s)`
+            : undefined
+        }
         onApply={barApply}
         onAccept={() =>
           stage ? void acceptStage(stage) : acceptAndNext([...selRef.current])
@@ -1579,7 +1584,15 @@ export default function App() {
                   : [...selRef.current];
             setEdit(null);
             const st = buildStage(ids, r.values, r.touched);
-            if (!st) return;
+            if (!st) {
+              if (r.kind === "accept") {
+                // nothing staged — Accept still accepts the scope (§4.30)
+                if (ids.length > 0) void acceptAndNext([...ids]);
+                return;
+              }
+              setError("nothing to apply — change a field first (#103)");
+              return;
+            }
             if (r.kind === "apply") {
               setStage(st); // §4.24: stage only — no DB write
               return;
