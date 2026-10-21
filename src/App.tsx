@@ -1296,7 +1296,8 @@ export default function App() {
                 ›
               </button>
             </span>
-            {/* #99: cluster group (persons mode) left of the status filter */}
+            {/* #99/#100: cluster group + status filter hug the right side */}
+            <span className="toolbar-right">
             <span
               className="seg"
               title="Person view: how faces form sections — Accuracy = similarity clusters within each description (§4.9); Description = one section per description (threshold ignored)"
@@ -1326,7 +1327,11 @@ export default function App() {
                 <option value="rejected">Rejected</option>
               </select>
             </label>
+            </span>
           </div>
+          {/* #100: the bar is the pane's real header — only the area below
+              it scrolls, so no section content can ever pass above it */}
+          <div className="center-scroll">
           <div className={splitRow ? "center-focus" : undefined}>
             {splitRow ? (
               // #55 (§4.19) — full-image focus mode: the annotated image
@@ -1418,6 +1423,7 @@ export default function App() {
           )}
               </>
             )}
+          </div>
           </div>
         </main>
 

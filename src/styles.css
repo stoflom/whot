@@ -145,7 +145,18 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
   overflow-y: auto;
   padding: 0.5rem;
 }
-.center { flex: 1; overflow-y: auto; min-width: 0; padding: 0.75rem; }
+/* #100: the toolbar is the pane's real header — .center is a plain
+   column and only .center-scroll scrolls. (Sticky pinning was clamped by
+   .center's padding: a strip stayed above the bar through which the
+   sections scrolled.) */
+.center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.center-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 0.75rem 0.75rem; }
 .right {
   width: 290px;
   flex: none;
@@ -496,18 +507,20 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 
 /* center-pane toolbar (#23) */
 .center-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 3;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.15rem 0 0.35rem;
-  margin-bottom: 0.35rem;
+  flex: none;
+  /* #100: at the very top of the pane — no sticky pin, no gap above */
+  padding: 0.6rem 0.75rem 0.4rem;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 .toolbar-left { display: flex; align-items: center; gap: 2px; }
+/* #99/#100: cluster toggle + status filter sit together at the right */
+.center-toolbar .toolbar-right { display: flex; align-items: center; gap: 0.5rem; }
+/* focus mode keeps its inner flex chain — the scroll area IS the pane */
+.center.focus .center-scroll { display: flex; flex-direction: column; overflow: hidden; }
 .nav-pos { font-size: 0.75rem; color: var(--dim); min-width: 2.6em; text-align: center; }
 .center-toolbar label {
   display: flex;
