@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 4.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 4.3** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
 group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
 file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
@@ -8,7 +8,9 @@ file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
 §8.6 coverage attribution — source tags, subtree breakdown, in-scope
 threshold, `!` exclude directive (#86); v4.2: §9.2 decode-space rationale
 correction — the decoders **apply** the EXIF orientation, so the canonical
-space is the displayed image (gui-design §4.29, #89)
+space is the displayed image (gui-design §4.29, #89); v4.3: §10.3 one full
+path per item — the `[i/N]` line carries it, the verdict lines never
+repeat it (#94)
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -437,7 +439,17 @@ same banner. Printed **even with `-q`**.
 ### 10.3 Status updates
 
 - Phase lines (`scanning …`, `found N files`, `[i/N] file`, `staging:
-  …`) while work proceeds — suppressed by `-q`.
+  …`) while work proceeds — suppressed by `-q`. The per-item line
+  (`[i/N] file`) always carries the **full path** — never a basename
+  (#90) — and carries it **once** (#94): the verdict lines that follow
+  (`no faces`, `imported: …`, `already in database — skipping`,
+  `FAILED: …`) print the verdict only and never repeat that path.
+  A diagnostic that does *not* follow a progress line — the closing
+  failure list, standalone per-file warnings — keeps the full path, so
+  it stands alone under `-q` or a split redirect. Applies to every
+  script's output (audited #94: `harvest_legacy`, `import_harvested`
+  and `annotation_snapshot` already print full paths and never repeat
+  one after its progress line).
 - **Heartbeat**: while a script is inside a long operation that prints
   nothing by itself (model load, corpus build, big walks, `VACUUM`),
   a background ticker prints `… <phase> — <N>s` at most every **10 s**,

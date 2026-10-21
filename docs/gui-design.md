@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.21** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.22** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -691,11 +691,17 @@ Double-click opens the full-image focus mode (§3).
     32-bit float TIFF exports of raw development), `≤ 255` are kept,
     larger values are treated as 16-bit; NaN/±inf ⇒ 0/255.
 
-    **Status lines print the full path** of every scanned, skipped,
-    imported and failed file (#90) — with 36 k files in same-named roll
-    folders a bare filename is useless. `-q` still yields exactly
-    header + summary (scripts-design §10), so the path detail is quieted
-    by `-q` and never by anything else.
+    **One full path per item** (#90, #94): the `[i/N] <full path>`
+    progress line identifies every scanned, skipped, imported and failed
+    file — a bare filename is useless across 36 k files in same-named
+    roll folders — and identifies it **once**: the verdict lines that
+    follow (`no faces`, `imported: N face(s), M person(s)`, `already in
+    database — skipping`, `FAILED: …`) print the verdict only; repeating
+    the path under its own progress line is clutter. Diagnostics that
+    stand alone (the closing failure list, warnings about files outside
+    a scan loop) keep the full path. `-q` still yields exactly header +
+    summary (scripts-design §10), so path detail is quieted by `-q` and
+    never by anything else.
 
     **Database handling** (#90): a missing `FACES_DB` file is reported
     as `database not found: <path>` (+ how to create it) and exits 1
