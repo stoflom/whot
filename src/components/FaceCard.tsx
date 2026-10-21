@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face, Person } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
@@ -6,14 +6,12 @@ import NameTypeahead from "./NameTypeahead";
 interface Props {
   face: Face;
   selected: boolean;
-  hovered: boolean;
   isPrimary: boolean;
   onToggle: (id: number) => void;
   /** plain click: select just this card — drops the range anchor (#69) */
   onSelectOne: (id: number) => void;
   /** shift-click: select the range from the anchor to this card (#69) */
   onRangeSelect: (id: number) => void;
-  onHover: (id: number | null) => void;
   /** double-click: open the full image (§3 card double-click) */
   onOpen: (id: number) => void;
   /** right-click context menu (#32) */
@@ -33,15 +31,17 @@ interface Props {
   onAccept: (id: number) => void;
 }
 
-export default function FaceCard({
+// #98 (§4.31): memoised — with the grid handlers stable (one useMemo in
+// App) and hover no longer a prop, every selection/mutation re-render
+// skips the cards whose own props did not change (thousands of cards in
+// review mode)
+function FaceCard({
   face,
   selected,
-  hovered,
   isPrimary,
   onToggle,
   onSelectOne,
   onRangeSelect,
-  onHover,
   onOpen,
   onContextMenu,
   personName,
@@ -78,11 +78,9 @@ export default function FaceCard({
 
   return (
     <div
-      className={`face-card status-${face.link_status}${selected ? " selected" : ""}${hovered ? " hovered" : ""}`}
+      className={`face-card status-${face.link_status}${selected ? " selected" : ""}`}
       data-face-id={face.id}              // #96: accept-&-next scroll target
       title={face.name}
-      onMouseEnter={() => onHover(face.id)}
-      onMouseLeave={() => onHover(null)}
       onDoubleClick={() => onOpen(face.id)}
       onContextMenu={(e) => onContextMenu(face.id, e)}
       // #53 (§4.17): ctrl/cmd-click toggles the selection; #69: plain
@@ -209,3 +207,5 @@ export default function FaceCard({
     </div>
   );
 }
+
+export default memo(FaceCard);

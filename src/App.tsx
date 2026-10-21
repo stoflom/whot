@@ -37,7 +37,17 @@ export default function App() {
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [selPersons, setSelPersons] = useState<Set<number>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
-  const [hoverId, setHoverId] = useState<number | null>(null);
+  // #98 (§4.31) — hover and "latest selection" are refs: the pointer
+  // crossing cards must never re-render the app. The highlight is synced
+  // imperatively (data-sync-hover on card + overlay rect) by the
+  // mousemove/scroll listener below.
+  const hoverRef = useRef<number | null>(null);
+  const selRef = useRef<Set<number>>(new Set());
+  selRef.current = sel;
+  // #98: sections handed to callbacks defined *before* them (the memoised
+  // grid handlers) — same latest-value pattern as selRef/hoverRef
+  const sectionsRef = useRef<Section[]>([]);
+  const sectionsForImageRef = useRef<(imgId: number) => Section[]>(() => []);
   const [splitImageId, setSplitImageId] = useState<number | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // #34 — pane sizes (session state); defaults match the stylesheet
@@ -202,62 +212,89 @@ export default function App() {
   // #52 (§4.15): the split follows the selection — it closes itself when
   // the selection moves to a different image and stays open while the new
   // selection is on the image it already shows; manual opens always win
-  const closeSplitForFaces = (ids: number[]) => {
-    if (splitImageId == null) return;
-    if (!ids.some((id) => facesById.get(id)?.image_id === splitImageId))
-      setSplitImageId(null);
-  };
+  const closeSplitForFaces = useCallback(
+    (ids: number[]) => {
+      if (splitImageId == null) return;
+      if (!ids.some((id) => facesById.get(id)?.image_id === splitImageId))
+        setSplitImageId(null);
+    },
+    [splitImageId, facesById]
+  );
 
-  const toggle = (id: number) => {
-    anchorRef.current = id; // #69: the toggled card becomes the range anchor
-    closeSplitForFaces([id]);
-    setSel((prev) => {
-      const n = new Set(prev);
-      if (n.has(id)) n.delete(id);
-      else {
-        n.add(id);
-        lastSelRef.current = id;
-      }
-      return n;
-    });
-  };
-  const toggleMany = (ids: number[], on: boolean) => {
+  const toggle = useCallback(
+    (id: number) => {
+      anchorRef.current = id; // #69: the toggled card becomes the range anchor
+      closeSplitForFaces([id]);
+      setSel((prev) => {
+        const n = new Set(prev);
+        if (n.has(id)) n.delete(id);
+        else {
+          n.add(id);
+          lastSelRef.current = id;
+        }
+        return n;
+      });
+    },
+    [closeSplitForFaces]
+  );
+  const toggleMany = useCallback((ids: number[], on: boolean) => {
     if (on && ids.length > 0) lastSelRef.current = ids[ids.length - 1];
     setSel((prev) => {
       const n = new Set(prev);
       ids.forEach((i) => (on ? n.add(i) : n.delete(i)));
       return n;
     });
-  };
+  }, []);
 
   // #49 (§4.14) — effective action scope: the active selection when the
-  // invoked card is part of it, otherwise just that card
-  const actionScope = (id: number): number[] =>
-    sel.has(id) && sel.size > 1 ? [...sel] : [id];
+  // invoked card is part of it, otherwise just that card. Reads selRef so
+  // the callback identity never changes with the selection (#98).
+  const actionScope = useCallback((id: number): number[] => {
+    const s = selRef.current;
+    return s.has(id) && s.size > 1 ? [...s] : [id];
+  }, []);
 
   // ------------------------------------------------------------ mutations
 
-  const doAssign = (ids: number[], name: string, group: string) =>
-    mutate(() => api.assignPerson(ids, name, group), true);
-  const doAccept = (ids: number[]) => mutate(() => api.acceptFaces(ids), true);
-  const doReject = (ids: number[]) => mutate(() => api.rejectFaces(ids), true);
+  const doAssign = useCallback(
+    (ids: number[], name: string, group: string) =>
+      mutate(() => api.assignPerson(ids, name, group), true),
+    [mutate]
+  );
+  const doAccept = useCallback(
+    (ids: number[]) => mutate(() => api.acceptFaces(ids), true),
+    [mutate]
+  );
+  const doReject = useCallback(
+    (ids: number[]) => mutate(() => api.rejectFaces(ids), true),
+    [mutate]
+  );
   // #58 (§4.14): per-card inputs honour the same scope — editing the
   // description of a card inside a multi-selection updates the whole
   // selection; applied sequentially because each call re-assigns seq
   // within its new (person, description) group (§4.4) and concurrent
   // transactions could compute the same next seq
-  const doDesc = (id: number, d: string) =>
-    mutate(async () => {
-      for (const i of actionScope(id)) await api.setFaceDescription(i, d);
-    });
-  const doPrimary = (id: number) => {
-    const f = facesById.get(id);
-    if (f && f.person_id != null) mutate(() => api.setPrimaryFace(f.person_id!, id));
-  };
-  const doRefcrop = (id: number) => {
-    const f = facesById.get(id);
-    if (f && f.person_id != null) mutate(() => api.addRefcrop(f.person_id!, id));
-  };
+  const doDesc = useCallback(
+    (id: number, d: string) =>
+      mutate(async () => {
+        for (const i of actionScope(id)) await api.setFaceDescription(i, d);
+      }),
+    [actionScope, mutate]
+  );
+  const doPrimary = useCallback(
+    (id: number) => {
+      const f = facesById.get(id);
+      if (f && f.person_id != null) mutate(() => api.setPrimaryFace(f.person_id!, id));
+    },
+    [facesById, mutate]
+  );
+  const doRefcrop = useCallback(
+    (id: number) => {
+      const f = facesById.get(id);
+      if (f && f.person_id != null) mutate(() => api.addRefcrop(f.person_id!, id));
+    },
+    [facesById, mutate]
+  );
 
   // #35 — tree selection: click selects, ctrl/cmd toggles, shift extends
   // over the tree's visible order; the anchor row stays the person shown.
@@ -353,18 +390,18 @@ export default function App() {
   }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
 
-  const faceMenu = (id: number, e: ReactMouseEvent) => {
+  const faceMenu = useCallback((id: number, e: ReactMouseEvent) => {
     const f = facesById.get(id);
     if (!f) return;
     // #75 (cursor-as-target, generalises #74): with an empty selection
     // the right-clicked card selects automatically — the menu then
     // visibly acts on it and the rule bar / A-R / Ctrl-G all agree
-    if (sel.size === 0) {
+    if (selRef.current.size === 0) {
       anchorRef.current = id;
       lastSelRef.current = id;
       setSel(new Set([id]));
     }
-    const section = sections.find((s) => s.faceIds.includes(id));
+    const section = sectionsRef.current.find((s) => s.faceIds.includes(id));
     // #49: actions hit the whole selection when this card is part of it
     const scope = actionScope(id);
     const multi = scope.length > 1;
@@ -375,7 +412,7 @@ export default function App() {
         items: [
           {
             // an empty selection just auto-selected this card (#75)
-            label: sel.has(id) || sel.size === 0 ? "Deselect" : "Select",
+            label: selRef.current.has(id) || selRef.current.size === 0 ? "Deselect" : "Select",
             hint: "Space",
             onClick: () => toggle(id),
           },
@@ -385,7 +422,7 @@ export default function App() {
             onClick: () => section && toggleMany(section.faceIds, true),
             disabled: !section,
           },
-          { label: "Clear selection", onClick: () => setSel(new Set()), disabled: sel.size === 0 },
+          { label: "Clear selection", onClick: () => setSel(new Set()), disabled: selRef.current.size === 0 },
         ],
       },
       {
@@ -423,7 +460,8 @@ export default function App() {
         ],
       },
     ]);
-  };
+  }, [facesById, actionScope, toggle, toggleMany, doAccept, doReject,
+     doPrimary, doRefcrop, splitImageId, openMenu]);
 
   const imageAreaMenu = (e: ReactMouseEvent, imageId: number) => {
     if (!snap) return;
@@ -491,44 +529,57 @@ export default function App() {
   // #69 — anchor + shift-click range selection over the rendered card
   // order (sections render back-to-back, so ranges may span sections)
   const anchorRef = useRef<number | null>(null);
-  const renderedIds = (): number[] =>
-    (splitImageId != null ? sectionsForImage(splitImageId) : sections).flatMap(
-      (s) => s.faceIds
-    );
+  const renderedIds = useCallback(
+    () =>
+      (splitImageId != null
+        ? sectionsForImageRef.current(splitImageId)
+        : sectionsRef.current
+      ).flatMap((s) => s.faceIds),
+    [splitImageId]
+  );
   // plain click: select just this card, drop the anchor
-  const selectOnly = (id: number) => {
-    anchorRef.current = id;
-    closeSplitForFaces([id]);
-    lastSelRef.current = id;
-    setSel(new Set([id]));
-  };
+  const selectOnly = useCallback(
+    (id: number) => {
+      anchorRef.current = id;
+      closeSplitForFaces([id]);
+      lastSelRef.current = id;
+      setSel(new Set([id]));
+    },
+    [closeSplitForFaces]
+  );
   // shift-click: the contiguous range anchor…clicked card; the anchor
   // stays put so repeated shift-clicks re-anchor the same start, the
   // clicked card becomes the new last-selected
-  const rangeSelect = (id: number) => {
-    const ids = renderedIds();
-    const ai = anchorRef.current == null ? -1 : ids.indexOf(anchorRef.current);
-    const ci = ids.indexOf(id);
-    if (ai === -1 || ci === -1) {
-      // anchor gone (filtered/removed) or card not in this view
-      selectOnly(id);
-      return;
-    }
-    const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
-    lastSelRef.current = id;
-    setSel(new Set(ids.slice(lo, hi + 1)));
-  };
+  const rangeSelect = useCallback(
+    (id: number) => {
+      const ids = renderedIds();
+      const ai = anchorRef.current == null ? -1 : ids.indexOf(anchorRef.current);
+      const ci = ids.indexOf(id);
+      if (ai === -1 || ci === -1) {
+        // anchor gone (filtered/removed) or card not in this view
+        selectOnly(id);
+        return;
+      }
+      const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
+      lastSelRef.current = id;
+      setSel(new Set(ids.slice(lo, hi + 1)));
+    },
+    [renderedIds, selectOnly]
+  );
 
-  const gridHandlers = {
+  // #97/#98: one suggestion source per snapshot — stable identity
+  const personOptions = useMemo(() => snap?.persons ?? [], [snap]);
+  const pathOptions = useMemo(() => groupPathOptions(personOptions), [personOptions]);
+
+  // #98 (§4.31): the card handlers are ONE memo — identity changes only
+  // when their inputs do (never per hover, never per selection change:
+  // sel/hover/sections are read through refs), which is what lets
+  // memo(FaceCard) skip untouched cards
+  const gridHandlers = useMemo(() => ({
     faces: facesById,
     persons: personsById,
-    // #97 (§4.21): suggestion sources for every value field, one option
-    // list per snapshot (memoised wholesale in the #98 pass)
-    personOptions: snap?.persons ?? [],
-    pathOptions: groupPathOptions(snap?.persons ?? []),
-    sel,
-    hoverId,
-    onHover: setHoverId,
+    personOptions,
+    pathOptions,
     onContextMenu: faceMenu,
     onAssignName: (faceId: number, name: string) => {
       if (!snap) return;
@@ -541,7 +592,7 @@ export default function App() {
       // none, the rest keep their current person's path); the dialog is
       // left to its original role — cards outside any selection
       const scope = actionScope(faceId);
-      if (sel.has(faceId)) {
+      if (selRef.current.has(faceId)) {
         doAssign(
           scope,
           name,
@@ -627,7 +678,10 @@ export default function App() {
         if (groupChanged && target) await api.setPersonGroup(target.id, group);
       }, true);
     },
-  };
+  }), [snap, facesById, personsById, personOptions, pathOptions, actionScope,
+      toggle, toggleMany, selectOnly, rangeSelect, doAssign,
+      doAccept, doReject, doDesc, doPrimary, doRefcrop, faceMenu, renameGroup,
+      mutate]);
 
   // one section per person over an image's faces — the Rolls image
   // detail and the #55 focus-mode film roll share it
@@ -659,9 +713,10 @@ export default function App() {
     [snap, personsById, renameGroup]
   );
 
-  // plain (unmemoised) on purpose: sectionsForImage is recreated per
-  // render and the #55 film roll needs it too — one pass over faces
-  const sections: Section[] = (() => {
+  // #98 (§4.31): memoised — computed once per snapshot/view/person/focus
+  // change (sectionsForImage is a stable useCallback, so the memo holds),
+  // never per render
+  const sections: Section[] = useMemo(() => {
     if (!snap) return [];
     if (imageId != null) {
       return sectionsForImage(imageId);
@@ -727,7 +782,10 @@ export default function App() {
         // rename must leave the Unknown branch (F7)
         ruleDefaultGroup: renameGroup(p),
       }));
-  })();
+  }, [snap, view, imageId, personId, selectedPerson, clusters,
+      sectionsForImage, renameGroup]);
+  sectionsRef.current = sections;
+  sectionsForImageRef.current = sectionsForImage;
 
   // #96 (§4.30) — Review mode: accept advances the context; person and
   // focus mode route to the plain accept (context only ever moves by the
@@ -740,7 +798,7 @@ export default function App() {
         await mutate(() => api.acceptFaces(ids), true);
         return;
       }
-      const anchor = lastSelRef.current ?? hoverId ?? ids[0] ?? null;
+      const anchor = lastSelRef.current ?? hoverRef.current ?? ids[0] ?? null;
       const actedKey =
         anchor == null
           ? null
@@ -760,7 +818,7 @@ export default function App() {
         );
       }
     },
-    [snap, view, splitImageId, sections, hoverId, mutate]
+    [snap, view, splitImageId, sections, mutate]
   );
 
   // #31 — person stepping: ‹ › and ← → walk the persons in the tree's
@@ -813,11 +871,42 @@ export default function App() {
   // cursor anywhere inside a group, without a prior click/hover on one
   // of its cards — the cursor position is tracked, the DOM resolves it
   useEffect(() => {
+    // #98: one delegated listener feeds BOTH the cursor-as-target
+    // shortcuts (hoverRef) and the card ↔ overlay-rect highlight
+    // (data-sync-hover) — no React state, no re-render per hover
+    let last: number | null = null;
+    const sync = (id: number | null) => {
+      if (id === last) return;
+      if (last != null)
+        document
+          .querySelectorAll(`[data-face-id="${last}"], [data-overlay-face="${last}"]`)
+          .forEach((el) => el.removeAttribute("data-sync-hover"));
+      if (id != null)
+        document
+          .querySelectorAll(`[data-face-id="${id}"], [data-overlay-face="${id}"]`)
+          .forEach((el) => el.setAttribute("data-sync-hover", ""));
+      last = id;
+      hoverRef.current = id;
+    };
+    const recompute = () => {
+      const el = document.elementFromPoint(mouseRef.current.x, mouseRef.current.y);
+      const hit = el?.closest?.("[data-face-id],[data-overlay-face]") as HTMLElement | null;
+      const raw =
+        hit?.getAttribute("data-face-id") ?? hit?.getAttribute("data-overlay-face");
+      sync(raw == null || Number.isNaN(parseInt(raw, 10)) ? null : parseInt(raw, 10));
+    };
     const move = (e: MouseEvent) => {
       mouseRef.current = { x: e.clientX, y: e.clientY };
+      recompute();
     };
     window.addEventListener("mousemove", move);
-    return () => window.removeEventListener("mousemove", move);
+    // scrolling moves cards under a stationary pointer (mouseenter-equivalent)
+    window.addEventListener("scroll", recompute, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("scroll", recompute, { capture: true } as EventListenerOptions);
+      sync(null);
+    };
   }, []);
   const sectionUnderCursor = (rendered: Section[]): Section | undefined => {
     const el = document.elementFromPoint(mouseRef.current.x, mouseRef.current.y);
@@ -858,7 +947,7 @@ export default function App() {
           splitImageId != null ? sectionsForImage(splitImageId) : sections;
         let section = sectionUnderCursor(rendered);
         if (!section) {
-          const targetId = hoverId ?? lastSelRef.current;
+          const targetId = hoverRef.current ?? lastSelRef.current;
           if (targetId == null) return;
           section = rendered.find((s) => s.faceIds.includes(targetId));
         }
@@ -878,7 +967,7 @@ export default function App() {
       }
       if (!e.ctrlKey && !e.metaKey && !e.altKey) {
         if (e.key === " ") {
-          const targetId = hoverId ?? lastSelRef.current;
+          const targetId = hoverRef.current ?? lastSelRef.current;
           if (targetId == null) return;
           e.preventDefault();
           toggle(targetId);
@@ -886,7 +975,7 @@ export default function App() {
           // #75: cursor-as-target — the hovered card stands in for the
           // selection when there is none
           const ids =
-            sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
+            sel.size > 0 ? [...sel] : hoverRef.current != null ? [hoverRef.current] : [];
           if (ids.length > 0) {
             e.preventDefault();
             acceptAndNext(ids);          // #96: advances in review mode
@@ -896,14 +985,14 @@ export default function App() {
           // in-field Enter keeps its commit meaning (the guard above
           // already keeps inputs out of this handler)
           const ids =
-            sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
+            sel.size > 0 ? [...sel] : hoverRef.current != null ? [hoverRef.current] : [];
           if (ids.length > 0) {
             e.preventDefault();
             acceptAndNext(ids);
           }
         } else if (e.key === "r" || e.key === "R") {
           const ids =
-            sel.size > 0 ? [...sel] : hoverId != null ? [hoverId] : [];
+            sel.size > 0 ? [...sel] : hoverRef.current != null ? [hoverRef.current] : [];
           if (ids.length > 0) {
             e.preventDefault();
             doReject(ids);
@@ -926,7 +1015,7 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, acceptAndNext, dialogFaceIds, faceAssign, confirmRemove, hoverId, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto]);
+  }, [stepPerson, acceptAndNext, dialogFaceIds, faceAssign, confirmRemove, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -1186,8 +1275,6 @@ export default function App() {
                     height={splitRow.height}
                     faces={snap.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f))}
                     sel={sel}
-                    hoverId={hoverId}
-                    onHover={setHoverId}
                     onToggle={toggle}
                     onFaceContextMenu={faceMenu}
                     onImageContextMenu={(e) => imageAreaMenu(e, splitRow.id)}
@@ -1196,6 +1283,7 @@ export default function App() {
                 <div className="film-roll">
                   <FaceGrid
                     sections={sectionsForImage(splitRow.id)}
+                    sel={sel}
                     {...gridHandlers}
                     primaryFaceId={displayPerson?.primary_face_id ?? null}
                   />
@@ -1232,18 +1320,17 @@ export default function App() {
                   height={imgRow.height}
                   faces={snap.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f))}
                   sel={sel}
-                  hoverId={hoverId}
-                  onHover={setHoverId}
                   onToggle={toggle}
                   onFaceContextMenu={faceMenu}
                   onImageContextMenu={(e) => imageAreaMenu(e, imgRow.id)}
                 />
               </div>
-              <FaceGrid sections={sections} {...gridHandlers} primaryFaceId={null} />
+              <FaceGrid sections={sections} sel={sel} {...gridHandlers} primaryFaceId={null} />
             </div>
           ) : (
             <FaceGrid
               sections={sections}
+              sel={sel}
               {...gridHandlers}
               primaryFaceId={view === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />

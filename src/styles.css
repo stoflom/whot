@@ -520,7 +520,8 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .face-rect.status-confirmed { border-color: var(--ok); }
 .face-rect.status-rejected { border-color: var(--bad); opacity: 0.6; }
 .face-rect:hover,
-.face-rect.hover {
+.face-rect.hover,
+.face-rect[data-sync-hover] {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   z-index: 2;
 }
@@ -547,7 +548,10 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 
 /* hover link between overlay rectangles and face cards (#26) */
-.face-card.hovered { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* #98: highlight = pure CSS :hover + the data-sync-hover attribute the
+   delegated mousemove listener toggles (card ↔ overlay rect, no state) */
+.face-card:hover,
+.face-card[data-sync-hover] { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* full-image focus mode (#55, §4.19): image on top at full pane width,
    film roll of this image's faces below; replaces the old side-by-side

@@ -38,8 +38,6 @@ interface GridProps {
   faces: Map<number, Face>;
   sel: Set<number>;
   primaryFaceId: number | null;
-  hoverId: number | null;
-  onHover: (id: number | null) => void;
   onOpen: (id: number) => void;
   /** right-click menu on face tiles (#32) */
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
@@ -165,9 +163,7 @@ function SectionView({ section, ...grid }: { section: Section } & Omit<GridProps
               face={face}
               personOptions={grid.personOptions}
               selected={grid.sel.has(id)}
-              hovered={grid.hoverId === id}
               isPrimary={grid.primaryFaceId === id}
-              onHover={grid.onHover}
               onOpen={grid.onOpen}
               onContextMenu={grid.onContextMenu}
               selSize={grid.sel.size}
