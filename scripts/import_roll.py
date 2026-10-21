@@ -4,11 +4,13 @@
 Pipeline (see docs/gui-design.md §4 and README.md):
   scan -> BLAKE3 hash -> skip existing / detect+embed -> associate -> store
 
-Usage: import_roll.py [--dry-run] [--all] [--recursive] [--cpu]
+Usage: import_roll.py [--dry-run] [--all] [--recursive] [--gpu]
                       [--threshold F] [-q] [--create-db] [ROLL_DIR]
 Console (scripts-design §10): startup header, status updates (full paths),
 final summary; -q/--quiet prints only the header and the final summary.
 --create-db builds the database from database/schema.sql (§4.29, #90).
+CPU provider by default; --gpu opts in to MIGraphX (§4.29, #91) — its
+compute hangs have wedged this machine's amdgpu and killed the session.
 Run with the insight_env venv python (insightface, cv2, rawpy, blake3).
 """
 from __future__ import annotations
@@ -350,29 +352,33 @@ def _resize_jpeg(img, long_edge: int, quality: int = 88) -> bytes:
 # ---------------------------------------------------------------- detection
 
 class Detector:
-    """insightface FaceAnalysis, loaded once."""
+    """insightface FaceAnalysis, loaded once.
 
-    def __init__(self, cpu: bool = False):
+    **CPU by default**; MIGraphX only behind --gpu (#91): its compute
+    hangs wedged the amdgpu and took the GNOME session down (2026-10-21),
+    so the unsafe path must be requested explicitly."""
+
+    def __init__(self, gpu: bool = False):
         from insightface.app import FaceAnalysis
-        # mirror activate.custom: direct bin/python calls don't inherit the
-        # cache path, and MIGraphX fails hard when it is empty (sessions are
-        # created lazily at first detect, so this must be set up-front)
-        cache = os.environ.setdefault("ORT_MIGRAPHX_MODEL_CACHE_PATH",
-                                      str(Path.home() / ".cache" / "migraphx"))
-        Path(cache).mkdir(parents=True, exist_ok=True)
-        try:
-            if cpu:
-                raise RuntimeError("--cpu requested")
-            self.app = FaceAnalysis(name="buffalo_l",
-                                    providers=["MIGraphXExecutionProvider", "CPUExecutionProvider"])
-            self.app.prepare(ctx_id=0, det_size=(640, 640))
-            # sessions are created lazily on first detect — probe now so a
-            # provider failure surfaces here, where we can fall back
-            self.app.get(np.zeros((640, 640, 3), dtype=np.uint8))
-        except Exception as exc:                       # GPU when it works, CPU otherwise
-            print(f"MIGraphX unavailable ({exc}); falling back to CPU", file=sys.stderr)
-            self.app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-            self.app.prepare(ctx_id=-1, det_size=(640, 640))
+        if gpu:
+            # mirror activate.custom: direct bin/python calls don't inherit
+            # the cache path, and MIGraphX fails hard when it is empty
+            # (sessions are created lazily at first detect, so set it up-front)
+            cache = os.environ.setdefault("ORT_MIGRAPHX_MODEL_CACHE_PATH",
+                                          str(Path.home() / ".cache" / "migraphx"))
+            Path(cache).mkdir(parents=True, exist_ok=True)
+            try:
+                self.app = FaceAnalysis(name="buffalo_l",
+                                        providers=["MIGraphXExecutionProvider", "CPUExecutionProvider"])
+                self.app.prepare(ctx_id=0, det_size=(640, 640))
+                # sessions are created lazily on first detect — probe now so a
+                # provider failure surfaces here, where we can fall back
+                self.app.get(np.zeros((640, 640, 3), dtype=np.uint8))
+                return
+            except Exception as exc:               # GPU when it works, CPU otherwise
+                print(f"MIGraphX unavailable ({exc}); falling back to CPU", file=sys.stderr)
+        self.app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+        self.app.prepare(ctx_id=-1, det_size=(640, 640))
 
     def detect(self, img_bgr) -> list[Detection]:
         faces = self.app.get(img_bgr)
@@ -629,25 +635,40 @@ def assign_missing_primaries(con: sqlite3.Connection) -> None:
     """)
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Flag contract of one run (#90/#91) — extracted from main() so the
+    defaults and refusals are unit-testable without a database or a model."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("roll_dir", type=Path, nargs="?",
                     help="roll directory to import (optional with --create-db)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--all", action="store_true",
                     help="import every image, faceless ones with state no-face (issue #1)")
-    ap.add_argument("--cpu", action="store_true", help="force CPU provider (skip MIGraphX)")
+    ap.add_argument("--gpu", action="store_true",
+                    help="opt in to the MIGraphX GPU provider (CPU is the default, #91)")
+    ap.add_argument("--cpu", action="store_true",
+                    help="deprecated no-op: CPU is the default now (#91)")
     ap.add_argument("--threshold", type=float, default=THRESHOLD_DEFAULT)
     ap.add_argument("--recursive", action="store_true")
     ap.add_argument("--create-db", action="store_true",
                     help="create the database named in .env from database/schema.sql; "
                          "refuses an existing non-empty database (#90)")
     cli_console.add_quiet_arg(ap)
-    args = ap.parse_args(argv)
+    return ap
+
+
+def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Combinations refused before anything runs (#90)."""
     if args.create_db and args.dry_run:
         ap.error("--create-db cannot be combined with --dry-run (creation is a write)")
     if args.roll_dir is None and not args.create_db:
         ap.error("roll_dir is required unless --create-db is given")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    validate_args(ap, args)
 
     ui = cli_console.Console(quiet=args.quiet)
 
@@ -664,6 +685,7 @@ def main(argv: list[str] | None = None) -> int:
                f"roll dir  : {args.roll_dir or '(none — create only)'}",
                f"recursive : {'yes' if args.recursive else 'no'}",
                f"threshold : {args.threshold}  (model {MODEL_TAG})",
+               f"provider  : {'gpu (MIGraphX, --gpu)' if args.gpu else 'cpu (default, --gpu to opt in)'}",
                f"database  : {db_path}")
 
     # --- database first: never create one implicitly, never misreport a
@@ -695,7 +717,7 @@ def main(argv: list[str] | None = None) -> int:
     check_schema(con, db_path)   # refuse a mismatched schema up-front
     ui.status(f"loading face model {MODEL_TAG} (first run may take a moment)...")
     ui.start_beat("loading face model")
-    detector = Detector(cpu=args.cpu)   # dry-run still detects; it only suppresses writes
+    detector = Detector(gpu=args.gpu)   # dry-run still detects; it only suppresses writes
     ui.stop_beat()
     ui.status("face model ready")
     ui.status("loading match corpus from database...")
