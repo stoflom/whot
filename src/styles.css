@@ -246,6 +246,25 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .face-section-count { color: var(--dim); font-size: 0.85rem; }
 .face-section-sub { color: var(--dim); font-size: 0.85rem; font-style: italic; }
 .select-all { cursor: pointer; display: inline-flex; }
+
+/* #108: a one-face section renders compact — heading and card share one
+   row (the conservative import yields many one-face clusters in the
+   initial review; two rows per section collapses to one). Same content
+   and interaction; the .rule-label ellipsis keeps the header in bounds */
+.face-section.single { display: flex; align-items: stretch; }
+.face-section.single .face-section-header {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+  flex-wrap: nowrap;
+}
+.face-section.single .face-grid {
+  flex: 0 0 auto;
+  display: flex;
+  padding: 0.5rem;
+}
+.face-section.single .face-card { flex: 0 0 148px; }
 input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); }
 
 .rule { margin-left: auto; display: flex; gap: 0.4rem; align-items: center; }
@@ -294,14 +313,6 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .face-badge.status.status-confirmed { color: var(--ok); }
 .face-badge.status.status-rejected { color: var(--bad); }
 
-.face-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.4rem;
-  padding: 4px 7px 0;
-  font-size: 0.8rem;
-}
-.face-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .face-conf { color: var(--dim); flex: none; }
 
 .face-desc { margin: 4px 7px 0; padding: 2px 6px; font-size: 0.78rem; }
@@ -745,20 +756,68 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .v-divider:hover { background: var(--accent); }
 
-/* face-card person-name input (#29 addition) */
-.face-person-name {
-  flex: 1;
-  min-width: 0;
-  padding: 2px 6px;
-  font-size: 0.8rem;
-}
-
 /* #97: the suggestion widget keeps the field layout of its flex row —
-   the wrapper span becomes the flex item, the input fills it */
-.face-meta > .typeahead,
+   (the tree rename still hosts one; the grid fields are labels now) */
 .tree-person > .typeahead { flex: 1; min-width: 0; }
-.face-meta .typeahead input,
 .tree-person .typeahead input { width: 100%; }
+/* #101/#102/#103 (§4.24): grid labels — display-only values, visually
+   distinct per field (name plain, group accent, description tag-coloured),
+   an unmistakable staged marker, and one Edit… button per card/header */
+.card-label,
+.rule-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+.card-label.group,
+.rule-label.group { color: var(--accent); }
+.card-label.desc,
+.rule-label.desc { color: var(--tag); }
+.card-label.empty,
+.rule-label.empty { color: var(--dim); }
+/* #103: a staged value must read as “preview on” at a glance */
+.card-label.staged,
+.rule-label.staged {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-bottom: 2px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 3px;
+  color: var(--text);
+  font-weight: 600;
+}
+/* #102: card field order — name strip inside the frame, then the image,
+   full-width group and description rows, then accuracy + Edit… */
+.face-img .card-label.name {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 2px 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 30% 30% 4px 4px / 12px 12px 4px 4px;
+}
+.face-img .card-label.name.empty { color: var(--dim); }
+.card-row { padding: 2px 7px 0; }
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 2px 7px 0;
+}
+.card-edit { flex: none; font-size: 0.7rem; padding: 0 4px; }
+.rule-label { max-width: 14ch; }
+/* #103: the live stage is announced on the bar as well */
+.stage-strip { font-size: 0.78rem; color: var(--accent); }
+/* #101: the Edit dialog — scope segment + three labelled fields */
+.edit-dialog label { display: flex; flex-direction: column; gap: 2px; }
+.scope-seg { display: flex; gap: 4px; margin: 0.2rem 0 0.6rem; }
+.scope-seg button { flex: 1; font-size: 0.8rem; }
 /* heading fields keep their fixed widths (the input's classes still apply,
    but the span must not shrink below them) */
 .face-section-header .rule .typeahead { flex: none; }

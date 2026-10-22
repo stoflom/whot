@@ -1,12 +1,14 @@
-import { memo, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
-import type { Face, Person } from "../api";
+import { memo, type MouseEvent as ReactMouseEvent } from "react";
+import type { Face } from "../api";
 import { useFaceImage } from "../hooks";
-import NameTypeahead from "./NameTypeahead";
+import { stagedFieldsForCard, type Stage } from "../stage";
 
 interface Props {
   face: Face;
   selected: boolean;
   isPrimary: boolean;
+  /** #101: the live stage — its fields preview on this card's labels */
+  stage: Stage | null;
   onToggle: (id: number) => void;
   /** plain click: select just this card — drops the range anchor (#69) */
   onSelectOne: (id: number) => void;
@@ -16,15 +18,16 @@ interface Props {
   onOpen: (id: number) => void;
   /** right-click context menu (#32) */
   onContextMenu: (id: number, e: ReactMouseEvent) => void;
-  /** person's name — the face-meta input assigns that person (#29) */
+  /** the card's person (name + group path) — shown as labels (#101) */
   personName?: string;
-  /** #97 (§4.21) — suggestions for the card's name field */
-  personOptions: Person[];
+  personGroup?: string;
   /** total selection size — ★/◈ are single-face actions and grey out
-      while this card is part of a multi-selection (#49, §4.14) */
-  selSize: number;
-  onAssignName: (faceId: number, name: string) => void;
-  onDescription: (id: number, description: string) => void;
+      while this card is part of a multi-selection (#49, §4.14). Passed
+      only to selected cards (#109): a stable `undefined` is what lets
+      an unselected card's memo hold across toggles elsewhere */
+  selSize?: number;
+  /** #101 (§4.24): the card's only editable surface — the Edit dialog */
+  onEdit: (id: number) => void;
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
   onReject: (id: number) => void;
@@ -32,48 +35,39 @@ interface Props {
 }
 
 // #98 (§4.31): memoised — with the grid handlers stable (one useMemo in
-// App) and hover no longer a prop, every selection/mutation re-render
-// skips the cards whose own props did not change (thousands of cards in
-// review mode)
+// App), every selection/mutation re-render skips the cards whose own
+// props did not change (thousands of cards in review mode).
+// #101 (§4.24): the card shows labels (name, group, description) + one
+// Edit… button — no inline inputs, no blur/commit machinery.
 function FaceCard({
   face,
   selected,
   isPrimary,
+  stage,
   onToggle,
   onSelectOne,
   onRangeSelect,
   onOpen,
   onContextMenu,
   personName,
-  personOptions,
+  personGroup,
   selSize,
-  onAssignName,
-  onDescription,
+  onEdit,
   onPrimary,
   onRefcrop,
   onReject,
   onAccept,
 }: Props) {
   const img = useFaceImage(face.id);
-  const [desc, setDesc] = useState(face.description ?? "");
-  useEffect(() => setDesc(face.description ?? ""), [face.description]);
-  const [pname, setPname] = useState(personName ?? "");
-  useEffect(() => setPname(personName ?? ""), [personName]);
-
-  const commit = () => {
-    if (desc !== (face.description ?? "")) onDescription(face.id, desc);
-  };
-  const commitName = () => {
-    const v = pname.trim();
-    // assigning, not renaming: an existing person merges into (v1.7 §3)
-    if (v && v !== personName) onAssignName(face.id, v);
-    else setPname(personName ?? "");
-  };
+  const staged = stagedFieldsForCard(stage, face.id);
+  const nameVal = staged.name ?? personName ?? "";
+  const groupVal = staged.group ?? personGroup ?? "";
+  const descVal = staged.desc ?? face.description ?? "";
   // unowned faces (removed person, §4.13): no primary/reference actions
   const unowned = face.person_id == null;
   // #49 (§4.14): this card is part of a multi-selection — ★/◈ cannot
   // apply to more than one face, so they are greyed out, never re-routed
-  const scopeMulti = selected && selSize > 1;
+  const scopeMulti = selected && (selSize ?? 0) > 1;
   const scopeLabel = scopeMulti ? ` (${selSize} selected)` : "";
 
   return (
@@ -88,9 +82,9 @@ function FaceCard({
       // selects the range from the anchor — double-click-to-open is
       // unaffected
       onClick={(e) => {
-        // clicks inside the card's own controls — checkbox, name/desc
-        // inputs, ★/◈/✗ buttons — are theirs, never a re-selection:
-        // a multi-selection must survive editing a card's fields (#70)
+        // clicks inside the card's own controls — checkbox, Edit and the
+        // ★/◈/✗ buttons — are theirs, never a re-selection: a
+        // multi-selection must survive acting on one card (#70)
         if (
           (e.target as HTMLElement).closest(
             ".face-check, input, textarea, button"
@@ -117,6 +111,13 @@ function FaceCard({
       </label>
       <div className="face-img">
         {img ? <img src={img} alt="" /> : <div className="face-img-loading" />}
+        {/* #102: the name sits inside the frame, at the top — its own strip */}
+        <span
+          className={`card-label name${staged.name != null ? " staged" : ""}${nameVal ? "" : " empty"}`}
+          title="Person name"
+        >
+          {nameVal || "–"}
+        </span>
         {isPrimary && <span className="face-badge primary">★</span>}
         <span className={`face-badge status status-${face.link_status}`}>
           {face.link_status === "provisional"
@@ -126,43 +127,39 @@ function FaceCard({
               : "✗"}
         </span>
       </div>
-      <div className="face-meta">
-        <NameTypeahead
-          className="face-person-name"
-          value={pname}
-          onChange={setPname}
-          persons={personOptions}
-          placeholder="person name"
-          title={
-            scopeMulti
-              ? `Assigning applies to all ${selSize} selected faces`
-              : "Name"
-          }
-          // #97: click-away commits (typed values used to need Enter);
-          // Esc cancels the edit instead — no same-tick blur, so the
-          // stale-closure commit can't fire
-          onLeave={commitName}
-          onEscape={() => setPname(personName ?? "")}
-        />
-        <span className="face-conf" title="Confidence — recognizer match score (read-only)">{Math.round(face.confidence * 100)}%</span>
+      {/* #102: group and description as full-width rows, then accuracy +
+          Edit… — the three fields stay visually distinct */}
+      <div className="card-row">
+        <span
+          className={`card-label group${staged.group != null ? " staged" : ""}${groupVal ? "" : " empty"}`}
+          title="Group"
+        >
+          {groupVal || "–"}
+        </span>
       </div>
-      <input
-        className="face-desc input-desc"
-        placeholder="desc e.g. beard|glasses"
-        // #58 (§4.14): per-card inputs honour the selection scope —
-        // editing here updates every selected face, say so up front
-        title={
-          scopeMulti
-            ? `Editing applies to all ${selSize} selected faces`
-            : "Description"
-        }
-        value={desc}
-        onChange={(e) => setDesc(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-      />
+      <div className="card-row">
+        <span
+          className={`card-label desc${staged.desc != null ? " staged" : ""}${descVal ? "" : " empty"}`}
+          title="Description"
+        >
+          {descVal || "–"}
+        </span>
+      </div>
+      <div className="card-foot">
+        <span
+          className="face-conf"
+          title="Confidence — recognizer match score (read-only)"
+        >
+          {Math.round(face.confidence * 100)}%
+        </span>
+        <button
+          className="ghost card-edit"
+          onClick={() => onEdit(face.id)}
+          title="Edit name/group/description — dialog, scope Card (#101, §4.24)"
+        >
+          Edit…
+        </button>
+      </div>
       <div className="face-actions">
         <button
           title={

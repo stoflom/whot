@@ -17,10 +17,10 @@ interface Props {
   onMergeInto: (ids: number[]) => void;
   /** apply one group path to the selected persons (§4.16, reversible) */
   onApplyGroup: (ids: number[], group: string) => void;
-  /** rename-merge the selection via the existing AssignDialog (§4.1) */
+  /** rename-merge the selection via the Edit dialog (§4.1, #101) */
   onRename: (ids: number[]) => void;
   onClose: () => void;
-  /** false while another dialog owns Esc (stacked AssignDialog) */
+  /** false while another dialog owns Esc (stacked Edit dialog) */
   escActive: boolean;
 }
 

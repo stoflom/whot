@@ -21,6 +21,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import harvest_legacy as hl  # noqa: E402
 import pathmap  # noqa: E402
 
+# #112: test isolation — the operator's real .env (PATH_MAP) must never
+# leak into fixtures: strip PATH_MAP from every env hl.main() would load
+# (an operator map defeats the unmapped-root premise; a broken file
+# aborts main() with 11 tests failing). The scripts are unchanged —
+# they behave as designed (#85/#86).
+_hl_load_env = hl.load_env
+
+
+def _hl_load_env_no_path_map(path):
+    env = _hl_load_env(path)
+    env.pop("PATH_MAP", None)
+    return env
+
+
+hl.load_env = _hl_load_env_no_path_map
+
 MWG_ELEMENT = """<x:xmpmeta><rdf:RDF><rdf:Description>
 <mwg-rs:Regions>
  <rdf:Bag><rdf:li rdf:parseType="Resource">
