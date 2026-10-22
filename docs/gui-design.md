@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.25** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.26** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -77,13 +77,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 │ WhoT Face Manager                [Review] [Rolls]      settings ⚙       │
 ├──────────────┬───────────────────────────────────────────┬───────────────┤
 │ filter       │ group header (select-all ▣ · N faces ·    │ person name   │
-│ ┌──────────┐ │  similarity · rule: [name][group] [apply])│ group path    │
+│ ┌──────────┐ │ name · group · desc · Edit…; similarity   │ group path    │
 │ │persons…  │ ├───────────────────────────────────────────┤ note          │
 │ └──────────┘ │  ▣ face card  ▣ face card  ▣ face card    │ primary face  │
-│ counts:      │  (preview, name,      …                   │ refcrops      │
-│ prov/conf/rej│   conf, desc input,                    (scrollable)      │
+│ counts:      │ (name strip · image · group · desc ·      │ refcrops      │
+│ prov/conf/rej│  accuracy + Edit…)                        │ (scrollable)  │
 ├──────────────┴───────────────────────────────────────────┴───────────────┤
-│ rule bar: N selected · [Assign name…][group…] [Accept] [Reject] [clear]  │
+│ rule bar: N sel · [Apply][Accept][Undo°][Assign…][Reject][clear]         │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -114,8 +114,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   - **Review** (default): all faces that are `provisional` (i.e. still to be
     decided on), **grouped by their importer person** (`UnknownN` clusters).
     Each group section has: select-all checkbox, face count, the current
-    `UnknownN` name, and a **rule** = `[name input][group input][Apply]` that
-    assigns the group's currently selected faces (default: whole group).
+    `UnknownN` name, and **name / group / description labels** with one
+    **Edit…** button — the shared dialog, scope Group (§4.24). A section
+    holding exactly **one face renders compact**: the heading and the card
+    share one row (the conservative import yields many one-face clusters in
+    the initial review, and legitimate single-face persons persist; #108).
   - **Rolls**: imports (roll path + date) as expandable sections; image
     thumbnails per roll; clicking an image opens its faces (same face cards,
     same operations) plus the image preview **annotated with its detected
@@ -156,18 +159,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Face vs person tiles** (#30): face crops render as **rounded squares
   with a large corner radius**, so a face tile never reads as a person
   tile (whose avatar is a small circle) without cropping the face tight.
-- **Face-card name input** (#29): the name in a face card's `face-meta`
-  row is a text input like the description field below it; committing it
+- **Face-card name label** (#29, #101): the card's name is a **label**
+  (the strip inside the image frame), not an input — editing goes through
+  the shared Edit dialog scoped to the card (§4.24); a name commit
   **assigns that person** — an existing person is merged into, a new one is
-  created (`assign_person` semantics, never a collision error). A
-  small dialog asks whether to apply it to **just this face** or the
-  **whole group** of the face's current person (§4.1 move/rename-in-place,
-  group path preserved for the current person on a whole-group rename)
-  — but is **skipped whenever the card is part of an active selection
-  of any size** (#59): the selection *is* the disambiguation and the
-  assign applies to it directly (§4.14 scope). The dialog is also
-  **skipped when it cannot disambiguate** (§1.10): a
-  single-face person or an unowned face assigns directly. The full
+  created (`assign_person` semantics, never a collision error). (The #29
+  face-vs-group disambiguation dialog is retired, #101 — the dialog's scope
+  selector is the disambiguation.) The full
   derived label stays in the tooltip; the detail pane's rename routes
   through the same rename-merge helper (§4.1).
 - **Inline rename** (#29): double-clicking a person row in the tree turns
@@ -231,15 +229,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Right pane — person detail** (when a person is selected): name (editable
   for known persons), group path (editable, `|`-separated; empty ⇒
   Ungrouped), note, primary-face picker, refcrops list.
-- **Rule bar (bottom)**: always visible when ≥1 face is selected in any
-  center-pane view: `N selected · [Assign…][Accept][Reject][clear]`. Assign
-  opens a name+group dialog (name pre-filled with the group's `UnknownN`
-  when the selection is homogeneous).
+- **Rule bar (bottom)**: always visible when ≥1 face is selected **or a
+  stage is live**, in any center-pane view: `N selected · [Apply] [Accept]
+  [Undo°] [Assign name…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
+  preview (a `staged: …` strip shows it), `Accept` commits it, `Undo`
+  greys out without a preview; `Assign name…` opens the shared Edit dialog
+  with scope preset to Selection (§4.24).
 
-Face card: preview image, derived `name`, confidence %, description input
-(`|`-separated tags, edited inline, committed on blur/Enter), star (set as
-primary), status badge (provisional/confirmed/rejected), reject button.
-Double-click opens the full-image focus mode (§3).
+- **Face card** (#102): top to bottom — the **name strip inside the image
+  frame at the top** (label; edited via the card's **Edit…** dialog, §4.24),
+  the image, **group** and **description** as full-width label rows
+  (descriptions are `|`-separated tags), **accuracy + Edit…**, then the
+  action row — star (set as primary), status badge
+  (provisional/confirmed/rejected), reject button.
+  Double-click opens the full-image focus mode (§3).
 - **Accept/reject asymmetry** (#63): *accepted* (`confirmed`) is the
   default status, so the card's reject **button** is the only styled
   action embellishment; acceptance is indicated by the status badge's
@@ -616,8 +619,12 @@ Double-click opens the full-image focus mode (§3).
       `{faceIds, name?, group?, desc?}` bound to its selection; a new
       Apply replaces it; **Undo** (bottom bar, greyed without a
       preview) and **Esc** revert it directly (F1); a **selection
-      change while staged asks escape-or-accept** (Q4). Text is never
-      dropped silently (Q3).
+      change while staged asks escape-or-accept** (Q4). In that dialog
+      **both branches apply the pending selection** (“selection changes
+      either way”); *accept* then commits the stage on its faceIds and
+      does **not** re-drive the review advance — the pending selection
+      simply becomes the selection (#110). Text is never dropped
+      silently (Q3).
     - Commit keeps the #77 field routing — a name change through
       `assign_person` (group applied on create/UnknownN-rename, later
       explicit groups via `set_person_group`), a group-only change
@@ -820,6 +827,16 @@ Double-click opens the full-image focus mode (§3).
       confirmation dialog; selection actions grey out at N = 0 and
       `Undo` greys out without a preview. `Assign name…` opens the
       shared Edit dialog with scope preset to Selection.
+    - **Key/bar Accept with a live stage acts on the stage's faceIds** —
+      the dialog's Accept, the bar's Accept, `A` and global `Enter`
+      all take the one stage-then-commit path; without a stage they act
+      on the selection (#105, #110). Global `Enter` accepts **in Review
+      only** (`A` works in every view, Q10); the advance plan anchors at
+      the **last-selected card**, else the hovered card, else the first
+      accepted id (#110).
+    - **An open modal owns the keyboard**: while any layer above
+      preview-undo in Q8's stack is open (dialog, menu, settings), every
+      other shortcut is suppressed (#107, #110).
     - Rejected faces stay sticky (F2); the Esc ordering of Q8 holds:
       dropdown → menus and dialogs → preview-undo → cancel field edit →
       split close.
@@ -835,10 +852,17 @@ Double-click opens the full-image focus mode (§3).
       would defeat the memo instantly.
     - **`sections` is computed once per input change** (`useMemo` over
       snapshot/view/person/focus inputs), never per render.
-    - Deferred to the planned Review-Mode requirements review:
+    - **A selection change re-renders only the sections it touches**
+      (#109): each section is a memo carrying its own selection
+      signature (which of its face ids are selected) and a
+      staged-fields key — a card toggle re-renders the one or two
+      touched sections, not all ~1200. Measured before #109 on the
+      4116-face DB: 87–153 ms per toggle; the signature path keeps the
+      interactive cost in the single-digit-ms range.
+    - Deferred, tracked in #111:
       section/window virtualisation (IntersectionObserver, no new
       dependency) and snapshot payload size — decide after measuring
-      1–3, not before.
+      1–4, not before.
 
 
 ## 5. Related documents
