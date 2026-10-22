@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.26** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.27** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -856,9 +856,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       (#109): each section is a memo carrying its own selection
       signature (which of its face ids are selected) and a
       staged-fields key — a card toggle re-renders the one or two
-      touched sections, not all ~1200. Measured before #109 on the
-      4116-face DB: 87–153 ms per toggle; the signature path keeps the
-      interactive cost in the single-digit-ms range.
+      touched sections, not all ~1200. Measured on the 4116-face DB
+      (gui-mock R2): 87–153 ms per toggle before #109, 16–50 ms after —
+      the interactive cost is tens of ms, not the full-tree re-render.
     - Deferred, tracked in #111:
       section/window virtualisation (IntersectionObserver, no new
       dependency) and snapshot payload size — decide after measuring
