@@ -21,10 +21,11 @@ Checks (contract refs: docs/gui-design.md):
   C4  no-op Apply shows feedback (#103)
   C5  selection change with a live stage asks escape-or-accept (Q4)
   C6  Esc ordering: dialog closes first, stage survives, then clears (Q8)
-  R1  layout geometry report (informational, #102)
-  R2  selection-toggle render time (informational, §4.31)
+  C7  compact single-section keeps its select-all interaction (#108)
+  R1  layout geometry + compact single-section rule (#102/#108)
+  R2  selection-toggle render time (informational, §4.31/#109)
 
-Exit code 0 iff all C-checks pass.
+Exit code 0 iff all C-checks and the R1 layout rule pass.
 """
 import json
 import sys
@@ -261,7 +262,7 @@ def c6_esc_ordering(t):
 
 def r1_layout(t):
     fresh(t)
-    rep = js(t, r"""
+    rep, ok = js(t, r"""
       const secs = [...document.querySelectorAll('.face-section')];
       const sizes = secs.map(s => s.querySelectorAll('.face-card').length);
       const hist = sizes.reduce((m, n) => (m[n] = (m[n] || 0) + 1, m), {});
@@ -270,8 +271,29 @@ def r1_layout(t):
       const name = c0 && c0.querySelector('.face-img .card-label.name');
       const img = c0 && c0.querySelector('.face-img');
       const grid = document.querySelector('.face-section .face-grid');
-      return {
+      // #108: compact single-card sections — one-face iff .single, and
+      // the compact row puts heading + card on one line (multi-card
+      // sections must keep the two-row layout)
+      const singles = secs.filter(s => s.querySelectorAll('.face-card').length === 1);
+      const singleClassed = [...document.querySelectorAll('.face-section.single')];
+      const mismatch = singleClassed.length !== singles.length
+        || singles.some(s => !s.classList.contains('single'))
+        || singleClassed.some(s => s.querySelectorAll('.face-card').length !== 1);
+      const rowSample = (el) => {
+        if (!el) return null;
+        const h = el.querySelector('.face-section-header').getBoundingClientRect();
+        const c = el.querySelector('.face-card').getBoundingClientRect();
+        return {rowH: Math.round(el.getBoundingClientRect().height),
+                sameRow: Math.abs(h.top - c.top) <= 12};
+      };
+      const singleSample = rowSample(document.querySelector('.face-section.single'));
+      const multiSample = rowSample(secs.find(s => s.querySelectorAll('.face-card').length > 1));
+      const ok = !mismatch
+        && (!singleSample || singleSample.sameRow)
+        && (!multiSample || !multiSample.sameRow);
+      return [ok, {
         sections: secs.length,
+        singleSections: singles.length,
         sizeHistogram: Object.fromEntries(Object.entries(hist).map(([k, v]) => [k, v]).sort((a, b) => a[0] - b[0])),
         domNodes: document.getElementsByTagName('*').length,
         truncatedLabels: labels.filter(l => l.scrollWidth > l.clientWidth + 1).length,
@@ -282,9 +304,10 @@ def r1_layout(t):
              top: Math.round(name.getBoundingClientRect().top - img.getBoundingClientRect().top)}
           : null,
         gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns : null,
-      };
+        singleSample, multiSample,
+      }];
     """)
-    record("R1 layout report", True, json.dumps(rep))
+    record("R1 layout + compact single sections", ok, json.dumps(rep))
 
 
 def r2_toggle_perf(t):
@@ -301,6 +324,25 @@ def r2_toggle_perf(t):
     record("R2 selection-toggle render ms", True, str(times))
 
 
+def c7_single_section_selectall(t):
+    fresh(t)
+    fid = js(t, "return document.querySelector('.face-section.single .face-card')?.getAttribute('data-face-id')")
+    if fid is None:
+        record("C7 single-section select-all", True,
+               "no single-card sections in view — vacuous")
+        return
+    cb = t.find_element(By.CSS_SELECTOR, ".face-section.single .select-all input")
+    cb.click()
+    time.sleep(0.5)
+    sel1 = js(t, "return document.querySelectorAll('.face-section.single .face-card.selected').length")
+    t.find_element(By.CSS_SELECTOR, ".face-section.single .select-all input").click()
+    time.sleep(0.5)
+    sel2 = js(t, "return document.querySelectorAll('.face-section.single .face-card.selected').length")
+    ok = sel1 == 1 and sel2 == 0
+    record("C7 single-section select-all", ok,
+           f"face {fid}: after 1st click={sel1}, after 2nd={sel2}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -315,6 +357,7 @@ def main():
         c4_noop_apply_feedback(t)
         c5_q4_escape_or_accept(t)
         c6_esc_ordering(t)
+        c7_single_section_selectall(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
