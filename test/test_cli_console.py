@@ -31,6 +31,33 @@ import import_roll as ir  # noqa: E402
 
 REAL_ROOT = ir.PROJECT_ROOT        # captured before any test patches it (#94)
 
+# ---- local-config isolation (#112): hl.main()/ih.main() read the real
+# project .env, so the operator's PATH_MAP (a present file, a missing file,
+# any content) must never decide a console-contract test's outcome.
+def _strip_path_map(module):
+    orig = module.load_env
+
+    def _load_env(path):
+        env = orig(path)
+        env.pop("PATH_MAP", None)
+        return env
+
+    return orig, _load_env
+
+
+_HL_LOAD_ENV, _HL_LOAD_ENV_NO_PM = _strip_path_map(hl)
+_IH_LOAD_ENV, _IH_LOAD_ENV_NO_PM = _strip_path_map(ih)
+
+
+def setUpModule() -> None:
+    hl.load_env = _HL_LOAD_ENV_NO_PM
+    ih.load_env = _IH_LOAD_ENV_NO_PM
+
+
+def tearDownModule() -> None:
+    hl.load_env = _HL_LOAD_ENV
+    ih.load_env = _IH_LOAD_ENV
+
 
 def run_captured(fn, *args, **kw):
     """Run fn(*args) capturing stdout/stderr; returns (rc, out, err)."""

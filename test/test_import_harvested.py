@@ -22,6 +22,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import harvest_legacy as hl        # noqa: E402
 import import_harvested as ih      # noqa: E402
 
+# ---- local-config isolation (#112): main() reads the real project .env, so
+# the operator's PATH_MAP would run the rescue pass against fixtures that
+# state "no path map here" (or hard-error when the file is missing).
+# Local config must never decide a test's outcome.
+_ORIG_LOAD_ENV = ih.load_env
+
+
+def _load_env_without_pathmap(path):
+    env = _ORIG_LOAD_ENV(path)
+    env.pop("PATH_MAP", None)
+    return env
+
+
+def setUpModule() -> None:
+    ih.load_env = _load_env_without_pathmap
+
+
+def tearDownModule() -> None:
+    ih.load_env = _ORIG_LOAD_ENV
+
 SCHEMA = Path(__file__).resolve().parent.parent / "database" / "schema.sql"
 NOW = "2026-10-19T00:00:00"
 H1 = "a" * 64                      # content hash of image 1
