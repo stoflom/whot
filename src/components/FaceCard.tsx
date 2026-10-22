@@ -22,8 +22,10 @@ interface Props {
   personName?: string;
   personGroup?: string;
   /** total selection size — ★/◈ are single-face actions and grey out
-      while this card is part of a multi-selection (#49, §4.14) */
-  selSize: number;
+      while this card is part of a multi-selection (#49, §4.14). Passed
+      only to selected cards (#109): a stable `undefined` is what lets
+      an unselected card's memo hold across toggles elsewhere */
+  selSize?: number;
   /** #101 (§4.24): the card's only editable surface — the Edit dialog */
   onEdit: (id: number) => void;
   onPrimary: (id: number) => void;
@@ -65,7 +67,7 @@ function FaceCard({
   const unowned = face.person_id == null;
   // #49 (§4.14): this card is part of a multi-selection — ★/◈ cannot
   // apply to more than one face, so they are greyed out, never re-routed
-  const scopeMulti = selected && selSize > 1;
+  const scopeMulti = selected && (selSize ?? 0) > 1;
   const scopeLabel = scopeMulti ? ` (${selSize} selected)` : "";
 
   return (

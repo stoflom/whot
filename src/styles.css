@@ -246,6 +246,25 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .face-section-count { color: var(--dim); font-size: 0.85rem; }
 .face-section-sub { color: var(--dim); font-size: 0.85rem; font-style: italic; }
 .select-all { cursor: pointer; display: inline-flex; }
+
+/* #108: a one-face section renders compact — heading and card share one
+   row (the conservative import yields many one-face clusters in the
+   initial review; two rows per section collapses to one). Same content
+   and interaction; the .rule-label ellipsis keeps the header in bounds */
+.face-section.single { display: flex; align-items: stretch; }
+.face-section.single .face-section-header {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+  flex-wrap: nowrap;
+}
+.face-section.single .face-grid {
+  flex: 0 0 auto;
+  display: flex;
+  padding: 0.5rem;
+}
+.face-section.single .face-card { flex: 0 0 148px; }
 input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); }
 
 .rule { margin-left: auto; display: flex; gap: 0.4rem; align-items: center; }
