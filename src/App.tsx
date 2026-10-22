@@ -200,14 +200,19 @@ export default function App() {
   useEffect(() => {
     // #47/#101 (§4.19 + the Q8 stack): dialogs/menus/popovers own Esc
     // first, then a live stage's preview-undo (F1), then the split —
-    // while typing, Esc always cancels the field itself
+    // while typing, Esc always cancels the field itself. The Q4
+    // escape-or-accept dialog is one of those dialogs: clearing the
+    // stage under it both violates the stack and unmounts the dialog
+    // mid-dispatch (its own Esc handler then loses the race and the
+    // pending selection is dropped)
     if (
       edit != null ||
       confirmRemove != null ||
       menu != null ||
       settingsOpen ||
       mergeOpen ||
-      mergeInto != null
+      mergeInto != null ||
+      stageConfirm != null
     )
       return;
     const onKey = (e: KeyboardEvent) => {
@@ -230,7 +235,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [edit, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto, splitImageId]);
+  }, [edit, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto, stageConfirm, splitImageId]);
 
   const mutate = useCallback(
     async (fn: () => Promise<unknown>, clearSel = false) => {
@@ -1051,12 +1056,16 @@ export default function App() {
           tgt.tagName === "BUTTON")
       )
         return;
+      // an open modal dialog owns the keyboard (Q8 stack): never act
+      // behind it — the Q4 escape-or-accept dialog in particular used
+      // to have the letter shortcuts fire under it
       if (
         edit != null ||
         confirmRemove != null ||
         menu != null ||
         mergeOpen ||
-        mergeInto != null
+        mergeInto != null ||
+        stageConfirm != null
       )
         return;
       // #53 (§4.17): Ctrl-G toggles the whole section — the one under
@@ -1095,6 +1104,16 @@ export default function App() {
           e.preventDefault();
           toggle(targetId);
         } else if (e.key === "a" || e.key === "A") {
+          // §4.30: Accept is stage-then-commit — with a live stage the
+          // keys do exactly what the bottom-bar Accept does (commit the
+          // stage, then accept its scope with the review advance); the
+          // old path accepted the selection and silently dropped the
+          // staged edit
+          if (stageRef.current) {
+            e.preventDefault();
+            void acceptStage(stageRef.current);
+            return;
+          }
           // #75: cursor-as-target — the hovered card stands in for the
           // selection when there is none
           const ids =
@@ -1107,6 +1126,11 @@ export default function App() {
           // #96 (§4.30): Enter with no field focused = Accept & next —
           // in-field Enter keeps its commit meaning (the guard above
           // already keeps inputs out of this handler)
+          if (stageRef.current) {
+            e.preventDefault();
+            void acceptStage(stageRef.current);
+            return;
+          }
           const ids =
             sel.size > 0 ? [...sel] : hoverRef.current != null ? [hoverRef.current] : [];
           if (ids.length > 0) {
@@ -1138,7 +1162,7 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, acceptAndNext, edit, confirmRemove, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto]);
+  }, [stepPerson, acceptAndNext, acceptStage, edit, confirmRemove, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto, stageConfirm]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
