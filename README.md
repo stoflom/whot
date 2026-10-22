@@ -121,7 +121,10 @@ Harvest flags: `--sources` (comma list of the canonical names printed by
 `--list-sources`, default all), `--lr-root 'CATALOG=LOCAL'` (repeatable,
 tried in order; maps the catalog's paths onto disk), `--dry-run` (parse and
 count, write nothing), `--no-hash` (skip the BLAKE3 reads for a quick
-first pass). Without `--out` the staging DB is created under
+first pass), `--resume` (rerun against an existing `--out` staging DB —
+e.g. after fixing a path map: full paths already hashed there are never
+read again, `docs/scripts-design.md` §8.7). Without `--out` the staging
+DB is created under
 `~/.cache/whot/harvest/`.
 
 Import flags: `--faces-db` (default `FACES_DB` from `.env`),

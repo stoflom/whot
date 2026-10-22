@@ -10,7 +10,9 @@ threshold, `!` exclude directive (#86); v4.2: §9.2 decode-space rationale
 correction — the decoders **apply** the EXIF orientation, so the canonical
 space is the displayed image (gui-design §4.29, #89); v4.3: §10.3 one full
 path per item — the `[i/N]` line carries it, the verdict lines never
-repeat it (#94)
+repeat it (#94); v5.0: §8.7 `--resume` — a rerun reopens the earlier
+staging DB and reuses its recorded hashes, so already-hashed full paths
+are never read again (#104)
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -66,6 +68,9 @@ The three source families (each enabled by canonical name):
 - **H2 — `faces.db` is never touched.** Not read, not seeded from, not
   written. The only write target is the staging DB, created fresh per run
   (`O_EXCL` create; refusing to overwrite an existing file is an error).
+  The one exception is an explicit `--resume` (§8.7), which reopens the
+  staging DB a previous run created — still never `faces.db`, and never
+  overwriting a recorded hash (they only ever move NULL → a value).
 - **H3 — no image content is imported.** Images are not decoded,
   thumbnailled or copied. The harvester captures the **fs path of the
   image as the source states it**, plus any dimensions the source states
@@ -146,7 +151,7 @@ stay in `images.source_ref/name/file_size` either way.
 scripts/harvest_legacy.py --out STAGING.db \
     [--images DIR …] [--digikam-db P] [--recognition-db P] \
     [--lightroom-catalog P] [--lr-root 'D:/LIVE/=/mnt/…/LIVE' …] \
-    [--sources sidecars-mwgrs,…] [--list-sources] [--dry-run]
+    [--sources sidecars-mwgrs,…] [--resume] [--list-sources] [--dry-run]
 ```
 
 Defaults come from `.env` (`DEFAULT_IMAGES_DIR`, `ARCHIVE_DIR`,
@@ -156,6 +161,9 @@ without `--out` the staging DB is created as
 catalog root onto disk, tried **in order** (map the live tree first), and
 the *mapped* path is the path of record. `--dry-run` parses and counts
 without writing anything at all; `--no-hash` skips the BLAKE3 reads (H3).
+A rerun that should not re-read the images an earlier run already hashed
+(e.g. after fixing a `--path-map`/`--lr-root`) reopens that run's staging
+DB with `--resume` (§8.7).
 
 ### 8.5 Import hand-off
 
@@ -223,6 +231,34 @@ not read as a catastrophe:
    counted `excluded` (own stat, never a warning), skipped before
    unmapped/missing accounting, and never rescued at import time. Same
    prefix rules as rewrites (longest-first, case-insensitive).
+
+### 8.7 Resume — reuse recorded hashes (v5.0, #104)
+
+A harvest over a big archive is dominated by the BLAKE3 reads of image
+bytes (H3). Re-running after fixing a `--path-map`/`--lr-root` — or after
+taking delivery of new files — would otherwise re-read every image that
+was already hashed. A **resume** run avoids exactly that.
+
+`--resume` requires an explicit `--out` naming the staging DB of an
+earlier run, and reopens it instead of creating a fresh one:
+
+1. **Hash reuse.** Every `images` row whose **full path** already carries
+   a `content_hash` is seeded into the hasher's path cache, so those
+   files are **never opened again** — `hasher.hex()` answers from the
+   cache. The summary reports the reused count as `hash_reused`;
+   `hashed` counts only files actually read this run.
+2. **Convergence.** Everything else is harvested normally. The staging
+   writes are get-or-create / `INSERT OR IGNORE`, so an unchanged archive
+   adds no rows; new files, previously ambiguous resolutions and fixed
+   path mappings do. Hashes only ever move NULL → a value (`COALESCE`),
+   so a resume can add a hash but never contradict or erase one.
+3. **Provenance.** The resume is its own `harvest_runs` row (H4); rows
+   already captured keep the `harvest_run_id` of the run that first saw
+   them.
+4. **Guards.** The file must exist and must be a harvest staging DB at
+   the current schema version; `faces.db` remains refused outright (H2).
+   Without `--resume` an existing `--out` stays an error (`O_EXCL`) — a
+   resume is always explicit, never inferred from the file's existence.
 
 ## 9. Harvest import — attaching legacy persons to existing faces (v3.0)
 
