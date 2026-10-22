@@ -22,4 +22,18 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // browser-emulating harness scripts (test/gui-mock) run in-page
+    files: ["test/gui-mock/**/*.js"],
+    languageOptions: {
+      globals: {
+        window: "readonly",
+        document: "readonly",
+        console: "readonly",
+        fetch: "readonly",
+        alert: "readonly",
+        URL: "readonly",
+      },
+    },
+  },
 );
