@@ -22,22 +22,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import harvest_legacy as hl        # noqa: E402
 import import_harvested as ih      # noqa: E402
 
-# #112: test isolation — the operator's real .env (PATH_MAP) must never
-# leak into fixtures: strip PATH_MAP from every env ih.main() would load
-# (an operator map defeats the unmapped-root premise; a broken file
-# aborts main() with the suite red). The scripts are unchanged — they
-# behave as designed (#85/#86).
-_ih_load_env = ih.load_env
-
-
-def _ih_load_env_no_path_map(path):
-    env = _ih_load_env(path)
-    env.pop("PATH_MAP", None)
-    return env
-
-
-ih.load_env = _ih_load_env_no_path_map
-
 SCHEMA = Path(__file__).resolve().parent.parent / "database" / "schema.sql"
 NOW = "2026-10-19T00:00:00"
 H1 = "a" * 64                      # content hash of image 1
