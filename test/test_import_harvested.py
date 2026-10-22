@@ -22,21 +22,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import harvest_legacy as hl        # noqa: E402
 import import_harvested as ih      # noqa: E402
 
-# #112: test isolation — the operator's real .env (PATH_MAP) must never
-# leak into fixtures: strip PATH_MAP from every env ih.main() would load
-# (an operator map defeats the unmapped-root premise; a broken file
-# aborts main() with the suite red). The scripts are unchanged — they
-# behave as designed (#85/#86).
-_ih_load_env = ih.load_env
+# ---- local-config isolation (#112): main() reads the real project .env, so
+# the operator's PATH_MAP would run the rescue pass against fixtures that
+# state "no path map here" (or hard-error when the file is missing).
+# Local config must never decide a test's outcome.
+_ORIG_LOAD_ENV = ih.load_env
 
 
-def _ih_load_env_no_path_map(path):
-    env = _ih_load_env(path)
+def _load_env_without_pathmap(path):
+    env = _ORIG_LOAD_ENV(path)
     env.pop("PATH_MAP", None)
     return env
 
 
-ih.load_env = _ih_load_env_no_path_map
+def setUpModule() -> None:
+    ih.load_env = _load_env_without_pathmap
+
+
+def tearDownModule() -> None:
+    ih.load_env = _ORIG_LOAD_ENV
 
 SCHEMA = Path(__file__).resolve().parent.parent / "database" / "schema.sql"
 NOW = "2026-10-19T00:00:00"

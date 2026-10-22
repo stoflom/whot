@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 4.3** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
 group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
 file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:

@@ -21,21 +21,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import harvest_legacy as hl  # noqa: E402
 import pathmap  # noqa: E402
 
-# #112: test isolation — the operator's real .env (PATH_MAP) must never
-# leak into fixtures: strip PATH_MAP from every env hl.main() would load
-# (an operator map defeats the unmapped-root premise; a broken file
-# aborts main() with 11 tests failing). The scripts are unchanged —
-# they behave as designed (#85/#86).
-_hl_load_env = hl.load_env
+# ---- local-config isolation (#112): main() reads the real project .env, so
+# the operator's PATH_MAP would rewrite the fixtures' D:/LIVE paths and
+# defeat the "nothing mapped" coverage scenarios (or hard-error when the
+# referenced file is missing).  Local config must never decide a test's
+# outcome; tests exercise the path map explicitly (pathmap.parse_path_map /
+# harvest(path_map=...)), never through .env.
+_ORIG_LOAD_ENV = hl.load_env
 
 
-def _hl_load_env_no_path_map(path):
-    env = _hl_load_env(path)
+def _load_env_without_pathmap(path):
+    env = _ORIG_LOAD_ENV(path)
     env.pop("PATH_MAP", None)
     return env
 
 
-hl.load_env = _hl_load_env_no_path_map
+def setUpModule() -> None:
+    hl.load_env = _load_env_without_pathmap
+
+
+def tearDownModule() -> None:
+    hl.load_env = _ORIG_LOAD_ENV
 
 MWG_ELEMENT = """<x:xmpmeta><rdf:RDF><rdf:Description>
 <mwg-rs:Regions>
