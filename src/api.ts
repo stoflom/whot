@@ -33,6 +33,8 @@ export interface Face {
   confidence: number;
   link_status: string;
   state: string;
+  /** #122: display rotation of the face crop, CW (0/90/180/270) */
+  rotation: number;
   import_id: number | null;
   created_at: string;
 }
@@ -42,6 +44,8 @@ export interface ImageRow {
   width: number;
   height: number;
   orientation: string | null;
+  /** #118/#122: EXIF display rotation, CW (0/90/180/270) */
+  rotation: number;
   rtype: string | null;
   state: string;
   first_import_id: number | null;
@@ -98,6 +102,12 @@ export const acceptFaces = (faceIds: number[]) =>
   invoke("accept_faces", { faceIds });
 export const rejectFaces = (faceIds: number[]) =>
   invoke("reject_faces", { faceIds });
+/** #122: rotate the full image ±90° (server state) */
+export const rotateImage = (imageId: number, delta: number) =>
+  invoke("rotate_image", { imageId, delta });
+/** #122: rotate the face crop ±90° (server state) */
+export const rotateFace = (faceId: number, delta: number) =>
+  invoke("rotate_face", { faceId, delta });
 export const setFaceDescription = (faceId: number, description: string) =>
   invoke("set_face_description", { faceId, description });
 export const setPrimaryFace = (personId: number, faceId: number) =>

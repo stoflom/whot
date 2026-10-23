@@ -1,6 +1,7 @@
 import { memo, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face } from "../api";
 import { useFaceImage } from "../hooks";
+import { rotStyle } from "../rotation";
 import { stagedFieldsForCard, type Stage } from "../stage";
 
 interface Props {
@@ -110,7 +111,13 @@ function FaceCard({
         />
       </label>
       <div className="face-img">
-        {img ? <img src={img} alt="" /> : <div className="face-img-loading" />}
+        {img ? (
+          // #122: the crop's stored display rotation, independent of the
+          // full-image rotation
+          <img src={img} alt="" style={rotStyle(face.rotation)} />
+        ) : (
+          <div className="face-img-loading" />
+        )}
         {/* #102: the name sits inside the frame, at the top — its own strip */}
         <span
           className={`card-label name${staged.name != null ? " staged" : ""}${nameVal ? "" : " is-empty"}`}

@@ -1,6 +1,7 @@
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face, ImportRow, ImageRow } from "../api";
 import { useImageThumbImg } from "../hooks";
+import { rotStyle } from "../rotation";
 
 interface Props {
   imports: ImportRow[];
@@ -19,7 +20,7 @@ function ImageThumb({ image, onOpen, onContextMenu }: {
   const img = useImageThumbImg(image.id);
   return (
     <button className="img-thumb" onClick={onOpen} onContextMenu={onContextMenu} title={image.primary_path}>
-      {img ? <img src={img} alt="" /> : <span className="dim">…</span>}
+      {img ? <img src={img} alt="" style={rotStyle(image.rotation)} /> : <span className="dim">…</span>}
       {image.state === "no-face" && <span className="no-face">no face</span>}
     </button>
   );

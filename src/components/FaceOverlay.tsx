@@ -1,6 +1,7 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { Face } from "../api";
-import { useImagePreviewImg } from "../hooks";
+import { useRotatedImage, imagePreview } from "../hooks";
+import { displayDims, rotatedRect } from "../rotation";
 
 // Full-size image with one active, name-labelled rectangle per visible face
 // (design §4.11): percentage-scaled from the canonical images.width/height
@@ -22,6 +23,9 @@ interface Props {
       menu entries don't work in Tauri (#32/#33) */
   onFaceContextMenu?: (id: number, e: ReactMouseEvent) => void;
   onImageContextMenu?: (e: ReactMouseEvent) => void;
+  /** #122: the image's stored display rotation (CW) — the preview is
+      rotated and every rectangle is mapped into display space */
+  rotation?: number;
 }
 
 export default function FaceOverlay({
@@ -33,25 +37,32 @@ export default function FaceOverlay({
   onToggle,
   onFaceContextMenu,
   onImageContextMenu,
+  rotation = 0,
 }: Props) {
-  const url = useImagePreviewImg(imageId);
+  // #122: the pixels are rotated once (memoised hook); the rectangles
+  // are positioned in DISPLAY space (the rotated frame) — same math the
+  // #118 importer uses for harvested boxes
+  const url = useRotatedImage(imagePreview, imageId, rotation);
   if (!url) return <span className="dim">no preview</span>;
+  const { w: dw, h: dh } = displayDims(width, height, rotation);
   return (
     <div className="annotated" onContextMenu={onImageContextMenu}>
       <img src={url} alt="" />
       {width > 0 &&
         height > 0 &&
-        faces.map((f) => (
+        faces.map((f) => {
+          const r = rotatedRect(f, width, height, rotation);
+          return (
           <button
             key={f.id}
             type="button"
             data-overlay-face={f.id}         // #98: sync-hover target
             className={`face-rect status-${f.link_status}${sel.has(f.id) ? " selected" : ""}`}
             style={{
-              left: `${(f.x / width) * 100}%`,
-              top: `${(f.y / height) * 100}%`,
-              width: `${(f.w / width) * 100}%`,
-              height: `${(f.h / height) * 100}%`,
+              left: `${(r.x / dw) * 100}%`,
+              top: `${(r.y / dh) * 100}%`,
+              width: `${(r.w / dw) * 100}%`,
+              height: `${(r.h / dh) * 100}%`,
             }}
             title={`${f.name} — ${Math.round(f.confidence * 100)}% (click to select)`}
             onClick={(e) => {
@@ -62,7 +73,8 @@ export default function FaceOverlay({
           >
             <span className="face-rect-label">{f.name}</span>
           </button>
-        ))}
+          );
+        })}
     </div>
   );
 }

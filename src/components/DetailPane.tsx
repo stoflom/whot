@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
+import { rotStyle } from "../rotation";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
 import type { SuggestOption } from "./SuggestInput";
@@ -107,11 +108,19 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
 
 function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
+  // #122: crop rotations are per-face — the primary face and every
+  // refcrop spin with their own stored angle
+  const rotOf = (faceId: number) =>
+    snapshot?.faces.find((f) => f.id === faceId)?.rotation ?? 0;
   const pathOptions = useGroupPathOptions(snapshot?.persons ?? []);   // #97
   return (
     <div className="dp-person" key={person.id}>
       <div className="dp-avatar" title="Click to make this the primary face" onClick={() => person.primary_face_id && onSetPrimary(person.primary_face_id)}>
-        {primaryImg ? <img src={primaryImg} alt="" /> : <span>?</span>}
+        {primaryImg ? (
+          <img src={primaryImg} alt="" style={rotStyle(rotOf(person.primary_face_id ?? -1))} />
+        ) : (
+          <span>?</span>
+        )}
       </div>
       <Editable
         label="Name"
@@ -161,7 +170,7 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
             </div>
             {rows.map((rc) => (
               <div className="refcrop" key={rc.face_id} title={rc.filename}>
-                <img src={rc.image} alt="" />
+                <img src={rc.image} alt="" style={rotStyle(rotOf(rc.face_id))} />
                 <span className="refcrop-desc">
                   {rc.pinned ? "📌 " : ""}#{rc.seq}
                 </span>

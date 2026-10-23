@@ -89,6 +89,18 @@ fn reject_faces(state: State<AppState>, face_ids: Vec<i64>) -> Result<(), String
     db::set_link_status(state.paths()?, &face_ids, "rejected").map_err(|e| e.to_string())
 }
 
+/// #122 — rotate the full image ±90° (server state; refresh follows).
+#[tauri::command]
+fn rotate_image(state: State<AppState>, image_id: i64, delta: i64) -> Result<i64, String> {
+    db::rotate_image(state.paths()?, image_id, delta).map_err(|e| e.to_string())
+}
+
+/// #122 — rotate the face crop ±90° (server state; refresh follows).
+#[tauri::command]
+fn rotate_face(state: State<AppState>, face_id: i64, delta: i64) -> Result<i64, String> {
+    db::rotate_face(state.paths()?, face_id, delta).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn set_face_description(
     state: State<AppState>,
@@ -188,6 +200,8 @@ pub fn run() {
             assign_person,
             accept_faces,
             reject_faces,
+            rotate_image,
+            rotate_face,
             set_face_description,
             set_primary_face,
             set_person_name,

@@ -177,6 +177,15 @@ export default function App() {
     () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
     [treePersons, personId]
   );
+  // #122: person id -> primary face's stored crop rotation (tree avatars)
+  const primaryRot = useMemo(() => {
+    const m = new Map<number, number>();
+    if (!snap) return m;
+    const rot = new Map(snap.faces.map((f) => [f.id, f.rotation]));
+    for (const p of snap.persons)
+      if (p.primary_face_id != null) m.set(p.id, rot.get(p.primary_face_id) ?? 0);
+    return m;
+  }, [snap]);
   // #31 — the review step list: the persons in the tree's current
   // (filtered) display order; declared early — #125's exhaust check and
   // doAccept/doReject need the index before their point of use
@@ -268,6 +277,16 @@ export default function App() {
       }
     },
     [refresh]
+  );
+
+  // #122: rotations are server state — command, then refresh
+  const rotateImg = useCallback(
+    (imageId: number, delta: number) => mutate(() => api.rotateImage(imageId, delta)),
+    [mutate]
+  );
+  const rotateFace = useCallback(
+    (faceId: number, delta: number) => mutate(() => api.rotateFace(faceId, delta)),
+    [mutate]
   );
 
   // #123: a selection change INSIDE the context never asks — the
@@ -594,6 +613,18 @@ export default function App() {
             onClick: () => doRefcrop(id),
             disabled: f.link_status !== "confirmed" || f.person_id == null || multi,
           },
+          // #122: crop display rotation — per face, independent of the
+          // full-image rotation
+          {
+            label: label("Rotate crop 90° CW"),
+            onClick: () => rotateFace(id, 90),
+            disabled: multi,
+          },
+          {
+            label: label("Rotate crop 90° CCW"),
+            onClick: () => rotateFace(id, -90),
+            disabled: multi,
+          },
           { label: label("Assign to person…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
           // #51: pointless while this very image is already open in the split
           ...(f.image_id === splitImageId
@@ -608,7 +639,7 @@ export default function App() {
     ]);
   }, [facesById, actionScope, toggle, toggleMany, doAccept, doReject,
      doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel,
-     confirmContext]);
+     confirmContext, rotateFace]);
 
   const imageAreaMenu = (e: ReactMouseEvent, imageId: number) => {
     if (!snap) return;
@@ -619,6 +650,15 @@ export default function App() {
       {
         items: [
           { label: "Open in system viewer", onClick: () => api.openImage(imageId) },
+          {
+            // #122: stored display rotation (EXIF key, #118)
+            label: "Rotate 90° CW",
+            onClick: () => rotateImg(imageId, 90),
+          },
+          {
+            label: "Rotate 90° CCW",
+            onClick: () => rotateImg(imageId, -90),
+          },
           {
             label: "Select all faces",
             onClick: () => changeSel(new Set(faces.map((f) => f.id))),
@@ -649,6 +689,15 @@ export default function App() {
             // #123: opening focus mode is a view-context change
             label: "Open full image (focused)",
             onClick: () => confirmContext(() => setSplitImageId(image.id)),
+          },
+          // #122: stored display rotation (EXIF key, #118)
+          {
+            label: "Rotate 90° CW",
+            onClick: () => rotateImg(image.id, 90),
+          },
+          {
+            label: "Rotate 90° CCW",
+            onClick: () => rotateImg(image.id, -90),
           },
         ],
       },
@@ -1404,6 +1453,7 @@ export default function App() {
         <aside className="left" style={{ width: paneSizes.left }}>
           <PersonTree
             persons={treePersons}
+            primaryRot={primaryRot}
             selectedId={personId}
             reviewCount={pendingCount}
             filter={filter}
@@ -1518,7 +1568,24 @@ export default function App() {
                   </span>
                   <span className="dim">
                     {splitRow.width}×{splitRow.height} · {splitRow.state}
+                    {splitRow.rotation ? ` · rotated ${splitRow.rotation}°` : ""}
                   </span>
+                  {/* #122: the stored display rotation — button twin of the
+                      context-menu entries (rotate once, it sticks) */}
+                  <button
+                    className="ghost"
+                    onClick={() => rotateImg(splitRow.id, 90)}
+                    title="Rotate 90° clockwise (stored)"
+                  >
+                    ⟳
+                  </button>
+                  <button
+                    className="ghost"
+                    onClick={() => rotateImg(splitRow.id, -90)}
+                    title="Rotate 90° counter-clockwise (stored)"
+                  >
+                    ⟲
+                  </button>
                   <button
                     className="ghost"
                     onClick={() =>
@@ -1539,6 +1606,7 @@ export default function App() {
                     onToggle={toggle}
                     onFaceContextMenu={faceMenu}
                     onImageContextMenu={(e) => imageAreaMenu(e, splitRow.id)}
+                    rotation={splitRow.rotation} // #122
                   />
                 </div>
                 <div className="film-roll">
@@ -1585,6 +1653,7 @@ export default function App() {
                   onToggle={toggle}
                   onFaceContextMenu={faceMenu}
                   onImageContextMenu={(e) => imageAreaMenu(e, imgRow.id)}
+                  rotation={imgRow.rotation} // #122
                 />
               </div>
               <FaceGrid sections={sections} sel={sel} stage={pending} {...gridHandlers} primaryFaceId={null} />
