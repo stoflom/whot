@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 5.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
 group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
 file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
@@ -16,7 +16,12 @@ are never read again (#104); v5.1: §9.2 normalised boxes scale by the
 decode dims — the source-stated stDim no longer scales them (#115);
 §9.3 default `--min-overlap` 0.60 → 0.50 (#116); §9.6 below-threshold
 counter is per staging face — multi-source inflation note (#117);
-§9.7 CLI line updated.
+§9.7 CLI line updated; v5.2: §8.2 staging v1.2 — `images.rotation`, the
+harvested EXIF display rotation (H3 extended), §9.2 the rotation-aware
+box transform — RAW-space boxes map into the displayed space, and the
+angle lands on `faces.db` `images.rotation` (gui-design §4.31, #118);
+§9.4 faceless same-named persons are shells — the name is reused,
+no `X N` generation (#128).
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -87,6 +92,11 @@ The three source families (each enabled by canonical name):
   absent resolution gets no hash, never a guessed one; `--no-hash` skips
   hashing entirely (e.g. a quick first pass over the archive). The tree
   walk that feeds digiKam's size-based resolution (§8.3) stats files only.
+  v5.2 (#118): the same certain-resolution gate also reads the file's
+  **EXIF Orientation tag** (header metadata only — pixels are still never
+  decoded) and stores the display rotation in `images.rotation` (CW,
+  0/90/180/270; flip orientations 2/4/5/7 have no rotation expression and
+  are stored as NULL, H4).
 - **H4 — capture, not judgement.** Rows are stored as the source said, with
   provenance: canonical `sources.name`, the source's own reference where it
   has one (`faces.source_ref`, `person_refs.ref`), the source's own user
@@ -95,7 +105,7 @@ The three source families (each enabled by canonical name):
   every captured row. No cross-source deduplication, no ambiguous guessing:
   an unresolvable image is counted in the run stats, never guessed.
 
-### 8.2 Staging schema (`database/harvest_schema.sql`, v1.1)
+### 8.2 Staging schema (`database/harvest_schema.sql`, v1.2)
 
 Deliberately modelled on `faces.db` v1.5 naming so the importer is a
 translation, not a redesign — but without content: no `content_hash`, no
@@ -114,14 +124,15 @@ after import).
   identity references: digiKam recognition UUIDs, Lightroom keyword UUIDs
   (`keyword:<id_global>`).
 - `images(id, path, path_origin, content_hash, name, file_size, source_ref,
-  source_id, width, height, harvest_run_id)` — **one row per distinct image
-  path as stated by a source**; `path_origin` records how the path was
-  obtained: `source` (the source states it) or `name-size` (uniquely
-  resolved against the scanned tree — digiKam's album-less images, §8.3).
-  `content_hash` is the BLAKE3 of the file, set **only when the image was
-  certainly resolved and read for hashing** (H3); `name`/`file_size`/
-  `source_ref` keep the source's own identifiers for the importer's
-  matching.
+  source_id, width, height, rotation, harvest_run_id)` — **one row per
+  distinct image path as stated by a source**; `path_origin` records how
+  the path was obtained: `source` (the source states it) or `name-size`
+  (uniquely resolved against the scanned tree — digiKam's album-less
+  images, §8.3). `content_hash` is the BLAKE3 of the file, set **only when
+  the image was certainly resolved and read for hashing** (H3); v1.2 adds
+  `rotation` — the file's EXIF display rotation (CW 0/90/180/270), set
+  under the same gate (H3 v5.2); `name`/`file_size`/`source_ref` keep the
+  source's own identifiers for the importer's matching.
 - `faces(id, image_id, person_id, x, y, w, h, unit, img_w, img_h,
   source_id, source_ref, picked, harvest_run_id)` — corner-origin boxes as
   the source states them: `unit` ∈ `normalized|pixels` plus the source's
@@ -137,7 +148,7 @@ after import).
   tag→image hits, the former `image_persons` table and the
   `sidecars-mpri` source) can never be used and are no longer recorded.
   Tag/catset paths still contribute `person_groups` (group info, §9.4).
-- `schema_version(version, updated_at)` — single row `'1.0'`, exact-match
+- `schema_version(version, updated_at)` — single row `'1.2'`, exact-match
   check like `faces.db`; no migrations (AGENTS.md).
 
 ### 8.3 Image resolution (digiKam)
@@ -316,10 +327,27 @@ space; stDim is kept in the staging record (H4 source-as-stated) but is a
 dead input to the match. The old stDim preference mis-scaled boxes whenever
 the file on disk was a differently-sized export of the same photo (same
 hash, J2 — the sidecar still states the original RAW dims): 22 faces in the
-2026-10-22 run. The 23 faces whose stDim is **transposed** (90° EXIF
-rotation) still cannot be mapped — a rotation swaps box axes, which the
-`inversion` flip vocabulary cannot express; tracked in #118 (rotation
-angle).
+2026-10-22 run.
+
+**v5.2 (#118):** the transposed case is now mappable. The harvest reads
+the file's EXIF display rotation under the H3 gate (§8.2 v1.2);
+`convert_box` takes it as `rotation` and maps the box from **RAW (file)
+space into the displayed space** before any inversion: normalised boxes
+scale by the RAW dims — the db's decode dims with 90/270° swapped — and
+then the corner-origin rectangle is rotated:
+
+| rotation | mapping (W, H = RAW dims) |
+|---|---|
+| 90 CW  | `(x, y, w, h) → (H−y−h, x, h, w)` |
+| 180    | `(x, y, w, h) → (W−x−w, H−y−h, w, h)` |
+| 270 CW | `(x, y, w, h) → (y, W−x−w, h, w)` |
+
+The same math is implemented once for the GUI (`src/rotation.ts`, #122).
+The angle is also **landed on the matched `faces.db` image** —
+`UPDATE images SET rotation=… WHERE rotation=0` — first write wins, so a
+rotation the user already set in the GUI is never overridden. The
+hash-match that gates the import (J2) guarantees the file whose EXIF was
+read is byte-identical to the one the db image displays.
 
 ### 9.3 Matching — the per-face claim model (v4.0, #87)
 
@@ -392,6 +420,18 @@ Per staging person with at least one accepted assignment:
   never guesses identity; otherwise it creates a new person
   (`state='imported'`) and the user merges later via the GUI's assign
   semantics (§4.1).
+- **v5.2 (#128): a faceless same-named person is a shell — the name is
+  reusable.** When no name+group match exists, but a same-named
+  (case-insensitive) person exists with **zero faces** (a faceless group
+  import, or a person the GUI left empty), the harvested faces are
+  linked to that person instead of minting an `X N` generation. The
+  shell's own groups are kept and the harvested groups are *appended*
+  (`INSERT OR IGNORE`, additive — the shell lands under the harvested
+  groups). Precedence among several faceless same-named persons: exact
+  spelling first, then lowest id (first-source order, the same fixed
+  precedence as rule 1). A person whose faces are all *discarded* is
+  **not** faceless — discarded faces are recoverable rows, and linking
+  into a discarded cluster would resurrect identity by guesswork.
 - **v4.0 (#87): agreement is case-insensitive.** Person-name and
   group-set comparisons `casefold`: `Winnie Pelser` = `winnie pelser` =
   `WINNIE PELSER`; `family|Smith` = `Family|Smith`. Only the *stored*
