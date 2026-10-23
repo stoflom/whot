@@ -161,12 +161,17 @@ export default function App() {
   // a person with no matching face disappears from the tree; the
   // surviving bucket drives its counts (an UnknownN whose only face is
   // filtered out vanishes; #28 clarification)
+  // #127 (§4.16): the tree ALWAYS shows every snapshot person — the face
+  // filter only changes the counts the badges show and which faces render
+  // in the grid, never which persons exist (faceless named shells from
+  // #128 must stay findable under their branch or Ungrouped)
   const treePersons = useMemo(() => {
     if (!snap) return [];
     if (faceFilter === "all") return snap.persons;
-    return snap.persons
-      .map((p) => ({ ...p, counts: filterCounts(p.counts, faceFilter) }))
-      .filter((p) => p.counts.total > 0);
+    return snap.persons.map((p) => ({
+      ...p,
+      counts: filterCounts(p.counts, faceFilter),
+    }));
   }, [snap, faceFilter]);
   const displayPerson = useMemo(
     () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
