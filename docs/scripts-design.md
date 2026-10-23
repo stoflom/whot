@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 5.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
 group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
 file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
@@ -12,7 +12,11 @@ space is the displayed image (gui-design §4.29, #89); v4.3: §10.3 one full
 path per item — the `[i/N]` line carries it, the verdict lines never
 repeat it (#94); v5.0: §8.7 `--resume` — a rerun reopens the earlier
 staging DB and reuses its recorded hashes, so already-hashed full paths
-are never read again (#104)
+are never read again (#104); v5.1: §9.2 normalised boxes scale by the
+decode dims — the source-stated stDim no longer scales them (#115);
+§9.3 default `--min-overlap` 0.60 → 0.50 (#116); §9.6 below-threshold
+counter is per staging face — multi-source inflation note (#117);
+§9.7 CLI line updated.
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -296,19 +300,36 @@ and in bulk.
 
 Harvested rectangles are converted into the canonical decode space of
 `faces.db` before any overlap is computed: normalised boxes are multiplied
-by the file dimensions (the source-stated `img_w/img_h` when given, else
-`images.width/height` — the **decode** dims: `import_roll.py` stores what
-the decoder returned, and cv2/rawpy **apply** the EXIF orientation, so the
-canonical space is the *displayed* image; v4.2 corrects the former
+by `images.width/height` — the **decode** dims: `import_roll.py` stores
+what the decoder returned, and cv2/rawpy **apply** the EXIF orientation,
+so the canonical space is the *displayed* image (v4.2 corrected the former
 "cv2/rawpy decode without EXIF rotation" claim — gui-design §4.29); pixel
 boxes (digiKam, Lightroom) are already in that same displayed space. If a
 target image ever carries `inversion != 'none'`, the box is mapped through
 the inverse flip (`lr`: `x' = W−(x+w)`; `tb`: `y' = H−(y+h)`) — kept for
 forward compatibility with design #18.
 
+**v5.1 (#115):** the source-stated `img_w/img_h` (stDim) **no longer scales
+normalised boxes**. A normalised rectangle is a fraction of the photo —
+scale-invariant — so scaling by the decode dims places it in the canonical
+space; stDim is kept in the staging record (H4 source-as-stated) but is a
+dead input to the match. The old stDim preference mis-scaled boxes whenever
+the file on disk was a differently-sized export of the same photo (same
+hash, J2 — the sidecar still states the original RAW dims): 22 faces in the
+2026-10-22 run. The 23 faces whose stDim is **transposed** (90° EXIF
+rotation) still cannot be mapped — a rotation swaps box axes, which the
+`inversion` flip vocabulary cannot express; tracked in #118 (rotation
+angle).
+
 ### 9.3 Matching — the per-face claim model (v4.0, #87)
 
-`overlap = |A∩B| / |A∪B| ≥ --min-overlap` (default **0.60**, configurable).
+`overlap = |A∩B| / |A∪B| ≥ --min-overlap` (default **0.50**, configurable;
+v5.1 #116 — lowered from 0.60: the 0.50–0.60 near-miss band of the
+2026-10-22 run was dominated by cross-tool rectangle disagreement on the
+*same* face — legacy tools draw looser/tighter boxes than insightface —
+and every assigned link stays `provisional` (J5), so a more permissive
+gate costs only extra suggestions to review. Below ~0.50 the band is
+dominated by genuine no-counterpart cases, so it is not justified.)
 
 **IoU is a face-identity test, never a ranking criterion**: ≥ threshold
 means "this harvested rectangle and this whot face are the same physical
@@ -437,11 +458,22 @@ summary plus a human-readable log are written next to the target copy.
 No `imports` row is created — this is recovery, not an import; the log
 files are the provenance.
 
+**Reading `below-threshold` (#117):** the counter counts **staging faces**,
+not physical faces. The harvest records the same physical face once **per
+source** (darktable sidecar, Lightroom sidecar, Lightroom catalog, digiKam),
+and the same file can appear as several staging image rows (e.g. an old vs
+a current mount path — the #113 duplicate-row mechanism). A single detected
+face claimed by three legacy rectangles therefore yields up to **two**
+below-threshold rows even when the match itself succeeded. In the
+2026-10-22 run 2 045 rows sat below the old 0.60 gate while the true
+unique-face loss was a fraction of that — treat the counter as a triage
+hint, never as lost-person evidence.
+
 ### 9.7 CLI
 
 ```
 scripts/import_harvested.py STAGING.db [--faces-db data/faces.db]
-    [--min-overlap 0.60] [--overwrite] [--dry-run]
+    [--min-overlap 0.50] [--overwrite] [--dry-run]
 ```
 
 `--faces-db` defaults to `FACES_DB` from `.env`. `--dry-run` runs the full

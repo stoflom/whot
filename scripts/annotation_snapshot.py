@@ -115,7 +115,8 @@ def restore_refcrop_n() -> int:
 
 def backfill_primary(con: sqlite3.Connection, pid: int) -> None:
     """Machine primary, mirroring db.rs backfill_primary: the highest-confidence
-    confirmed, non-discarded face; only when the person has none."""
+    non-discarded, non-rejected face (the db.rs criterion); only when the
+    person has none."""
     con.execute(
         "UPDATE persons SET primary_face_id = ("
         "  SELECT f.id FROM faces f"

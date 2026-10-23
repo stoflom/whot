@@ -619,9 +619,9 @@ def plan_image(path: Path, detector: Detector | None) -> ImportPlan:
 
 def assign_missing_primaries(con: sqlite3.Connection) -> None:
     """Set the machine-initial primary face for every person lacking one
-    (req §3.2.2: highest-confidence face, first-group semantics; user picks
-    are pinned and never overwritten). Idempotent — also backfills persons
-    imported before this pass existed (issue #10)."""
+    (req §3.2.2: the highest-confidence non-discarded, non-rejected face;
+    user picks are pinned and never overwritten). Idempotent — also
+    backfills persons imported before this pass existed (issue #10)."""
     con.execute("""
         UPDATE persons SET primary_face_id = (
             SELECT f.id FROM faces f

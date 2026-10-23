@@ -1209,7 +1209,9 @@ def harvest(st: Staging | None, *, images_dirs: list[Path],
     # uses the index's basename set; no index => no split (old behaviour)
     covered_names = {name for name, _size in index} if index else None
 
-    if enabled & {"sidecars-mwgrs", "sidecars-mpri", "sidecars-catsets"}:
+    # #114: sidecars-mpri dropped from this gate — it is not a canonical
+    # source (ensure_sources rejects it), so the entry could never fire
+    if enabled & {"sidecars-mwgrs", "sidecars-catsets"}:
         log(f"  scanning sidecars under {', '.join(str(d) for d in images_dirs)}")
         known |= harvest_sidecars(st, images_dirs, src, stats, enabled, hasher)
 

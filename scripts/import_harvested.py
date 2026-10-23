@@ -23,13 +23,14 @@ or faces, never adds detections.  Invariants:
       in the GUI.
 
 Matching (§9.3): harvested rectangles are converted into the canonical
-decode space (§9.2) and matched one-to-one per image by
-IoU = |A∩B|/|A∪B| >= --min-overlap (default 0.60), greedy best-first.
+decode space (§9.2) and matched per whot face by the per-face claim
+model — a face accepts the above-threshold claims (IoU =
+|A∩B|/|A∪B| >= --min-overlap, default 0.50) that agree on one person.
 UnknownN clusters are merged whole only on unanimous evidence (§9.5).
 
 Usage:
   scripts/import_harvested.py STAGING.db [--faces-db data/faces.db]
-      [--min-overlap 0.60] [--overwrite] [--dry-run] [-q]
+      [--min-overlap 0.50] [--overwrite] [--dry-run] [-q]
 
 Console (scripts-design §10): startup header, status updates, final summary;
 -q/--quiet prints only the header and the final summary.
@@ -123,21 +124,21 @@ def iou(a: tuple[float, float, float, float],
 
 
 def convert_box(x: float, y: float, w: float, h: float, unit: str,
-                img_w: int | None, img_h: int | None,
                 db_w: int, db_h: int,
                 inversion: str = "none") -> tuple[float, float, float, float] | None:
     """Harvested box -> decode-space box (§9.2). None when degenerate.
 
-    Normalised fractions are multiplied by the file dimensions (the
-    source-stated img_w/img_h when given, else the db's decode dims —
-    what import_roll stored: the *displayed* image, EXIF orientation
-    applied by the decoder, gui-design §4.29).  Pixel boxes are already
-    in that displayed space.  A recorded inversion maps it -> decode
-    space via the inverse flip.
+    Normalised fractions are multiplied by the db's decode dims — what
+    import_roll stored: the *displayed* image, EXIF orientation applied
+    by the decoder, gui-design §4.29.  A normalised box is a fraction of
+    the photo (scale-invariant), so the decode dims are always the right
+    scale; the source-stated stDim is kept in staging (H4) but does not
+    scale — it mis-scales same-photo exports with differently-sized
+    files (v5.1, #115).  Pixel boxes are already in the displayed space.
+    A recorded inversion maps the box via the inverse flip.
     """
     if unit == "normalized":
-        W = float(img_w or db_w)
-        H = float(img_h or db_h)
+        W, H = float(db_w), float(db_h)
         x, y, w, h = x * W, y * H, w * W, h * H
     elif unit != "pixels":
         return None
@@ -424,7 +425,6 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
                     f" {ch[:12]}… not in faces.db (J2)")
             continue
         box = convert_box(sf["x"], sf["y"], sf["w"], sf["h"], sf["unit"],
-                          sf["img_w"], sf["img_h"],
                           dbimg["width"], dbimg["height"],
                           dbimg["inversion"] or "none")
         if box is None:
@@ -731,9 +731,9 @@ def main(argv=None) -> int:
                     help="harvest staging DB (§8, schema v1.1)")
     ap.add_argument("--faces-db", metavar="PATH", default=None,
                     help="source faces.db (default: FACES_DB from .env)")
-    ap.add_argument("--min-overlap", type=float, default=0.60,
+    ap.add_argument("--min-overlap", type=float, default=0.50,
                     help="minimum IoU between harvested and detected face "
-                         "(default 0.60, §9.3)")
+                         "(default 0.50, §9.3)")
     ap.add_argument("--overwrite", action="store_true",
                     help="treat the user's prior links as invalid: every "
                          "face is eligible (J4); links become provisional "
