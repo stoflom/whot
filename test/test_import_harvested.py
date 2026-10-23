@@ -132,7 +132,7 @@ class Fixture(unittest.TestCase):
                                  unit=unit, img_w=img_w, img_h=img_h,
                                  source_id=self.sid)
 
-    def run_plan(self, min_overlap=0.60, overwrite=False):
+    def run_plan(self, min_overlap=0.50, overwrite=False):
         """Plan + execute against the fixture faces.db itself (temp file)."""
         rep = ih.Report()
         stcon = ih.open_ro(self.staging)
@@ -169,35 +169,33 @@ class GeometryTests(unittest.TestCase):
 
     def test_convert_normalized(self):
         self.assertEqual(
-            ih.convert_box(0.1, 0.2, 0.5, 0.5, "normalized", 4000, 3000,
-                           4000, 3000),
+            ih.convert_box(0.1, 0.2, 0.5, 0.5, "normalized", 4000, 3000),
             (400.0, 600.0, 2000.0, 1500.0))
 
-    def test_convert_normalized_falls_back_to_db_dims(self):
+    def test_convert_normalized_scales_by_db_dims(self):
+        # #115 (v5.1): a normalised box is a fraction of the photo — it is
+        # always scaled by the db decode dims. Under the old stDim
+        # preference the same call (source stDim 6000x4500, db 4000x3000 —
+        # a same-photo export at a different size) would have returned
+        # (3000.0, 2250.0, 600.0, 450.0): misplaced in decode space.
         self.assertEqual(
-            ih.convert_box(0.5, 0.5, 0.5, 0.5, "normalized", None, None,
-                           100, 200),
-            (50.0, 100.0, 50.0, 100.0))
+            ih.convert_box(0.5, 0.5, 0.1, 0.1, "normalized", 4000, 3000),
+            (2000.0, 1500.0, 400.0, 300.0))
 
     def test_convert_pixels_inversion(self):
         box = (10, 20, 30, 40)
-        self.assertEqual(ih.convert_box(*box, "pixels", None, None, 100, 100),
+        self.assertEqual(ih.convert_box(*box, "pixels", 100, 100),
                          (10, 20, 30, 40))          # inversion none
-        self.assertEqual(ih.convert_box(*box, "pixels", None, None, 100, 100,
-                                        "lr"),
+        self.assertEqual(ih.convert_box(*box, "pixels", 100, 100, "lr"),
                          (60, 20, 30, 40))          # x' = W - (x + w)
-        self.assertEqual(ih.convert_box(*box, "pixels", None, None, 100, 100,
-                                        "tb"),
+        self.assertEqual(ih.convert_box(*box, "pixels", 100, 100, "tb"),
                          (10, 40, 30, 40))          # y' = H - (y + h)
-        self.assertEqual(ih.convert_box(*box, "pixels", None, None, 100, 100,
-                                        "both"),
+        self.assertEqual(ih.convert_box(*box, "pixels", 100, 100, "both"),
                          (60, 40, 30, 40))
 
     def test_convert_degenerate(self):
-        self.assertIsNone(ih.convert_box(0, 0, 0, 10, "pixels", None, None,
-                                         100, 100))
-        self.assertIsNone(ih.convert_box(0, 0, 1, 1, "degrees", None, None,
-                                         100, 100))
+        self.assertIsNone(ih.convert_box(0, 0, 0, 10, "pixels", 100, 100))
+        self.assertIsNone(ih.convert_box(0, 0, 1, 1, "degrees", 100, 100))
 
     def test_strip_group_root(self):
         # without a person name: root stripped only (legacy behaviour)
