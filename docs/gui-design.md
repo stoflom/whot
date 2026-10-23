@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.27** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.28** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -115,10 +115,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     decided on), **grouped by their importer person** (`UnknownN` clusters).
     Each group section has: select-all checkbox, face count, the current
     `UnknownN` name, and **name / group / description labels** with one
-    **Edit…** button — the shared dialog, scope Group (§4.24). A section
-    holding exactly **one face renders compact**: the heading and the card
-    share one row (the conservative import yields many one-face clusters in
-    the initial review, and legitimate single-face persons persist; #108).
+    **Edit…** button — the shared dialog, scope Group (§4.24). The heading
+    always sits on its own row above the card(s) — the compact one-row
+    layout (#108) was withdrawn in #120: a heading beside the card left a
+    tall black column next to a single card and read as broken, and the
+    same person rendered differently in the review vs person views.
   - **Rolls**: imports (roll path + date) as expandable sections; image
     thumbnails per roll; clicking an image opens its faces (same face cards,
     same operations) plus the image preview **annotated with its detected
@@ -242,6 +243,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   (descriptions are `|`-separated tags), **accuracy + Edit…**, then the
   action row — star (set as primary), status badge
   (provisional/confirmed/rejected), reject button.
+  An **empty** group or description label shows a **dimmed hint** instead of
+  a bare dash — group: e.g. `Friends|School`, description: e.g.
+  `glasses|beard` — so the row reads as “where this may go / what may be
+  noted” rather than as a hole (#119). The section-heading rule labels use
+  the same hints. The hint is dim like the old empty colour; real values
+  keep their current colours. (The label’s old `empty` modifier class
+  collided with the app-level `.empty` no-results rule — 3rem of padding on
+  every empty label row — and was renamed `is-empty`, #119.)
   Double-click opens the full-image focus mode (§3).
 - **Accept/reject asymmetry** (#63): *accepted* (`confirmed`) is the
   default status, so the card's reject **button** is the only styled
