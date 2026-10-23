@@ -247,24 +247,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .face-section-sub { color: var(--dim); font-size: 0.85rem; font-style: italic; }
 .select-all { cursor: pointer; display: inline-flex; }
 
-/* #108: a one-face section renders compact — heading and card share one
-   row (the conservative import yields many one-face clusters in the
-   initial review; two rows per section collapses to one). Same content
-   and interaction; the .rule-label ellipsis keeps the header in bounds */
-.face-section.single { display: flex; align-items: stretch; }
-.face-section.single .face-section-header {
-  flex: 1 1 auto;
-  min-width: 0;
-  border-bottom: none;
-  border-right: 1px solid var(--border);
-  flex-wrap: nowrap;
-}
-.face-section.single .face-grid {
-  flex: 0 0 auto;
-  display: flex;
-  padding: 0.5rem;
-}
-.face-section.single .face-card { flex: 0 0 148px; }
+/* #120: the #108 compact one-row layout (.face-section.single) was
+   withdrawn — the heading always sits on its own row above the cards. */
 input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); }
 
 .rule { margin-left: auto; display: flex; gap: 0.4rem; align-items: center; }
@@ -775,8 +759,11 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .rule-label.group { color: var(--accent); }
 .card-label.desc,
 .rule-label.desc { color: var(--tag); }
-.card-label.empty,
-.rule-label.empty { color: var(--dim); }
+/* #119: the modifier is is-empty, never bare empty — the app-level
+   .empty no-results rule (3rem padding) used to collide with it and
+   inflated every empty label row to ~98px */
+.card-label.is-empty,
+.rule-label.is-empty { color: var(--dim); }
 /* #103: a staged value must read as “preview on” at a glance */
 .card-label.staged,
 .rule-label.staged {
@@ -801,7 +788,7 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   background: rgba(0, 0, 0, 0.65);
   border-radius: 30% 30% 4px 4px / 12px 12px 4px 4px;
 }
-.face-img .card-label.name.empty { color: var(--dim); }
+.face-img .card-label.name.is-empty { color: var(--dim); }
 .card-row { padding: 2px 7px 0; }
 .card-foot {
   display: flex;

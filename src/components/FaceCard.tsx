@@ -113,7 +113,7 @@ function FaceCard({
         {img ? <img src={img} alt="" /> : <div className="face-img-loading" />}
         {/* #102: the name sits inside the frame, at the top — its own strip */}
         <span
-          className={`card-label name${staged.name != null ? " staged" : ""}${nameVal ? "" : " empty"}`}
+          className={`card-label name${staged.name != null ? " staged" : ""}${nameVal ? "" : " is-empty"}`}
           title="Person name"
         >
           {nameVal || "–"}
@@ -131,18 +131,18 @@ function FaceCard({
           Edit… — the three fields stay visually distinct */}
       <div className="card-row">
         <span
-          className={`card-label group${staged.group != null ? " staged" : ""}${groupVal ? "" : " empty"}`}
-          title="Group"
+          className={`card-label group${staged.group != null ? " staged" : ""}${groupVal ? "" : " is-empty"}`}
+          title="Group — edit via the Edit… dialog"
         >
-          {groupVal || "–"}
+          {groupVal || "Friends|School"}
         </span>
       </div>
       <div className="card-row">
         <span
-          className={`card-label desc${staged.desc != null ? " staged" : ""}${descVal ? "" : " empty"}`}
-          title="Description"
+          className={`card-label desc${staged.desc != null ? " staged" : ""}${descVal ? "" : " is-empty"}`}
+          title="Description — edit via the Edit… dialog"
         >
-          {descVal || "–"}
+          {descVal || "glasses|beard"}
         </span>
       </div>
       <div className="card-foot">
