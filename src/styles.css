@@ -42,6 +42,7 @@ button.active { background: var(--accent); border-color: var(--accent); color: #
 button.secondary { background: transparent; }
 button.ghost { background: transparent; border: none; font-size: 1.1rem; }
 button.ok { background: color-mix(in srgb, var(--ok) 25%, var(--panel2)); border-color: var(--ok); }
+button.warn { background: color-mix(in srgb, var(--warn) 25%, var(--panel2)); border-color: var(--warn); }
 button.bad { background: color-mix(in srgb, var(--bad) 25%, var(--panel2)); border-color: var(--bad); }
 
 input, textarea {

@@ -7,8 +7,8 @@ interface Props {
   face: Face;
   selected: boolean;
   isPrimary: boolean;
-  /** #101: the live stage — its fields preview on this card's labels */
-  stage: Stage | null;
+  /** #101/#123: the live pending set — its fields preview on this card's labels */
+  stage: Stage[];
   onToggle: (id: number) => void;
   /** plain click: select just this card — drops the range anchor (#69) */
   onSelectOne: (id: number) => void;

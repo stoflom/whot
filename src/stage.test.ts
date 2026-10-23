@@ -3,12 +3,15 @@
 import { describe, expect, it } from "vitest";
 import {
   buildStage,
+  dropStagesForFaces,
   objectInsideSelection,
   sameIdSet,
   scopeFaceIds,
   stageSummary,
+  stageSummarySet,
   stagedFieldsForCard,
   stagedFieldsForSection,
+  upsertStage,
   type Stage,
 } from "./stage";
 
@@ -39,16 +42,50 @@ describe("buildStage (#77 routing kept)", () => {
   });
 });
 
+describe("the pending set (#123)", () => {
+  it("upsert extends the set; a re-Apply on the same faceIds replaces that op (latest wins)", () => {
+    const a: Stage = { faceIds: [1, 2], name: "Alice" };
+    const b: Stage = { faceIds: [3], desc: "beard" };
+    expect(upsertStage([], a)).toEqual([a]);
+    expect(upsertStage([a], b)).toEqual([a, b]);
+    const c: Stage = { faceIds: [2, 1], desc: "glasses" };
+    const set = upsertStage([a, b], c);
+    expect(set).toHaveLength(2);
+    expect(set[0]).toEqual(c); // replaced in place, order kept
+    expect(set[1]).toEqual(b);
+  });
+  it("dropStagesForFaces drops every op touching a rejected face (F2)", () => {
+    const a: Stage = { faceIds: [1, 2], name: "Alice" };
+    const b: Stage = { faceIds: [3], desc: "beard" };
+    expect(dropStagesForFaces([a, b], [2])).toEqual([b]);
+    expect(dropStagesForFaces([a, b], [])).toEqual([a, b]);
+  });
+  it("stagedFieldsForCard merges covering ops, later ops win", () => {
+    const a: Stage = { faceIds: [1], name: "Alice", desc: "beard" };
+    const b: Stage = { faceIds: [1], desc: "glasses" };
+    expect(stagedFieldsForCard([a, b], 1)).toEqual({ name: "Alice", desc: "glasses" });
+    expect(stagedFieldsForCard([a, b], 9)).toEqual({});
+    expect(stagedFieldsForCard([], 1)).toEqual({});
+  });
+  it("stageSummarySet names every op and the total face count", () => {
+    const a: Stage = { faceIds: [1, 2], name: "Alice" };
+    const b: Stage = { faceIds: [2, 3], desc: "beard" };
+    expect(stageSummarySet([a, b]))
+      .toBe("name “Alice” · 2 face(s)  /  description “beard” · 2 face(s) — 3 face(s) staged");
+    expect(stageSummarySet([])).toBe("");
+  });
+});
+
 describe("label overlays (H2)", () => {
   const stage: Stage = { faceIds: [1, 2], name: "Alice", desc: "beard" };
-  it("a card inside the stage shows its fields; others show nothing", () => {
-    expect(stagedFieldsForCard(stage, 1)).toEqual({ name: "Alice", desc: "beard" });
-    expect(stagedFieldsForCard(stage, 9)).toEqual({});
-    expect(stagedFieldsForCard(null, 1)).toEqual({});
+  it("a card inside the set shows its fields; others show nothing", () => {
+    expect(stagedFieldsForCard([stage], 1)).toEqual({ name: "Alice", desc: "beard" });
+    expect(stagedFieldsForCard([stage], 9)).toEqual({});
+    expect(stagedFieldsForCard([], 1)).toEqual({});
   });
   it("a header stages on any overlap", () => {
-    expect(stagedFieldsForSection(stage, [2, 3])).toEqual({ name: "Alice", desc: "beard" });
-    expect(stagedFieldsForSection(stage, [3])).toEqual({});
+    expect(stagedFieldsForSection([stage], [2, 3])).toEqual({ name: "Alice", desc: "beard" });
+    expect(stagedFieldsForSection([stage], [3])).toEqual({});
   });
 });
 
@@ -66,7 +103,7 @@ describe("selection rules (Q1/G3)", () => {
   });
 });
 
-describe("stageSummary (Q4 dialog copy)", () => {
+describe("stageSummary (dialog copy)", () => {
   it("names every staged field, including clears", () => {
     expect(stageSummary({ faceIds: [1], name: "Alice", group: "", desc: "beard" }))
       .toBe("name “Alice”, group → ungrouped, description “beard”");

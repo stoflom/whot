@@ -25,9 +25,10 @@ import {
 import { groupPathOptions } from "./components/PathTypeahead";
 import {
   buildStage,
+  dropStagesForFaces,
   objectInsideSelection,
-  sameIdSet,
-  stageSummary,
+  stageSummarySet,
+  upsertStage,
   type Prefill,
   type Stage,
   type StageScope,
@@ -101,20 +102,21 @@ export default function App() {
   const [mergeInto, setMergeInto] = useState<
     { sourceIds: number[]; targetId?: number } | null
   >(null);
-  // #101 (§4.24): grid editing lives in one dialog; Apply stages a single
-  // pending change on a scope of faces (screen only), Accept commits it
+  // #101 (§4.24): grid editing lives in one dialog; #123: Apply extends
+  // the pending SET (screen only, nothing commits), Accept commits it all
   const [edit, setEdit] = useState<{
     defaultScope: StageScope;
     card: number[];
     group: number[];
     prefills: Record<StageScope, Prefill>;
   } | null>(null);
-  const [stage, setStage] = useState<Stage | null>(null);
-  const stageRef = useRef<Stage | null>(null);
-  stageRef.current = stage;
-  /** Q4: a live stage makes a selection change ask escape-or-accept —
-      the pending Set applies after the choice */
-  const [stageConfirm, setStageConfirm] = useState<Set<number> | null>(null);
+  const [pending, setPending] = useState<Stage[]>([]);
+  const pendingRef = useRef<Stage[]>([]);
+  pendingRef.current = pending;
+  /** #123: a CONTEXT change (person / view / focus) with a live set asks
+      drop-or-accept — the stored action runs after the choice */
+  const [contextConfirm, setContextConfirm] = useState<(() => void) | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -200,11 +202,10 @@ export default function App() {
   useEffect(() => {
     // #47/#101 (§4.19 + the Q8 stack): dialogs/menus/popovers own Esc
     // first, then a live stage's preview-undo (F1), then the split —
-    // while typing, Esc always cancels the field itself. The Q4
-    // escape-or-accept dialog is one of those dialogs: clearing the
-    // stage under it both violates the stack and unmounts the dialog
-    // mid-dispatch (its own Esc handler then loses the race and the
-    // pending selection is dropped)
+    // while typing, Esc always cancels the field itself. The #123
+    // context-change dialog is one of those dialogs: dropping the set
+    // under it both violates the stack and unmounts the dialog
+    // mid-dispatch
     if (
       edit != null ||
       confirmRemove != null ||
@@ -212,7 +213,7 @@ export default function App() {
       settingsOpen ||
       mergeOpen ||
       mergeInto != null ||
-      stageConfirm != null
+      contextConfirm != null
     )
       return;
     const onKey = (e: KeyboardEvent) => {
@@ -224,9 +225,9 @@ export default function App() {
           tgt.tagName === "TEXTAREA" ||
           tgt.tagName === "SELECT" ||
           tgt.isContentEditable);
-      if (stageRef.current) {
+      if (pendingRef.current.length > 0) {
         if (!typing) {
-          setStage(null);
+          setPending([]); // #123: Undo = Cancel — the whole set drops
           e.preventDefault();
         }
         return;
@@ -235,7 +236,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [edit, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto, stageConfirm, splitImageId]);
+  }, [edit, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto, contextConfirm, splitImageId]);
 
   const mutate = useCallback(
     async (fn: () => Promise<unknown>, clearSel = false) => {
@@ -254,14 +255,18 @@ export default function App() {
     [refresh]
   );
 
-  // #101/Q4: with a live stage, a selection change first asks
-  // escape-or-accept — the pending Set applies after the choice
+  // #123: a selection change INSIDE the context never asks — the
+  // Apply → change → Apply loop is dialog-free by design
   const changeSel = useCallback((next: Set<number>) => {
-    if (stageRef.current && !sameIdSet(next, selRef.current)) {
-      setStageConfirm(next);
-      return;
-    }
     setSel(next);
+  }, []);
+
+  // #123: only a complete context change (another person, a view switch,
+  // focus open/close) asks drop-or-accept while the set is live — the
+  // stored action runs after the choice, on BOTH branches
+  const confirmContext = useCallback((action: () => void) => {
+    if (pendingRef.current.length > 0) setContextConfirm(action);
+    else action();
   }, []);
 
   // ------------------------------------------------------------ selection
@@ -351,28 +356,32 @@ export default function App() {
   // image closes whether the person appears in it or not (§4.15); #52's
   // person-relevance check is gone on purpose
   const handleTreeSelect = (id: number, e?: ReactMouseEvent) => {
-    if (splitImageId != null) setSplitImageId(null);
-    if (e?.ctrlKey || e?.metaKey) {
-      setSelPersons((prev) => {
-        const n = new Set(prev);
-        if (n.has(id)) n.delete(id);
-        else n.add(id);
-        return n;
-      });
-      setPersonId(id); // anchor follows the click; view unchanged
-    } else if (e?.shiftKey && personId != null) {
-      const a = stepIds.indexOf(personId);
-      const b = stepIds.indexOf(id);
-      if (a === -1 || b === -1) return;
-      const [lo, hi] = a < b ? [a, b] : [b, a];
-      setSelPersons(new Set(stepIds.slice(lo, hi + 1)));
-      setPersonId(id);
-    } else {
-      setSelPersons(new Set([id]));
-      setPersonId(id);
-      setView("person");
-      setImageId(null);
-    }
+    // #123: a tree select shifts attention to another person — with a
+    // live pending set that is a context change (drop-or-accept)
+    confirmContext(() => {
+      if (splitImageId != null) setSplitImageId(null);
+      if (e?.ctrlKey || e?.metaKey) {
+        setSelPersons((prev) => {
+          const n = new Set(prev);
+          if (n.has(id)) n.delete(id);
+          else n.add(id);
+          return n;
+        });
+        setPersonId(id); // anchor follows the click; view unchanged
+      } else if (e?.shiftKey && personId != null) {
+        const a = stepIds.indexOf(personId);
+        const b = stepIds.indexOf(id);
+        if (a === -1 || b === -1) return;
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelPersons(new Set(stepIds.slice(lo, hi + 1)));
+        setPersonId(id);
+      } else {
+        setSelPersons(new Set([id]));
+        setPersonId(id);
+        setView("person");
+        setImageId(null);
+      }
+    });
   };
   const doRemovePersons = (ids: number[]) => {
     if (ids.length > 0) setConfirmRemove(ids);
@@ -561,12 +570,17 @@ export default function App() {
           // #51: pointless while this very image is already open in the split
           ...(f.image_id === splitImageId
             ? []
-            : [{ label: "Open full image", onClick: () => setSplitImageId(f.image_id) }]),
+            : [{
+                // #123: opening focus mode is a view-context change
+                label: "Open full image",
+                onClick: () => confirmContext(() => setSplitImageId(f.image_id)),
+              }]),
         ],
       },
     ]);
   }, [facesById, actionScope, toggle, toggleMany, doAccept, doReject,
-     doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel]);
+     doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel,
+     confirmContext]);
 
   const imageAreaMenu = (e: ReactMouseEvent, imageId: number) => {
     if (!snap) return;
@@ -603,7 +617,11 @@ export default function App() {
               setImageId(image.id);
             },
           },
-          { label: "Open full image (focused)", onClick: () => setSplitImageId(image.id) },
+          {
+            // #123: opening focus mode is a view-context change
+            label: "Open full image (focused)",
+            onClick: () => confirmContext(() => setSplitImageId(image.id)),
+          },
         ],
       },
       {
@@ -685,7 +703,8 @@ export default function App() {
     onRangeSelect: rangeSelect,
     onOpen: (id: number) => {
       const f = facesById.get(id);
-      if (f) setSplitImageId(f.image_id);
+      // #123: opening focus mode is a view-context change
+      if (f) confirmContext(() => setSplitImageId(f.image_id));
     },
     onToggleMany: toggleMany,
     onPrimary: doPrimary,
@@ -699,7 +718,8 @@ export default function App() {
     onEditCard: (id: number) => openEdit("card", { card: id }),
     onEditGroup: (ids: number[]) => openEdit("group", { group: ids }),
   }), [facesById, personsById, faceMenu, toggle, selectOnly, rangeSelect,
-      toggleMany, doPrimary, doRefcrop, doReject, doAccept, actionScope, openEdit]);
+      toggleMany, doPrimary, doRefcrop, doReject, doAccept, actionScope, openEdit,
+      confirmContext]);
 
   // one section per person over an image's faces — the Rolls image
   // detail and the #55 focus-mode film roll share it
@@ -930,23 +950,26 @@ export default function App() {
     [facesById, personsById]
   );
 
-  /** dialog Accept / bottom-bar Accept with a live stage (§4.30) */
-  const acceptStage = useCallback(
-    async (st: Stage) => {
-      setStage(null);
-      await acceptAndNext(st.faceIds, () => stageOps(st));
+  /** #123 — commit the WHOLE pending set: the ops in order through the
+      #77 routing, then the shared accept-and-advance over their union
+      (the review advance anchors as before — last-selected, hovered,
+      first id) */
+  const commitPending = useCallback(
+    async (all: Stage[]) => {
+      if (all.length === 0) return;
+      setPending([]);
+      const union = [...new Set(all.flatMap((o) => o.faceIds))];
+      await acceptAndNext(union, async () => {
+        for (const op of all) await stageOps(op);
+      });
     },
     [acceptAndNext, stageOps]
   );
 
-  /** bottom-bar Apply (Q2/Q9): a live stage is re-scoped to the whole
-      selection; otherwise the dialog opens on the selection */
+  /** bottom-bar Apply (Q2/Q9, #123): opens the dialog on the selection —
+      the Apply loop extends the set; it never re-scopes or commits */
   const barApply = () => {
     if (!snap) return;
-    if (stage && selRef.current.size > 0) {
-      setStage({ ...stage, faceIds: [...selRef.current] });
-      return;
-    }
     openEdit("selection");
   };
 
@@ -988,13 +1011,16 @@ export default function App() {
       if (id == null) return;
       // #62 — attention shifted to the new person: the full image ends
       // whether they appear in it or not (§4.15, same rule as a tree-row
-      // select; #52's relevance check dropped)
-      if (splitImageId != null) setSplitImageId(null);
-      setPersonId(id);
-      setView("person");
-      setImageId(null);
+      // select; #52's relevance check dropped) — #123: stepping is a
+      // context change (drop-or-accept with a live set)
+      confirmContext(() => {
+        if (splitImageId != null) setSplitImageId(null);
+        setPersonId(id);
+        setView("person");
+        setImageId(null);
+      });
     },
-    [stepIdx, stepIds, splitImageId]
+    [stepIdx, stepIds, splitImageId, confirmContext]
   );
   // #74 — section under the mouse cursor: Ctrl-G must work with the
   // cursor anywhere inside a group, without a prior click/hover on one
@@ -1065,7 +1091,7 @@ export default function App() {
         menu != null ||
         mergeOpen ||
         mergeInto != null ||
-        stageConfirm != null
+        contextConfirm != null
       )
         return;
       // #53 (§4.17): Ctrl-G toggles the whole section — the one under
@@ -1104,14 +1130,13 @@ export default function App() {
           e.preventDefault();
           toggle(targetId);
         } else if (e.key === "a" || e.key === "A") {
-          // §4.30: Accept is stage-then-commit — with a live stage the
-          // keys do exactly what the bottom-bar Accept does (commit the
-          // stage, then accept its scope with the review advance); the
-          // old path accepted the selection and silently dropped the
-          // staged edit
-          if (stageRef.current) {
+          // §4.30: Accept is stage-then-commit — with a live pending set
+          // the keys do exactly what the bottom-bar Accept does: commit
+          // the WHOLE set (#123), then accept its scope with the review
+          // advance
+          if (pendingRef.current.length > 0) {
             e.preventDefault();
-            void acceptStage(stageRef.current);
+            void commitPending(pendingRef.current);
             return;
           }
           // #75: cursor-as-target — the hovered card stands in for the
@@ -1125,10 +1150,11 @@ export default function App() {
         } else if (e.key === "Enter" && view === "review") {
           // #96 (§4.30): Enter with no field focused = Accept & next —
           // in-field Enter keeps its commit meaning (the guard above
-          // already keeps inputs out of this handler)
-          if (stageRef.current) {
+          // already keeps inputs out of this handler) — #123: a live
+          // pending set commits whole
+          if (pendingRef.current.length > 0) {
             e.preventDefault();
-            void acceptStage(stageRef.current);
+            void commitPending(pendingRef.current);
             return;
           }
           const ids =
@@ -1162,7 +1188,7 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, acceptAndNext, acceptStage, edit, confirmRemove, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto, stageConfirm]);
+  }, [stepPerson, acceptAndNext, commitPending, edit, confirmRemove, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto, contextConfirm]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -1266,31 +1292,38 @@ export default function App() {
         <nav>
           <button
             className={view === "review" ? "active" : ""}
-            onClick={() => {
-              setView("review");
-              setImageId(null);
-              setSplitImageId(null); // #55 (§4.19): explicit navigation ends focus mode
-            }}
+            onClick={() =>
+              // #123: a tab switch is a view-context change
+              confirmContext(() => {
+                setView("review");
+                setImageId(null);
+                setSplitImageId(null); // #55 (§4.19): explicit navigation ends focus mode
+              })
+            }
           >
             Review <span className="pill">{pendingCount}</span>
           </button>
           <button
             className={view === "rolls" ? "active" : ""}
-            onClick={() => {
-              setView("rolls");
-              setSplitImageId(null); // #55 (§4.19)
-            }}
+            onClick={() =>
+              confirmContext(() => {
+                setView("rolls");
+                setSplitImageId(null); // #55 (§4.19)
+              })
+            }
           >
             Rolls
           </button>
           <button
             className={view === "person" ? "active" : ""}
             disabled={personId == null}
-            onClick={() => {
-              setView("person");
-              setImageId(null);
-              setSplitImageId(null); // #55 (§4.19)
-            }}
+            onClick={() =>
+              confirmContext(() => {
+                setView("person");
+                setImageId(null);
+                setSplitImageId(null); // #55 (§4.19)
+              })
+            }
             title={personId == null ? "select a person in the tree" : ""}
           >
             Person
@@ -1325,11 +1358,13 @@ export default function App() {
             reviewCount={pendingCount}
             filter={filter}
             onFilter={setFilter}
-            onReview={() => {
-              setView("review");
-              setImageId(null);
-              setSplitImageId(null); // #55 (§4.19)
-            }}
+            onReview={() =>
+              confirmContext(() => {
+                setView("review");
+                setImageId(null);
+                setSplitImageId(null); // #55 (§4.19)
+              })
+            }
             onSelect={handleTreeSelect}
             selectedIds={selPersons}
             onRemovePersons={doRemovePersons}
@@ -1436,7 +1471,9 @@ export default function App() {
                   </span>
                   <button
                     className="ghost"
-                    onClick={() => setSplitImageId(null)}
+                    onClick={() =>
+                      confirmContext(() => setSplitImageId(null)) // #123
+                    }
                     title="close (Esc)"
                   >
                     ×
@@ -1458,7 +1495,7 @@ export default function App() {
                   <FaceGrid
                     sections={sectionsForImage(splitRow.id)}
                     sel={sel}
-                    stage={stage}
+                    stage={pending}
                     {...gridHandlers}
                     primaryFaceId={displayPerson?.primary_face_id ?? null}
                   />
@@ -1500,13 +1537,13 @@ export default function App() {
                   onImageContextMenu={(e) => imageAreaMenu(e, imgRow.id)}
                 />
               </div>
-              <FaceGrid sections={sections} sel={sel} stage={stage} {...gridHandlers} primaryFaceId={null} />
+              <FaceGrid sections={sections} sel={sel} stage={pending} {...gridHandlers} primaryFaceId={null} />
             </div>
           ) : (
             <FaceGrid
               sections={sections}
               sel={sel}
-              stage={stage}
+              stage={pending}
               {...gridHandlers}
               primaryFaceId={view === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />
@@ -1545,17 +1582,15 @@ export default function App() {
 
       <RuleBar
         count={sel.size}
-        stageLive={stage != null}
-        stageText={
-          stage
-            ? `${stageSummary(stage)} · ${stage.faceIds.length} face(s)`
-            : undefined
-        }
+        stageLive={pending.length > 0}
+        stageText={pending.length > 0 ? stageSummarySet(pending) : undefined}
         onApply={barApply}
         onAccept={() =>
-          stage ? void acceptStage(stage) : acceptAndNext([...selRef.current])
+          pending.length > 0
+            ? void commitPending(pending) // #123: commit the whole set
+            : acceptAndNext([...selRef.current])
         }
-        onUndo={() => setStage(null)}
+        onUndo={() => setPending([])} // #123: Undo = Cancel — the whole set
         onAssign={() => openEdit("selection")}
         onReject={() => doReject([...sel])}
         onClear={() => changeSel(new Set())}
@@ -1618,10 +1653,39 @@ export default function App() {
               return;
             }
             if (r.kind === "apply") {
-              setStage(st); // §4.24: stage only — no DB write
+              setPending((p) => upsertStage(p, st)); // #123: extend the set
               return;
             }
-            void acceptStage(st); // §4.30: stage + commit (+ review advance)
+            // #123: Accept commits the whole set — this op included
+            void commitPending(upsertStage(pendingRef.current, st));
+          }}
+          onReject={(scope, unreject) => {
+            // #124: a verdict, not a field edit — commits immediately
+            const ids =
+              scope === "card"
+                ? edit.card
+                : scope === "group"
+                  ? edit.group
+                  : [...selRef.current];
+            setEdit(null);
+            if (unreject) {
+              void doAccept(ids); // “Un-reject (accept)” — the plain accept
+            } else {
+              // F2: ops on the rejected faces are moot — drop them
+              setPending((p) => dropStagesForFaces(p, ids));
+              void doReject(ids);
+            }
+          }}
+          rejected={{
+            card:
+              edit.card.length > 0 &&
+              edit.card.every((id) => facesById.get(id)?.link_status === "rejected"),
+            group:
+              edit.group.length > 0 &&
+              edit.group.every((id) => facesById.get(id)?.link_status === "rejected"),
+            selection:
+              sel.size > 0 &&
+              [...sel].every((id) => facesById.get(id)?.link_status === "rejected"),
           }}
           onCancel={() => setEdit(null)}
         />
@@ -1637,31 +1701,26 @@ export default function App() {
           }}
         />
       )}
-      {stageConfirm && stage && (
+      {contextConfirm && pending.length > 0 && (
         <ConfirmDialog
           title="Unapplied changes"
           body={
-            `Staged: ${stageSummary(stage)} on ${stage.faceIds.length} face(s) — ` +
-            "accept writes it to the database, discard drops it; the selection " +
-            "changes either way (Q4)"
+            `Staged: ${stageSummarySet(pending)} — accept writes it to the ` +
+            "database, discard drops it; the context switches either way (#123)"
           }
           confirmLabel="accept"
           cancelLabel="discard"
           onCancel={() => {
-            const next = stageConfirm;
-            setStage(null);
-            setStageConfirm(null);
-            setSel(next);
+            const act = contextConfirm;
+            setContextConfirm(null);
+            setPending([]);
+            act();
           }}
           onConfirm={() => {
-            const st = stage;
-            const next = stageConfirm;
-            setStage(null);
-            setStageConfirm(null);
-            void mutate(async () => {
-              await stageOps(st);
-              await api.acceptFaces(st.faceIds);
-            }, false).then(() => setSel(next));
+            const all = pending;
+            const act = contextConfirm;
+            setContextConfirm(null);
+            void commitPending(all).then(act);
           }}
         />
       )}

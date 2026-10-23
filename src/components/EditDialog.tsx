@@ -7,9 +7,10 @@ import type { Prefill, StageScope } from "../stage";
 
 // #101 (§4.24) — THE edit dialog: the three value fields (name, group,
 // description) with type-ahead, plus the Card | Group | Selection scope
-// selector. Apply stages (screen preview), Accept stages + commits
-// (Enter = Accept, Esc = Cancel). Cards and headers never host inputs —
-// they show labels and this button.
+// selector. #123: Apply extends the pending set (screen only), Accept
+// commits the whole set (Enter = Accept, Esc = Cancel — discard). #124:
+// Reject decides the scope immediately (a verdict, not a field edit).
+// Cards and headers never host inputs — they show labels and this button.
 
 export interface EditResult {
   kind: "apply" | "accept";
@@ -24,10 +25,15 @@ interface Props {
   defaultScope: StageScope;
   /** live face counts of each scope (0 = the choice is disabled) */
   counts: { card: number; group: number; selection: number };
+  /** #124: is the scope fully rejected? the Reject button then offers
+      “Un-reject (accept)” instead */
+  rejected: Record<StageScope, boolean>;
   prefills: Record<StageScope, Prefill>;
   persons: Person[];
   pathOptions: SuggestOption[];
   onDone: (r: EditResult) => void;
+  /** #124: commit the verdict on the scope now (unreject = accept) */
+  onReject: (scope: StageScope, unreject: boolean) => void;
   onCancel: () => void;
 }
 
@@ -42,10 +48,12 @@ const MIXED_HINT = "multiple values — type to set all";
 export default function EditDialog({
   defaultScope,
   counts,
+  rejected,
   prefills,
   persons,
   pathOptions,
   onDone,
+  onReject,
   onCancel,
 }: Props) {
   // header-open has no card scope (count 0) — never open on an empty scope
@@ -90,8 +98,9 @@ export default function EditDialog({
       <div className="dialog edit-dialog">
         <h3>Edit</h3>
         <p className="dim">
-          applies to {counts[scope]} face(s) — <b>Apply</b> previews on the labels,
-          <b> Accept</b> writes it (and advances in Review)
+          applies to {counts[scope]} face(s) — <b>Apply</b> stages it (preview,
+          nothing is written yet), <b>Accept</b> writes the whole pending set
+          (and advances in Review), <b>Reject</b> decides the scope now
         </p>
         <div className="scope-seg" title="Which faces the action covers — the selection unless you choose otherwise (#101, §4.24)">
           {SCOPES.map((s) => (
@@ -154,6 +163,17 @@ export default function EditDialog({
         <div className="dialog-actions">
           <button className="secondary" onClick={onCancel}>
             cancel
+          </button>
+          <button
+            className="warn"
+            onClick={() => onReject(scope, rejected[scope])}
+            title={
+              rejected[scope]
+                ? "the scope is fully rejected — accept it back"
+                : "reject the scope now (sticky — it stays rejected, §4.2)"
+            }
+          >
+            {rejected[scope] ? "Un-reject (accept)" : "Reject"}
           </button>
           <button onClick={() => done("apply")}>Apply</button>
           <button className="ok" onClick={() => done("accept")}>
