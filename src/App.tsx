@@ -119,6 +119,8 @@ export default function App() {
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // #31: the tree's text filter (declared early — stepIds needs it, #125)
+  const [filter, setFilter] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -170,6 +172,14 @@ export default function App() {
     () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
     [treePersons, personId]
   );
+  // #31 — the review step list: the persons in the tree's current
+  // (filtered) display order; declared early — #125's exhaust check and
+  // doAccept/doReject need the index before their point of use
+  const stepIds = useMemo(
+    () => orderedVisiblePersonIds(treePersons, filter),
+    [treePersons, filter]
+  );
+  const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
 
   // similarity clusters for the person view (Accuracy mode only —
   // Description mode needs no IPC at all, #99)
@@ -322,13 +332,26 @@ export default function App() {
       mutate(() => api.assignPerson(ids, name, group), true),
     [mutate]
   );
+  // #125: a verdict that might empty the current person in Review marks
+  // the step index pre-mutation; the refreshed-snapshot effect below
+  // consumes it and steps past (exactly what “›” does)
+  const exhaustAtRef = useRef(-1);
+  const markExhaust = useCallback(() => {
+    if (view === "review" && personId != null) exhaustAtRef.current = stepIdx;
+  }, [view, personId, stepIdx]);
   const doAccept = useCallback(
-    (ids: number[]) => mutate(() => api.acceptFaces(ids), true),
-    [mutate]
+    (ids: number[]) => {
+      markExhaust();
+      return mutate(() => api.acceptFaces(ids), true);
+    },
+    [mutate, markExhaust]
   );
   const doReject = useCallback(
-    (ids: number[]) => mutate(() => api.rejectFaces(ids), true),
-    [mutate]
+    (ids: number[]) => {
+      markExhaust();
+      return mutate(() => api.rejectFaces(ids), true);
+    },
+    [mutate, markExhaust]
   );
   // #58 (§4.14): per-card inputs honour the same scope — editing the
   // description of a card inside a multi-selection updates the whole
@@ -879,6 +902,7 @@ export default function App() {
         }, true);
         return;
       }
+      markExhaust(); // #125: accepting may empty the current person
       const anchor = lastSelRef.current ?? hoverRef.current ?? ids[0] ?? null;
       const actedKey =
         anchor == null
@@ -902,8 +926,35 @@ export default function App() {
         );
       }
     },
-    [snap, view, splitImageId, sections, mutate]
+    [snap, view, splitImageId, sections, mutate, markExhaust]
   );
+
+  // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
+  // the current person without a face under the review status steps past
+  // it — exactly what “›” does — instead of a black centre panel. The
+  // mark is set pre-mutation; this effect consumes it once the refreshed
+  // snap lands. Partial verdicts (the person still has review faces)
+  // never fire it.
+  useEffect(() => {
+    const at = exhaustAtRef.current;
+    if (at < 0 || view !== "review") return;
+    exhaustAtRef.current = -1;
+    const pid = personId;
+    if (pid == null || !snap) return;
+    const status =
+      faceFilter === "confirmed" || faceFilter === "rejected" ? faceFilter : "provisional";
+    if (snap.faces.some((f) => f.person_id === pid && f.link_status === status)) return;
+    let j = at;
+    while (j < stepIds.length && stepIds[j] === pid) j += 1;
+    const nextId = stepIds[j];
+    if (nextId == null) {
+      setError("no more persons to review");
+      return;
+    }
+    setPersonId(nextId);
+    setView("person");
+    setImageId(null);
+  }, [snap, view, personId, faceFilter, stepIds]);
 
   // #101 (§4.24) — stage/commit engine: Apply stages (no DB — the labels
   // preview), Accept commits the stage ops through the shared
@@ -974,16 +1025,10 @@ export default function App() {
   };
 
   // #31 — person stepping: ‹ › and ← → walk the persons in the tree's
-  // current (filtered) display order; the shortcut set is listed in the
-  // settings popover
-  const [filter, setFilter] = useState("");
+  // current (filtered) display order (stepIds/stepIdx declared early —
+  // #125); the shortcut set is listed in the settings popover
   // shared cursor position for the cursor-as-target rules (#74/#75/#76)
   const mouseRef = useRef({ x: -1, y: -1 });
-  const stepIds = useMemo(
-    () => orderedVisiblePersonIds(treePersons, filter),
-    [treePersons, filter]
-  );
-  const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
   const stepPerson = useCallback(
     (dir: 1 | -1) => {
       // #76 — cursor-as-target (§4.25): with no selected person the
@@ -1741,6 +1786,7 @@ export default function App() {
           danger
           onConfirm={() => {
             const ids = confirmRemove;
+            markExhaust(); // #125: removing may empty the current person
             setConfirmRemove(null);
             setSelPersons((prev) => {
               const n = new Set(prev);
