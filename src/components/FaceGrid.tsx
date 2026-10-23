@@ -113,14 +113,12 @@ const SectionView = memo(
     const nameVal = staged.name ?? section.ruleDefaultName ?? "";
     const groupVal = staged.group ?? section.ruleDefaultGroup ?? "";
     const descVal = staged.desc ?? section.description ?? "";
-    // #108: a one-face section renders compact — heading + card, one row
-    const single = section.faceIds.length === 1;
-
+    // #120: the heading always sits on its own row above the card(s) —
+    // the #108 compact one-row layout was withdrawn (a heading beside a
+    // single card left a tall black column and read as broken).
     return (
-      <section
-        className={single ? "face-section single" : "face-section"}
-        data-section-key={section.key}
-      >
+      <section className="face-section" data-section-key={section.key}>
+
         <div className="face-section-header">
           <label className="select-all" title="Select whole group">
             <input
@@ -139,22 +137,22 @@ const SectionView = memo(
             {/* #101 (§4.24): the heading edits via one dialog — the labels
                 show the current values (staged ones underlined) */}
             <span
-              className={`rule-label${staged.name != null ? " staged" : ""}${nameVal ? "" : " empty"}`}
+              className={`rule-label${staged.name != null ? " staged" : ""}${nameVal ? "" : " is-empty"}`}
               title="Person name"
             >
               {nameVal || "–"}
             </span>
             <span
-              className={`rule-label${staged.group != null ? " staged" : ""}${groupVal ? "" : " empty"}`}
-              title="Group"
+              className={`rule-label${staged.group != null ? " staged" : ""}${groupVal ? "" : " is-empty"}`}
+              title="Group — set via Edit… (scope Group)"
             >
-              {groupVal || "–"}
+              {groupVal || "Friends|School"}
             </span>
             <span
-              className={`rule-label${staged.desc != null ? " staged" : ""}${descVal ? "" : " empty"}`}
-              title="Description"
+              className={`rule-label${staged.desc != null ? " staged" : ""}${descVal ? "" : " is-empty"}`}
+              title="Description — set via Edit… (scope Group)"
             >
-              {descVal || "–"}
+              {descVal || "glasses|beard"}
             </span>
             <button
               className="ghost"
