@@ -492,6 +492,14 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
     for r in dbcon.execute("SELECT person_id, path FROM person_groups"):
         existing_groups_cf.setdefault(r["person_id"], set()) \
             .add(r["path"].casefold())
+    # #128: per-person face row counts — a same-named person with ZERO
+    # faces is a shell, reusable by name (see step 1.5 below); discarded
+    # faces still count as faces (they are recoverable)
+    face_counts: dict[int, int] = {}
+    for r in dbcon.execute(
+            "SELECT person_id, COUNT(*) AS n FROM faces"
+            " WHERE person_id IS NOT NULL GROUP BY person_id"):
+        face_counts[r["person_id"]] = r["n"]
 
     def translated_groups(spid: int) -> set[str]:
         """§9.4 v2.1 translation: root stripped, name-leaf dropped."""
@@ -508,6 +516,7 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
     target_of: dict[int, tuple] = {}      # spid -> ('reused', pid) | ('new', rep_spid)
     new_persons: dict[int, tuple] = {}    # rep spid -> (final name, groups, orig)
     reused: dict[int, int] = {}           # spid -> existing person id
+    shell_groups: dict[int, set[str]] = {}  # #128: pid -> groups to append
     new_by_identity: dict[tuple, int] = {}  # (cf name, cf groups) -> rep spid
     taken_cf = {n.casefold() for n in existing_name_of.values()}
     for spid in claiming_spids:           # ascending id = first source wins
@@ -521,6 +530,20 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
         if matching:
             exact = [cid for cid in matching if existing_name_of[cid] == name]
             hit = (exact or matching)[0]
+        # 1.5) #128: no name+group hit, but a same-named person exists
+        # with NO faces — a shell (a faceless group import, or a person
+        # the GUI left empty).  The name is reusable: link the harvested
+        # faces to it instead of minting an 'X N' generation; the
+        # harvested groups are appended (step 1's group-equality match
+        # already covers the shell whose groups agree)
+        if hit is None:
+            shells = [cid for cid in existing_by_cf.get(n_cf, [])
+                      if face_counts.get(cid, 0) == 0]
+            if shells:
+                exact = [cid for cid in shells
+                         if existing_name_of[cid] == name]
+                hit = (exact or shells)[0]
+                shell_groups[hit] = shell_groups.get(hit, set()) | gs
         # 2) this importer's own suffixed generation (#82, §9.8)
         if hit is None:
             for cid in imported_by_cf_base.get(n_cf, []):
@@ -633,7 +656,8 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
                 moves.append({"db_face": r["id"], "person": tgt,
                               "current": current})
     return {"new_persons": new_persons, "reused": reused,
-            "moves": moves, "cluster_deletes": cluster_deletes}
+            "moves": moves, "cluster_deletes": cluster_deletes,
+            "shell_groups": shell_groups}
 
 
 # ------------------------------------------------------------------ execution
@@ -684,6 +708,16 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
             "UPDATE faces SET person_id=?, seq=?, name=?,"
             " link_status='provisional', reassigned=0 WHERE id=?",
             (pid, seq, name, face_id))
+
+    # #128: faceless shells were linked by name — append the harvested
+    # groups so the shell lands under them (additive; its own groups stay)
+    for pid, gs in sorted(plan.get("shell_groups", {}).items()):
+        for g in sorted(gs):
+            cur = dbcon.execute(
+                "INSERT OR IGNORE INTO person_groups(person_id, path)"
+                " VALUES(?,?)", (pid, g))
+            if cur.rowcount:
+                rep.add("shell_groups_added")
 
     moved_ids: list[int] = []
     moved_to: dict[int, int] = {}

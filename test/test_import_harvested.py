@@ -637,6 +637,49 @@ class ScenarioTests(Fixture):
                          self.q("SELECT id FROM persons"
                                 " WHERE name='Winnie Pelser'")[0]["id"])
 
+    def test_faceless_shell_name_reuse(self):
+        """#128 (v5.2): a same-named person with ZERO faces is a shell —
+        the harvested faces link to it, the name is reused (no 'X N'),
+        and the harvested groups are appended to the shell."""
+        con = sqlite3.connect(self.faces_db)
+        con.execute("INSERT INTO persons(id, name, state, created_at)"
+                    " VALUES (11, 'Joe', 'created', ?)", (NOW,))
+        con.commit()
+        con.close()
+        img2 = self.s_image(H2, w=200, h=200)
+        # harvested 'joe' (case variant, group Family) — db 'Joe' has no
+        # groups, so step 1 (name+group) misses and step 1.5 (faceless)
+        # catches it
+        self.st.group(self.st.person("joe"), "People|Family|joe", self.sid)
+        self.s_face(img2, "joe", 120, 120, 30, 30)   # unowned f5
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters["persons_reused"], 1)
+        self.assertEqual(rep.counters.get("persons_created", 0), 0)
+        self.assertEqual(rep.counters.get("shell_groups_added", 0), 1)
+        names = {p["name"] for p in self.q(
+            "SELECT name FROM persons WHERE name LIKE 'joe%'")}
+        self.assertEqual(names, {"Joe"})            # no 'joe 2'
+        row = self.q("SELECT p.id FROM faces f JOIN persons p"
+                     " ON p.id=f.person_id WHERE f.id=5")[0]
+        self.assertEqual(row["id"], 11)
+        g = self.q("SELECT path FROM person_groups WHERE person_id=11")
+        self.assertEqual([x["path"] for x in g], ["Family"])
+
+    def test_person_with_faces_is_not_a_shell(self):
+        """#128 (v5.2): a same-named person WITH faces is not a shell —
+        the suffixed generation is still created (the pre-#128 rule)."""
+        img2 = self.s_image(H2, w=200, h=200)
+        self.st.group(self.st.person("Mary"), "People|Friends|Mary", self.sid)
+        self.s_face(img2, "Mary", 120, 120, 30, 30)   # unowned f5
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters.get("persons_created", 0), 1)
+        names = {p["name"] for p in self.q(
+            "SELECT name FROM persons WHERE name LIKE 'Mary%'")}
+        self.assertEqual(names, {"Mary", "Mary 2"})
+
+
 # ------------------------------------------------- idempotent re-runs (#82)
 
 class IdempotencyTests(Fixture):
