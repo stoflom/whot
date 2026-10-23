@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Person, Settings } from "../api";
 import { aliasesToText, clusterPersons, textToAliases, type MergeCluster } from "../nameCluster";
 import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
+import ContextMenu, { type MenuState } from "./ContextMenu";
 
 // #88 (gui-design §4.28) — the Merge Similar Persons triage view:
 // clusters of near-identical names with per-pair link evidence, bulk
 // merge (shared MergeIntoDialog), bulk group and rename over a
-// multi-selection. Detection itself runs pure in App (nameCluster).
+// multi-selection. #126: viewport-capped (the list scrolls, the action
+// row stays visible), cluster-header select-all, and per-row context
+// menus with the finalise actions. Detection itself runs pure in App
+// (nameCluster).
 
 interface Props {
   persons: Person[];
@@ -45,6 +49,14 @@ export default function MergeSimilarDialog({
   const [dist, setDist] = useState(settings.merge_name_distance);
   const [aliasText, setAliasText] = useState(aliasesToText(settings.merge_suffix_aliases));
   const [group, setGroup] = useState("");
+  // #126: per-row / per-cluster context menu with the finalise actions
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const closeMenu = () => setMenu(null);
+  const openMenu = (e: ReactMouseEvent, groups: MenuState["groups"]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, groups });
+  };
   const pathOptions = useGroupPathOptions(persons);   // #97
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   // detection is pure and cheap, but only runs while this dialog is open
@@ -57,15 +69,16 @@ export default function MergeSimilarDialog({
     [persons, settings.merge_name_distance, settings.merge_suffix_aliases],
   );
 
-  // close on Esc while no other dialog is stacked above us
+  // close on Esc while no other dialog is stacked above us — and while
+  // the #126 context menu is closed (the menu owns Esc first)
   useEffect(() => {
-    if (!escActive) return;
+    if (!escActive || menu != null) return;
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [escActive, onClose]);
+  }, [escActive, menu, onClose]);
 
   // prune dead ids after a merge/rename refresh changed the person set
   useEffect(() => {
@@ -125,8 +138,10 @@ export default function MergeSimilarDialog({
         <h3>Merge Similar Persons</h3>
         <p className="dim">
           Names within <b>Damerau-Levenshtein ≤ {dist}</b> (case, seq suffixes and transpositions
-          count as one edit), single-linkage. Check the evidence, select who to combine, then
-          merge or realign the set — merging is confirmed and has no undo.
+          count as one edit), single-linkage. Check the evidence, then tick who to combine —
+          <b> they may come from different clusters</b>; a neighbour beyond the distance can be
+          the same person. <b>Everything ticked merges into ONE target person</b>, which you
+          pick in the next step — merging is confirmed and has no undo.
         </p>
 
         <div className="merge-opts">
@@ -159,14 +174,58 @@ export default function MergeSimilarDialog({
         {clusters.length === 0 ? (
           <p className="dim">No similar names found under the current rule.</p>
         ) : (
-          clusters.map((c) => {
+          // #126: the list scrolls; the title/intro above and the action
+          // row below stay visible (viewport-capped dialog)
+          <div className="merge-list">
+          {clusters.map((c) => {
             const allSel = c.members.every((m) => sel.has(m.id));
+            const memberIds = c.members.map((m) => m.id);
             return (
               <div className="merge-cluster" key={c.key}>
-                <div className="merge-cluster-head">
+                {/* #126: a cluster-header click toggles all its members */}
+                <div
+                  className="merge-cluster-head"
+                  onClick={() => toggleCluster(c)}
+                  title={`click: ${allSel ? "deselect" : "select"} all ${c.members.length} member(s)`}
+                  onContextMenu={(e) =>
+                    openMenu(e, [
+                      {
+                        title: `Cluster “${c.label}” (${c.members.length} person(s))`,
+                        items: [
+                          {
+                            label: `Merge all ${c.members.length} into…`,
+                            onClick: () => {
+                              closeMenu();
+                              onMergeInto(memberIds);
+                            },
+                            disabled: c.members.every((m) => m.counts.total === 0),
+                            danger: true,
+                          },
+                          {
+                            label: "Rename all…",
+                            onClick: () => {
+                              closeMenu();
+                              onRename(memberIds);
+                            },
+                          },
+                          {
+                            label: "Apply group to all…",
+                            hint: group || "(ungrouped)",
+                            onClick: () => {
+                              closeMenu();
+                              onApplyGroup(memberIds, group);
+                              setGroup("");
+                            },
+                          },
+                        ],
+                      },
+                    ])
+                  }
+                >
                   <input
                     type="checkbox"
                     checked={allSel}
+                    onClick={(e) => e.stopPropagation()}
                     onChange={() => toggleCluster(c)}
                     title={`select all ${c.members.length} member(s)`}
                   />
@@ -176,7 +235,46 @@ export default function MergeSimilarDialog({
                   </span>
                 </div>
                 {c.members.map((m) => (
-                  <label className="merge-member" key={m.id}>
+                  <label
+                    className="merge-member"
+                    key={m.id}
+                    // #126: per-member finalise actions without knowing
+                    // the selection-first flow
+                    onContextMenu={(e) =>
+                      openMenu(e, [
+                        {
+                          title: m.name,
+                          items: [
+                            {
+                              label: "Merge into…",
+                              onClick: () => {
+                                closeMenu();
+                                onMergeInto([m.id]);
+                              },
+                              disabled: m.counts.total === 0,
+                              danger: true,
+                            },
+                            {
+                              label: "Rename…",
+                              onClick: () => {
+                                closeMenu();
+                                onRename([m.id]);
+                              },
+                            },
+                            {
+                              label: "Apply group…",
+                              hint: group || "(ungrouped)",
+                              onClick: () => {
+                                closeMenu();
+                                onApplyGroup([m.id], group);
+                                setGroup("");
+                              },
+                            },
+                          ],
+                        },
+                      ])
+                    }
+                  >
                     <input type="checkbox" checked={sel.has(m.id)} onChange={() => toggle(m.id)} />
                     <span className="merge-name">{m.name}</span>
                     {m.state === "imported" && (
@@ -208,12 +306,15 @@ export default function MergeSimilarDialog({
                 ))}
               </div>
             );
-          })
+          })}
+          </div>
         )}
 
         <div className="merge-foot">
           <span className="dim">
-            {sel.size} person(s) · {faceCount} face(s) selected
+            {sel.size === 0
+              ? "select persons first (tick rows, a cluster header, or right-click one)"
+              : `${sel.size} person(s) · ${faceCount} face(s) selected`}
           </span>
           <span className="merge-spacer" />
           <PathTypeahead
@@ -251,12 +352,13 @@ export default function MergeSimilarDialog({
             className="bad"
             disabled={sel.size === 0 || faceCount === 0}
             onClick={() => onMergeInto([...sel])}
-            title="Merge the selection into one person — confirmation required, no undo (§4.28)"
+            title="Merge the selection into ONE target person (picked in the confirmation) — required, no undo (§4.28)"
           >
             Merge into…
           </button>
         </div>
       </div>
+      {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
     </div>
   );
 }
