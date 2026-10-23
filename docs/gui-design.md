@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.28** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.29** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -468,6 +468,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     confirm dialog), person menu (*move to group…* for the selection), and
     drag-and-drop of persons/selections/branches onto branch nodes or
     Ungrouped (virtual nodes are not draggable/renameable themselves).
+
+    **Display guarantees** (#127): group paths are **case-significant** —
+    `Family|Lombards` and `family|Lombard` are distinct data and each
+    renders its own branch (the builder is case-sensitive; do not fold).
+    With the face filter on **All** and an empty text filter, **every
+    person in the snapshot must be findable in the tree** — including
+    faceless named persons (their own branch, or the virtual `Ungrouped`
+    node when ungrouped). A person always renders under its **first**
+    group (`groups[0]`); further groups stay visible in the row tooltip.
+    The virtual `Unknown`/`Ungrouped` nodes are never pruned while they
+    hold persons.
 17. **Selection accelerators** (#53) ⇒ Ctrl/⌘-click on a face-card body
     toggles that card in the selection — the tree's idiom, now mirrored
     on cards; plain click stays inert so double-click-to-open is
@@ -616,24 +627,47 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the chosen scope's faceIds**, which Accept then commits (the
       review advance works off those ids too).
     - **Buttons**: `Apply` = stage + close (screen preview), `Accept` =
-      stage + commit (the shortcut — “Accept is what makes my changes
-      permanent”, Q3), `Cancel`/Esc = discard. **Enter = Accept**,
-      **Esc = Cancel** — inside the dialog only (G2).
+      commit the whole pending set (the shortcut — “Accept is what makes
+      my changes permanent”, Q3), `Reject` = the scope’s verdict,
+      `Cancel`/Esc = discard the pending set. **Enter = Accept**, **Esc
+      = Cancel** — inside the dialog only (G2).
+    - **Reject in the dialog** (#124): acts on the chosen scope (Card →
+      that face; Group → the cluster; Selection → the selected set),
+      **commits immediately** (a verdict, not a field edit — the same
+      path as the rule-bar Reject; sticky `rejected`, §4.2) and closes
+      the dialog. Pending ops touching rejected faces are dropped from
+      the set (the commit would skip them anyway, F2). A fully-rejected
+      scope relabels the button **“Un-reject (accept)”** and routes to
+      the plain accept of the scope (the context-menu semantics). No
+      dialog key for it — Enter/Esc keep their meaning.
     - **Scope**: every action targets the **selection**; bottom-bar
       buttons and plain keys never confirm (Q2/Q9), and the dialog's
       selector is the *only* object-vs-selection disambiguation,
       chosen before anything runs — the confirmation dialog the Q2
       alignment circled around is unnecessary.
-    - **Stage / preview state**: one pending
-      `{faceIds, name?, group?, desc?}` bound to its selection; a new
-      Apply replaces it; **Undo** (bottom bar, greyed without a
-      preview) and **Esc** revert it directly (F1); a **selection
-      change while staged asks escape-or-accept** (Q4). In that dialog
-      **both branches apply the pending selection** (“selection changes
-      either way”); *accept* then commits the stage on its faceIds and
-      does **not** re-drive the review advance — the pending selection
-      simply becomes the selection (#110). Text is never dropped
-      silently (Q3).
+    - **Stage / preview state — the pending set** (#123, replaces the
+      single-replacing stage and Q4’s selection-change dialog): the
+      stage is an **accumulating set of pending ops**, one per Apply —
+      `{faceIds, name?, group?, desc?}` bound to that Apply’s scope.
+      The working loop is **Apply → change → Apply → … until Accept or
+      Cancel**: Apply never commits, it only extends the set (screen
+      preview on the labels, the `staged: …` strip shows the whole
+      set); **Accept commits every op** through the #77 routing and
+      drives the review advance off the committed ids; a re-Apply on
+      the **same faceIds** replaces that op (latest wins); **Undo and
+      Cancel/Esc discard the whole set** (owner ruling: Undo = Cancel —
+      re-editing is just opening Edit… again).
+    - **No dialog inside the context** (#123): changing the selection
+      while the set is live — clicking another card, extending the
+      selection, opening Edit… on another card (whose selection rule
+      then makes the card the selection) — is **part of the Apply loop
+      and never asks**. The drop/accept dialog comes up **only when the
+      context changes completely**: selecting/stepping to **another
+      person**, or switching the view context (top-bar tabs / focus)
+      with a live set. In that dialog **both branches move the context**
+      (as Q4 always did): *accept* commits the set first, then the
+      context switches; *cancel* discards it, then the context switches.
+      Text is never dropped silently (Q3).
     - Commit keeps the #77 field routing — a name change through
       `assign_person` (group applied on create/UnknownN-rename, later
       explicit groups via `set_person_group`), a group-only change
@@ -727,6 +761,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     helper (§4.1) — identical resulting names merge. Self-merge is a
     no-op; `UnknownN` targets are refused (server-side and pre-validated
     in the UI, including on drop).
+
+    **Pane UX** (#126): the dialog is **viewport-capped** — the member
+    list scrolls, while the title/intro and the action row (`apply
+    group`, `rename to…`, `Merge into…`) stay visible (action row
+    pinned at the bottom). The intro states the contract: tick the
+    persons to combine — **they may come from different clusters** (a
+    neighbour beyond the distance can be the same person) — and
+    **everything ticked merges into ONE target person, picked in the
+    next step**. Affordances: a **cluster-header click toggles all its
+    members**; the buttons stay visible (disabled + explanatory title)
+    when nothing is selected; every member row and cluster header offers
+    a **context menu** with the finalise actions (*Merge into…* — the
+    row’s person, or the cluster’s members, as sources; *Rename…*,
+    *Apply group…*) so right-clicking a person finds the exit without
+    knowing the selection-first flow.
 
     **Settings**: `whotrc.json` gains `merge_name_distance` (default 2,
     clamped 1–3) and `merge_suffix_aliases` (default `[]`), with serde
@@ -836,13 +885,25 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       confirmation dialog; selection actions grey out at N = 0 and
       `Undo` greys out without a preview. `Assign name…` opens the
       shared Edit dialog with scope preset to Selection.
-    - **Key/bar Accept with a live stage acts on the stage's faceIds** —
+    - **Key/bar Accept with a live pending set commits the whole set** —
       the dialog's Accept, the bar's Accept, `A` and global `Enter`
-      all take the one stage-then-commit path; without a stage they act
-      on the selection (#105, #110). Global `Enter` accepts **in Review
+      all take the one commit path (the set's ops, then the review
+      advance off the committed ids); without a set they act on the
+      selection (#105, #110, #123). Global `Enter` accepts **in Review
       only** (`A` works in every view, Q10); the advance plan anchors at
       the **last-selected card**, else the hovered card, else the first
       accepted id (#110).
+    - **Person-exhausted fall-through** (#125): in Review, when
+      **Accept, Reject or Delete Person** leaves the current person with
+      **no faces left** (no sections for it in the refreshed snapshot,
+      under the current face filter), the context advances to the
+      **next person of the review step list — exactly what “›”
+      (`stepPerson(1)`) does** — instead of leaving a black centre
+      panel. Partial actions (remaining faces/sections) keep the
+      existing section-level advance or stay put; the step reuses the
+      ‹ › code path, so cursor-as-target (#75) and list-end behaviour
+      follow the stepping rules. At the end of the list the context
+      stays and a toast says the review is exhausted.
     - **An open modal owns the keyboard**: while any layer above
       preview-undo in Q8's stack is open (dialog, menu, settings), every
       other shortcut is suppressed (#107, #110).
@@ -872,6 +933,33 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       section/window virtualisation (IntersectionObserver, no new
       dependency) and snapshot payload size — decide after measuring
       1–4, not before.
+32. **Image & face-crop rotation** (#122; import half in
+    `docs/scripts-design.md` #118) ⇒ display rotation is **server
+    state**, one column per entity, applied on every load:
+    - **`images.rotation`** (0/90/180/270, degrees clockwise, default 0):
+      the full-image view (focus mode, §4.19) rotates the annotated
+      image (overlay included — the whole annotated block rotates, so
+      the rectangles stay aligned; no coordinate math for display).
+      Controls: **⟲/⟳ buttons** on the focus mode's pinned header row
+      and **context-menu entries** on the image (“Rotate 90°
+      counter-clockwise / clockwise”) — the image gains a WhoT context
+      menu, superseding #33's “full images keep the default webview
+      menu” for these entries. Persisted by `rotate_image(image_id,
+      ±90)`; the snapshot carries the angle and the renderer applies
+      `transform: rotate(⟨angle⟩deg)` from it — rotate once, it sticks.
+    - **`faces.rotation`** — the former dead `faces.orientation`
+      column (0/4116 set), **renamed** and repurposed (0/90/180/270,
+      default 0): display rotation of the **face crop**, **independent
+      of the image rotation** (crop pixels are fixed at creation; both
+      rotations are pure display state — image 90° CW + crop 90° CCW is
+      legal). Same control pattern on the card: ⟲/⟳ buttons on the card
+      action row + context-menu entries, persisted by
+      `rotate_face(face_id, ±90)`.
+    - **Import interlock** (#118): a legacy file's harvested EXIF
+      rotation angle lands in `images.rotation` at import time, so a
+      90°-rotated photo displays upright with zero user interaction;
+      the GUI controls are the manual override. Schema/DDL details in
+      `docs/schema-design.md`.
 
 
 ## 5. Related documents
