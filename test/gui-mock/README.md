@@ -2,7 +2,8 @@
 
 Drives the built frontend in headless Firefox against an in-memory mock of
 the Tauri backend, seeded from a real `faces.db` dump. Used to review the
-Review GUI (layout geometry incl. the compact one-face sections (#108),
+Review GUI (layout geometry — heading above cards in every section (#120),
+dimmed empty-label hints with normal row height (#119),
 §4.24/§4.30 stage-then-commit contract, Q4 escape-or-accept, Esc
 ordering, #103 no-op feedback, selection-toggle render time (§4.31/#109))
 without running the Rust backend or touching the real database.

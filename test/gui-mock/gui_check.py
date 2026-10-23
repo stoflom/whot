@@ -21,8 +21,9 @@ Checks (contract refs: docs/gui-design.md):
   C4  no-op Apply shows feedback (#103)
   C5  selection change with a live stage asks escape-or-accept (Q4)
   C6  Esc ordering: dialog closes first, stage survives, then clears (Q8)
-  C7  compact single-section keeps its select-all interaction (#108)
-  R1  layout geometry + compact single-section rule (#102/#108)
+  C7  one-face section keeps its select-all interaction (#120)
+  R1  layout geometry: heading above cards in every section (#120),
+      empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
 
 Exit code 0 iff all C-checks and the R1 layout rule pass.
@@ -271,29 +272,34 @@ def r1_layout(t):
       const name = c0 && c0.querySelector('.face-img .card-label.name');
       const img = c0 && c0.querySelector('.face-img');
       const grid = document.querySelector('.face-section .face-grid');
-      // #108: compact single-card sections — one-face iff .single, and
-      // the compact row puts heading + card on one line (multi-card
-      // sections must keep the two-row layout)
-      const singles = secs.filter(s => s.querySelectorAll('.face-card').length === 1);
-      const singleClassed = [...document.querySelectorAll('.face-section.single')];
-      const mismatch = singleClassed.length !== singles.length
-        || singles.some(s => !s.classList.contains('single'))
-        || singleClassed.some(s => s.querySelectorAll('.face-card').length !== 1);
-      const rowSample = (el) => {
-        if (!el) return null;
-        const h = el.querySelector('.face-section-header').getBoundingClientRect();
-        const c = el.querySelector('.face-card').getBoundingClientRect();
-        return {rowH: Math.round(el.getBoundingClientRect().height),
-                sameRow: Math.abs(h.top - c.top) <= 12};
-      };
-      const singleSample = rowSample(document.querySelector('.face-section.single'));
-      const multiSample = rowSample(secs.find(s => s.querySelectorAll('.face-card').length > 1));
-      const ok = !mismatch
-        && (!singleSample || singleSample.sameRow)
-        && (!multiSample || !multiSample.sameRow);
+      // #120: no compact one-row sections anymore — the heading always
+      // sits on its own row ABOVE the cards in every section
+      const noSingleClass = document.querySelectorAll('.face-section.single').length === 0;
+      const headingAbove = secs.every(s => {
+        const h = s.querySelector('.face-section-header').getBoundingClientRect();
+        const c = s.querySelector('.face-card');
+        if (!c) return true;
+        return h.bottom <= c.getBoundingClientRect().top + 2;
+      });
+      // #119: empty labels — dimmed hint text (never a 3rem-padded row:
+      // the old .empty collision rendered them ~98px tall)
+      const empties = [...document.querySelectorAll('.card-label.is-empty, .rule-label.is-empty')];
+      const emptyRows = empties.map(e => Math.round(e.getBoundingClientRect().height));
+      const emptyHeightsOk = empties.length > 0 && emptyRows.every(h => h > 0 && h <= 30);
+      // dim reference: .face-conf is always styled with var(--dim)
+      const ref = document.querySelector('.face-conf');
+      const refColor = ref ? getComputedStyle(ref).color : null;
+      const emptiesDimmed = refColor != null && empties.every(e => getComputedStyle(e).color === refColor);
+      // card labels carry per-field classes; the heading's rule labels are
+      // identified by position inside .rule (name, group, desc, Edit…)
+      const hintDesc = [...document.querySelectorAll('.card-label.desc.is-empty, .rule .rule-label:nth-child(3).is-empty')]
+        .every(e => e.textContent === 'glasses|beard');
+      const hintGroup = [...document.querySelectorAll('.card-label.group.is-empty, .rule .rule-label:nth-child(2).is-empty')]
+        .every(e => e.textContent === 'Friends|School');
+      const ok = noSingleClass && headingAbove && emptyHeightsOk && emptiesDimmed && hintDesc && hintGroup;
       return [ok, {
         sections: secs.length,
-        singleSections: singles.length,
+        oneFaceSections: sizes.filter(n => n === 1).length,
         sizeHistogram: Object.fromEntries(Object.entries(hist).map(([k, v]) => [k, v]).sort((a, b) => a[0] - b[0])),
         domNodes: document.getElementsByTagName('*').length,
         truncatedLabels: labels.filter(l => l.scrollWidth > l.clientWidth + 1).length,
@@ -304,10 +310,10 @@ def r1_layout(t):
              top: Math.round(name.getBoundingClientRect().top - img.getBoundingClientRect().top)}
           : null,
         gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns : null,
-        singleSample, multiSample,
+        emptyLabels: {count: empties.length, heights: emptyRows, dimmed: emptiesDimmed},
       }];
     """)
-    record("R1 layout + compact single sections", ok, json.dumps(rep))
+    record("R1 layout: heading above cards + empty hints", ok, json.dumps(rep))
 
 
 def r2_toggle_perf(t):
@@ -326,21 +332,29 @@ def r2_toggle_perf(t):
 
 def c7_single_section_selectall(t):
     fresh(t)
-    fid = js(t, "return document.querySelector('.face-section.single .face-card')?.getAttribute('data-face-id')")
-    if fid is None:
-        record("C7 single-section select-all", True,
-               "no single-card sections in view — vacuous")
+    # #120: one-face sections are plain .face-section now — find one by
+    # its position in .face-sections (no .single class to select on)
+    pos = js(t, """return (() => {
+      const secs = [...document.querySelectorAll('.face-section')];
+      const i = secs.findIndex(s => s.querySelectorAll('.face-card').length === 1);
+      if (i === -1) return null;
+      return {i, fid: secs[i].querySelector('.face-card').getAttribute('data-face-id')};
+    })()""")
+    if pos is None:
+        record("C7 one-face section select-all", True,
+               "no one-face sections in view — vacuous")
         return
-    cb = t.find_element(By.CSS_SELECTOR, ".face-section.single .select-all input")
+    sel = f".face-sections > .face-section:nth-of-type({pos['i'] + 1})"
+    cb = t.find_element(By.CSS_SELECTOR, f"{sel} .select-all input")
     cb.click()
     time.sleep(0.5)
-    sel1 = js(t, "return document.querySelectorAll('.face-section.single .face-card.selected').length")
-    t.find_element(By.CSS_SELECTOR, ".face-section.single .select-all input").click()
+    sel1 = js(t, f"return document.querySelectorAll('{sel} .face-card.selected').length")
+    t.find_element(By.CSS_SELECTOR, f"{sel} .select-all input").click()
     time.sleep(0.5)
-    sel2 = js(t, "return document.querySelectorAll('.face-section.single .face-card.selected').length")
+    sel2 = js(t, f"return document.querySelectorAll('{sel} .face-card.selected').length")
     ok = sel1 == 1 and sel2 == 0
-    record("C7 single-section select-all", ok,
-           f"face {fid}: after 1st click={sel1}, after 2nd={sel2}")
+    record("C7 one-face section select-all", ok,
+           f"face {pos['fid']}: after 1st click={sel1}, after 2nd={sel2}")
 
 
 def main():
