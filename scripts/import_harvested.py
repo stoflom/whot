@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """import_harvested.py — attach harvested persons to existing faces (design §9).
 
-Merges one harvest staging DB (§8, schema v1.1) into a **vacuumed copy** of
+Merges one harvest staging DB (§8, schema v1.2) into a **vacuumed copy** of
 faces.db.  Recovery of legacy work, not an import: it never creates images
 or faces, never adds detections.  Invariants:
 
@@ -51,8 +51,8 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 import pathmap      # legacy path-map file (scripts-design §8.6, #85)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-STAGING_SCHEMA_VERSION = "1.1"     # §8.2, exact-match (J3)
-FACES_SCHEMA_VERSION = "1.5"       # database/schema.sql, exact-match
+STAGING_SCHEMA_VERSION = "1.2"     # §8.2, exact-match (J3)
+FACES_SCHEMA_VERSION = "1.6"       # database/schema.sql, exact-match
 GROUP_ROOTS = {"people", "person"}  # stripped from harvested paths (§9.4)
 UNKNOWN_NAME_RE = re.compile(r"^Unknown\d+$")
 
@@ -125,7 +125,8 @@ def iou(a: tuple[float, float, float, float],
 
 def convert_box(x: float, y: float, w: float, h: float, unit: str,
                 db_w: int, db_h: int,
-                inversion: str = "none") -> tuple[float, float, float, float] | None:
+                inversion: str = "none",
+                rotation: int = 0) -> tuple[float, float, float, float] | None:
     """Harvested box -> decode-space box (§9.2). None when degenerate.
 
     Normalised fractions are multiplied by the db's decode dims — what
@@ -136,12 +137,30 @@ def convert_box(x: float, y: float, w: float, h: float, unit: str,
     scale — it mis-scales same-photo exports with differently-sized
     files (v5.1, #115).  Pixel boxes are already in the displayed space.
     A recorded inversion maps the box via the inverse flip.
+
+    #118 (v5.2): `rotation` is the source file's EXIF display rotation
+    (CW) as harvested.  Legacy tools record boxes in RAW (file) space —
+    pixel boxes in RAW pixels, normalised ones as fractions of the RAW
+    dims — while the db's decode dims are the DISPLAYED dims, which for a
+    90/270° rotation are the RAW dims swapped.  So the box is scaled by
+    the RAW dims and then mapped raw->display (the same math the GUI
+    applies, src/rotation.ts, #122) BEFORE the inversion, which is
+    expressed in display space.
     """
-    if unit == "normalized":
-        W, H = float(db_w), float(db_h)
-        x, y, w, h = x * W, y * H, w * W, h * H
-    elif unit != "pixels":
+    if unit not in ("normalized", "pixels"):
         return None
+    # RAW (file) dims: the db decode dims with 90/270° swapped
+    swapped = rotation in (90, 270)
+    W = float(db_h) if swapped else float(db_w)
+    H = float(db_w) if swapped else float(db_h)
+    if unit == "normalized":
+        x, y, w, h = x * W, y * H, w * W, h * H
+    if rotation == 90:
+        x, y, w, h = H - y - h, x, h, w
+    elif rotation == 180:
+        x, y = W - x - w, H - y - h
+    elif rotation == 270:
+        x, y, w, h = y, W - x - w, h, w
     if inversion in ("lr", "both"):
         x = db_w - (x + w)
     if inversion in ("tb", "both"):
@@ -403,6 +422,7 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
     claims: dict[int, list[tuple[int, float]]] = {}   # dbfid -> [(sfid, iou)]
     reported_missing: set[int] = set()
     reported_absent: set[int] = set()
+    rotations_landed: set[int] = set()                # #118: db image ids
     for sf in sfaces:
         rep.add("staging_faces")
         img_row = images.get(sf["image_id"])
@@ -424,9 +444,18 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
                     f"image-not-in-db: image {_img_where(img_row)} hash"
                     f" {ch[:12]}… not in faces.db (J2)")
             continue
+        # #118: the harvested EXIF display rotation maps the box from RAW
+        # space into the db's displayed (decode) space; it is also landed
+        # on the matched image (first write wins — a user-set GUI
+        # rotation is never overridden)
+        rot = (img_row or {}).get("rotation") or 0
+        if rot and dbimg["id"] not in rotations_landed:
+            rotations_landed.add(dbimg["id"])
+            dbcon.execute("UPDATE images SET rotation=? WHERE id=?"
+                          " AND rotation=0", (rot, dbimg["id"]))
         box = convert_box(sf["x"], sf["y"], sf["w"], sf["h"], sf["unit"],
                           dbimg["width"], dbimg["height"],
-                          dbimg["inversion"] or "none")
+                          dbimg["inversion"] or "none", rotation=rot)
         if box is None:
             rep.skip("degenerate-box",
                      f"staging face {sf['id']} person {sf['person_name']!r}")

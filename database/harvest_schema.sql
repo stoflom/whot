@@ -4,6 +4,10 @@
 -- v1.1: rectangle-less capture removed — only faces with geometry are
 -- harvested (§9 attaches persons by rectangle overlap), so the former
 -- image_persons table and the sidecars-mpri source are gone.
+-- v1.2: images.rotation — the source file's EXIF display rotation (CW,
+-- 0/90/180/270), harvested alongside the file hash (#118); the importer
+-- maps harvested boxes through it and lands it on faces.db's
+-- images.rotation.
 --   sqlite3 harvest.db < database/harvest_schema.sql   (tests / emergencies)
 
 PRAGMA journal_mode = WAL;
@@ -69,7 +73,12 @@ CREATE TABLE images (
   source_id      INTEGER NOT NULL REFERENCES sources(id),
   width          INTEGER,                  -- when the source states them
   height         INTEGER,
-  harvest_run_id INTEGER NOT NULL REFERENCES harvest_runs(id)
+  rotation       INTEGER,                  -- EXIF display rotation (CW),
+                                           --   read from the file when it was
+                                           --   certainly resolved and read
+                                           --   (H3 v5.2, #118)
+  harvest_run_id INTEGER NOT NULL REFERENCES harvest_runs(id),
+  CHECK (rotation IS NULL OR rotation IN (0,90,180,270))
 );
 CREATE INDEX idx_images_name_size ON images(name, file_size);
 CREATE INDEX idx_images_source_ref ON images(source_ref);
@@ -99,4 +108,4 @@ CREATE TABLE schema_version (
   version    TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-INSERT INTO schema_version(version, updated_at) VALUES ('1.1', datetime('now'));
+INSERT INTO schema_version(version, updated_at) VALUES ('1.2', datetime('now'));

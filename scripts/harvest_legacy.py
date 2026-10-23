@@ -72,7 +72,7 @@ import pathmap      # legacy path-map file (scripts-design §8.6, #85)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "database" / "harvest_schema.sql"
-HARVEST_SCHEMA_VERSION = "1.1"   # exact-match, like faces.db (no migrations)
+HARVEST_SCHEMA_VERSION = "1.2"   # exact-match, like faces.db (no migrations)
 
 # The canonical source vocabulary (design §8).  kind groups the sources for
 # the harvest_runs.roots JSON; a name outside this map is refused, never
@@ -156,6 +156,29 @@ def blake3_hex(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+# EXIF Orientation tag values -> display rotation, clockwise degrees (#118).
+# Flip orientations (2/4/5/7) have no rotation expression — they are None.
+EXIF_ROTATIONS = {1: 0, 3: 180, 6: 90, 8: 270}
+
+
+def exif_rotation(path: Path) -> int | None:
+    """The file's EXIF display rotation (CW), or None when absent.
+
+    Only the Orientation tag is read (metadata, not pixel decoding —
+    H3's one byte-read stays hashing; this reads the header only, and
+    only for *certainly* resolved files).  Flip orientations (2/4/5/7)
+    and missing/unreadable EXIF are both None — captured as-is, never
+    guessed (H4).
+    """
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            orientation = im.getexif().get(0x0112)  # EXIF Orientation
+    except Exception:
+        return None
+    return EXIF_ROTATIONS.get(orientation)
 
 
 class Hasher:
@@ -413,11 +436,13 @@ class Staging:
               path_origin: str | None = None,
               content_hash: str | None = None, name: str | None = None,
               file_size: int | None = None, source_ref: str | None = None,
-              width: int | None = None, height: int | None = None) -> int:
+              width: int | None = None, height: int | None = None,
+              rotation: int | None = None) -> int:
         """Get-or-create the image row for a source-stated path (or the
-        source's own image id); returns its id.  Dimensions and the content
-        hash only ever move from NULL to a value (COALESCE): the first
-        source that states them wins, later sources cannot contradict (H4)."""
+        source's own image id); returns its id.  Dimensions, the content
+        hash and the EXIF rotation only ever move from NULL to a value
+        (COALESCE): the first source that states them wins, later sources
+        cannot contradict (H4)."""
         row = None
         if path is not None:
             row = self.con.execute(
@@ -431,15 +456,16 @@ class Staging:
             self.con.execute(
                 "UPDATE images SET width=COALESCE(width,?),"
                 " height=COALESCE(height,?),"
-                " content_hash=COALESCE(content_hash,?) WHERE id=?",
-                (width, height, content_hash, iid))
+                " content_hash=COALESCE(content_hash,?),"
+                " rotation=COALESCE(rotation,?) WHERE id=?",
+                (width, height, content_hash, rotation, iid))
             return iid
         cur = self.con.execute(
             "INSERT INTO images(path, path_origin, content_hash, name,"
-            " file_size, source_ref, source_id, width, height,"
-            " harvest_run_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            " file_size, source_ref, source_id, width, height, rotation,"
+            " harvest_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (path, path_origin, content_hash, name, file_size, source_ref,
-             source_id, width, height, self.run_id))
+             source_id, width, height, rotation, self.run_id))
         return cur.lastrowid
 
     # -- presence without geometry ----------------------------------------
@@ -758,11 +784,18 @@ def harvest_sidecars(st: Staging, images_dirs: list[Path],
                 n_files += 1
                 img_path = str(Path(root, img))
                 # the sidecar names its sibling exactly: certainly resolved,
-                # so the file (when present) is hashed (H3)
+                # so the file (when present) is hashed (H3) and its EXIF
+                # display rotation is read (#118)
+                # hash keys are the source-stated path STRINGS (resume
+                # seeds by path) — exif_rotation is the only Path consumer
                 ch = hasher.hex(img_path) if Path(img_path).is_file() else None
+                rot = (exif_rotation(Path(img_path)) if ch is not None
+                       else None)
+                if rot:
+                    stats["exif_rotated"] = stats.get("exif_rotated", 0) + 1
                 iid = st.image(source_id=img_src,
                                path=img_path, path_origin="source",
-                               content_hash=ch)
+                               content_hash=ch, rotation=rot)
 
                 if "sidecars-mwgrs" in enabled:
                     for name, x, y, w, h, unit, iw, ih in \
@@ -918,10 +951,14 @@ def harvest_digikam_faces(st: Staging, db_path: Path, src_id: int,
                 unresolved.append(f"{name!r} ({fsize} bytes,"
                                   f" digikam-image:{img_id})")
             ch = hasher.hex(path) if path and Path(path).is_file() else None
+            rot = exif_rotation(Path(path)) if ch is not None else None
+            if rot:
+                stats["exif_rotated"] = stats.get("exif_rotated", 0) + 1
             iid = st.image(source_id=src_id, path=path,
                            path_origin=origin if path else None,
                            content_hash=ch, name=name, file_size=fsize,
-                           source_ref=f"digikam-image:{img_id}")
+                           source_ref=f"digikam-image:{img_id}",
+                           rotation=rot)
             pid = st.person(tname)
             if st.face(image_id=iid, pid=pid, x=x, y=y, w=w, h=h,
                        unit="pixels", source_id=src_id):
@@ -1034,10 +1071,14 @@ def harvest_lightroom_catalog(st: Staging, catalog: Path,
             if w <= 0 or h <= 0:
                 n_degenerate += 1
                 continue
+            rot = exif_rotation(Path(local))
+            if rot:
+                stats["exif_rotated"] = stats.get("exif_rotated", 0) + 1
             iid = st.image(source_id=src_id, path=local, path_origin="source",
                            content_hash=hasher.hex(local),
                            width=int(W), height=int(H),
-                           source_ref=f"lightroom-image:{fid}")
+                           source_ref=f"lightroom-image:{fid}",
+                           rotation=rot)
             pid = st.person(name)
             known.add(name)
             if st.face(image_id=iid, pid=pid, x=x, y=y, w=w, h=h,
@@ -1107,14 +1148,21 @@ def harvest_lightroom_sidecars(st: Staging, images_dirs: list[Path],
                     n.lower()))
                 cand_path = str(Path(root, cands[0]))
                 # RAW-preference among SEVERAL candidates is a heuristic, not
-                # certainty: only a single candidate gets its bytes hashed (H3)
+                # certainty: only a single candidate gets its bytes hashed
+                # (H3) — and read for its EXIF rotation (#118), the same
+                # certainty gate
                 ch = hasher.hex(cand_path) if len(cands) == 1 else None
+                rot = (exif_rotation(Path(cand_path)) if ch is not None
+                       else None)
+                if rot:
+                    stats["exif_rotated"] = stats.get("exif_rotated", 0) + 1
                 text = read_text(Path(root, base + ".xmp"))
                 if text is None:
                     continue
                 n_files += 1
                 iid = st.image(source_id=src_id, path=cand_path,
-                               path_origin="source", content_hash=ch)
+                               path_origin="source", content_hash=ch,
+                               rotation=rot)
                 for name, x, y, w, h, unit, iw, ih in \
                         sidecar_face_data(text):
                     pid = st.person(name)

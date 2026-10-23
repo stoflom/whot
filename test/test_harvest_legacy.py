@@ -709,5 +709,57 @@ class ResumeTests(HarvestFixture):
             hl.create_staging(self.out)
 
 
+class ExifRotationTests(HarvestFixture):
+    """#118 (v5.2): the harvested EXIF display rotation (H3 gate)."""
+
+    def _jpeg(self, name: str, orientation: int | None) -> Path:
+        from PIL import Image
+        p = self.pics / name
+        im = Image.new("RGB", (40, 30), "white")
+        if orientation is None:
+            im.save(p)
+        else:
+            exif = Image.Exif()
+            exif[0x0112] = orientation
+            im.save(p, exif=exif)
+        return p
+
+    def test_exif_rotation_tag_mapping(self):
+        self.assertEqual(hl.exif_rotation(self._jpeg("e1.jpg", 1)), 0)
+        self.assertEqual(hl.exif_rotation(self._jpeg("e3.jpg", 3)), 180)
+        self.assertEqual(hl.exif_rotation(self._jpeg("e6.jpg", 6)), 90)
+        self.assertEqual(hl.exif_rotation(self._jpeg("e8.jpg", 8)), 270)
+        # a flip has no rotation expression (H4: capture, not judgement)
+        self.assertIsNone(hl.exif_rotation(self._jpeg("e5.jpg", 5)))
+        # non-image / missing files are None, never an exception
+        self.assertIsNone(hl.exif_rotation(self.pics / "dup.jpg"))
+        self.assertIsNone(hl.exif_rotation(self.pics / "nope.jpg"))
+
+    def test_sidecar_harvest_lands_rotation(self):
+        p = self._jpeg("r.jpg", 6)
+        (self.pics / "r.jpg.xmp").write_text(MWG_ELEMENT)
+        stats = self.run_harvest(sources=("sidecars-mwgrs",))
+        row = self.q(
+            f"SELECT rotation, content_hash FROM images WHERE path='{p}'")
+        self.assertEqual(len(row), 1)
+        self.assertEqual(row[0]["rotation"], 90)
+        self.assertIsNotNone(row[0]["content_hash"])   # certainly resolved
+        self.assertEqual(stats.get("exif_rotated"), 1)
+
+    def test_rotation_not_read_for_uncertain_resolution(self):
+        # an ambiguous (name, size) digiKam resolution is NOT certainly
+        # resolved: no hash, and no EXIF read either (the H3 gate) — the
+        # fixture's duplicate dup.jpg stays path-less with NULL rotation
+        # (full run: the sidecars establish the person name that gates
+        # digiKam's tag linking)
+        self.run_harvest()
+        row = self.q("SELECT path, content_hash, rotation FROM images"
+                     " WHERE source_ref='digikam-image:12'")
+        self.assertEqual(len(row), 1)
+        self.assertIsNone(row[0]["path"])
+        self.assertIsNone(row[0]["content_hash"])
+        self.assertIsNone(row[0]["rotation"])
+
+
 if __name__ == "__main__":
     unittest.main()
