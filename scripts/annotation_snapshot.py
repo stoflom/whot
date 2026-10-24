@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """annotation_snapshot.py — one-off export/restore of manual annotations.
 
-Supports the schema v1.5 drop & recreate (design v1.3; AGENTS.md: no
-migrations). Export reads the OLD database (pre-1.5 or 1.5) and writes the
+Supports the schema v1.6 drop & recreate (design v1.3; AGENTS.md: no
+migrations). Export reads the OLD database (pre-marker or the current
+version) and writes the
 manual work — named persons, groups, notes, primary picks, per-face
 link_status/description/person moves and pinned refcrops — keyed by stable
 face identity (image BLAKE3 content hash + rectangle). Restore applies it to
@@ -18,7 +19,7 @@ summary on **stderr** (stdout is the JSON data channel); -q/--quiet prints
 only the header and the final summary.
 
 Export never writes to the database (read-only connection). Restore requires
-a schema v1.5 target (schema_version gate), runs in one transaction and
+a schema v1.6 target (schema_version gate), runs in one transaction and
 prints a summary; unmatched faces are reported, never silently dropped.
 
 Exit codes: 0 ok, 1 failure / incompatible schema. stdlib only.
@@ -36,7 +37,7 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # must match database/schema.sql and scripts/import_roll.py / db.rs
-SCHEMA_VERSION = "1.5"
+SCHEMA_VERSION = "1.6"
 FORMAT = 1
 
 

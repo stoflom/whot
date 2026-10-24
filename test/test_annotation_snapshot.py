@@ -1,4 +1,4 @@
-"""Tests for scripts/annotation_snapshot.py (schema v1.5 export/restore).
+"""Tests for scripts/annotation_snapshot.py (schema v1.6 export/restore).
 
 Run: python3 -m unittest discover -s test
 Builds old/new databases from database/schema.sql — no local data needed.
@@ -94,7 +94,7 @@ class RoundTripTest(unittest.TestCase):
     def test_export_reports_schema_and_decisions(self):
         data = ansi.do_export(self.old)
         self.assertEqual(data["format"], 1)
-        self.assertEqual(data["source_schema"], "1.5")
+        self.assertEqual(data["source_schema"], "1.6")
         self.assertEqual([p["name"] for p in data["persons"]], ["Alice"])
         self.assertEqual(data["persons"][0]["groups"], ["family|test"])
         self.assertEqual(data["persons"][0]["note"], "mom")
@@ -190,7 +190,7 @@ class RoundTripTest(unittest.TestCase):
         derived-state maintenance: machine primary, auto refcrops, and
         deletion of the UnknownN shells the moves emptied."""
         data = {
-            "format": 1, "source_schema": "1.5", "exported_at": NOW,
+            "format": 1, "source_schema": "1.6", "exported_at": NOW,
             "persons": [{"name": "Bob", "state": "created", "note": None,
                          "groups": ["family|test"],
                          "primary": None, "primary_pinned": 0}],

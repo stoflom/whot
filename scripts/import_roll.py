@@ -32,7 +32,7 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_TAG = "insightface:buffalo_l"
 # must match database/schema.sql's schema_version row and db.rs SCHEMA_VERSION
-SCHEMA_VERSION = "1.5"
+SCHEMA_VERSION = "1.6"
 
 
 # ---------------------------------------------------------------- insightface venv

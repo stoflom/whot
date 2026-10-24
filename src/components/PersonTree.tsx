@@ -3,6 +3,7 @@ import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
 import { groupPathOptions } from "./PathTypeahead";
+import { rotStyle } from "../rotation";
 import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
 import GroupDialog from "./GroupDialog";
@@ -118,6 +119,8 @@ interface Props {
   onMergeInto: (ids: number[], targetId?: number) => void;
   /** #88 (§4.28) — rename-merge a multi-selection via the Edit dialog (#101) */
   onRenameSelection?: (ids: number[]) => void;
+  /** #122: person id -> primary face rotation (avatar display) */
+  primaryRot: Map<number, number>;
 }
 
 function PersonRow({
@@ -126,6 +129,7 @@ function PersonRow({
   selected,
   multi,
   renaming,
+  rot,
   dropTarget,
   onSelect,
   onStartRename,
@@ -144,6 +148,8 @@ function PersonRow({
   selected: boolean;
   multi: boolean;
   renaming: boolean;
+  /** #122: the primary face's stored display rotation (crop spins) */
+  rot: number;
   /** #88: highlighted as the merge target while persons are dragged over it */
   dropTarget: boolean;
   onSelect: (e: ReactMouseEvent) => void;
@@ -183,7 +189,7 @@ function PersonRow({
       title={`${person.groups.join(", ") || "Ungrouped"} — double-click to rename`}
     >
       <span className="tree-avatar">
-        {img ? <img src={img} alt="" /> : person.name[0]}
+        {img ? <img src={img} alt="" style={rotStyle(rot)} /> : person.name[0]}
       </span>
       {renaming ? (
         <NameTypeahead
@@ -213,7 +219,7 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onError, onOpenMerge, onMergeInto, onRenameSelection }: Props) {
+export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot }: Props) {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: number } | null>(null);
   const [branchMenu, setBranchMenu] = useState<{
@@ -449,6 +455,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                   selected={selectedId === p.id}
                   multi={selectedIds.has(p.id)}
                   renaming={renamingId === p.id}
+                  rot={primaryRot.get(p.id) ?? 0}
                   onSelect={(e) => onSelect(p.id, e)}
                   onStartRename={() => setRenamingId(p.id)}
                   onRename={onRename}

@@ -57,12 +57,13 @@ def main():
         "x": f["x"], "y": f["y"], "w": f["w"], "h": f["h"], "name": f["name"],
         "seq": f["seq"], "description": f["description"], "confidence": f["confidence"],
         "link_status": f["link_status"], "state": f["state"],
+        "rotation": f["rotation"],
         "import_id": f["detected_in_import_id"], "created_at": f["created_at"],
     } for f in con.execute("select * from faces order by id")]
 
     images = [{
         "id": i["id"], "primary_path": i["primary_path"], "width": i["width"],
-        "height": i["height"], "orientation": i["orientation"], "rtype": i["type"],
+        "height": i["height"], "orientation": i["orientation"], "rotation": i["rotation"], "rtype": i["type"],
         "state": i["state"], "first_import_id": i["first_import_id"],
         "last_import_id": i["last_import_id"],
     } for i in con.execute("select * from images order by id")]

@@ -21,8 +21,8 @@ export interface Section {
 interface GridShared {
   faces: Map<number, Face>;
   persons: Map<number, Person>;
-  /** #101: the live stage — its fields preview on the covered labels */
-  stage: Stage | null;
+  /** #101/#123: the live pending set — its fields preview on the covered labels */
+  stage: Stage[];
   primaryFaceId: number | null;
   onOpen: (id: number) => void;
   /** right-click menu on face tiles (#32) */
@@ -48,10 +48,10 @@ interface GridProps extends GridShared {
 }
 
 /** #109: a stable identity for "which staged fields preview on this
-    section" — "" while no live stage overlaps it, so only the sections
-    a stage newly covers (or stops covering) change when it does */
-function stagedKeyFor(stage: Stage | null, ids: number[]): string {
-  if (!stage) return "";
+    section" — "" while no live pending set overlaps it, so only the
+    sections a set newly covers (or stops covering) change when it does */
+function stagedKeyFor(stage: Stage[], ids: number[]): string {
+  if (stage.length === 0) return "";
   const f = stagedFieldsForSection(stage, ids);
   return Object.keys(f).length ? JSON.stringify(f) : "";
 }

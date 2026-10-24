@@ -15,7 +15,7 @@ pub const MODEL_TAG: &str = "insightface:buffalo_l";
 /// Must match `schema_version.version` in database/schema.sql — exact
 /// match, no migrations by policy: mismatched DBs are refused up-front
 /// with recreate instructions instead of failing on the first query.
-pub const SCHEMA_VERSION: &str = "1.5";
+pub const SCHEMA_VERSION: &str = "1.6";
 const DEFAULT_THRESHOLD: f64 = 0.40;
 const DEFAULT_REFCROP_N: i64 = 5;
 
@@ -304,6 +304,9 @@ pub struct Face {
     pub confidence: f64,
     pub link_status: String,
     pub state: String,
+    /// #122: display rotation of the face crop (CW, 0/90/180/270)
+    /// — independent of the full-image rotation
+    pub rotation: i64,
     pub import_id: Option<i64>,
     pub created_at: String,
 }
@@ -315,6 +318,9 @@ pub struct ImageRow {
     pub width: i64,
     pub height: i64,
     pub orientation: Option<String>,
+    /// #118/#122: EXIF display rotation, CW (0/90/180/270) — the geometric
+    /// key the importer lands harvested angles in
+    pub rotation: i64,
     pub rtype: Option<String>,
     pub state: String,
     pub first_import_id: Option<i64>,
@@ -420,7 +426,7 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
     let faces: Vec<Face> = {
         let mut st = con.prepare(
             "SELECT id, image_id, person_id, x, y, w, h, name, seq, description,
-                    confidence, link_status, state, detected_in_import_id, created_at
+                    confidence, link_status, state, rotation, detected_in_import_id, created_at
                FROM faces ORDER BY id",
         )?;
         st.query_map([], |r| {
@@ -438,8 +444,9 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
                 confidence: r.get(10)?,
                 link_status: r.get(11)?,
                 state: r.get(12)?,
-                import_id: r.get(13)?,
-                created_at: r.get(14)?,
+                rotation: r.get(13)?,
+                import_id: r.get(14)?,
+                created_at: r.get(15)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?
@@ -447,7 +454,7 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
 
     let images: Vec<ImageRow> = {
         let mut st = con.prepare(
-            "SELECT id, primary_path, width, height, orientation, type, state,
+            "SELECT id, primary_path, width, height, orientation, rotation, type, state,
                     first_import_id, last_import_id FROM images ORDER BY id",
         )?;
         st.query_map([], |r| {
@@ -457,10 +464,11 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
                 width: r.get(2)?,
                 height: r.get(3)?,
                 orientation: r.get(4)?,
-                rtype: r.get(5)?,
-                state: r.get(6)?,
-                first_import_id: r.get(7)?,
-                last_import_id: r.get(8)?,
+                rotation: r.get(5)?,
+                rtype: r.get(6)?,
+                state: r.get(7)?,
+                first_import_id: r.get(8)?,
+                last_import_id: r.get(9)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?
@@ -903,6 +911,34 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
     }
     tx.commit()?;
     Ok(())
+}
+
+/// #122 — full-image display rotation (server state): `delta` is the
+/// signed quarter-turn (the GUI sends +90/−90); the stored value is
+/// normalised to 0/90/180/270 CW. The same column is the geometric key
+/// #118 lands harvested EXIF angles in at import time.
+pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<i64> {
+    let d = ((delta % 360) + 360) % 360;
+    let con = connect(paths)?;
+    let cur: i64 = con
+        .query_row("SELECT rotation FROM images WHERE id = ?", params![image_id], |r| r.get(0))
+        .context("image not found")?;
+    let next = (cur + d) % 360;
+    con.execute("UPDATE images SET rotation = ? WHERE id = ?", params![next, image_id])?;
+    Ok(next)
+}
+
+/// #122 — face-crop display rotation (server state): independent of the
+/// full-image rotation; same ±90 quarter-turn contract as `rotate_image`.
+pub fn rotate_face(paths: &Paths, face_id: i64, delta: i64) -> Result<i64> {
+    let d = ((delta % 360) + 360) % 360;
+    let con = connect(paths)?;
+    let cur: i64 = con
+        .query_row("SELECT rotation FROM faces WHERE id = ?", params![face_id], |r| r.get(0))
+        .context("face not found")?;
+    let next = (cur + d) % 360;
+    con.execute("UPDATE faces SET rotation = ? WHERE id = ?", params![next, face_id])?;
+    Ok(next)
 }
 
 /// §4.4 — set face description (normalised): re-assign seq within the NEW

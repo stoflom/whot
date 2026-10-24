@@ -46,29 +46,56 @@ export function buildStage(
   return stage;
 }
 
-/** card label overlay: the staged fields for one face (§4.24 H2) */
+/** #123 — the pending SET: an ordered list of ops, one per Apply. A
+    re-Apply on the same faceIds replaces that op (latest wins); every
+    other faceIds extends the set. Nothing here commits — Accept does. */
+export function upsertStage(set: Stage[], st: Stage): Stage[] {
+  const i = set.findIndex((s) => sameIdSet(new Set(s.faceIds), new Set(st.faceIds)));
+  if (i === -1) return [...set, st];
+  const n = [...set];
+  n[i] = st;
+  return n;
+}
+
+/** F2: ops touching rejected faces are moot (the commit would skip them
+    anyway) — drop them from the set when their faces get rejected */
+export function dropStagesForFaces(
+  set: Stage[],
+  faceIds: Iterable<number>,
+): Stage[] {
+  const gone = new Set(faceIds);
+  return set.filter((s) => !s.faceIds.some((id) => gone.has(id)));
+}
+
+/** card label overlay: the staged fields for one face (§4.24 H2, #123 —
+    ops later in the set win when two cover the same face) */
 export function stagedFieldsForCard(
-  stage: Stage | null,
+  set: Stage[],
   faceId: number,
 ): { name?: string; group?: string; desc?: string } {
-  if (!stage || !stage.faceIds.includes(faceId)) return {};
   const out: { name?: string; group?: string; desc?: string } = {};
-  if (stage.name != null) out.name = stage.name;
-  if (stage.group != null) out.group = stage.group;
-  if (stage.desc != null) out.desc = stage.desc;
+  for (const stage of set) {
+    if (!stage.faceIds.includes(faceId)) continue;
+    if (stage.name != null) out.name = stage.name;
+    if (stage.group != null) out.group = stage.group;
+    if (stage.desc != null) out.desc = stage.desc;
+  }
   return out;
 }
 
-/** header label overlay: any overlap stages the whole heading (§4.24) */
+/** header label overlay: any overlap stages the whole heading (§4.24,
+    #123 — same later-ops-win merge) */
 export function stagedFieldsForSection(
-  stage: Stage | null,
+  set: Stage[],
   sectionIds: number[],
 ): { name?: string; group?: string; desc?: string } {
-  if (!stage || !sectionIds.some((id) => stage.faceIds.includes(id))) return {};
   const out: { name?: string; group?: string; desc?: string } = {};
-  if (stage.name != null) out.name = stage.name;
-  if (stage.group != null) out.group = stage.group;
-  if (stage.desc != null) out.desc = stage.desc;
+  for (const stage of set) {
+    if (!sectionIds.some((id) => stage.faceIds.includes(id))) continue;
+    if (stage.name != null) out.name = stage.name;
+    if (stage.group != null) out.group = stage.group;
+    if (stage.desc != null) out.desc = stage.desc;
+  }
   return out;
 }
 
@@ -88,11 +115,20 @@ export function sameIdSet(a: ReadonlySet<number>, b: ReadonlySet<number>): boole
   return true;
 }
 
-/** human summary of a stage for the escape-or-accept dialog (Q4) */
+/** human summary of one op */
 export function stageSummary(stage: Stage): string {
   const parts: string[] = [];
   if (stage.name != null) parts.push(`name “${stage.name}”`);
   if (stage.group != null) parts.push(stage.group ? `group “${stage.group}”` : "group → ungrouped");
   if (stage.desc != null) parts.push(stage.desc ? `description “${stage.desc}”` : "description → cleared");
   return parts.join(", ") || "no changes";
+}
+
+/** #123 — compact summary of the whole pending set for the bottom bar
+    and the context-change dialog */
+export function stageSummarySet(set: Stage[]): string {
+  if (set.length === 0) return "";
+  const faces = new Set(set.flatMap((s) => s.faceIds));
+  const per = set.map((s) => `${stageSummary(s)} · ${s.faceIds.length} face(s)`);
+  return `${per.join("  /  ")} — ${faces.size} face(s) staged`;
 }

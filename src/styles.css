@@ -42,6 +42,7 @@ button.active { background: var(--accent); border-color: var(--accent); color: #
 button.secondary { background: transparent; }
 button.ghost { background: transparent; border: none; font-size: 1.1rem; }
 button.ok { background: color-mix(in srgb, var(--ok) 25%, var(--panel2)); border-color: var(--ok); }
+button.warn { background: color-mix(in srgb, var(--warn) 25%, var(--panel2)); border-color: var(--warn); }
 button.bad { background: color-mix(in srgb, var(--bad) 25%, var(--panel2)); border-color: var(--bad); }
 
 input, textarea {
@@ -897,6 +898,18 @@ button.merge-open { font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
 }
 
 .merge-dialog { width: 720px; }
+/* #126: the dialog is capped to the viewport — the cluster list scrolls,
+   the title/intro above and the action row below stay visible */
+.merge-dialog { max-height: 86vh; }
+.merge-list {
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding-right: 2px;
+}
+.merge-cluster-head { cursor: pointer; }
 
 .merge-opts {
   display: flex;
@@ -968,6 +981,8 @@ button.merge-open { font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
   flex-wrap: wrap;
   border-top: 1px solid var(--border);
   padding-top: 0.7rem;
+  /* #126: the action row never scrolls away */
+  flex-shrink: 0;
 }
 .merge-foot .input-group { flex: 1 1 12rem; min-width: 0; }
 .merge-spacer { flex: 1; }

@@ -49,7 +49,7 @@ H2 = "b" * 64                      # content hash of image 2 (staging only)
 
 
 def build_faces_db(path: Path) -> None:
-    """faces.db v1.5 fixture: two images, an UnknownN cluster, a known
+    """faces.db v1.6 fixture: two images, an UnknownN cluster, a known
     person, an unowned face."""
     con = sqlite3.connect(path)
     con.executescript(SCHEMA.read_text())
@@ -112,14 +112,15 @@ class Fixture(unittest.TestCase):
         self.con.close()
 
     def s_image(self, hash_: str | None, w: int | None = 100,
-                h: int | None = 100, path: str | None = None) -> int:
+                h: int | None = 100, path: str | None = None,
+                rotation: int | None = None) -> int:
         if path is None:
             # distinct path per hash: images are keyed by path first, and
             # two staging images must not collide on one path in a test
             path = f"/arc/{(hash_ or 'nohash')[:6]}.jpg"
         return self.st.image(source_id=self.sid, path=path,
                              path_origin="source", content_hash=hash_,
-                             width=w, height=h)
+                             width=w, height=h, rotation=rotation)
 
     def s_face(self, image_id: int, person: str, x, y, w, h,
                unit: str = "pixels", img_w=None, img_h=None,
@@ -196,6 +197,38 @@ class GeometryTests(unittest.TestCase):
     def test_convert_degenerate(self):
         self.assertIsNone(ih.convert_box(0, 0, 0, 10, "pixels", 100, 100))
         self.assertIsNone(ih.convert_box(0, 0, 1, 1, "degrees", 100, 100))
+
+    def test_convert_rotation_pixels(self):
+        # #118 (v5.2): RAW-space boxes on a rotated EXIF file. The db
+        # stores the DISPLAYED (decode) dims — equal to the RAW dims for a
+        # square file — and convert_box maps raw->display first:
+        # 90 CW: (x,y,w,h) -> (H-y-h, x, h, w); 180: (W-x-w, H-y-h);
+        # 270: (y, W-x-w, h, w)
+        self.assertEqual(
+            ih.convert_box(10, 20, 30, 40, "pixels", 100, 100, rotation=90),
+            (40, 10, 40, 30))
+        self.assertEqual(
+            ih.convert_box(10, 20, 30, 40, "pixels", 100, 100, rotation=180),
+            (60, 40, 30, 40))
+        self.assertEqual(
+            ih.convert_box(10, 20, 30, 40, "pixels", 100, 100, rotation=270),
+            (20, 60, 40, 30))
+
+    def test_convert_rotation_normalized_uses_raw_dims(self):
+        # #118 (v5.2): a 90°-rotated photo lands in the db as displayed
+        # 200x100 (RAW 100x200); a normalised box is a fraction of the RAW
+        # dims, so it scales by the SWAPPED decode dims before mapping
+        self.assertEqual(
+            ih.convert_box(0.5, 0.25, 0.1, 0.1, "normalized", 200, 100,
+                           rotation=90),
+            (130.0, 50.0, 20.0, 10.0))
+
+    def test_convert_rotation_then_inversion(self):
+        # #118 (v5.2): rotation first (RAW -> display), inversion after —
+        # it is expressed in display space
+        self.assertEqual(
+            ih.convert_box(10, 20, 30, 40, "pixels", 100, 100, "lr", rotation=90),
+            (20, 10, 40, 30))
 
     def test_strip_group_root(self):
         # without a person name: root stripped only (legacy behaviour)
@@ -565,6 +598,86 @@ class ScenarioTests(Fixture):
         rep = self.run_plan()
         self.assertEqual(rep.counters["persons_reused"], 1)
         self.assertEqual(rep.counters.get("persons_created", 0), 0)
+
+    def test_rotation_landed_on_matched_image(self):
+        """#118 (v5.2): the harvested EXIF rotation maps the box AND is
+        landed on the matched db image — first write wins, a user-set
+        GUI rotation is never overridden."""
+        img = self.s_image(H1, rotation=90)
+        # db face f1 sits at (10,10,20,20) in DISPLAY space; the same
+        # physical rectangle in RAW space of a 90°-rotated 100x100 file
+        # is (10,70,20,20): (H-y-h, x, h, w) -> (100-70-20, 10, 20, 20)
+        self.s_face(img, "Winnie Pelser", 10, 70, 20, 20)
+        self.con.commit()
+        rep = self.run_plan()
+        # the RAW-space box mapped through the 90° rotation lands exactly
+        # on f1 -> the whole Unknown cluster co-moves (§9.5)
+        self.assertEqual(rep.counters["faces_moved"], 3)
+        self.assertEqual(
+            self.q("SELECT p.name FROM faces f JOIN persons p"
+                   " ON p.id=f.person_id WHERE f.id=1")[0]["name"],
+            "Winnie Pelser")
+        self.assertEqual(self.q("SELECT rotation FROM images WHERE id=1")[0]
+                         ["rotation"], 90)
+
+        # a user-set rotation on the second image survives the import
+        con = sqlite3.connect(self.faces_db)
+        con.execute("UPDATE images SET rotation=270 WHERE id=2")
+        con.commit()
+        con.close()
+        img2 = self.s_image(H2, w=200, h=200, rotation=90)
+        # unowned f5 at display (120,120,30,30) <- RAW (120,50,30,30)
+        self.s_face(img2, "Winnie Pelser", 120, 50, 30, 30)
+        self.con.commit()
+        self.run_plan()
+        self.assertEqual(self.q("SELECT rotation FROM images WHERE id=2")[0]
+                         ["rotation"], 270)
+        self.assertEqual(self.q("SELECT person_id FROM faces WHERE id=5")[0]
+                         ["person_id"],
+                         self.q("SELECT id FROM persons"
+                                " WHERE name='Winnie Pelser'")[0]["id"])
+
+    def test_faceless_shell_name_reuse(self):
+        """#128 (v5.2): a same-named person with ZERO faces is a shell —
+        the harvested faces link to it, the name is reused (no 'X N'),
+        and the harvested groups are appended to the shell."""
+        con = sqlite3.connect(self.faces_db)
+        con.execute("INSERT INTO persons(id, name, state, created_at)"
+                    " VALUES (11, 'Joe', 'created', ?)", (NOW,))
+        con.commit()
+        con.close()
+        img2 = self.s_image(H2, w=200, h=200)
+        # harvested 'joe' (case variant, group Family) — db 'Joe' has no
+        # groups, so step 1 (name+group) misses and step 1.5 (faceless)
+        # catches it
+        self.st.group(self.st.person("joe"), "People|Family|joe", self.sid)
+        self.s_face(img2, "joe", 120, 120, 30, 30)   # unowned f5
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters["persons_reused"], 1)
+        self.assertEqual(rep.counters.get("persons_created", 0), 0)
+        self.assertEqual(rep.counters.get("shell_groups_added", 0), 1)
+        names = {p["name"] for p in self.q(
+            "SELECT name FROM persons WHERE name LIKE 'joe%'")}
+        self.assertEqual(names, {"Joe"})            # no 'joe 2'
+        row = self.q("SELECT p.id FROM faces f JOIN persons p"
+                     " ON p.id=f.person_id WHERE f.id=5")[0]
+        self.assertEqual(row["id"], 11)
+        g = self.q("SELECT path FROM person_groups WHERE person_id=11")
+        self.assertEqual([x["path"] for x in g], ["Family"])
+
+    def test_person_with_faces_is_not_a_shell(self):
+        """#128 (v5.2): a same-named person WITH faces is not a shell —
+        the suffixed generation is still created (the pre-#128 rule)."""
+        img2 = self.s_image(H2, w=200, h=200)
+        self.st.group(self.st.person("Mary"), "People|Friends|Mary", self.sid)
+        self.s_face(img2, "Mary", 120, 120, 30, 30)   # unowned f5
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertEqual(rep.counters.get("persons_created", 0), 1)
+        names = {p["name"] for p in self.q(
+            "SELECT name FROM persons WHERE name LIKE 'Mary%'")}
+        self.assertEqual(names, {"Mary", "Mary 2"})
 
 
 # ------------------------------------------------- idempotent re-runs (#82)

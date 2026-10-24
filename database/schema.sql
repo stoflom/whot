@@ -1,4 +1,4 @@
--- who app — faces.db schema (v1.5; behaviour rules: docs/gui-design.md §4)
+-- who app — faces.db schema (v1.6; behaviour rules: docs/gui-design.md §4)
 -- No migrations: drop and recreate. The schema_version table lets the app,
 -- the importer and the annotation tools verify they are talking to the
 -- matching schema (SCHEMA_VERSION in src-tauri/src/db.rs and
@@ -32,6 +32,8 @@ CREATE TABLE images (
   state          TEXT NOT NULL DEFAULT 'imported'
                  CHECK (state IN ('imported','scanned','no-face')),
   orientation    TEXT CHECK (orientation IN ('landscape','portrait')),
+  rotation       INTEGER NOT NULL DEFAULT 0
+                 CHECK (rotation IN (0,90,180,270)),  -- EXIF display rotation, CW (#118/#122)
   inversion      TEXT NOT NULL DEFAULT 'none'
                  CHECK (inversion IN ('none','lr','tb','both')),
   type           TEXT CHECK (type IN ('raw','processed')),
@@ -70,7 +72,8 @@ CREATE TABLE faces (
   name                  TEXT NOT NULL,       -- derived label: person.name[-description]-seq
   seq                   INTEGER NOT NULL,
   confidence            REAL NOT NULL DEFAULT 0 CHECK (confidence >= 0),
-  orientation           INTEGER,             -- face angle, degrees
+  rotation              INTEGER NOT NULL DEFAULT 0
+                        CHECK (rotation IN (0,90,180,270)),  -- crop display rotation, CW (#122; renamed from the dead v1.5 `orientation` column)
   inversion             TEXT NOT NULL DEFAULT 'none'
                         CHECK (inversion IN ('none','lr','tb','both')),
   preview               BLOB,
@@ -125,4 +128,4 @@ CREATE TABLE schema_version (
   version    TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-INSERT INTO schema_version(version, updated_at) VALUES ('1.5', datetime('now'));
+INSERT INTO schema_version(version, updated_at) VALUES ('1.6', datetime('now'));
