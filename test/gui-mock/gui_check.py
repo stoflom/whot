@@ -27,6 +27,9 @@ Checks (contract refs: docs/gui-design.md):
   C9  dialog action rows sit above the typeahead fields (#131)
   C10 no-op Apply is an info toast: no buttons, auto-clears on next action (#132)
   C11 post-merge focus: the centre pane opens the merged target (#133)
+  C12 face drag onto a person row: confirmed merge into that person (#135)
+  C13 face drag onto a face card: copies the shown description onto the
+      whole payload; empty-description cards refuse the drop (#136)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -544,6 +547,221 @@ def c11_merge_focuses_target(t):
            f"target {pick['target']}: {rep} (expected {pick['before']} faces)")
 
 
+def drag_face(t, src_sel, dst_sel):
+    """Simulate an HTML5 drag of a face card (src_sel) onto a drop target
+       (dst_sel). Marionette's trusted mouse events do not raise HTML5 DnD
+       in headless Firefox, so the drag events are dispatched with a
+       shimmed dataTransfer — React's root listeners pick them up.
+       Returns 'dropped' (the target highlighted on dragover), 'refused'
+       (no highlight — a browser would not deliver a drop), or an error.
+       window.__dnd.targetId captures the highlighted card during dragover."""
+    started = js(t, r"""
+      const src = document.querySelector(arguments[0]);
+      const dst = document.querySelector(arguments[1]);
+      if (!src || !dst) return "missing nodes";
+      window.__dnd = {done: null, accepted: null, targetId: null};
+      const mk = (type) => {
+        const ev = new Event(type, {bubbles: true, cancelable: true});
+        Object.defineProperty(ev, "dataTransfer", {
+          value: { _d: {}, effectAllowed: "", dropEffect: "",
+                   setData(k, v) { this._d[k] = v; },
+                   getData(k) { return this._d[k] ?? ""; } }});
+        return ev;
+      };
+      src.dispatchEvent(mk("dragstart"));
+      setTimeout(() => {
+        dst.dispatchEvent(mk("dragover"));
+        setTimeout(() => {
+          window.__dnd.targetId =
+            document.querySelector('.face-card.desc-target')
+              ?.getAttribute('data-face-id') ?? null;
+          window.__dnd.accepted =
+            dst.classList.contains("merge-target") ||
+            dst.classList.contains("desc-target");
+          if (window.__dnd.accepted) dst.dispatchEvent(mk("drop"));
+          src.dispatchEvent(mk("dragend"));
+          window.__dnd.done = "done";
+        }, 80);
+      }, 80);
+      return "started";
+    """, src_sel, dst_sel)
+    if started != "started":
+        return started
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        st = js(t, "return window.__dnd")
+        if st and st.get("done") == "done":
+            return "dropped" if st["accepted"] else "refused"
+        time.sleep(0.1)
+    return "timeout"
+
+
+def c12_face_drag_merges_into_person(t):
+    fresh(t)
+    pick = js(t, r"""
+      const rows = [...document.querySelectorAll('.tree-person')].map(n => {
+        const name = n.querySelector('.tree-name')?.textContent.trim() ?? '';
+        const total = Number(n.querySelector('.tree-count.total')?.textContent ?? 0);
+        return {name, total};
+      }).filter(r => r.name && !/^unknown/i.test(r.name) && r.total > 0);
+      if (rows.length < 2) return null;
+      rows.sort((a, b) => b.total - a.total);
+      return {source: rows[1].name, target: rows[0].name,
+              targetBefore: rows[0].total, sourceBefore: rows[1].total};
+    """)
+    if pick is None:
+        record("C12 face-drag merge (#135)", True,
+               "need two visible named persons with faces — vacuous")
+        return
+    nodes = t.find_elements(By.CSS_SELECTOR, ".tree-person")
+    src = next(e for e in nodes
+               if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["source"])
+    js(t, "arguments[0].scrollIntoView({block: 'center'})", src)
+    time.sleep(0.4)
+    src.click()  # centre pane = the source person's faces
+    time.sleep(1.0)
+    cards = t.find_elements(By.CSS_SELECTOR, ".face-card")
+    if len(cards) < 2:
+        record("C12 face-drag merge (#135)", True, "source person has < 2 cards — vacuous")
+        return
+    fid1 = cards[0].get_attribute("data-face-id")
+    fid2 = cards[1].get_attribute("data-face-id")
+    cards[0].click()
+    time.sleep(0.4)
+    AC(t.driver).key_down(Keys.CONTROL).click(cards[1]).key_up(Keys.CONTROL).perform()
+    time.sleep(0.6)
+    # tag the target row for a reliable selector
+    js(t, r"""
+      const n = [...document.querySelectorAll('.tree-person')]
+        .find(x => x.querySelector('.tree-name')?.textContent.trim() === arguments[0]);
+      n?.setAttribute('data-gc', '1');
+    """, pick["target"])
+    drag = drag_face(t, f".face-card[data-face-id='{fid1}']", ".tree-person[data-gc='1']")
+    time.sleep(0.8)
+    if drag != "dropped":
+        record("C12 face-drag merge (#135)", False, f"person row did not accept the face drag: {drag}")
+        return
+    # the drop CONFIRMS — nothing moved while the dialog is open
+    pre = face_by_id(t, fid1)
+    dlg = js(t, r"""
+      const d = [...document.querySelectorAll('.overlay .dialog')]
+        .find(x => /Merge \d+ face\(s\) into/.test(x.querySelector('h3')?.textContent ?? ''));
+      return d ? {h3: d.querySelector('h3').textContent.trim(),
+                  chips: [...d.querySelectorAll('.ev-chip')].map(c => c.textContent.trim())}
+               : null;
+    """)
+    if pre["person"] != pick["source"] or dlg is None or pick["target"] not in dlg["h3"]:
+        record("C12 face-drag merge (#135)", False,
+               f"drop did not ask without moving: pre={pre}, dialog={dlg}")
+        return
+    t.find_element(By.CSS_SELECTOR, ".overlay .dialog button.bad").click()
+    time.sleep(1.5)
+    rep = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const target = snap.persons.find(p => p.name === arguments[0]);
+      const source = snap.persons.find(p => p.name === arguments[1]);
+      const f1 = snap.faces.find(f => f.id === Number(arguments[2]));
+      const f2 = snap.faces.find(f => f.id === Number(arguments[3]));
+      const sections = [...document.querySelectorAll('.face-section')]
+        .map(s => s.querySelector('.rule .rule-label')?.textContent.trim() ?? null);
+      return {
+        dialog: !![...document.querySelectorAll('.overlay .dialog')]
+          .some(x => /Merge \d+ face\(s\) into/.test(x.querySelector('h3')?.textContent ?? '')),
+        bothMoved: f1?.person_id === target?.id && f2?.person_id === target?.id,
+        targetCount: target ? target.counts.total : null,
+        sourceAfter: source ? source.counts.total : null,
+        centerHasTarget: sections.includes(arguments[0]),
+        selectedPerson: document.querySelector('.tree-person.selected .tree-name')?.textContent.trim() ?? null,
+      };
+    """, pick["target"], pick["source"], fid1, fid2)
+    source_ok = (rep["sourceAfter"] is None if pick["sourceBefore"] == 2
+                 else rep["sourceAfter"] == pick["sourceBefore"] - 2)
+    ok = (not rep["dialog"] and rep["bothMoved"]
+          and rep["targetCount"] == pick["targetBefore"] + 2 and source_ok
+          and rep["centerHasTarget"] and rep["selectedPerson"] == pick["target"])
+    record("C12 face-drag merge (#135)", ok,
+           f"{pick['source']} -> {pick['target']}: dialog={dlg['h3']}, {rep}")
+
+
+def c13_face_drag_copies_description(t):
+    fresh(t)
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      for (const p of snap.persons) {
+        if (/^unknown/i.test(p.name)) continue;
+        const fs = snap.faces.filter(f => f.person_id === p.id);
+        const withDesc = fs.filter(f => (f.description ?? '').trim() !== '');
+        if (withDesc.length < 1 || fs.length < 2) continue;
+        const tg = withDesc[0];
+        const rest = fs.filter(f => f.id !== tg.id);
+        const s = rest.find(f => (f.description ?? '') !== tg.description) ?? rest[0];
+        const o = rest.find(f => f.id !== s.id) ?? null;
+        const e = rest.find(f => (f.description ?? '').trim() === '') ?? null;
+        const rowIdx = [...document.querySelectorAll('.tree-person')]
+          .findIndex(n => n.querySelector('.tree-name')?.textContent.trim() === p.name);
+        if (rowIdx < 0) continue;
+        return {person: p.name, rowIdx,
+                target: tg.id, targetDesc: tg.description,
+                source: s.id, sourceDesc: s.description ?? null,
+                other: o ? o.id : null, empty: e ? e.id : null};
+      }
+      return null;
+    """)
+    if pick is None:
+        record("C13 face-drag description copy (#136)", True,
+               "need a person with a described face + another face — vacuous")
+        return
+    js(t, "document.querySelectorAll('.tree-person')[arguments[0]].scrollIntoView({block: 'center'})", pick["rowIdx"])
+    time.sleep(0.4)
+    js(t, "document.querySelectorAll('.tree-person')[arguments[0]].click()", pick["rowIdx"])
+    time.sleep(1.0)
+    # 1) empty-description card is NOT a target: refused, nothing changes
+    if pick["empty"]:
+        drag = drag_face(t, f".face-card[data-face-id='{pick['source']}']",
+                         f".face-card[data-face-id='{pick['empty']}']")
+        time.sleep(0.6)
+        pre = js(t, r"""
+          const f = window.__MOCK_SNAP.faces.find(x => x.id === Number(arguments[0]));
+          return {desc: f?.description ?? null};
+        """, pick["source"])
+        if drag != "refused" or pre["desc"] != pick["sourceDesc"]:
+            record("C13 face-drag description copy (#136)", False,
+                   f"empty-description card must refuse: drag={drag}, {pre}")
+            return
+    # 2) select the payload (source + optional other) and drop on the target
+    src_card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['source']}']")
+    js(t, "arguments[0].scrollIntoView({block: 'center'})", src_card)
+    time.sleep(0.4)
+    src_card.click()
+    time.sleep(0.4)
+    if pick["other"]:
+        other_card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['other']}']")
+        js(t, "arguments[0].scrollIntoView({block: 'center'})", other_card)
+        time.sleep(0.3)
+        AC(t.driver).key_down(Keys.CONTROL).click(other_card).key_up(Keys.CONTROL).perform()
+        time.sleep(0.5)
+    drag = drag_face(t, f".face-card[data-face-id='{pick['source']}']",
+                     f".face-card[data-face-id='{pick['target']}']")
+    time.sleep(1.5)
+    rep = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const g = (id) => {
+        const f = snap.faces.find(x => x.id === Number(id));
+        return f ? {desc: f.description ?? null, name: f.name} : null;
+      };
+      return {
+        source: g(arguments[0]), target: g(arguments[1]),
+        other: arguments[2] ? g(arguments[2]) : null,
+        toast: document.querySelector('.toast:not(.info)')?.textContent.trim() ?? null,
+      };
+    """, pick["source"], pick["target"], pick["other"] or "")
+    ok = (drag == "dropped" and rep["source"]["desc"] == pick["targetDesc"]
+          and rep["target"]["desc"] == pick["targetDesc"] and rep["toast"] is None
+          and (pick["other"] is None or rep["other"]["desc"] == pick["targetDesc"]))
+    record("C13 face-drag description copy (#136)", ok,
+           f"{pick['person']}: drag={drag}, {rep}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -563,6 +781,8 @@ def main():
         c9_actions_above_typeahead(t)
         c10_noop_apply_is_info(t)
         c11_merge_focuses_target(t)
+        c12_face_drag_merges_into_person(t)
+        c13_face_drag_copies_description(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
