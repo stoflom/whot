@@ -113,8 +113,12 @@ export default function App() {
   const pendingRef = useRef<Stage[]>([]);
   pendingRef.current = pending;
   /** #123: a CONTEXT change (person / view / focus) with a live set asks
-      drop-or-accept — the stored action runs after the choice */
-  const [contextConfirm, setContextConfirm] = useState<(() => void) | null>(null);
+      drop-or-accept — the stored action runs after the choice. The action is
+      wrapped in an object: a bare function passed to a useState setter is
+      read as a function-form updater and executed immediately (storing its
+      return value) instead of being stored — which silently disabled the
+      context-change dialog (#123, found via gui-mock C5) */
+  const [contextConfirm, setContextConfirm] = useState<{ fn: () => void } | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   // #132 (§4.26): guidance/info — expected no-ops, quiet toast, no Copy,
@@ -313,7 +317,7 @@ export default function App() {
   // focus open/close) asks drop-or-accept while the set is live — the
   // stored action runs after the choice, on BOTH branches
   const confirmContext = useCallback((action: () => void) => {
-    if (pendingRef.current.length > 0) setContextConfirm(action);
+    if (pendingRef.current.length > 0) setContextConfirm({ fn: action });
     else action();
   }, []);
 
@@ -1851,14 +1855,14 @@ export default function App() {
           confirmLabel="accept"
           cancelLabel="discard"
           onCancel={() => {
-            const act = contextConfirm;
+            const act = contextConfirm.fn;
             setContextConfirm(null);
             setPending([]);
             act();
           }}
           onConfirm={() => {
             const all = pending;
-            const act = contextConfirm;
+            const act = contextConfirm.fn;
             setContextConfirm(null);
             void commitPending(all).then(act);
           }}
