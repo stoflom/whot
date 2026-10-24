@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.30** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.31** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -677,6 +677,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       (as Q4 always did): *accept* commits the set first, then the
       context switches; *cancel* discards it, then the context switches.
       Text is never dropped silently (Q3).
+    - **Implementation note — the stored action is object-wrapped**
+      (#123 fix, v3.31): the pending action is kept as `useState<{fn} | null>`
+      and set with `setContextConfirm({ fn: action })`. A bare function passed
+      to a `useState` setter is read by React as a function-form updater and
+      is **executed immediately** (storing its `undefined` return) instead of
+      being stored — which silently disabled the context-change dialog (the
+      action ran on its own and the dialog never rendered). Found via the
+      gui-mock C5 check; the object wrapper makes the value non-callable so
+      React stores it verbatim.
     - Commit keeps the #77 field routing — a name change through
       `assign_person` (group applied on create/UnknownN-rename, later
       explicit groups via `set_person_group`), a group-only change
