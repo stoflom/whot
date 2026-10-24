@@ -2,7 +2,7 @@
 // as pure helpers: the 4-state face-status filter that replaces
 // show_rejected, and the Description-mode grouping.
 
-import type { Face, PersonCounts } from "./api";
+import type { Face } from "./api";
 
 /** whotrc `face_filter` — 'confirmed' is labelled **Accepted** in the UI */
 export type FaceFilter = "all" | "provisional" | "confirmed" | "rejected";
@@ -12,19 +12,6 @@ export type ClusterGroup = "accuracy" | "description";
 /** does a face of this link_status survive the filter? ('all' = everything) */
 export function matchesStatusFilter(status: string, filter: FaceFilter): boolean {
   return filter === "all" || status === filter;
-}
-
-/** Tree presence/counts under a filter (#28 generalised): only the
-    matching bucket survives — a zero-total person leaves the tree. */
-export function filterCounts(counts: PersonCounts, filter: FaceFilter): PersonCounts {
-  if (filter === "all") return counts;
-  const n = counts[filter]; // filter is now provisional | confirmed | rejected
-  return {
-    total: n,
-    provisional: filter === "provisional" ? n : 0,
-    confirmed: filter === "confirmed" ? n : 0,
-    rejected: filter === "rejected" ? n : 0,
-  };
 }
 
 /** Description mode (#99): one cluster per distinct description over the

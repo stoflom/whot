@@ -67,6 +67,18 @@ export function ErrorToast({ message, onDismiss }: { message: string; onDismiss:
   );
 }
 
+/** Info toast (design §4.26, #132): a quiet guidance message — expected
+    no-ops and hints, NOT failures. No Copy, no ✕; it auto-goes-away on
+    the next user action (the App wires that). Stacks above a live error
+    toast (`.toast.info` offset in styles.css). */
+export function InfoToast({ message }: { message: string }) {
+  return (
+    <div className="toast info" role="status">
+      <span className="toast-text">{message}</span>
+    </div>
+  );
+}
+
 /** Fatal load-failure screen (design §4.26): selectable text + Copy. */
 export function FatalError({ title, message }: { title: string; message: string }) {
   return (

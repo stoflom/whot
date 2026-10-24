@@ -102,6 +102,29 @@ export default function EditDialog({
           nothing is written yet), <b>Accept</b> writes the whole pending set
           (and advances in Review), <b>Reject</b> decides the scope now
         </p>
+        {/* #131 (§4.33): the action row sits ABOVE the fields — the
+            typeahead suggestions open downward and would obscure a bottom
+            row while they are showing */}
+        <div className="dialog-actions">
+          <button className="secondary" onClick={onCancel}>
+            cancel
+          </button>
+          <button
+            className="warn"
+            onClick={() => onReject(scope, rejected[scope])}
+            title={
+              rejected[scope]
+                ? "the scope is fully rejected — accept it back"
+                : "reject the scope now (sticky — it stays rejected, §4.2)"
+            }
+          >
+            {rejected[scope] ? "Un-reject (accept)" : "Reject"}
+          </button>
+          <button onClick={() => done("apply")}>Apply</button>
+          <button className="ok" onClick={() => done("accept")}>
+            Accept
+          </button>
+        </div>
         <div className="scope-seg" title="Which faces the action covers — the selection unless you choose otherwise (#101, §4.24)">
           {SCOPES.map((s) => (
             <button
@@ -160,26 +183,6 @@ export default function EditDialog({
             onKeyDown={enter}
           />
         </label>
-        <div className="dialog-actions">
-          <button className="secondary" onClick={onCancel}>
-            cancel
-          </button>
-          <button
-            className="warn"
-            onClick={() => onReject(scope, rejected[scope])}
-            title={
-              rejected[scope]
-                ? "the scope is fully rejected — accept it back"
-                : "reject the scope now (sticky — it stays rejected, §4.2)"
-            }
-          >
-            {rejected[scope] ? "Un-reject (accept)" : "Reject"}
-          </button>
-          <button onClick={() => done("apply")}>Apply</button>
-          <button className="ok" onClick={() => done("accept")}>
-            Accept
-          </button>
-        </div>
       </div>
     </div>
   );

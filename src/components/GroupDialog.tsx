@@ -39,6 +39,14 @@ export default function GroupDialog({
       <div className="dialog">
         <h3>{title}</h3>
         <p className="dim">{body}</p>
+        {/* #131 (§4.33): action row above the typeahead — its suggestions
+            open downward and would obscure a bottom row */}
+        <div className="dialog-actions">
+          <button className="secondary" onClick={onCancel}>
+            cancel
+          </button>
+          <button onClick={submit}>{submitLabel}</button>
+        </div>
         <label>
           Group
           <PathTypeahead
@@ -59,12 +67,6 @@ export default function GroupDialog({
             onEscape={onCancel}
           />
         </label>
-        <div className="dialog-actions">
-          <button className="secondary" onClick={onCancel}>
-            cancel
-          </button>
-          <button onClick={submit}>{submitLabel}</button>
-        </div>
       </div>
     </div>
   );
