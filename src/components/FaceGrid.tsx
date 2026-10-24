@@ -152,7 +152,7 @@ const SectionView = memo(
               className={`rule-label${staged.desc != null ? " staged" : ""}${descVal ? "" : " is-empty"}`}
               title="Description — set via Edit… (scope Group)"
             >
-              {descVal || "glasses|beard"}
+              {descVal || "description"}
             </span>
             <button
               className="ghost"

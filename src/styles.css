@@ -476,6 +476,19 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .toast-text { flex: 1 1 auto; min-width: 0; }
 
+/* #132 (§4.26): info toasts — quiet guidance, no buttons. Sits above the
+   error toast when both are live; auto-dismissed on the next user action
+   (App), never by clicking it. */
+.toast.info {
+  bottom: 118px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 400;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .err-copy,
 .err-dismiss {
   flex: 0 0 auto;

@@ -10,13 +10,12 @@ import * as api from "./api";
 import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
-import { ErrorToast, FatalError } from "./components/ErrorNotice";
+import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
 import { acceptAdvancePlan } from "./reviewFlow";
 import {
-  filterCounts,
   groupByDescription,
   matchesStatusFilter,
   type ClusterGroup,
@@ -114,14 +113,34 @@ export default function App() {
   const pendingRef = useRef<Stage[]>([]);
   pendingRef.current = pending;
   /** #123: a CONTEXT change (person / view / focus) with a live set asks
-      drop-or-accept — the stored action runs after the choice */
-  const [contextConfirm, setContextConfirm] = useState<(() => void) | null>(null);
+      drop-or-accept — the stored action runs after the choice. The action is
+      wrapped in an object: a bare function passed to a useState setter is
+      read as a function-form updater and executed immediately (storing its
+      return value) instead of being stored — which silently disabled the
+      context-change dialog (#123, found via gui-mock C5) */
+  const [contextConfirm, setContextConfirm] = useState<{ fn: () => void } | null>(null);
 
   const [error, setError] = useState<string | null>(null);
+  // #132 (§4.26): guidance/info — expected no-ops, quiet toast, no Copy,
+  // auto-goes-away on the next user action (any click or keystroke)
+  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // #31: the tree's text filter (declared early — stepIds needs it, #125)
   const [filter, setFilter] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // #132: the info toast survives the action that raised it and clears on
+  // the NEXT user action — capture phase, so it beats any child handler
+  useEffect(() => {
+    if (info == null) return;
+    const clear = () => setInfo(null);
+    window.addEventListener("pointerdown", clear, { capture: true });
+    window.addEventListener("keydown", clear, { capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", clear, { capture: true });
+      window.removeEventListener("keydown", clear, { capture: true });
+    };
+  }, [info]);
 
   const refresh = useCallback(async () => {
     setSnap(await api.getSnapshot());
@@ -158,21 +177,15 @@ export default function App() {
   const faceFilter = (snap?.settings.face_filter ?? "all") as FaceFilter;
   const clusterGroup = snap?.settings.cluster_group ?? "accuracy";
   const faceVisible = (f: Face) => matchesStatusFilter(f.link_status, faceFilter);
-  // a person with no matching face disappears from the tree; the
-  // surviving bucket drives its counts (an UnknownN whose only face is
-  // filtered out vanishes; #28 clarification)
-  // #127 (§4.16): the tree ALWAYS shows every snapshot person — the face
-  // filter only changes the counts the badges show and which faces render
-  // in the grid, never which persons exist (faceless named shells from
-  // #128 must stay findable under their branch or Ungrouped)
-  const treePersons = useMemo(() => {
-    if (!snap) return [];
-    if (faceFilter === "all") return snap.persons;
-    return snap.persons.map((p) => ({
-      ...p,
-      counts: filterCounts(p.counts, faceFilter),
-    }));
-  }, [snap, faceFilter]);
+  // #127/#129 (§4.16): the tree ALWAYS shows every snapshot person, and
+  // the badges ALWAYS carry the raw totals — the face filter changes only
+  // which faces render in the grid, never which persons exist or their
+  // counts (faceless named shells from #128 stay findable under their
+  // branch or Ungrouped)
+  const treePersons = useMemo(
+    () => (snap ? snap.persons : []),
+    [snap],
+  );
   const displayPerson = useMemo(
     () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
     [treePersons, personId]
@@ -262,16 +275,21 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [edit, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto, contextConfirm, splitImageId]);
 
+  // #133: resolves to whether the operation AND the refresh succeeded —
+  // callers may act only on success (errors are still surfaced as the
+  // error toast, never thrown)
   const mutate = useCallback(
-    async (fn: () => Promise<unknown>, clearSel = false) => {
+    async (fn: () => Promise<unknown>, clearSel = false): Promise<boolean> => {
       setBusy(true);
       setError(null);
       try {
         await fn();
         await refresh();
         if (clearSel) setSel(new Set());
+        return true;
       } catch (e) {
         setError(String(e));
+        return false;
       } finally {
         setBusy(false);
       }
@@ -299,7 +317,7 @@ export default function App() {
   // focus open/close) asks drop-or-accept while the set is live — the
   // stored action runs after the choice, on BOTH branches
   const confirmContext = useCallback((action: () => void) => {
-    if (pendingRef.current.length > 0) setContextConfirm(action);
+    if (pendingRef.current.length > 0) setContextConfirm({ fn: action });
     else action();
   }, []);
 
@@ -1002,7 +1020,7 @@ export default function App() {
     while (j < stepIds.length && stepIds[j] === pid) j += 1;
     const nextId = stepIds[j];
     if (nextId == null) {
-      setError("no more persons to review");
+      setInfo("no more persons to review");
       return;
     }
     setPersonId(nextId);
@@ -1037,13 +1055,13 @@ export default function App() {
           ),
         ];
         if (pids.length === 0) {
-          setError("type a name first — unowned faces have no person to group");
+          setInfo("type a name first — unowned faces have no person to group");
         } else {
           const unowned =
             ids.length - ids.filter((id) => facesById.get(id)?.person_id != null).length;
           for (const pid of pids) await api.setPersonGroup(pid, st.group);
           if (unowned > 0)
-            setError(`${unowned} unowned face(s) skipped — assign a name to group them`);
+            setInfo(`${unowned} unowned face(s) skipped — assign a name to group them`);
         }
       }
       if (st.desc != null) {
@@ -1321,7 +1339,7 @@ export default function App() {
           return;
         }
         if (sourceIds.every((id) => id === targetId)) {
-          setError("already merged — the drop target is the only selection");
+          setInfo("already merged — the drop target is the only selection");
           return;
         }
       }
@@ -1340,12 +1358,19 @@ export default function App() {
         .map((f) => f.id);
       setMergeInto(null);
       if (faceIds.length === 0) {
-        setError("nothing to merge — the selected persons have no faces");
+        setInfo("nothing to merge — the selected persons have no faces");
         return;
       }
       // one assign_person call = one transaction, §4.1 merge semantics
       // (sticky rejected, emptied shells deleted, derived state recomputed)
-      await mutate(() => api.assignPerson(faceIds, target.name, target.groups[0] ?? ""));
+      const ok = await mutate(() => api.assignPerson(faceIds, target.name, target.groups[0] ?? ""));
+      if (ok) {
+        // #133 (§4.28): the centre pane opens the merged target — all the
+        // combined faces (a failed merge leaves the selection unchanged)
+        setPersonId(target.id);
+        setImageId(null);
+        setView("person");
+      }
     },
     [snap, mergeInto, mutate],
   );
@@ -1357,7 +1382,7 @@ export default function App() {
       if (!snap) return;
       const faceIds = faceIdsOf(snap.faces, new Set(ids));
       if (faceIds.length === 0) {
-        setError("no faces to rename — the selection has no faces");
+        setInfo("no faces to rename — the selection has no faces");
         return;
       }
       // #101: rename-selection opens the shared dialog scoped to all
@@ -1768,7 +1793,7 @@ export default function App() {
                 if (ids.length > 0) void acceptAndNext([...ids]);
                 return;
               }
-              setError("nothing to apply — change a field first (#103)");
+              setInfo("nothing to apply — change a field first (#103)");
               return;
             }
             if (r.kind === "apply") {
@@ -1830,14 +1855,14 @@ export default function App() {
           confirmLabel="accept"
           cancelLabel="discard"
           onCancel={() => {
-            const act = contextConfirm;
+            const act = contextConfirm.fn;
             setContextConfirm(null);
             setPending([]);
             act();
           }}
           onConfirm={() => {
             const all = pending;
-            const act = contextConfirm;
+            const act = contextConfirm.fn;
             setContextConfirm(null);
             void commitPending(all).then(act);
           }}
@@ -1878,6 +1903,7 @@ export default function App() {
       )}
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
+      {info && <InfoToast message={info} />}
     </div>
   );
 }

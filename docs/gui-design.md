@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.29** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.31** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -244,9 +244,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   action row — star (set as primary), status badge
   (provisional/confirmed/rejected), reject button.
   An **empty** group or description label shows a **dimmed hint** instead of
-  a bare dash — group: e.g. `Friends|School`, description: e.g.
-  `glasses|beard` — so the row reads as “where this may go / what may be
-  noted” rather than as a hole (#119). The section-heading rule labels use
+  a bare dash — group: e.g. `Friends|School`, description: the neutral word
+  **`description`** — so the row reads as “where this may go / what may be
+  noted” rather than as a hole (#119; #130 replaced the feature-example
+  hint `glasses|beard`, which read as inappropriate on women — the useful
+  example stays where it helps: the **Edit dialog placeholder**
+  `e.g. beard|glasses`). The section-heading rule labels use
   the same hints. The hint is dim like the old empty colour; real values
   keep their current colours. (The label’s old `empty` modifier class
   collided with the app-level `.empty` no-results rule — 3rem of padding on
@@ -469,13 +472,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     drag-and-drop of persons/selections/branches onto branch nodes or
     Ungrouped (virtual nodes are not draggable/renameable themselves).
 
-    **Display guarantees** (#127): group paths are **case-significant** —
-    `Family|Lombards` and `family|Lombard` are distinct data and each
+    **Display guarantees** (#127/#129): group paths are **case-significant**
+    — `Family|Lombards` and `family|Lombard` are distinct data and each
     renders its own branch (the builder is case-sensitive; do not fold).
-    With the face filter on **All** and an empty text filter, **every
-    person in the snapshot must be findable in the tree** — including
-    faceless named persons (their own branch, or the virtual `Ungrouped`
-    node when ungrouped). A person always renders under its **first**
+    Under **any** face-status filter (All/New/Accepted/Rejected) and an
+    empty text filter, **every person in the snapshot is findable in the
+    tree** — including faceless named persons (their own branch, or the
+    virtual `Ungrouped` node when ungrouped) — and the status filter
+    **never changes which persons exist or the counts the badges show**: a
+    badge always carries the person's raw totals; the filter only changes
+    which faces render in the middle pane (#129). A person always renders under its **first**
     group (`groups[0]`); further groups stay visible in the row tooltip.
     The virtual `Unknown`/`Ungrouped` nodes are never pruned while they
     hold persons.
@@ -600,8 +606,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - **Cards and cluster headers show labels, not inputs**: the three
       value fields — **name, group, description** (headers gain the
       description label; cards show all three) — are per-object,
-      **live labels** (H1: an empty group/description renders as a dim
-      `–`) plus one **Edit…** button. The fields stay **visually
+      **live labels** (H1: an empty group/description renders as the
+      dimmed hint, §Face card / #119/#130) plus one **Edit…** button.
+      The fields stay **visually
       distinct**: name plain, group accent-coloured, description in the
       tag colour (#102). Card order top to bottom (#102): the **name
       strip inside the image frame at the top**, the image, **group**
@@ -610,7 +617,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       per object when an apply/accept changed some cards and not others,
       and a pending preview marks them — **unmistakably** (accent tint
       + underline + weight, #103), echoed by a `staged: …` strip on the
-      bottom bar while a stage is live. Apply with **no changed field**
+      bottom bar while a stage is live. Empty group/description render as
+      the dimmed hints (§Face card: `Friends|School` / `description`,
+      #119/#130). Apply with **no changed field**
       raises the "nothing to apply" toast; Accept with no changes still
       accepts the scope (#103, §4.30).
     - **One shared dialog**: three labelled fields — name, group,
@@ -668,6 +677,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       (as Q4 always did): *accept* commits the set first, then the
       context switches; *cancel* discards it, then the context switches.
       Text is never dropped silently (Q3).
+    - **Implementation note — the stored action is object-wrapped**
+      (#123 fix, v3.31): the pending action is kept as `useState<{fn} | null>`
+      and set with `setContextConfirm({ fn: action })`. A bare function passed
+      to a `useState` setter is read by React as a function-form updater and
+      is **executed immediately** (storing its `undefined` return) instead of
+      being stored — which silently disabled the context-change dialog (the
+      action ran on its own and the dialog never rendered). Found via the
+      gui-mock C5 check; the object wrapper makes the value non-callable so
+      React stores it verbatim.
     - Commit keeps the #77 field routing — a name change through
       `assign_person` (group applied on create/UnknownN-rename, later
       explicit groups via `set_person_group`), a group-only change
@@ -706,6 +724,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       selections): dismissal is an explicit **✕** button, or the toast
       stays until replaced/cleared; selecting text inside it never
       dismisses it.
+    - **info vs error** (#132): expected no-ops and guidance — “nothing to
+      apply — change a field first”, “nothing to merge — the selected
+      persons have no faces”, “no faces to rename — the selection has no
+      faces”, “already merged — the drop target is the only selection”,
+      “type a name first — unowned faces have no person to group”, “N
+      unowned face(s) skipped — assign a name to group them”, “no more
+      persons to review” — are **info, not error**: a quiet toast, **no
+      Copy button, no ✕**, and it **auto-goes-away on the next user
+      action** (any click or keystroke that acts). Real errors (failed
+      operations, backend exceptions) keep the copyable red toast with ✕
+      — the copyability rule above applies to them only.
 27. **Stale-shell sweep** (#84) ⇒ on every `get_snapshot()`, persons
     matching `name LIKE 'Unknown%'` with **zero faces** are deleted
     (leftovers from pre-v1.9 runs or external writers — no code path
@@ -752,6 +781,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     sources emptied and deleted, **no undo** (faces themselves are never
     deleted; §4.13). #50's branch drops stay dialog-free — moving
     between groups is reversible.
+
+    **Post-merge focus** (#133): after a successful merge the centre pane
+    opens the **merged target** person — the selection moves there, showing
+    all the combined faces (sources are emptied/deleted server-side); a
+    failed merge leaves the selection unchanged.
 
     **Execution = existing §4 commands, zero new SQL paths**: merge is
     one `assign_person(face_ids_of_all_sources, target.name,
@@ -960,6 +994,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       90°-rotated photo displays upright with zero user interaction;
       the GUI controls are the manual override. Schema/DDL details in
       `docs/schema-design.md`.
+33. **Dialog action rows above typeahead fields** (#131) ⇒ a typeahead's
+    suggestion list opens **downward** from its input and covers whatever
+    sits below it — so in dialogs containing a typeahead (the §4.24 Edit
+    dialog, the §4.16 group dialog), the **action row goes to the top** of
+    the dialog (under the title/body, above the fields), where suggestions
+    can never obscure it. Buttons keep their order and behaviour.
 
 
 ## 5. Related documents

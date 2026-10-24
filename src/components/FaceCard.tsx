@@ -149,7 +149,7 @@ function FaceCard({
           className={`card-label desc${staged.desc != null ? " staged" : ""}${descVal ? "" : " is-empty"}`}
           title="Description — edit via the Edit… dialog"
         >
-          {descVal || "glasses|beard"}
+          {descVal || "description"}
         </span>
       </div>
       <div className="card-foot">

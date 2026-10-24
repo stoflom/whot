@@ -19,9 +19,14 @@ Checks (contract refs: docs/gui-design.md):
   C2  'a' with a live stage stages-then-commits (§4.30, #101)
   C3  bar Accept commits the stage (§4.30 — reference path)
   C4  no-op Apply shows feedback (#103)
-  C5  selection change with a live stage asks escape-or-accept (Q4)
+  C5  #123 stage model: in-context selection change is dialog-free;
+      a complete context change asks discard-or-accept either way
   C6  Esc ordering: dialog closes first, stage survives, then clears (Q8)
   C7  one-face section keeps its select-all interaction (#120)
+  C8  tree badge counts ignore the face-status filter (#129)
+  C9  dialog action rows sit above the typeahead fields (#131)
+  C10 no-op Apply is an info toast: no buttons, auto-clears on next action (#132)
+  C11 post-merge focus: the centre pane opens the merged target (#133)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -111,10 +116,6 @@ def committed(t, fid, wanted):
 
 def strip_text(t):
     return js(t, "const s=document.querySelector('.stage-strip');return s?s.textContent.trim():'no strip'")
-
-
-def sel_count(t):
-    return js(t, "return document.querySelectorAll('.face-card.selected').length")
 
 
 def q4_dialog(t):
@@ -215,7 +216,11 @@ def c4_noop_apply_feedback(t):
     record("C4 no-op Apply feedback", ok, f"toast={toast!r}")
 
 
-def c5_q4_escape_or_accept(t):
+def c5_q4_stage_model(t):
+    """#123 stage model: a selection change INSIDE the context never asks
+       (the Apply → change → Apply loop is dialog-free); only a complete
+       context change (another person) asks discard-or-accept — and the
+       choice runs the stored action either way."""
     fresh(t)
     cards = t.find_elements(By.CSS_SELECTOR, ".face-card")
     idA = cards[0].get_attribute("data-face-id")
@@ -223,25 +228,45 @@ def c5_q4_escape_or_accept(t):
     cards[0].click()  # plain click sets the range anchor (#69) and selects A
     time.sleep(0.5)
     edit_and_apply(t, "GuiCheck Q4")
+    # in-context selection change: NO dialog, stage survives, sel applies
     AC(t.driver).key_down(Keys.SHIFT).click(cards[1]).key_up(Keys.SHIFT).perform()
     time.sleep(1.0)
-    seen = q4_dialog(t)
-    sel_while = sel_count(t)
-    if not seen:
-        record("C5 Q4 escape-or-accept", False,
-               f"no confirm dialog; sel={sel_while} strip={strip_text(t)!r}")
-        return
-    # Esc = discard: stage dropped, pending range selection {A,B} applied
-    AC(t.driver).send_keys(Keys.ESCAPE).perform()
-    time.sleep(0.8)
-    after = {
+    mid = {
         "dialog": q4_dialog(t), "strip": strip_text(t),
         "sel": js(t, "return [...document.querySelectorAll('.face-card.selected')].map(c => c.getAttribute('data-face-id'))"),
     }
+    sel_ok = (not mid["dialog"]) and mid["strip"] != "no strip" \
+        and sorted(mid["sel"]) == sorted([idA, idB])
+    if not sel_ok:
+        record("C5 #123 stage model", False, f"selection change asked/lost the stage: {mid}")
+        return
+    # complete context change: open another person — discard-or-accept
+    anchor = js(t, "return document.querySelector('.tree-person.selected .tree-name')?.textContent.trim() ?? null")
+    nodes = t.find_elements(By.CSS_SELECTOR, ".tree-person")
+    other = next((n for n in nodes
+                  if n.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() != anchor), None)
+    if other is None:
+        record("C5 #123 stage model", False, "no second person node to switch to")
+        return
+    other_name = other.find_element(By.CSS_SELECTOR, ".tree-name").text.strip()
+    other.click()
+    time.sleep(1.0)
+    seen = q4_dialog(t)
+    if not seen:
+        record("C5 #123 stage model", False,
+               f"context change with live set did not ask; strip={strip_text(t)!r}")
+        return
+    # Esc = discard: pending dropped, the context switch still happens
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(1.0)
+    after = {
+        "dialog": q4_dialog(t), "strip": strip_text(t),
+        "selected": js(t, "return document.querySelector('.tree-person.selected .tree-name')?.textContent.trim() ?? null"),
+    }
     ok = (not after["dialog"]) and after["strip"] == "no strip" \
-         and sorted(after["sel"]) == sorted([idA, idB])
-    record("C5 Q4 escape-or-accept", ok,
-           f"dialog seen (sel-while={sel_while}), discard -> {after}")
+         and after["selected"] == other_name
+    record("C5 #123 stage model", ok,
+           f"in-context silent (sel={mid['sel']}), context ask -> discard: {after}")
 
 
 def c6_esc_ordering(t):
@@ -292,8 +317,10 @@ def r1_layout(t):
       const emptiesDimmed = refColor != null && empties.every(e => getComputedStyle(e).color === refColor);
       // card labels carry per-field classes; the heading's rule labels are
       // identified by position inside .rule (name, group, desc, Edit…)
+      // #130: the empty-description hint is the neutral word 'description'
+      // (the feature example stayed as the Edit dialog placeholder only)
       const hintDesc = [...document.querySelectorAll('.card-label.desc.is-empty, .rule .rule-label:nth-child(3).is-empty')]
-        .every(e => e.textContent === 'glasses|beard');
+        .every(e => e.textContent === 'description');
       const hintGroup = [...document.querySelectorAll('.card-label.group.is-empty, .rule .rule-label:nth-child(2).is-empty')]
         .every(e => e.textContent === 'Friends|School');
       const ok = noSingleClass && headingAbove && emptyHeightsOk && emptiesDimmed && hintDesc && hintGroup;
@@ -357,6 +384,166 @@ def c7_single_section_selectall(t):
            f"face {pos['fid']}: after 1st click={sel1}, after 2nd={sel2}")
 
 
+def tree_badges(t):
+    """name|total|provisional per tree person, sorted — filter-invariant (#129)"""
+    return js(t, """
+      return [...document.querySelectorAll('.tree-person')].map(p =>
+        (p.querySelector('.tree-name')?.textContent ?? '').trim() + '|' +
+        (p.querySelector('.tree-count.total')?.textContent ?? '') + '|' +
+        (p.querySelector('.tree-count.prov')?.textContent ?? '')
+      ).sort();
+    """)
+
+
+def c8_tree_counts_ignore_filter(t):
+    fresh(t)
+    before = tree_badges(t)
+    js(t, """
+      const s = [...document.querySelectorAll('select')]
+        .find(x => [...x.options].some(o => o.value === 'provisional'));
+      if (s) { s.value = 'provisional'; s.dispatchEvent(new Event('change', {bubbles: true})); }
+    """)
+    time.sleep(0.8)
+    after = tree_badges(t)
+    ok = before is not None and before == after
+    detail = f"{len(before or [])} persons, badges { 'identical' if ok else 'CHANGED'}"
+    if not ok:
+        detail += f" before={before} after={after}"
+    record("C8 tree badges ignore the status filter (#129)", ok, detail)
+
+
+def dialog_actions_above_typeahead(dlg_js):
+    """JS: true iff .dialog-actions precedes the first typeahead input"""
+    return f"""
+      const d = {dlg_js};
+      if (!d) return null;
+      const act = d.querySelector('.dialog-actions');
+      const inp = d.querySelector('.typeahead input');
+      return act && inp && (act.compareDocumentPosition(inp) & 4) !== 0;
+    """
+
+
+def c9_actions_above_typeahead(t):
+    fresh(t)
+    t.find_element(By.CSS_SELECTOR, ".face-card .card-edit").click()
+    time.sleep(0.6)
+    edit_ok = js(t, dialog_actions_above_typeahead(
+        "[...document.querySelectorAll('.overlay .dialog')]"
+        ".find(x => x.querySelector('.scope-seg'))"))
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.6)
+    group_ok = None
+    AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, ".tree-person")).perform()
+    time.sleep(0.6)
+    items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+             if "Move to group" in b.text]
+    if items:
+        items[0].click()
+        time.sleep(0.8)
+        group_ok = js(t, dialog_actions_above_typeahead(
+            "[...document.querySelectorAll('.overlay .dialog')]"
+            ".find(x => /group/i.test(x.querySelector('h3')?.textContent ?? '')"
+            "&& x.querySelector('.typeahead') && !x.querySelector('.scope-seg'))"))
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.4)
+    else:
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    ok = edit_ok is True and (group_ok is True or group_ok is None)
+    record("C9 dialog action rows above typeahead (#131)", ok,
+           f"edit={edit_ok} group={group_ok}")
+
+
+def c10_noop_apply_is_info(t):
+    fresh(t)
+    t.find_element(By.CSS_SELECTOR, ".face-card .card-edit").click()
+    time.sleep(0.6)
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+     if b.text.strip() == "Apply"][0].click()
+    time.sleep(0.8)
+    rep = js(t, """
+      const info = document.querySelector('.toast.info');
+      const err = document.querySelector('.toast:not(.info)');
+      return {
+        info: info ? info.querySelector('.toast-text')?.textContent.trim() : null,
+        infoButtons: info ? info.querySelectorAll('button').length : null,
+        errorToast: err ? err.querySelector('.toast-text')?.textContent.trim() : null,
+      };
+    """)
+    ok = (rep["info"] and "nothing to apply" in rep["info"]
+          and rep["infoButtons"] == 0 and not rep["errorToast"])
+    # the info must survive the action that raised it and clear on the NEXT
+    # user action — 'z' is not a bound shortcut (trusted keystroke)
+    AC(t.driver).send_keys("z").perform()
+    time.sleep(0.8)
+    gone = js(t, "return !document.querySelector('.toast.info')")
+    ok = ok and gone
+    record("C10 no-op Apply is an info toast (#132)", ok, f"{rep} cleared-on-next-action={gone}")
+
+
+def c11_merge_focuses_target(t):
+    fresh(t)
+    pick = js(t, r"""
+      const rows = [...document.querySelectorAll('.tree-person')].map(n => {
+        const name = n.querySelector('.tree-name')?.textContent.trim() ?? '';
+        const total = Number(n.querySelector('.tree-count.total')?.textContent ?? 0);
+        return {name, total};
+      }).filter(r => r.name && !/^unknown/i.test(r.name) && r.total > 0);
+      if (rows.length < 2) return null;
+      rows.sort((a, b) => b.total - a.total);
+      return {source: rows[1].name, target: rows[0].name,
+              before: rows[0].total + rows[1].total};
+    """)
+    if pick is None:
+        record("C11 post-merge focus (#133)", True,
+               "need two visible named persons with faces — vacuous")
+        return
+    nodes = t.find_elements(By.CSS_SELECTOR, ".tree-person")
+    src = next(e for e in nodes
+               if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["source"])
+    js(t, "arguments[0].scrollIntoView({block: 'center'})", src)
+    time.sleep(0.4)
+    AC(t.driver).context_click(src).perform()
+    time.sleep(0.6)
+    items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+             if "into" in b.text and "Merge" in b.text]
+    if not items:
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        record("C11 post-merge focus (#133)", False, "no Merge-into menu item")
+        return
+    items[0].click()
+    time.sleep(0.8)
+    inp = t.find_element(By.CSS_SELECTOR, ".overlay .dialog .typeahead input")
+    inp.click()
+    inp.send_keys(pick["target"])
+    time.sleep(0.6)
+    merge_btn = [b for b in t.find_elements(By.CSS_SELECTOR, ".overlay .dialog button.bad")
+                 if b.is_enabled()]
+    if not merge_btn:
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        record("C11 post-merge focus (#133)", False, "merge button not enabled")
+        return
+    merge_btn[0].click()
+    time.sleep(1.5)
+    rep = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const target = snap.persons.find(p => p.name === arguments[0]);
+      const source = snap.persons.find(p => p.name === arguments[1]);
+      const sections = [...document.querySelectorAll('.face-section')]
+        .map(s => s.querySelector('.rule .rule-label')?.textContent.trim() ?? null);
+      const selName = document.querySelector('.tree-person.selected .tree-name')?.textContent.trim() ?? null;
+      return {
+        targetCount: target ? target.counts.total : null,
+        sourceGone: !source,
+        centerHasTarget: sections.includes(arguments[0]),
+        selectedPerson: selName,
+      };
+    """, pick["target"], pick["source"])
+    ok = (rep["targetCount"] == pick["before"] and rep["sourceGone"]
+          and rep["centerHasTarget"] and rep["selectedPerson"] == pick["target"])
+    record("C11 post-merge focus (#133)", ok,
+           f"target {pick['target']}: {rep} (expected {pick['before']} faces)")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -369,9 +556,13 @@ def main():
         c2_a_key_stages_then_commits(t)
         c3_bar_accept_commits(t)
         c4_noop_apply_feedback(t)
-        c5_q4_escape_or_accept(t)
+        c5_q4_stage_model(t)
         c6_esc_ordering(t)
         c7_single_section_selectall(t)
+        c8_tree_counts_ignore_filter(t)
+        c9_actions_above_typeahead(t)
+        c10_noop_apply_is_info(t)
+        c11_merge_focuses_target(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
