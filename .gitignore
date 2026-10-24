@@ -36,3 +36,6 @@ config/whotrc.json
 # *.txt catch-all above covers it, named explicitly so it survives that
 config/pathmap*.txt
 /test/archive-fixture/
+
+# local config backups (machine-specific; *.txt does not catch the .bak suffix)
+*.bak-*
