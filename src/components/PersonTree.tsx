@@ -122,8 +122,13 @@ interface Props {
   /** #122: person id -> primary face rotation (avatar display) */
   primaryRot: Map<number, number>;
   /** #135 (rule 34): a face drag from the centre pane is live — every
-      person row is a merge-into target for it (null = no face drag) */
+      person row is a merge-into target for it (null = no face drag).
+      Rendered for the highlight/clear bookkeeping… */
   faceDragIds?: number[] | null;
+  /** …but ACCEPTANCE reads this ref at event time (v3.33 fix): the working
+      person-drag path is ref-driven for exactly this reason — a drop must
+      not depend on a React re-render having landed mid-drag */
+  faceDragRef?: { current: number[] | null };
   /** #135: a face drag dropped on a person row — validation +
       confirmation live in App (same shared path as every merge) */
   onDropFaces?: (faceIds: number[], personId: number) => void;
@@ -195,7 +200,13 @@ function PersonRow({
       title={`${person.groups.join(", ") || "Ungrouped"} — double-click to rename`}
     >
       <span className="tree-avatar">
-        {img ? <img src={img} alt="" style={rotStyle(rot)} /> : person.name[0]}
+        {img ? (
+          // v3.33: a press on the avatar must not start a native image
+          // drag — the row is the drag source
+          <img src={img} alt="" style={rotStyle(rot)} draggable={false} />
+        ) : (
+          person.name[0]
+        )}
       </span>
       {renaming ? (
         <NameTypeahead
@@ -225,7 +236,7 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, onDropFaces }: Props) {
+export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces }: Props) {
   // #135: a face drag ending without a drop (Esc, drop outside) must
   // clear the merge-target highlight — the drag state itself lives in
   // App, only the highlight is ours
@@ -264,7 +275,13 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   >(null);
   const [dropPath, setDropPath] = useState<string | null>(null); // '' = Ungrouped node
   const [dropPerson, setDropPerson] = useState<number | null>(null); // #88 merge target
+  // #135 (rule 34): face drag in flight (state view — highlight/effects)
   const faceDrag = faceDragIds != null && faceDragIds.length > 0;
+  // v3.33 fix: the EVENT-TIME views — acceptance and the dropped payload
+  // come from the ref, mirroring how the person-drag path reads dragRef
+  const liveFaceDrag = () =>
+    faceDragRef?.current != null && faceDragRef.current.length > 0;
+  const liveFaceDragIds = () => faceDragRef?.current ?? null;
   const tree = useMemo(() => buildTree(persons), [persons]);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -355,7 +372,9 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
       if (dropPerson !== id) setDropPerson(id);
       return;
     }
-    if (faceDrag) {
+    if (liveFaceDrag()) {
+      // #135: face payload — person rows accept (ref-checked at event
+      // time, v3.33)
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = "move";
@@ -381,17 +400,19 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
       onMergeInto(ids, id);
       return;
     }
-    if (faceDrag && faceDragIds) {
+    const faces = liveFaceDragIds();
+    if (faces && faces.length > 0) {
+      // #135: face payload → face-level merge (ref at drop time, v3.33)
       e.preventDefault();
       e.stopPropagation();
-      const ids = faceDragIds;
       clearDrag();
-      onDropFaces?.(ids, id);
+      onDropFaces?.(faces, id);
     }
   };
   const acceptDrop = (e: React.DragEvent, target: string) => {
     // #135: face drags target person rows only — branches refuse them
-    if (faceDrag) return;
+    // (ref-checked at event time, v3.33)
+    if (liveFaceDrag()) return;
     // target '' = the Ungrouped node: persons drop ungrouped, a branch
     // re-homes at the top level (its leaf name only)
     e.preventDefault();
@@ -416,7 +437,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   };
   const dragOver = (e: React.DragEvent, target: string) => {
     if (!dragRef.current) return;
-    if (faceDrag) return; // #135: face drags do not target branches
+    if (liveFaceDrag()) return; // #135: face drags do not target branches
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";

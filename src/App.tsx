@@ -1628,6 +1628,8 @@ export default function App() {
             // #135 (rule 34): face drags from the centre pane — merge
             // into the dropped person (validation + dialog in App)
             faceDragIds={faceDrag}
+            // v3.33: acceptance in the tree reads this ref at event time
+            faceDragRef={faceDragRef}
             onDropFaces={onFacesDropped}
             onRenameSelection={renamePersons}
             onSelectPending={(id) => {

@@ -101,6 +101,22 @@ function FaceCard({
       // #135/#136 (rule 34): the card is a drag source — the payload is
       // the whole selection when this card is part of one (App decides)
       draggable
+      // #135 fix (v3.33): a plain press on an UNSELECTED card selects it
+      // first, so a drag started immediately carries it; the payload rule
+      // (selection vs single) then applies uniformly. Modifier presses
+      // (ctrl/shift) keep the click handler's semantics untouched.
+      onMouseDown={(e) => {
+        if (
+          e.button !== 0 ||
+          e.ctrlKey ||
+          e.metaKey ||
+          e.shiftKey ||
+          selected ||
+          (e.target as HTMLElement).closest(".face-check, input, textarea, button")
+        )
+          return;
+        onSelectOne(face.id);
+      }}
       onDragStart={(e) => onFaceDragStart(face.id, e)}
       onDragEnd={onFaceDragEnd}
       onDragOver={(e) => onFaceDragOver(face.id, e)}
@@ -143,8 +159,16 @@ function FaceCard({
       <div className="face-img">
         {img ? (
           // #122: the crop's stored display rotation, independent of the
-          // full-image rotation
-          <img src={img} alt="" style={rotStyle(face.rotation)} />
+          // full-image rotation. #135 fix (v3.33): draggable={false} —
+          // otherwise pressing on the crop (most of the card's area) starts
+          // a native IMAGE drag (a URL, copy-only) that WebKit never drops
+          // back into the app; the card div is the drag source
+          <img
+            src={img}
+            alt=""
+            style={rotStyle(face.rotation)}
+            draggable={false}
+          />
         ) : (
           <div className="face-img-loading" />
         )}
