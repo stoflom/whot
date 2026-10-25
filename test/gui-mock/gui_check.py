@@ -683,6 +683,31 @@ def c12_face_drag_merges_into_person(t):
            f"{pick['source']} -> {pick['target']}: dialog={dlg['h3']}, {rep}")
 
 
+def c14_drag_sources(t):
+    # v3.33 (rule 34 implementation notes): the face crop and the tree
+    # avatar must NOT be native drag sources — a press on the image would
+    # start an image/URL drag (copy-only) that WebKit never drops back
+    # into the app; the card div and the person row are the sources
+    fresh(t)
+    bad = js(t, r"""
+      const bad = [];
+      document.querySelectorAll('.face-card img').forEach(i => {
+        if (i.draggable) bad.push('face-crop img');
+      });
+      document.querySelectorAll('.tree-avatar img').forEach(i => {
+        if (i.draggable) bad.push('tree-avatar img');
+      });
+      if (!document.querySelector('.face-card')?.draggable)
+        bad.push('face-card not draggable');
+      const row = document.querySelector('.tree-person');
+      if (!row?.draggable) bad.push('tree-person not draggable');
+      return bad;
+    """)
+    record("C14 drag sources (v3.33 WebKit fixes)", not bad,
+           "; ".join(bad) if bad
+           else "face crops + avatars inert; cards + rows are the sources")
+
+
 def c13_face_drag_copies_description(t):
     fresh(t)
     pick = js(t, r"""
@@ -783,6 +808,7 @@ def main():
         c11_merge_focuses_target(t)
         c12_face_drag_merges_into_person(t)
         c13_face_drag_copies_description(t)
+        c14_drag_sources(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
