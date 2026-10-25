@@ -865,33 +865,6 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   white-space: nowrap;
   overflow: hidden;
 }
-.typeahead-list li.hi { background: color-mix(in srgb, var(--accent) 30
-/* #67: name typeahead — suggestion dropdown over the existing persons */
-.typeahead { position: relative; display: block; }
-.typeahead-list {
-  position: absolute;
-  z-index: 40;
-  left: 0;
-  right: 0;
-  margin: 2px 0 0;
-  padding: 2px;
-  list-style: none;
-  max-height: 220px;
-  overflow-y: auto;
-  background: var(--panel2);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-}
-.typeahead-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 3px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-}
 .typeahead-list li.hi { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 .typeahead-list .ta-group {
   color: var(--dim);
@@ -948,6 +921,9 @@ button.merge-open { font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
+  /* v3.34: the list is a flex column — without this, a capped list
+     shrinks the clusters instead of scrolling (rows clip away) */
+  flex-shrink: 0;
 }
 .merge-cluster-head {
   display: flex;

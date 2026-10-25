@@ -30,6 +30,8 @@ Checks (contract refs: docs/gui-design.md):
   C12 face drag onto a person row: confirmed merge into that person (#135)
   C13 face drag onto a face card: copies the shown description onto the
       whole payload; empty-description cards refuse the drop (#136)
+  C15 served stylesheet fully parsed + merge dialog honours #126:
+      86vh cap, scrolling list, pinned action row (v3.34/#137)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -787,6 +789,52 @@ def c13_face_drag_copies_description(t):
            f"{pick['person']}: drag={drag}, {rep}")
 
 
+def c15_merge_dialog_scroll(t):
+    # v3.34 (#137): a truncated rule + duplicate block in styles.css (since
+    # 631a90e/#67) desynced the CSS parser — the sheet stopped after the
+    # typeahead section, so #126's cap/scroll CSS never applied. Two locks:
+    # the sheet must parse to its final rule, and the open dialog must
+    # honour #126 (capped, scrolling list, action row in the viewport)
+    fresh(t)
+    parse_bad = js(t, r"""
+      const sheet = [...document.styleSheets][0];
+      const rules = [...sheet.cssRules];
+      const bad = [];
+      if (rules.length === 0) bad.push('no rules parsed');
+      else if (rules.at(-1).selectorText !== '.merge-spacer')
+        bad.push('sheet stops at ' + rules.at(-1).selectorText);
+      const btn = document.querySelector('button.merge-open');
+      if (btn) btn.click();
+      return bad;
+    """)
+    time.sleep(0.4)
+    m = js(t, r"""
+      const bad = [...arguments[0]];
+      const dlg = document.querySelector('.merge-dialog');
+      if (!dlg) { bad.push('dialog did not open'); return {bad, m: null}; }
+      const dcs = getComputedStyle(dlg);
+      const list = dlg.querySelector('.merge-list');
+      const lcs = list ? getComputedStyle(list) : null;
+      const cl = dlg.querySelector('.merge-cluster');
+      const ccs = cl ? getComputedStyle(cl) : null;
+      const foot = dlg.querySelector('.merge-foot');
+      const dr = dlg.getBoundingClientRect();
+      const fr = foot ? foot.getBoundingClientRect() : null;
+      const cap = window.innerHeight * 0.86;
+      if (dcs.maxHeight === 'none') bad.push('dialog max-height not applied');
+      else if (dr.height > cap + 2) bad.push('dialog exceeds 86vh cap');
+      if (!lcs || lcs.overflowY !== 'auto') bad.push('list not scrollable');
+      if (!lcs || lcs.minHeight !== '0px') bad.push('list min-height not 0');
+      if (!ccs || ccs.flexShrink !== '0') bad.push('clusters shrink instead of scrolling');
+      if (!fr || fr.bottom > window.innerHeight + 1) bad.push('action row below viewport');
+      return {bad, m: {dialogH: Math.round(dr.height), capPx: Math.round(cap)}};
+    """, parse_bad)
+    ok = not m["bad"]
+    record("C15 merge dialog: sheet fully parsed, #126 cap + scroll list + pinned footer (v3.34/#137)",
+           ok, "; ".join(m["bad"]) if m["bad"]
+           else f"last rule .merge-spacer; cap {m['m']}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -809,6 +857,7 @@ def main():
         c12_face_drag_merges_into_person(t)
         c13_face_drag_copies_description(t)
         c14_drag_sources(t)
+        c15_merge_dialog_scroll(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.33** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.34** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -810,6 +810,27 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     row’s person, or the cluster’s members, as sources; *Rename…*,
     *Apply group…*) so right-clicking a person finds the exit without
     knowing the selection-first flow.
+
+    **Implementation notes — making the #126 cap actually apply** (v3.34):
+    1. **`src/styles.css` was corrupted since `631a90e` (#67, v3.2)**: the
+       typeahead block had been appended twice, the first copy **truncated
+       mid-declaration** (`.typeahead-list li.hi { background: color-mix(
+       in srgb, var(--accent) 30` — no `)`, no `;`, no `}`). The
+       unterminated `color-mix(` desyncs the CSS parser: the browser
+       discards the broken rule while resyncing, and in Firefox the last
+       rule applied in the whole sheet was the *second* (complete) `li.hi`
+       copy — so **nothing after the typeahead section was ever applied**,
+       including this entire dialog (viewport cap, scrolling list, pinned
+       action row, member-row and chip styling). That is why #126 looked
+       broken on its first live test. Fixed by deleting the truncated
+       duplicate; gui-mock **C15** locks it: the served sheet must parse to
+       its final rule (`.merge-spacer`) and the open dialog's computed
+       `max-height` must be the 86vh cap, not `none`.
+    2. **`.merge-cluster` carries `flex-shrink: 0`** — `.merge-list` is a
+       flex column, and without it a capped list does not scroll, it
+       *shrinks every cluster item* down to its border height (the
+       cluster's `overflow: hidden` then clips the rows away), so a real
+       person set would still not scroll.
 
     **Settings**: `whotrc.json` gains `merge_name_distance` (default 2,
     clamped 1–3) and `merge_suffix_aliases` (default `[]`), with serde
