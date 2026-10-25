@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.32** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.33** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -1040,6 +1040,27 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - No other drop targets (no branch, no image area, no section header)
       and no other drag sources (card drags only — section headers are not
       draggable).
+    - **Implementation notes — WebKit drag fixes** (v3.33, live-test fixes
+      to the v3.32 feature):
+      1. **The face crop (and the tree avatar) are `draggable={false}`**.
+         Without this, pressing on the image — most of a card's area —
+         starts a **native image drag** (a `text/uri-list` URL drag with
+         copy-only semantics) instead of the card's element drag; WebKit
+         never delivers that drag back into the app as a droppable payload,
+         so targets never highlight and drops never land. The card div /
+         person row is the only drag source.
+      2. **A plain mouse-down on an unselected card selects it first**
+         (`selectOne`), so a press-drag started immediately carries exactly
+         that card; the payload rule above then applies uniformly
+         (selection-bearing card → whole selection, unselected card → the
+         card just selected). Modifier presses (ctrl/shift) keep the
+         existing click semantics.
+      3. **Drop acceptance in the tree is ref-driven, not state-driven**
+         (`faceDragRef`): a drag must never depend on a React re-render
+         having landed mid-drag — the working person-drag path has always
+         read its local `dragRef` at event time, and the face path now
+         mirrors it. The `faceDragIds` prop remains for highlight/clear
+         bookkeeping only.
 
 
 ## 5. Related documents
