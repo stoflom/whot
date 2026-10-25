@@ -1,4 +1,8 @@
-import { memo, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  memo,
+  type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import type { Face } from "../api";
 import { useFaceImage } from "../hooks";
 import { rotStyle } from "../rotation";
@@ -33,6 +37,18 @@ interface Props {
   onRefcrop: (id: number) => void;
   onReject: (id: number) => void;
   onAccept: (id: number) => void;
+  /** #135/#136 (rule 34): start dragging this card — or the whole
+      selection it is part of (the payload rule lives in App) */
+  onFaceDragStart: (id: number, e: ReactDragEvent) => void;
+  /** the drag ended (drop, Esc, cancel) — clears the App payload */
+  onFaceDragEnd: () => void;
+  /** #136: a face drag hovers this card — valid only with a description */
+  onFaceDragOver: (id: number, e: ReactDragEvent) => void;
+  onFaceDragLeave: (id: number) => void;
+  /** #136: a face drag dropped on this card — copy its description */
+  onFaceDropOnCard: (id: number, e: ReactDragEvent) => void;
+  /** #136: a description drop is currently hovering this card */
+  descTarget: boolean;
 }
 
 // #98 (§4.31): memoised — with the grid handlers stable (one useMemo in
@@ -58,6 +74,12 @@ function FaceCard({
   onRefcrop,
   onReject,
   onAccept,
+  onFaceDragStart,
+  onFaceDragEnd,
+  onFaceDragOver,
+  onFaceDragLeave,
+  onFaceDropOnCard,
+  descTarget,
 }: Props) {
   const img = useFaceImage(face.id);
   const staged = stagedFieldsForCard(stage, face.id);
@@ -73,9 +95,33 @@ function FaceCard({
 
   return (
     <div
-      className={`face-card status-${face.link_status}${selected ? " selected" : ""}`}
+      className={`face-card status-${face.link_status}${selected ? " selected" : ""}${descTarget ? " desc-target" : ""}`}
       data-face-id={face.id}              // #96: accept-&-next scroll target
       title={face.name}
+      // #135/#136 (rule 34): the card is a drag source — the payload is
+      // the whole selection when this card is part of one (App decides)
+      draggable
+      // #135 fix (v3.33): a plain press on an UNSELECTED card selects it
+      // first, so a drag started immediately carries it; the payload rule
+      // (selection vs single) then applies uniformly. Modifier presses
+      // (ctrl/shift) keep the click handler's semantics untouched.
+      onMouseDown={(e) => {
+        if (
+          e.button !== 0 ||
+          e.ctrlKey ||
+          e.metaKey ||
+          e.shiftKey ||
+          selected ||
+          (e.target as HTMLElement).closest(".face-check, input, textarea, button")
+        )
+          return;
+        onSelectOne(face.id);
+      }}
+      onDragStart={(e) => onFaceDragStart(face.id, e)}
+      onDragEnd={onFaceDragEnd}
+      onDragOver={(e) => onFaceDragOver(face.id, e)}
+      onDragLeave={() => onFaceDragLeave(face.id)}
+      onDrop={(e) => onFaceDropOnCard(face.id, e)}
       onDoubleClick={() => onOpen(face.id)}
       onContextMenu={(e) => onContextMenu(face.id, e)}
       // #53 (§4.17): ctrl/cmd-click toggles the selection; #69: plain
@@ -113,8 +159,16 @@ function FaceCard({
       <div className="face-img">
         {img ? (
           // #122: the crop's stored display rotation, independent of the
-          // full-image rotation
-          <img src={img} alt="" style={rotStyle(face.rotation)} />
+          // full-image rotation. #135 fix (v3.33): draggable={false} —
+          // otherwise pressing on the crop (most of the card's area) starts
+          // a native IMAGE drag (a URL, copy-only) that WebKit never drops
+          // back into the app; the card div is the drag source
+          <img
+            src={img}
+            alt=""
+            style={rotStyle(face.rotation)}
+            draggable={false}
+          />
         ) : (
           <div className="face-img-loading" />
         )}

@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
@@ -15,6 +16,8 @@ import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
 import { acceptAdvancePlan } from "./reviewFlow";
+import { faceDragPayload, faceMergePlan } from "./faceDrop";
+import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
   groupByDescription,
   matchesStatusFilter,
@@ -27,6 +30,7 @@ import {
   dropStagesForFaces,
   objectInsideSelection,
   stageSummarySet,
+  stagedFieldsForCard,
   upsertStage,
   type Prefill,
   type Stage,
@@ -100,6 +104,20 @@ export default function App() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeInto, setMergeInto] = useState<
     { sourceIds: number[]; targetId?: number } | null
+  >(null);
+  // #135/#136 (rule 34): face drag & drop — the payload is App-owned
+  // (the drag starts in the centre pane and may land in the left pane).
+  // Refs mirror the state so the (identity-stable) grid handlers read
+  // the live values without taking state into their dependency lists:
+  // a drag must not churn the grid memo while it is in flight.
+  const [faceDrag, setFaceDrag] = useState<number[] | null>(null);
+  const faceDragRef = useRef<number[] | null>(null);
+  const [faceDropTarget, setFaceDropTarget] = useState<number | null>(null);
+  const faceDropTargetRef = useRef<number | null>(null);
+  // #135: a face drag dropped on a person row — face-level merge
+  // confirmation (the §4.28 person-level dialog moves whole persons)
+  const [faceMerge, setFaceMerge] = useState<
+    { faceIds: number[]; targetId: number } | null
   >(null);
   // #101 (§4.24): grid editing lives in one dialog; #123: Apply extends
   // the pending SET (screen only, nothing commits), Accept commits it all
@@ -812,9 +830,65 @@ export default function App() {
     // #101: the grid's only editable surface — one dialog
     onEditCard: (id: number) => openEdit("card", { card: id }),
     onEditGroup: (ids: number[]) => openEdit("group", { group: ids }),
+    // #135/#136 (rule 34): face drag & drop — the live payload is read
+    // from refs so these identities (and thus the grid memo) never churn
+    // while a drag is in flight
+    onFaceDragStart: (id: number, e: ReactDragEvent) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", `face ${id}`); // Firefox needs data
+      // rule 34: the whole selection when the card is part of one
+      const payload = faceDragPayload(selRef.current, id);
+      faceDragRef.current = payload;
+      setFaceDrag(payload);
+    },
+    onFaceDragEnd: () => {
+      faceDragRef.current = null;
+      faceDropTargetRef.current = null;
+      setFaceDrag(null);
+      setFaceDropTarget(null);
+    },
+    onFaceDragOver: (id: number, e: ReactDragEvent) => {
+      if (!faceDragRef.current) return;
+      // #136: the copy source is what the card SHOWS — a live staged
+      // value when one is staged on it, else the committed one
+      const staged = stagedFieldsForCard(pendingRef.current, id);
+      const desc = (staged?.desc ?? facesById.get(id)?.description ?? "").trim();
+      if (!desc) return; // nothing to copy — not a target (Q3)
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (faceDropTargetRef.current !== id) {
+        faceDropTargetRef.current = id;
+        setFaceDropTarget(id);
+      }
+    },
+    onFaceDragLeave: (id: number) => {
+      if (faceDropTargetRef.current === id) {
+        faceDropTargetRef.current = null;
+        setFaceDropTarget(null);
+      }
+    },
+    onFaceDropOnCard: (id: number, e: ReactDragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const payload = faceDragRef.current;
+      faceDragRef.current = null;
+      faceDropTargetRef.current = null;
+      setFaceDrag(null);
+      setFaceDropTarget(null);
+      if (!payload) return;
+      const staged = stagedFieldsForCard(pendingRef.current, id);
+      const desc = (staged?.desc ?? facesById.get(id)?.description ?? "").trim();
+      if (!desc) return; // double guard — the browser would not have dropped
+      const ids = payload.filter((x) => x !== id); // its own desc is a no-op
+      if (ids.length === 0) return;
+      // one mutate = one refresh; link_status is untouched (a text edit)
+      void mutate(async () => {
+        for (const x of ids) await api.setFaceDescription(x, desc);
+      });
+    },
   }), [facesById, personsById, faceMenu, toggle, selectOnly, rangeSelect,
       toggleMany, doPrimary, doRefcrop, doReject, doAccept, actionScope, openEdit,
-      confirmContext]);
+      confirmContext, mutate]);
 
   // one section per person over an image's faces — the Rolls image
   // detail and the #55 focus-mode film roll share it
@@ -1375,6 +1449,56 @@ export default function App() {
     [snap, mergeInto, mutate],
   );
 
+  // #135 (rule 34): a face drag dropped on a person row — the same
+  // shared merge validation as every path; the confirmation is the
+  // face-level dialog (whole-person merges use the §4.28 one)
+  const onFacesDropped = useCallback(
+    (faceIds: number[], targetId: number) => {
+      // the drag is over — clear the payload and highlights (App side)
+      faceDragRef.current = null;
+      faceDropTargetRef.current = null;
+      setFaceDrag(null);
+      setFaceDropTarget(null);
+      if (!snap) return;
+      const target = personsById.get(targetId);
+      if (!target) return;
+      if (/^unknown/i.test(target.name)) {
+        setError(
+          "cannot merge into an UnknownN cluster — it is an importer placeholder, not a person (§4.28)",
+        );
+        return;
+      }
+      const plan = faceMergePlan(faceIds, target.id, snap.faces, snap.persons);
+      if (plan.movers.length === 0) {
+        setInfo(
+          `all ${faceIds.length} face(s) are already on ${target.name} — nothing to move`,
+        );
+        return;
+      }
+      setFaceMerge({ faceIds: plan.movers, targetId });
+    },
+    [snap, personsById],
+  );
+
+  const confirmFaceMerge = useCallback(async () => {
+    if (!snap || !faceMerge) return;
+    const target = personsById.get(faceMerge.targetId);
+    const faceIds = faceMerge.faceIds;
+    setFaceMerge(null);
+    if (!target) return;
+    // one assign_person call = one transaction, §4.1 merge semantics
+    // (sticky rejected, emptied shells deleted, derived state recomputed)
+    const ok = await mutate(() =>
+      api.assignPerson(faceIds, target.name, target.groups[0] ?? ""),
+    );
+    if (ok) {
+      // #133 (rule 34): the centre pane opens the merged target
+      setPersonId(target.id);
+      setImageId(null);
+      setView("person");
+    }
+  }, [snap, faceMerge, personsById, mutate]);
+
   /** bulk rename/merge over a person selection: open the Edit dialog
       over all their faces (§4.1 rename-merge, #101) */
   const renamePersons = useCallback(
@@ -1501,6 +1625,12 @@ export default function App() {
             onError={setError}
             onOpenMerge={() => setMergeOpen(true)}
             onMergeInto={openMergeInto}
+            // #135 (rule 34): face drags from the centre pane — merge
+            // into the dropped person (validation + dialog in App)
+            faceDragIds={faceDrag}
+            // v3.33: acceptance in the tree reads this ref at event time
+            faceDragRef={faceDragRef}
+            onDropFaces={onFacesDropped}
             onRenameSelection={renamePersons}
             onSelectPending={(id) => {
               const ids = snap.faces
@@ -1639,6 +1769,7 @@ export default function App() {
                     sections={sectionsForImage(splitRow.id)}
                     sel={sel}
                     stage={pending}
+                    faceDropTarget={faceDropTarget}
                     {...gridHandlers}
                     primaryFaceId={displayPerson?.primary_face_id ?? null}
                   />
@@ -1681,13 +1812,14 @@ export default function App() {
                   rotation={imgRow.rotation} // #122
                 />
               </div>
-              <FaceGrid sections={sections} sel={sel} stage={pending} {...gridHandlers} primaryFaceId={null} />
+              <FaceGrid sections={sections} sel={sel} stage={pending} faceDropTarget={faceDropTarget} {...gridHandlers} primaryFaceId={null} />
             </div>
           ) : (
             <FaceGrid
               sections={sections}
               sel={sel}
               stage={pending}
+              faceDropTarget={faceDropTarget}
               {...gridHandlers}
               primaryFaceId={view === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />
@@ -1765,6 +1897,20 @@ export default function App() {
           persons={snap.persons}
           onConfirm={confirmMerge}
           onCancel={() => setMergeInto(null)}
+        />
+      )}
+      {faceMerge && snap && personsById.get(faceMerge.targetId) && (
+        <FaceMergeDialog
+          plan={faceMergePlan(
+            faceMerge.faceIds,
+            faceMerge.targetId,
+            snap.faces,
+            snap.persons,
+          )}
+          sourceNames={new Map(snap.persons.map((p) => [p.id, p.name]))}
+          target={personsById.get(faceMerge.targetId)!}
+          onConfirm={() => void confirmFaceMerge()}
+          onCancel={() => setFaceMerge(null)}
         />
       )}
       {edit && snap && (

@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.31** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.33** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it)
 
@@ -35,10 +35,10 @@ user:
 
 All panes re-sync after every mutation.
 
-Non-goals (v1): moving faces between *known* persons by drag & drop,
-deleting faces (persons *can* be removed — §4.13; their faces become
-rejected, unowned records), editing embeddings, multi-group membership UI
-(one group path per person), i18n.
+Non-goals (v1): deleting faces (persons *can* be removed — §4.13; their
+faces become rejected, unowned records), editing embeddings, multi-group
+membership UI (one group path per person), i18n. (Moving faces between
+persons by drag & drop is now a feature — rule 34, #135/#136.)
 
 ## 2. Stack
 
@@ -1000,6 +1000,67 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     dialog, the §4.16 group dialog), the **action row goes to the top** of
     the dialog (under the title/body, above the fields), where suggestions
     can never obscure it. Buttons keep their order and behaviour.
+34. **Face drag & drop** (#135, #136) ⇒ the centre-pane face cards are
+    drag sources with **two drop zones** — the person tree (merge) and the
+    centre pane itself (description copy):
+    - **Drag source (both features)**: dragging a card that is part of the
+      current multi-selection drags the **whole selection**; dragging an
+      unselected card drags just that card (the #50 person-drag rule,
+      mirrored). The payload is App-level state — the drag starts in the
+      centre pane and may land in the left pane — and `dragend` (drop
+      outside, Esc, cancel) clears it with every highlight.
+    - **Drop on a person row — merge into the person** (#135): every
+      person row is a valid target during a face drag (group branches and
+      the virtual `Unknown`/`Ungrouped` nodes are not); the row shows the
+      existing `merge-target` highlight. The drop is **confirmed like every
+      merge path** (§4.28 — an accidental drop must not silently destroy):
+      a face-level dialog spells `M face(s) → <target>`, lists the movers
+      by owner (`N from X`, `K unowned`) and notes that rejected faces keep
+      their status (sticky, §4.2) while source persons losing their last
+      face are deleted (§4.1). The target is the dropped person — fixed,
+      the drop already chose it; dropping onto an `UnknownN` row is
+      refused. Faces already on the target are excluded; if nothing
+      remains the drop is a no-op info toast (#132-style). Execution is one
+      `assign_person` (#77 routing — the same call the person-merge uses)
+      and the centre pane opens the merged target (#133).
+    - **Drop on a face card — copy its description** (#136): during a face
+      drag, every centre-pane card **with a non-empty description** is a
+      valid target (highlighted `desc-target`); dropping copies that card's
+      description onto the **whole dragged payload** (the target card
+      included — re-applying its own description is a no-op). The copy
+      source is what the card **shows** — a live staged value when one is
+      staged on the card, else the committed one. A card with an **empty
+      description is not a target** (no-drop cursor, drop ignored): a drag
+      onto it must never clear the payload's descriptions — text is never
+      dropped silently (Q3). Execution is the existing per-face description
+      setter, batched over the payload inside one `mutate` (the §4.30
+      stage-commit loop); `link_status` is untouched — a description write
+      is a text edit, like every other description path in the app, and
+      needs no confirmation.
+    - No other drop targets (no branch, no image area, no section header)
+      and no other drag sources (card drags only — section headers are not
+      draggable).
+    - **Implementation notes — WebKit drag fixes** (v3.33, live-test fixes
+      to the v3.32 feature):
+      1. **The face crop (and the tree avatar) are `draggable={false}`**.
+         Without this, pressing on the image — most of a card's area —
+         starts a **native image drag** (a `text/uri-list` URL drag with
+         copy-only semantics) instead of the card's element drag; WebKit
+         never delivers that drag back into the app as a droppable payload,
+         so targets never highlight and drops never land. The card div /
+         person row is the only drag source.
+      2. **A plain mouse-down on an unselected card selects it first**
+         (`selectOne`), so a press-drag started immediately carries exactly
+         that card; the payload rule above then applies uniformly
+         (selection-bearing card → whole selection, unselected card → the
+         card just selected). Modifier presses (ctrl/shift) keep the
+         existing click semantics.
+      3. **Drop acceptance in the tree is ref-driven, not state-driven**
+         (`faceDragRef`): a drag must never depend on a React re-render
+         having landed mid-drag — the working person-drag path has always
+         read its local `dragRef` at event time, and the face path now
+         mirrors it. The `faceDragIds` prop remains for highlight/clear
+         bookkeeping only.
 
 
 ## 5. Related documents

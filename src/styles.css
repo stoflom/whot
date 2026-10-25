@@ -275,6 +275,10 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   flex-direction: column;
 }
 .face-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* #136 (rule 34): the hovered description-copy target during a face
+   drag — --tag (the description colour) so it reads as "drop here to
+   copy THIS description", distinct from the accent selection ring */
+.face-card.desc-target { border-color: var(--tag); box-shadow: 0 0 0 2px var(--tag); }
 .face-card.status-rejected { opacity: 0.55; }
 
 .face-check { position: absolute; top: 6px; left: 6px; z-index: 2; cursor: pointer; }

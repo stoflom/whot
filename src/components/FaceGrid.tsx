@@ -40,11 +40,19 @@ interface GridShared {
   /** #101 (§4.24): the grid's only editable surface — the Edit dialog */
   onEditCard: (id: number) => void;
   onEditGroup: (ids: number[]) => void;
+  /** #135/#136 (rule 34): face drag & drop — stable handler identities, */
+  onFaceDragStart: (id: number, e: import("react").DragEvent) => void;
+  onFaceDragEnd: () => void;
+  onFaceDragOver: (id: number, e: import("react").DragEvent) => void;
+  onFaceDragLeave: (id: number) => void;
+  onFaceDropOnCard: (id: number, e: import("react").DragEvent) => void;
 }
 
 interface GridProps extends GridShared {
   sections: Section[];
   sel: Set<number>;
+  /** #136: the card a face drag currently hovers (null = none) */
+  faceDropTarget: number | null;
 }
 
 /** #109: a stable identity for "which staged fields preview on this
@@ -78,6 +86,12 @@ const SectionView = memo(
     onAccept,
     onEditCard,
     onEditGroup,
+    onFaceDragStart,
+    onFaceDragEnd,
+    onFaceDragOver,
+    onFaceDragLeave,
+    onFaceDropOnCard,
+    descTargetId,
   }: {
     section: Section;
     /** #109: this section's selected face ids as "a,b,c" — identical
@@ -90,6 +104,10 @@ const SectionView = memo(
     selSize?: number;
     /** #109: the staged fields previewing here ("" when none) */
     stagedKey: string;
+    /** #136 (rule 34): this section's hovered description-drop target —
+        set only on the one section a drag hovers, stable `undefined`
+        elsewhere, so a hover move re-renders one or two sections */
+    descTargetId?: number;
   } & GridShared) {
     // #109: rebuild this section's selection from its signature — the
     // body runs only when the memo lets the section through
@@ -197,6 +215,12 @@ const SectionView = memo(
                 onRefcrop={onRefcrop}
                 onReject={onReject}
                 onAccept={onAccept}
+                onFaceDragStart={onFaceDragStart}
+                onFaceDragEnd={onFaceDragEnd}
+                onFaceDragOver={onFaceDragOver}
+                onFaceDragLeave={onFaceDragLeave}
+                onFaceDropOnCard={onFaceDropOnCard}
+                descTarget={descTargetId === id}
               />
             );
           })}
@@ -228,10 +252,21 @@ const SectionView = memo(
     a.onReject === b.onReject &&
     a.onAccept === b.onAccept &&
     a.onEditCard === b.onEditCard &&
-    a.onEditGroup === b.onEditGroup,
+    a.onEditGroup === b.onEditGroup &&
+    a.onFaceDragStart === b.onFaceDragStart &&
+    a.onFaceDragEnd === b.onFaceDragEnd &&
+    a.onFaceDragOver === b.onFaceDragOver &&
+    a.onFaceDragLeave === b.onFaceDragLeave &&
+    a.onFaceDropOnCard === b.onFaceDropOnCard &&
+    a.descTargetId === b.descTargetId,
 );
 
-export default function FaceGrid({ sections, sel, ...shared }: GridProps) {
+export default function FaceGrid({
+  sections,
+  sel,
+  faceDropTarget,
+  ...shared
+}: GridProps) {
   if (sections.length === 0) {
     return <div className="empty">nothing to show</div>;
   }
@@ -241,6 +276,11 @@ export default function FaceGrid({ sections, sel, ...shared }: GridProps) {
         // #109: the per-section selection identity — computed per render
         // (cheap: one `sel.has` per face), consumed only by the comparator
         const selSig = s.faceIds.filter((id) => sel.has(id)).join(",");
+        // #136: only the section holding the hovered card gets a target
+        const descTargetId =
+          faceDropTarget != null && s.faceIds.includes(faceDropTarget)
+            ? faceDropTarget
+            : undefined;
         return (
           <SectionView
             key={s.key}
@@ -248,6 +288,7 @@ export default function FaceGrid({ sections, sel, ...shared }: GridProps) {
             selSig={selSig}
             selSize={selSig ? sel.size : undefined}
             stagedKey={stagedKeyFor(shared.stage, s.faceIds)}
+            descTargetId={descTargetId}
             {...shared}
           />
         );
