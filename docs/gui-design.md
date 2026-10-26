@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.60** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.61** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -930,7 +930,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **Pane UX** (#126): the dialog is **viewport-capped** — the member
     list scrolls, while the title/intro and the action row (`apply
     group`, `rename to…`, `Merge into…`) stay visible (action row
-    pinned at the bottom). The intro states the contract: tick the
+    pinned at the bottom). The row ends with a visible **cancel**
+    button (#160 — Esc and an overlay click already closed the dialog,
+    but the escape was invisible): same dismiss as Esc, styled like
+    every other dialog's cancel (`secondary`). The intro states the contract: tick the
     persons to combine — **they may come from different clusters** (a
     neighbour beyond the distance can be the same person) — and
     **everything ticked merges into ONE target person, picked in the
