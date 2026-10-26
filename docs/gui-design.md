@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.42** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.43** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -756,6 +756,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       setter — an empty field counts as unchanged, unowned faces
       surface a toast. **Rejected faces stay sticky** (§4.2): a stage
       may display on them, the commit skips them (F2).
+      **Implementation note — the F2 drop is owned by `doReject` and the
+      filter change** (#141, v3.43): the last-seen "pending ops touching
+      rejected faces are dropped" only ran on the Edit-dialog Reject
+      branch; the bar ✗, the `R` key, card ✗ and the context-menu Reject
+      left the staged previews in place — a preview lying on
+      now-rejected faces, committed by the next Accept anyway — and a
+      filter switch (§4.10) only un-selected the hidden faces, leaving
+      their invisible ops in the set for the next commit. The drop now
+      lives inside `doReject` (so every reject entry point drops the
+      moot stages by construction) and `changeFaceFilter` drops the
+      stages of the faces the new filter hides — invisible staged ops
+      would otherwise be both unseen and silently committed.
     - **Retired**: inline inputs on cards and headers, the header
       `apply` button, the #29 FaceAssignDialog, the AssignDialog as a
       separate component (`Assign name…` opens this dialog with scope
