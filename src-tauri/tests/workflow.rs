@@ -602,6 +602,40 @@ fn corrupt_embedding_blob_is_reported() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #149 — a length-valid blob that decodes to NaN components must degrade,
+/// not panic: NaN is "no similarity evidence" (0.0, like #41) and the
+/// ordering paths use unwrap_or(Ordering::Equal).
+#[test]
+fn nan_embedding_blob_degrades_not_panics() {
+    let p = fixture_paths("nanblob");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap();
+    {
+        let con = db::connect(&p).unwrap();
+        let nan = f32::NAN.to_le_bytes();
+        let mut v = Vec::new();
+        for _ in 0..4 {
+            v.extend_from_slice(&nan); // 16 bytes = 4 dims of NaN
+        }
+        con.execute(
+            "UPDATE face_embeddings SET vector = ? WHERE face_id = 6",
+            params![v],
+        )
+        .unwrap();
+    }
+    // must return Ok — the pre-#149 code panicked in the order sort below
+    let cl = db::person_face_clusters(&p, 1, 0.5).unwrap();
+    let all: Vec<&db::ClusterFace> = cl.iter().flat_map(|g| g.clusters.iter().flatten()).collect();
+    let f6 = all.iter().find(|c| c.face_id == 6).copied().expect("face 6 must be shown");
+    assert_eq!(f6.sim, 0.0, "NaN embedding ⇒ no similarity evidence, not 100%");
+    assert!(
+        cl.iter().any(|g| g.clusters.iter().any(|c| c.len() == 1 && c[0].face_id == 6)),
+        "face 6 stays visible in its own cluster"
+    );
+    let f1 = all.iter().find(|c| c.face_id == 1).copied().unwrap();
+    assert_eq!(f1.sim, 1.0, "the primary keeps sim 1.0");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #44 — a malformed whotrc.json falls back to the defaults (with a
 /// visible warning) instead of vanishing silently; a missing file is a
 /// first run and stays quiet.
