@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.40** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.41** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1022,6 +1022,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       ‹ › code path, so cursor-as-target (#75) and list-end behaviour
       follow the stepping rules. At the end of the list the context
       stays and a toast says the review is exhausted.
+      **Implementation note — the exhaust mark is strictly bound**
+      (#148, v3.41): the pre-mutation mark (`exhaustAtRef`) stored only a
+      step index. Two holes let a stale mark fire much later: the consume
+      effect returned early **without resetting** when the refreshed
+      snapshot landed while the user had left Review, and consumption
+      read *whenever* the current `personId` happened to be — a
+      window-refocus refresh long after the verdict could auto-advance a
+      different person from the *marked* step index. The mark now
+      remembers which person it was set for, is consumed
+      unconditionally (so it can never linger across view switches), and
+      acts only when the consumer is still the marked person in Review —
+      anything else silently drops it.
     - **An open modal owns the keyboard**: while any layer above
       preview-undo in Q8's stack is open (dialog, menu, settings), every
       other shortcut is suppressed (#107, #110).
