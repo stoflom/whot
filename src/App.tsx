@@ -1821,7 +1821,10 @@ export default function App() {
             </span>
             {/* #99/#100: the cluster-group seg hugs the right side of the
                 person view — the Show filter is a global control and lives
-                in the top bar (#158, v3.57) */}
+                in the top bar (#158, v3.57); #163: person view ONLY —
+                cluster_group shapes that view's sections alone, so Review
+                and Rolls must not show it */}
+            {view === "person" && (
             <span className="toolbar-right">
             <span
               className="seg"
@@ -1841,6 +1844,7 @@ export default function App() {
               </button>
             </span>
             </span>
+            )}
           </div>
           {/* #100: the bar is the pane's real header — only the area below
               it scrolls, so no section content can ever pass above it */}
