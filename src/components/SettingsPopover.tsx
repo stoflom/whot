@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Settings } from "../api";
+import { useOwnsKeyboard } from "../overlays";
 
 interface Props {
   settings: Settings;
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export default function SettingsPopover({ settings, onSave, onClose }: Props) {
+  useOwnsKeyboard(); // #138 (the shortcut guard never saw this popover)
   const [threshold, setThreshold] = useState(settings.cluster_threshold);
   const [refcropN, setRefcropN] = useState(settings.refcrop_n);
   useEffect(() => {

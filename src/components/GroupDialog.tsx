@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { groupInputMode } from "../autoText";
 import PathTypeahead, { type SuggestOption } from "./PathTypeahead";
+import { useOwnsKeyboard } from "../overlays";
 
 // §4.16 (#50) — edit a group path: rename/move a branch or move persons
 // into a group. The path is `|`-separated; empty means Ungrouped (the
@@ -26,6 +27,7 @@ export default function GroupDialog({
   onCancel,
   options,
 }: Props) {
+  useOwnsKeyboard(); // #138
   const [path, setPath] = useState(defaultPath);
   useEffect(() => setPath(defaultPath), [defaultPath]);
   // #92/#97 — a '|'-terminated prefill (root/branch right-click → Add

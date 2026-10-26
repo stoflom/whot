@@ -38,6 +38,7 @@ import {
 } from "./stage";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
+import { useOverlayCount } from "./overlays";
 import FaceGrid, { type Section } from "./components/FaceGrid";
 import FaceOverlay from "./components/FaceOverlay";
 import PersonTree, { orderedVisiblePersonIds } from "./components/PersonTree";
@@ -254,6 +255,10 @@ export default function App() {
   }, [personId, snap]);
 
   // #25 — Esc closes the double-click image split
+  // #138: which overlays are open is ONE registry count, not a list of
+  // states — the ladder state list has drifted before (face-merge, tree
+  // menus, group dialog were invisible to it)
+  const overlayCount = useOverlayCount();
   useEffect(() => {
     // #47/#101 (§4.19 + the Q8 stack): dialogs/menus/popovers own Esc
     // first, then a live stage's preview-undo (F1), then the split —
@@ -261,16 +266,7 @@ export default function App() {
     // context-change dialog is one of those dialogs: dropping the set
     // under it both violates the stack and unmounts the dialog
     // mid-dispatch
-    if (
-      edit != null ||
-      confirmRemove != null ||
-      menu != null ||
-      settingsOpen ||
-      mergeOpen ||
-      mergeInto != null ||
-      contextConfirm != null
-    )
-      return;
+    if (overlayCount > 0) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       const tgt = e.target as HTMLElement | null;
@@ -291,7 +287,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [edit, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto, contextConfirm, splitImageId]);
+  }, [overlayCount, splitImageId]);
 
   // #133: resolves to whether the operation AND the refresh succeeded —
   // callers may act only on success (errors are still surfaced as the
@@ -1341,17 +1337,11 @@ export default function App() {
       )
         return;
       // an open modal dialog owns the keyboard (Q8 stack): never act
-      // behind it — the Q4 escape-or-accept dialog in particular used
-      // to have the letter shortcuts fire under it
-      if (
-        edit != null ||
-        confirmRemove != null ||
-        menu != null ||
-        mergeOpen ||
-        mergeInto != null ||
-        contextConfirm != null
-      )
-        return;
+      // behind it — the #138 registry count covers EVERY overlay layer,
+      // App-owned or child-owned (the old state list let the face-merge
+      // dialog, tree menus/group dialog and the settings popover slip
+      // through)
+      if (overlayCount > 0) return;
       // #53 (§4.17): Ctrl-G toggles the whole section — the one under
       // the mouse cursor first (#74), else the hovered card's, else the
       // most recently selected card's; preventDefault so webkit cannot
@@ -1446,7 +1436,7 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, acceptAndNext, commitPending, edit, confirmRemove, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto, contextConfirm]);
+  }, [stepPerson, acceptAndNext, commitPending, overlayCount, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto, contextConfirm]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 

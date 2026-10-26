@@ -3,6 +3,7 @@ import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead from "./PathTypeahead";
 import type { SuggestOption } from "./SuggestInput";
+import { useOwnsKeyboard } from "../overlays";
 import type { Prefill, StageScope } from "../stage";
 
 // #101 (§4.24) — THE edit dialog: the three value fields (name, group,
@@ -57,6 +58,7 @@ export default function EditDialog({
   onCancel,
 }: Props) {
   // header-open has no card scope (count 0) — never open on an empty scope
+  useOwnsKeyboard(); // #138
   const [scope, setScope] = useState<StageScope>(
     counts[defaultScope] > 0
       ? defaultScope
