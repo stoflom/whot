@@ -979,3 +979,6 @@ button.merge-open { font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
 }
 .merge-foot .input-group { flex: 1 1 12rem; min-width: 0; }
 .merge-spacer { flex: 1; }
+/* #161: nested path branches — sub-directories render indented below their parent */
+.roll-children { display: flex; flex-direction: column; gap: 0.5rem; padding: 0 0.6rem 0.6rem; }
+.roll-children .img-grid { padding: 0; }
