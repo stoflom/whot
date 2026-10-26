@@ -65,6 +65,9 @@ Checks (contract refs: docs/gui-design.md):
       opens full-image (root kept), invalid path shows a hint (root
       kept), browse… picks a folder via the mocked native picker, empty
       input roots at '/'
+  C27 the Description/Accuracy cluster-group seg is person-view-only
+      (#163, v3.63): present there, hidden in Review and Rolls (the
+      centre toolbar's navigation cluster stays in every view)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1226,13 +1229,13 @@ def c21_show_filter_in_topbar(t):
         seg: !!document.querySelector('.center-toolbar .seg'),
       };
     """)
-    ok = (topbar["sel"] and topbar["centre"] is False and topbar["seg"]
+    ok = (topbar["sel"] and topbar["centre"] is False
           and set(["all", "provisional", "confirmed", "rejected"]
                   ).issubset(set(topbar["opts"])))
     record("C21 Show filter lives in the top bar (#158)", ok,
            f"topbar select={topbar['sel']} (opts={topbar['opts']}, "
            f"value={topbar['val']}), centre toolbar select={topbar['centre']}, "
-           f"view-local seg still present={topbar['seg']}")
+           f"centre seg on review={topbar['seg']} (hidden, #163 → C27)")
 
 
 def c22_review_exhaust_skips_reviewed(t):
@@ -1612,6 +1615,37 @@ def c26_rolls_path_filter(t):
            f"clear → {len(h5)}/{len(exp5)} exact={h5 == exp5}")
 
 
+def c27_cluster_seg_person_only(t):
+    """#163 (v3.63): the Description/Accuracy cluster-group seg belongs
+    to the person view alone — present there, hidden in Review and Rolls
+    (cluster_group shapes only the person view's sections, §4.9); the
+    centre toolbar's navigation cluster stays in every view."""
+    fresh(t)  # lands on Review
+    def seg():
+        return js(t, "return !!document.querySelector('.center-toolbar .seg')")
+    def nav():
+        return js(t, "return document.querySelectorAll('.center-toolbar .toolbar-left button').length")
+    def go(i):
+        js(t, "[...document.querySelectorAll('.topbar nav button')][arguments[0]].click();", i)
+        time.sleep(0.8)
+    review = seg()
+    review_nav = nav()
+    go(1)  # Rolls
+    rolls = seg()
+    rolls_nav = nav()
+    js(t, "document.querySelector('.tree-person')?.click();")  # personId (tab is disabled without one)
+    time.sleep(0.8)
+    go(2)  # Person
+    person = seg()
+    person_nav = nav()
+    ok = (review is False and rolls is False and person is True
+          and review_nav == 2 and rolls_nav == 2 and person_nav == 2)
+    record("C27 cluster-group seg is person-view-only (#163)", ok,
+           f"seg present — review={review} (want False), rolls={rolls} "
+           f"(want False), person={person} (want True); nav cluster "
+           f"buttons={review_nav}/{rolls_nav}/{person_nav} (want 2/2/2)")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1646,6 +1680,7 @@ def main():
         c24_dark_scheme_native_controls(t)
         c25_merge_dialog_cancel_button(t)
         c26_rolls_path_filter(t)
+        c27_cluster_seg_person_only(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
