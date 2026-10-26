@@ -41,6 +41,8 @@ Checks (contract refs: docs/gui-design.md):
   C19 staged dialog-Apply (§4.24) regroups the Description-mode sections
       live (#155, v3.55): Undo returns the committed grouping; bar Accept
       commits the description
+  C20 a person with SEVERAL group rows renders under EVERY path
+      (§4.16, #156, v3.56 — stepped once; branch bulk-ops dedupe)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -435,9 +437,15 @@ def c8_tree_counts_ignore_filter(t):
 
 
 def tree_person_ids(t):
+    """Distinct person ids in tree display order — #156: a multi-group
+    person renders under every path, so raw row order holds duplicates."""
     return js(t, """
-      return [...document.querySelectorAll('.tree-person')]
-        .map(p => String(p.getAttribute('data-person-id')));
+      const out = []; const seen = new Set();
+      for (const p of document.querySelectorAll('.tree-person')) {
+        const id = String(p.getAttribute('data-person-id'));
+        if (!seen.has(id)) { seen.add(id); out.push(id); }
+      }
+      return out;
     """)
 
 
@@ -678,6 +686,52 @@ def c19_staged_desc_regroups(t):
            f"mode switch: {seg!r}→Description; person={pick['pid']} "
            f"description {old_a!r} -> {staged_a!r} (staged) -> "
            f"{undone_a!r} (Undo) -> {committed_a!r} (Accept, mock desc={mock_desc!r})")
+
+
+def c20_multi_group_renders_everywhere(t):
+    """#156 (§4.16, v3.56): a person with SEVERAL person_groups rows
+    renders under EVERY listed path — the §9 harvest importer leaves
+    multiple rows (additive shell groups, #128), and the old groups[0]
+    placement made such a person unfindable in the branch the user filed
+    them under."""
+    fresh(t)
+    set_show_filter(t, "all")  # the §4.10 pruning must not interfere
+    pick = js(t, """
+      // first person with >= 2 DISTINCT group rows and a matching face
+      for (const p of window.__MOCK_SNAP.persons) {
+        if (!p.groups || new Set(p.groups).size < 2) continue;
+        if (!window.__MOCK_SNAP.faces.some(f => f.person_id === p.id
+            && f.link_status !== 'rejected' && (f.state ?? '') !== 'discarded'))
+          continue;
+        return {pid: p.id, name: p.name, groups: p.groups};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C20 multi-group renders under every path (#156)", True,
+               "no multi-group person in the dump — vacuous")
+        return
+    rows = js(t, """
+      return [...document.querySelectorAll('.tree-person')]
+        .filter(x => x.getAttribute('data-person-id') === String(arguments[0]))
+        .map(x => {
+          // enclosing branch of this placement = the .tree-node whose
+          // row block directly holds this row's .tree-children
+          const kids = x.closest('.tree-children');
+          const holder = kids ? kids.parentElement : null;
+          const name = holder?.querySelector('.tree-node-name')?.textContent ?? '';
+          return name;
+        });
+    """, pick["pid"])
+    # each distinct group row → one placement, whose enclosing leaf name
+    # is the row's last segment
+    want = sorted({seg for seg in (g.split("|")[-1] for g in pick["groups"]) if seg})
+    got = sorted(set(rows))
+    ok = len(rows) == len(set(pick["groups"])) and got == want
+    record("C20 multi-group renders under every path (#156)", ok,
+           f"{pick['name']} (rows={pick['groups']}) → {len(rows)} rendered "
+           f"placements under {got} (want {want})")
+
 
 
 def dialog_actions_above_typeahead(dlg_js):
@@ -1127,6 +1181,7 @@ def main():
         c17_remove_unknowns_button(t)
         c18_zero_image_rolls_hidden(t)
         c19_staged_desc_regroups(t)
+        c20_multi_group_renders_everywhere(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

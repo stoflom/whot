@@ -33,12 +33,20 @@ function buildTree(persons: Person[]): TreeNode {
   // Ungrouped. The importer seeds no group rows, so fresh UnknownN
   // persons are ungrouped by construction (never a literal 'Unknown'
   // segment); historic rows still land on the same top-level branch.
+  // #156 (v3.56): a person with SEVERAL group rows renders under every
+  // listed path — the §9 harvest importer legally leaves multiple
+  // person_groups rows per person (§9.6/#128 additive shell groups), and
+  // hiding them on all but the alphabetically-first branch made the
+  // person unfindable in the branch the user filed them under. Each
+  // distinct row is one placement; duplicates are impossible (PK).
   for (const p of persons) {
     if (p.groups.length > 0) {
-      const parts = p.groups[0].split("|").filter(Boolean);
-      let node = root;
-      for (const part of parts) node = find(node, part);
-      node.personIds.push(p.id);
+      for (const g of p.groups) {
+        const parts = g.split("|").filter(Boolean);
+        let node = root;
+        for (const part of parts) node = find(node, part);
+        node.personIds.push(p.id);
+      }
     } else if (p.name.startsWith("Unknown")) {
       unknown.personIds.push(p.id);
     } else {
@@ -65,7 +73,9 @@ function buildTree(persons: Person[]): TreeNode {
 }
 
 /** Person ids in the tree's visual (filtered) display order — the
- * ‹ › / arrow-key person stepping walks this list (#31). */
+ * ‹ › / arrow-key person stepping walks this list (#31). A multi-group
+ * person renders under every path (#156) but is stepped once, at the
+ * first placement reached. */
 export function orderedVisiblePersonIds(persons: Person[], filter: string): number[] {
   const tree = buildTree(persons);
   const byId = new Map(persons.map((p) => [p.id, p]));
@@ -80,11 +90,16 @@ export function orderedVisiblePersonIds(persons: Person[], filter: string): numb
       return !!p && matches(p);
     }) || node.children.some(subtreeMatch);
   const out: number[] = [];
+  const seen = new Set<number>();
   const walk = (node: TreeNode, isRoot: boolean) => {
     if (!isRoot && !subtreeMatch(node)) return;
     for (const id of node.personIds) {
+      if (seen.has(id)) continue; // #156: one placement only per id
       const p = byId.get(id);
-      if (p && matches(p)) out.push(id);
+      if (p && matches(p)) {
+        out.push(id);
+        seen.add(id);
+      }
     }
     for (const c of node.children) walk(c, false);
   };
@@ -347,11 +362,19 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   const rollUpAll = () => setCollapsed(new Set(collectBranchPaths(tree, "")));
   const rollDownAll = () => setCollapsed(new Set());
 
-  // structural (unfiltered) person ids of a branch — bulk remove (#35)
-  const collectSubtreeIds = (node: TreeNode): number[] => [
-    ...node.personIds,
-    ...node.children.flatMap(collectSubtreeIds),
-  ];
+  // structural (unfiltered) person ids of a branch — bulk remove (#35).
+  // #156: dedupe — a multi-group person sits in several sub-branches and
+  // must not be removed (or confirmed) twice.
+  const collectSubtreeIds = (node: TreeNode): number[] => {
+    const seen = new Set<number>();
+    const walk = (n: TreeNode): number[] => {
+      for (const id of n.personIds) seen.add(id);
+      n.children.forEach(walk);
+      return [];
+    };
+    walk(node);
+    return [...seen];
+  };
   const menuTargets = menu
     ? selectedIds.has(menu.id) && selectedIds.size > 1
       ? [...selectedIds]

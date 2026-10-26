@@ -242,8 +242,10 @@ npm run tauri build    # release bundles
   group row) and `Unknown` (ungrouped `UnknownN` persons — purely
   name-driven). A person with a group renders under that group even when
   named `UnknownN` — filing an Unknown you remember by face but not by
-  name into a group is normal (#153). Right-click: rows, branches and
-  cards all carry menus.
+  name into a group is normal (#153). A person with **several** group
+  rows (the §9 harvest import can leave multiple) renders under every
+  listed path, and is stepped once (#156). Right-click: rows, branches
+  and cards all carry menus.
 - **Centre pane** — the face grid, `Show`-filtered; Review groups the
   pending faces by the importer's `UnknownN` clusters, Rolls lists
   imports as expandable sections (a roll with **0 images** is never
