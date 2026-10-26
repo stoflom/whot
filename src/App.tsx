@@ -1461,12 +1461,15 @@ export default function App() {
             e.preventDefault();
             doReject(ids);
           }
-        } else if (e.key === "ArrowLeft") {
+        } else if (e.key === "ArrowLeft" && view !== "rolls") {
           // #95: plain arrows step persons (§4.22/#31) — they were dead
-          // because this block returned before the arrow checks
+          // because this block returned before the arrow checks;
+          // #163 (v3.64): inert in Rolls — stepping always lands in the
+          // person view and must not yank a rolls browser away (there
+          // the arrows keep their native scroll behaviour)
           e.preventDefault();
           stepPerson(-1);
-        } else if (e.key === "ArrowRight") {
+        } else if (e.key === "ArrowRight" && view !== "rolls") {
           e.preventDefault();
           stepPerson(1);
         }
@@ -1793,6 +1796,11 @@ export default function App() {
         />
 
         <main className={splitRow ? "center focus" : "center"}>
+          {/* #163 (v3.64): Rolls renders no centre toolbar at all — no
+              nav cluster (person stepping always lands in Person — it
+              used to yank a rolls browser away), no seg (§4.9); the
+              grid gets the pane's full height */}
+          {view !== "rolls" && (
           <div className="center-toolbar">
             <span className="toolbar-left">
               <button
@@ -1846,6 +1854,7 @@ export default function App() {
             </span>
             )}
           </div>
+          )}
           {/* #100: the bar is the pane's real header — only the area below
               it scrolls, so no section content can ever pass above it */}
           <div className="center-scroll">
