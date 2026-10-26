@@ -1392,12 +1392,23 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
         return Ok(Vec::new());
     }
     let primary = faces.iter().find(|(_, _, p, _)| *p).map(|(id, _, _, _)| *id)
-        .or_else(|| faces.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).map(|(id, _, _, _)| *id));
+        .or_else(|| {
+            // #149: NaN confidence must not panic — Equal is as good a
+            // fallback rank as any for corrupt data
+            faces.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(id, _, _, _)| *id)
+        });
     let ids: Vec<i64> = faces.iter().map(|(id, _, _, _)| *id).collect();
     let vectors = l2_vectors(&con, &ids)?;
 
     // reference = primary face's vector (fallback: highest-confidence face)
     let ref_idx = faces.iter().position(|(id, _, _, _)| Some(*id) == primary).unwrap_or(0);
+    /// #149: a length-valid blob can still decode to non-finite
+    /// components; a non-finite cosine (NaN/±inf) is "no similarity
+    /// evidence", exactly like the #41 missing-embedding 0.0 — this also
+    /// keeps every stored similarity finite so `partial_cmp` irreflexivity
+    /// can never trip a comparison unwrap below.
+    let clean = |s: f64| if s.is_finite() { s } else { 0.0 };
     let sims: Vec<f64> = faces
         .iter()
         .enumerate()
@@ -1410,7 +1421,7 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
                 // for faces it could not measure
                 0.0
             } else {
-                cosine(&vectors[ref_idx], &vectors[i])
+                clean(cosine(&vectors[ref_idx], &vectors[i]))
             }
         })
         .collect();
@@ -1429,7 +1440,8 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
         // single-linkage: each face joins the first cluster with a member at ≥ threshold
         let mut clusters: Vec<Vec<usize>> = Vec::new();
         let mut order = members;
-        order.sort_by(|&a, &b| sims[b].partial_cmp(&sims[a]).unwrap());
+        // #149: NaN must not panic the command — Equal is fine for corrupt data
+        order.sort_by(|&a, &b| sims[b].partial_cmp(&sims[a]).unwrap_or(std::cmp::Ordering::Equal));
         for i in order {
             let mut joined = false;
             for cluster in clusters.iter_mut() {
