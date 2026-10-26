@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.35** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.36** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -360,6 +360,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    (§4.9/§3), so another legitimate appearance reads as its own appearance
    section instead of an impostor cluster — and a true impostor still shows
    as a low-similarity cluster inside the appearance it impersonates.
+   **Implementation notes — corrupted embeddings must degrade, not panic**
+   (#149, v3.36): the clustering is display-only code that must never take
+   the command down. A length-valid embedding blob can still decode to
+   non-finite f32 components, and `f32::partial_cmp` returns `None` for
+   `NaN`, so the historical `sort_by(...partial_cmp(...).unwrap())` sites
+   panicked the Tauri command on rows that #45's length check lets
+   through. (1) Similarities are computed defensively: a non-finite cosine
+   result (`NaN`/±inf) is treated exactly like the #41 missing-embedding
+   case — "no similarity evidence", `0.0` — which also keeps every stored
+   similarity finite. (2) The two ordering unwraps that remained after the
+   cluster/appearance sorts already went `unwrap_or(Ordering::Equal)` in
+   v1.6 use `.unwrap_or(Ordering::Equal)` too, so no comparison site can
+   panic on non-finite data.
    A **cluster-group toggle** sits in the top bar, left of the status
    filter (#99): `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
