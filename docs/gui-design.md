@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.39** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.40** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -127,6 +127,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     thumbnails per roll; clicking an image opens its faces (same face cards,
     same operations) plus the image preview **annotated with its detected
     face rectangles** (see below).
+    **Implementation note — the roll's face counts are per-roll image set**
+    (#146, v3.40): a roll section lists its images by `first_import_id`
+    (the roll that first imported each image), but the used to count
+    faces with `import_id` matching the roll id — the roll that
+    *produced* the face. On a re-import (same file in a later roll) the
+    new faces land in the later roll (its `import_id`), which
+    consequently showed "0 img, N new" for images it did not display,
+    while the original roll showed images with inflated counts. All four
+    counts (img / new / ✓ / ✗) are now taken over the faces *of the
+    section's images* (`image_id` in the `first_import_id` set), so the
+    header always summarises exactly what the section shows.
 - **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
   pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
   face-status filter applied by every view (default All; **New** is the
