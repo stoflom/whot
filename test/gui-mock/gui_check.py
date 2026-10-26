@@ -57,6 +57,9 @@ Checks (contract refs: docs/gui-design.md):
       Show select renders its value text in the theme text colour
       (#158 follow-up — WebKit's light-scheme defaults washed the value
       out against the dark panel)
+  C25 the Merge Similar Persons dialog has a visible cancel button in
+      its action row — it closes the dialog with nothing applied (#160,
+      v3.61 — Esc worked but was invisible)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1456,6 +1459,53 @@ def c24_dark_scheme_native_controls(t):
            ok, detail)
 
 
+def c25_merge_dialog_cancel_button(t):
+    """#160 (v3.61): the Merge Similar Persons action row ends with a
+    visible secondary 'cancel' button — enabled regardless of the
+    selection, and clicking it closes the dialog with nothing applied
+    (the dismiss Esc/overlay-click already offered, but invisibly)."""
+    fresh(t)
+    opened = js(t, r"""
+      const b = document.querySelector('button.merge-open');
+      if (!b) return {opened: false};
+      b.click();
+      return {opened: !!document.querySelector('.merge-dialog')};
+    """)
+    time.sleep(0.4)
+    opened = js(t, "return !!document.querySelector('.merge-dialog')")
+    btn = js(t, r"""
+      const foot = document.querySelector('.merge-dialog .merge-foot');
+      if (!foot) return {foot: false};
+      const bs = [...foot.querySelectorAll('button')];
+      const c = bs.find(x => x.textContent.trim() === 'cancel');
+      if (!c) return {foot: true, cancel: false};
+      const r = c.getBoundingClientRect();
+      const cs = getComputedStyle(c);
+      return {
+        foot: true, cancel: true,
+        secondary: c.classList.contains('secondary'),
+        visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none',
+        last: c === bs.at(-1),
+        enabled: !c.disabled,
+      };
+    """)
+    closed = js(t, r"""
+      const c = [...document.querySelectorAll('.merge-dialog .merge-foot button')]
+        .find(x => x.textContent.trim() === 'cancel');
+      if (!c) return null;
+      c.click();
+      return 'clicked';
+    """)
+    time.sleep(0.4)
+    gone = js(t, "return document.querySelector('.merge-dialog') == null")
+    ok = bool(opened) and bool(btn.get('cancel')) \
+        and bool(btn.get('secondary')) and bool(btn.get('visible')) \
+        and bool(btn.get('last')) and bool(btn.get('enabled')) \
+        and closed == 'clicked' and gone is True
+    record("C25 Merge Similar dialog: visible cancel button closes it (#160)", ok,
+           f"opened={opened}; button={btn}; click={closed}; closed={gone}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1488,6 +1538,7 @@ def main():
         c22_review_exhaust_skips_reviewed(t)
         c23_dnd_moves_one_membership(t)
         c24_dark_scheme_native_controls(t)
+        c25_merge_dialog_cancel_button(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
