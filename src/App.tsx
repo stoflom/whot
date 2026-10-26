@@ -743,11 +743,16 @@ export default function App() {
       {
         items: [
           {
+            // #123 + #142: opening an image is a full view-context change
+            // (the centre pane rebinds to that image's faces) and honours
+            // the drop-or-accept dialog exactly like the focused-open
+            // entry just below — it never silently carries a staged set
             label: "Open image",
-            onClick: () => {
-              setView("rolls");
-              setImageId(image.id);
-            },
+            onClick: () =>
+              confirmContext(() => {
+                setView("rolls");
+                setImageId(image.id);
+              }),
           },
           {
             // #123: opening focus mode is a view-context change
@@ -1844,7 +1849,15 @@ export default function App() {
               imports={snap.imports}
               images={snap.images}
               faces={snap.faces}
-              onOpenImage={(id) => setImageId(id)}
+              // #142: opening an image from the rolls grid is a full
+              // view-context change and must honour the #123 drop-or-
+              // accept dialog when a staged set is live
+              onOpenImage={(id) =>
+                confirmContext(() => {
+                  setView("rolls");
+                  setImageId(id);
+                })
+              }
               onContextMenuImage={imageMenu}
             />
           ) : view === "rolls" && imageId != null && imgRow ? (
