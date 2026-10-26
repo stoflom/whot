@@ -32,6 +32,12 @@ Checks (contract refs: docs/gui-design.md):
       whole payload; empty-description cards refuse the drop (#136)
   C15 served stylesheet fully parsed + merge dialog honours #126:
       86vh cap, scrolling list, pinned action row (v3.34/#137)
+  C16 Show filter prunes the tree person list (#152, §4.10 — sees
+      C8 updated accordingly)
+  C17 top-bar 'Remove Unknowns': filter-independent, removes Unknowns
+      whose faces are all decided (v3.54 — exact removal, confirm
+      dialog) (#154)
+  C18 rolls with 0 images are never listed (#151)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -400,21 +406,156 @@ def tree_badges(t):
     """)
 
 
-def c8_tree_counts_ignore_filter(t):
-    fresh(t)
-    before = tree_badges(t)
+def set_show_filter(t, value):
+    """flip the top-bar Show filter (§4.10) to `value` and wait for the refetch"""
     js(t, """
       const s = [...document.querySelectorAll('select')]
-        .find(x => [...x.options].some(o => o.value === 'provisional'));
-      if (s) { s.value = 'provisional'; s.dispatchEvent(new Event('change', {bubbles: true})); }
-    """)
+        .find(x => [...x.options].some(o => o.value === arguments[0]));
+      if (s) { s.value = arguments[0]; s.dispatchEvent(new Event('change', {bubbles: true})); }
+    """, value)
     time.sleep(0.8)
-    after = tree_badges(t)
-    ok = before is not None and before == after
-    detail = f"{len(before or [])} persons, badges { 'identical' if ok else 'CHANGED'}"
-    if not ok:
-        detail += f" before={before} after={after}"
-    record("C8 tree badges ignore the status filter (#129)", ok, detail)
+
+
+def c8_tree_counts_ignore_filter(t):
+    """#129: badge VALUES stay raw totals across the status filter.
+    #152 makes presence itself filter-relative — a shrinking list is
+    expected — so only persons listed under BOTH filters are compared."""
+    fresh(t)
+    before_all = tree_badges(t)
+    set_show_filter(t, "provisional")
+    after_new = tree_badges(t)
+    shared = set(after_new) & set(before_all)
+    ok = set(after_new) == shared  # everything listed under New appears verbatim in All
+    record("C8 badge totals stay raw across the status filter (#129)", ok,
+           f"all={len(before_all)} persons → new={len(after_new)}: "
+           f"{len(shared)}/{len(after_new)} badges appear verbatim in the All list")
+
+
+def tree_person_ids(t):
+    return js(t, """
+      return [...document.querySelectorAll('.tree-person')]
+        .map(p => String(p.getAttribute('data-person-id')));
+    """)
+
+
+def c16_filter_prunes_tree(t):
+    """#152 (§4.10): with Show=New, persons without a provisional face are
+    not listed; Show=All lists everyone again (incl. faceless shells)."""
+    fresh(t)
+    all_ids = tree_person_ids(t)
+    set_show_filter(t, "provisional")
+    new_ids = tree_person_ids(t)
+    expected = js(t, """
+      return window.__MOCK_SNAP.persons
+        .map(p => String(p.id))
+        .filter(id => new Set(window.__MOCK_SNAP.faces
+          .filter(f => f.link_status === 'provisional' && f.person_id != null)
+          .map(f => String(f.person_id))).has(id));
+    """)
+    set_show_filter(t, "all")
+    all_again = tree_person_ids(t)
+    subset = set(new_ids) <= set(all_ids)
+    exact = sorted(new_ids) == sorted(expected)
+    restores = sorted(all_again) == sorted(all_ids)
+    ok = subset and exact and restores
+    record("C16 Show filter prunes the tree person list (#152)", ok,
+           f"all={len(all_ids)} → new={len(new_ids)} (subset={subset}, "
+           f"exact-vs-faces={exact}); Show=All restores everyone: {restores}")
+
+
+def c17_remove_unknowns_button(t):
+    """#154 (v3.54): the top-bar 'Remove Unknowns' button is FILTER-
+    INDEPENDENT — it removes exactly the Unknown persons whose faces are
+    all decided (zero New and zero Accepted left), same set under every
+    Show filter, after the §4.13 confirm dialog."""
+    fresh(t)
+
+    def state():
+        return js(t, """
+          const b = [...document.querySelectorAll('.topbar button')]
+            .find(x => x.textContent.includes('Remove Unknowns'));
+          if (!b) return {missing: true};
+          const sees = new Set(window.__MOCK_SNAP.faces
+            .filter(x => x.link_status === 'provisional' || x.link_status === 'confirmed')
+            .map(x => String(x.person_id)));
+          const cand = window.__MOCK_SNAP.persons
+            .filter(p => /^Unknown/.test(p.name) && !sees.has(String(p.id)))
+            .map(p => p.id);
+          return {disabled: b.disabled, candidates: cand};
+        """)
+
+    under_all = state()
+    set_show_filter(t, "provisional")
+    under_new = state()
+    set_show_filter(t, "rejected")
+    under_rejected = state()
+    set_show_filter(t, "confirmed")
+    under_confirmed = state()
+    set_show_filter(t, "all")
+    cand = (under_all.get("candidates") or [])
+    if not cand or "missing" in under_all:
+        record("C17 Remove Unknowns (all faces decided) (#154)", False,
+               f"button {'missing' if 'missing' in under_all else 'has no candidates'}")
+        return
+    before_count = js(t, "return window.__MOCK_SNAP.persons.length")
+    js(t, """
+      const b = [...document.querySelectorAll('.topbar button')]
+        .find(x => x.textContent.includes('Remove Unknowns'));
+      b.click();
+    """)
+    time.sleep(0.7)
+    dlg_title = js(t, """
+      const d = [...document.querySelectorAll('.overlay .dialog')][0];
+      return d ? d.querySelector('h3')?.textContent ?? '' : null;
+    """)
+    js(t, """
+      const btn = [...document.querySelectorAll('.overlay .dialog-actions button')]
+        .find(x => !x.className.includes('secondary'));
+      if (btn) btn.click();
+    """)
+    time.sleep(1.2)
+    after_count = js(t, "return window.__MOCK_SNAP.persons.length")
+    gone = js(t, """
+      return window.__MOCK_SNAP.persons
+        .filter(p => arguments[0].includes(p.id)).length;
+    """, cand)
+    ok = (
+        under_all.get("disabled") is False
+        and under_new.get("candidates") == cand
+        and under_rejected.get("candidates") == cand
+        and under_confirmed.get("candidates") == cand
+        and "Remove" in (dlg_title or "")
+        and after_count == before_count - len(cand)
+        and gone == 0
+    )
+    record("C17 Remove Unknowns is filter-independent (all faces decided) (#154)", ok,
+           f"candidates={len(cand)} identical under All/New/Rejected/Accepted "
+           f"[{under_all.get('disabled')}, {under_new.get('disabled')}] "
+           f"{under_rejected.get('disabled')}, {under_confirmed.get('disabled')}]"
+           f" - disabled); confirm title='{dlg_title}'; delta={before_count - after_count} "
+           f"persons (all candidates gone: {gone == 0})")
+
+
+def c18_zero_image_rolls_hidden(t):
+    """#151: the Rolls pane lists only rolls holding >= 1 image — the dump
+    carries re-import rolls with zero images (one section must remain)."""
+    fresh(t)
+    js(t, """
+      document.querySelectorAll('.topbar nav button')[1]?.click();
+    """)  # the Rolls tab
+    time.sleep(1.2)
+    sections = js(t, "return document.querySelectorAll('.roll-header').length")
+    zeros = js(t, """
+      const imgs = {};
+      for (const i of window.__MOCK_SNAP.images)
+        imgs[i.first_import_id] = (imgs[i.first_import_id] ?? 0) + 1;
+      return window.__MOCK_SNAP.imports.filter(i => !imgs[i.id]).length;
+    """)
+    total = js(t, "return window.__MOCK_SNAP.imports.length")
+    ok = sections == total - zeros
+    record("C18 rolls with 0 images are never listed (#151)", ok,
+           f"imports={total} (zero-image: {zeros}) → sections shown={sections}")
+
 
 
 def dialog_actions_above_typeahead(dlg_js):
@@ -858,6 +999,9 @@ def main():
         c13_face_drag_copies_description(t)
         c14_drag_sources(t)
         c15_merge_dialog_scroll(t)
+        c16_filter_prunes_tree(t)
+        c17_remove_unknowns_button(t)
+        c18_zero_image_rolls_hidden(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

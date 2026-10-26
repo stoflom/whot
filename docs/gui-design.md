@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.49** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.54** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -92,8 +92,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 ```
 
 - **Left pane — person tree.** Hierarchy built from `person_groups.path`
-  (segments split on `|`). Virtual branches: `Unknown` (persons whose only
-  group is `Unknown`) and `Ungrouped` (known persons with no group row).
+  (segments split on `|`). **Group first** (#153): a person with a group
+  row renders under their first path even when named `UnknownN` — the
+  user may group an UnknownN they remember by face but not by name.
+  Virtual branches hold the rest: `Ungrouped` (persons with no group
+  row) and `Unknown` (**ungrouped** persons named `UnknownN` — purely
+  name-driven). The importer writes **no group rows at all** for the
+  `UnknownN` persons it seeds: all new persons start Ungrouped (an
+  empty group field means Ungrouped — never a literal `Unknown`
+  segment; §4.18 keeps the `Ungrouped` path segment reserved).
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
   rejected). The tree's header — **roll up/down buttons on the left,
   filter box on the right, then the Review button** — is **pinned flush
@@ -135,6 +142,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     / ✓ / ✗) are therefore taken over the faces *of the section's images*
     (`image_id` in the `first_import_id` set), so the header always
     summarises exactly what the section shows.
+    **A roll with zero images is never listed** (#151): the section set
+    keys images on `first_import_id`, so a re-import of only
+    already-known files creates an import row with no images of its own —
+    a shell that offers nothing to open (its faces belong to the images
+    shown in the earlier roll). Such rolls are irrelevant: to work on
+    that content again the user re-imports it, which creates a fresh
+    roll.
 - **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
   pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
   face-status filter applied by every view (default All; **New** is the
@@ -204,13 +218,25 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   **Tree rows** additionally support **multi-select** (click sets the
   selection, ctrl/cmd-click toggles, shift-click extends over the tree's
   visible order; the anchor row stays the person shown) and offer
-  **Remove person / Remove N persons** (§4.13); **branch headers** have
-  their own menu — *remove all unknown persons* on the `Unknown` root,
-  *remove all persons in this branch* on any group branch (counts shown,
-  confirm dialog required) — and, on real group branches, *rename/move
-  group…*, *delete group* and *add group…* (§4.16/§4.18, #50/#54; the
-  tree root offers *add group…* too). The reference-set pane exposes
-  **Remove person** as a button.
+  **Remove person / Remove N persons** (§4.13); **real group branches**
+  have their own menu — *remove all persons in this branch* (counts shown,
+  confirm dialog required) plus *rename/move group…*, *delete group* and
+  *add group…* (§4.16/§4.18, #50/#54; the tree root offers *add group…*
+  too); the virtual `Unknown`/`Ungrouped` branches offer **no** branch
+  menu — bulk actions target real branches only, and Unknown cleanup
+  moved to a dedicated top-bar button (below). **`Remove Unknowns`**
+  (#154) sits in the top bar beside the refresh button: **filter-independent**
+  (v3.54 — the original filter-relative rule offered the still-unfinished
+  review queue when Show = Accepted/Rejected); it removes every
+  `UnknownN` person whose faces are **all decided** — zero New
+  (`provisional`) and zero Accepted (`confirmed`) faces left, meaning
+  nothing remains to show or decide on. Unknowns that still hold a new or
+  accepted face are never touched (zero-attached-face UnknownN do not
+  appear anyway: §4.27's stale-shell sweep deletes them on every read).
+  The button is disabled when no such Unknown exists, opens the §4.13
+  confirm dialog (every face becomes rejected and unowned; no undo), and
+  its tooltip spells out the rule. The reference-set
+  pane exposes **Remove person** as a button.
 - **Group management & drag-and-drop** (#50, §4.16): real group branches
   (not the virtual `Unknown`/`Ungrouped` nodes) can be **renamed/moved**
   (a path dialog, prefilled; the whole subtree follows the prefix rewrite)
@@ -327,11 +353,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      GUI rename** (tree, context menu, detail pane) via one rename-merge
      helper: the `set_person_name` collision error can never surface in
      the GUI; a *faceless* person renamed to an existing name merges by
-     deletion, an empty input is a no-op, and renaming an `UnknownN` in
-     these flows clears its `Unknown` group (F7 — the group argument is
-     not user-visible there; the review-section rule bar likewise defaults
-     the group to empty for `UnknownN` sections, so a rename always leaves
-     the Unknown branch from every entry point).
+     deletion, an empty input is a no-op, and a rename keeps the
+     person's current group path (#153 — #38's UnknownN force-to-empty
+     is obsolete since the importer no longer seeds an `Unknown` group
+     row: an ungrouped UnknownN stays ungrouped and holds its virtual
+     Unknown-branch seat until renamed, after which a real name simply
+     falls to Ungrouped).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
      are per `(person, description)` — see §4.12.
@@ -411,9 +438,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **every view's**
     visibility: the person view's cluster sections and its Rejected
     section, image grids and full-image rectangles, the review grid, the
-    **left-pane person presence and counts** — a person with no matching
-    face leaves the tree and the surviving bucket drives its counts (#28
-    generalised) — and the **right-pane overview totals**. `link_status`
+    **left-pane person presence** (#152) — a person holding no face that
+    matches the filter leaves the tree (set Show back to All to list
+    everyone again, including the faceless shells) — and the
+    **right-pane overview totals**. The badges of the persons that stay
+    listed carry their raw totals (#129): the filter changes who is
+    listed, never any counters. A selection survives its person dropping
+    out of the tree — the person view simply shows nothing for them under
+    the filter. `link_status`
     never changes: the filter is pure display. Switching it **drops
     non-matching faces from the selection**: faces the filter hides can
     never be bulk-acted on.
@@ -505,16 +537,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **Display guarantees** (#127/#129): group paths are **case-significant**
     — `Family|Lombards` and `family|Lombard` are distinct data and each
     renders its own branch (the builder is case-sensitive; do not fold).
-    Under **any** face-status filter (All/New/Accepted/Rejected) and an
-    empty text filter, **every person in the snapshot is findable in the
-    tree** — including faceless named persons (their own branch, or the
-    virtual `Ungrouped` node when ungrouped) — and the status filter
-    **never changes which persons exist or the counts the badges show**: a
-    badge always carries the person's raw totals; the filter only changes
-    which faces render in the middle pane (#129). A person always renders under its **first**
+    Under the **All** face-status filter and an empty text filter, **every
+    person in the snapshot is findable in the tree** — including faceless
+    named persons (#127/#128; their own branch, or the virtual
+    `Ungrouped` node when ungrouped). Under New/Accepted/Rejected the
+    tree lists only persons holding ≥ 1 face of that status (#152,
+    §4.10) — a person with no matching face is not listed, so reach them
+    by switching Show to All. The badges of the persons that stay listed
+    always carry their raw totals (#129); the filter changes who is
+    listed and which faces render in the middle pane, never whose faces
+    exist or their counts. A person always renders under its **first**
     group (`groups[0]`); further groups stay visible in the row tooltip.
-    The virtual `Unknown`/`Ungrouped` nodes are never pruned while they
-    hold persons.
+    The virtual `Unknown`/`Ungrouped` nodes are
+    never pruned while they hold (listed) persons — a virtual branch
+    whose persons are all filtered out disappears with them.
 17. **Selection accelerators** (#53) ⇒ Ctrl/⌘-click on a face-card body
     toggles that card in the selection — the tree's idiom, mirrored
     on cards; plain click stays inert so double-click-to-open is

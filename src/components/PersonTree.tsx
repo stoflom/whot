@@ -26,16 +26,23 @@ function buildTree(persons: Person[]): TreeNode {
   };
   const unknown = find(root, "Unknown");
   const ungrouped = find(root, "Ungrouped");
+  // #153 (§3): group placement first — a person with a group row renders
+  // under their first path even when named UnknownN (the user may group
+  // an UnknownN they remember by face but not by name). The virtual
+  // branches hold the ungrouped: UnknownN names to Unknown, the rest to
+  // Ungrouped. The importer seeds no group rows, so fresh UnknownN
+  // persons are ungrouped by construction (never a literal 'Unknown'
+  // segment); historic rows still land on the same top-level branch.
   for (const p of persons) {
-    if (p.name.startsWith("Unknown")) {
-      unknown.personIds.push(p.id);
-    } else if (p.groups.length === 0) {
-      ungrouped.personIds.push(p.id);
-    } else {
+    if (p.groups.length > 0) {
       const parts = p.groups[0].split("|").filter(Boolean);
       let node = root;
       for (const part of parts) node = find(node, part);
       node.personIds.push(p.id);
+    } else if (p.name.startsWith("Unknown")) {
+      unknown.personIds.push(p.id);
+    } else {
+      ungrouped.personIds.push(p.id);
     }
   }
   // #61 (§3): within every branch, biggest clusters first — persons
@@ -270,7 +277,6 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     y: number;
     node: TreeNode;
     groupPath: string;      // '|' path — branch ops live in that namespace
-    virtual: boolean;       // Unknown/Ungrouped are display-only (#50)
   } | null>(null);
   // #50 (§4.16) — group dialogs: rename/move a branch, move persons,
   // add a group (#54, §4.18: create = move the tree selection into it)
@@ -498,7 +504,11 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            setBranchMenu({ x: e.clientX, y: e.clientY, node, groupPath, virtual });
+            // #154: virtual branches (Unknown/Ungrouped) offer no branch
+            // menu — Unknown cleanup lives in the top-bar 'Remove
+            // Unknowns' button
+            if (isVirtual(node.name, depth)) return;
+            setBranchMenu({ x: e.clientX, y: e.clientY, node, groupPath });
           }}
           draggable={!virtual}
           onDragStart={(e) => !virtual && startDragBranch(e, groupPath)}
@@ -678,47 +688,42 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
             y: branchMenu.y,
             groups: [
               // #50 (§4.16): real branches can be renamed/moved and
-              // deleted; the virtual Unknown/Ungrouped nodes cannot
-              ...(branchMenu.virtual
-                ? []
-                : [
-                    {
-                      title: "Group",
-                      items: [
-                        {
-                          // #54 (§4.18): 'creating' a group = moving the
-                          // tree selection into it — empty groups cannot
-                          // exist (branches derive from person paths)
-                          label: "Add group…",
-                          onClick: () =>
-                            setGroupDialog({ kind: "add-group", parent: branchMenu.groupPath }),
-                          disabled: selectedIds.size === 0,
-                        },
-                        {
-                          label: "Rename/move group…",
-                          onClick: () =>
-                            setGroupDialog({ kind: "rename-branch", path: branchMenu.groupPath }),
-                        },
-                        {
-                          label: "Delete group",
-                          onClick: () =>
-                            setConfirmDeleteGroup({
-                              path: branchMenu.groupPath,
-                              count: branchIds.length,
-                            }),
-                          disabled: branchIds.length === 0,
-                          danger: true,
-                        },
-                      ],
-                    },
-                  ]),
+              // deleted (#154: virtual branches never open this menu at
+              // all — Unknown cleanup is the top-bar 'Remove Unknowns'
+              // button)
+              {
+                title: "Group",
+                items: [
+                  {
+                    // #54 (§4.18): 'creating' a group = moving the
+                    // tree selection into it — empty groups cannot
+                    // exist (branches derive from person paths)
+                    label: "Add group…",
+                    onClick: () =>
+                      setGroupDialog({ kind: "add-group", parent: branchMenu.groupPath }),
+                    disabled: selectedIds.size === 0,
+                  },
+                  {
+                    label: "Rename/move group…",
+                    onClick: () =>
+                      setGroupDialog({ kind: "rename-branch", path: branchMenu.groupPath }),
+                  },
+                  {
+                    label: "Delete group",
+                    onClick: () =>
+                      setConfirmDeleteGroup({
+                        path: branchMenu.groupPath,
+                        count: branchIds.length,
+                      }),
+                    disabled: branchIds.length === 0,
+                    danger: true,
+                  },
+                ],
+              },
               {
                 items: [
                   {
-                    label:
-                      branchMenu.node.name === "Unknown"
-                        ? `Remove all unknown persons (${branchIds.length})`
-                        : `Remove all persons in this branch (${branchIds.length})`,
+                    label: `Remove all persons in this branch (${branchIds.length})`,
                     onClick: () => onRemovePersons(branchIds),
                     disabled: branchIds.length === 0,
                     danger: true,

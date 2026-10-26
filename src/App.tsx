@@ -21,6 +21,8 @@ import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
   groupByDescription,
   matchesStatusFilter,
+  personTreeMembers,
+  removableUnknownShellIds,
   type ClusterGroup,
   type FaceFilter,
 } from "./viewFilters";
@@ -196,18 +198,29 @@ export default function App() {
   const faceFilter = (snap?.settings.face_filter ?? "all") as FaceFilter;
   const clusterGroup = snap?.settings.cluster_group ?? "accuracy";
   const faceVisible = (f: Face) => matchesStatusFilter(f.link_status, faceFilter);
-  // #127/#129 (§4.16): the tree ALWAYS shows every snapshot person, and
-  // the badges ALWAYS carry the raw totals — the face filter changes only
-  // which faces render in the grid, never which persons exist or their
-  // counts (faceless named shells from #128 stay findable under their
-  // branch or Ungrouped)
+  // #127/#128 → #152 (§4.16): the face-status filter decides the tree's
+  // person presence (§4.10) — All lists every snapshot person (faceless
+  // shells stay findable), New/Accepted/Rejected list only persons
+  // holding ≥ 1 face of that status; the listed badges stay raw totals
+  // (#129's badge rule — unchanged, only presence moved)
   const treePersons = useMemo(
-    () => (snap ? snap.persons : []),
-    [snap],
+    () => (snap ? personTreeMembers(snap.persons, snap.faces, faceFilter) : []),
+    [snap, faceFilter],
   );
+  // #152: the selection survives its person dropping out of the tree —
+  // the detail pane keeps working off the unfiltered snapshot (the person
+  // view shows no faces for them under the filter)
   const displayPerson = useMemo(
-    () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
-    [treePersons, personId]
+    () => (personId != null ? personsById.get(personId) ?? null : null),
+    [personsById, personId]
+  );
+  // #154 — 'Remove Unknowns' (§3): UnknownN persons whose faces are all
+  // decided (zero New and zero Accepted faces left) — filter-independent
+  // (v3.54; the first filter-relative rule offered the unfinished queue
+  // under Accepted/Rejected). Disabled when the list is empty.
+  const unknownShells = useMemo(
+    () => (snap ? removableUnknownShellIds(snap.persons, snap.faces) : []),
+    [snap]
   );
   // #122: person id -> primary face's stored crop rotation (tree avatars)
   const primaryRot = useMemo(() => {
@@ -480,11 +493,13 @@ export default function App() {
     if (ids.length > 0) setConfirmRemove(ids);
   };
 
-  // group argument for rename-style assigns: an UnknownN must leave the
-  // 'Unknown' branch (F7) — the group isn't user-visible in these flows;
-  // otherwise the person keeps their current path (pure — stable ref)
+  // group argument for rename-style assigns: keep the person's current
+  // path (#153) — the old UnknownN force-to-empty (#38/F7) is obsolete
+  // now that the importer seeds no 'Unknown' row; a grouped UnknownN
+  // keeps their group through a rename, an ungrouped one stays Ungrouped
+  // (pure — stable ref)
   const renameGroup = useCallback(
-    (p: Person | undefined) => (p && p.name.startsWith("Unknown") ? "" : (p?.groups[0] ?? "")),
+    (p: Person | undefined) => p?.groups[0] ?? "",
     []
   );
 
@@ -939,7 +954,7 @@ export default function App() {
           title: p?.name ?? "unassigned",
           faceIds: fl.map((f) => f.id),
           ruleDefaultName: p?.name,
-          // #38: an UnknownN must leave the Unknown branch on rename
+          // #153: the rename keeps the person's current group path
           ruleDefaultGroup: renameGroup(p),
         };
       });
@@ -976,7 +991,7 @@ export default function App() {
             description: g.description || undefined,
             faceIds: g.faceIds,
             ruleDefaultName: pname,
-            // #38: an UnknownN must leave the Unknown branch on rename
+            // #153: the rename keeps the person's current group path
             ruleDefaultGroup: rg,
           });
         });
@@ -1015,7 +1030,7 @@ export default function App() {
               // appearance (display only — the title stays cluster-derived,
               // F6)
               description: g.description || undefined,
-              // #38: an UnknownN must leave the Unknown branch on rename
+              // #153: the rename keeps the person's current group path
               ruleDefaultGroup: rg,
             });
           });
@@ -1054,8 +1069,7 @@ export default function App() {
         subtitle: p.counts.total > byPerson.get(p.id)!.length ? `${p.counts.total} faces total` : undefined,
         faceIds: byPerson.get(p.id)!.map((f) => f.id),
         ruleDefaultName: p.name,
-        // #38: review sections come from UnknownN importer clusters — a
-        // rename must leave the Unknown branch (F7)
+        // #153: the rename keeps the person's current group path
         ruleDefaultGroup: renameGroup(p),
       }));
   }, [snap, view, imageId, personId, selectedPerson, clusters,
@@ -1642,6 +1656,21 @@ export default function App() {
               <span className="dim">working…</span>
             </>
           )}
+          {/* #154 (§3): Unknown cleanup beside the refresh button — only
+              Unknowns with nothing left to decide (all faces decided) */}
+          <button
+            className="ghost"
+            disabled={unknownShells.length === 0}
+            onClick={() => doRemovePersons(unknownShells)}
+            title={
+              "Remove Unknowns — removes only Unknown persons with no face left " +
+              "to show or decide on (all their faces rejected); Unknowns that " +
+              "still hold a new or accepted face are never touched. Untouched " +
+              "by the Show filter."
+            }
+          >
+            Remove Unknowns
+          </button>
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}

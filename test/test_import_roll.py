@@ -572,5 +572,52 @@ class CreateDatabaseTest(unittest.TestCase):
             self.assertGreater(db.stat().st_size, 0)
 
 
+class EnsurePersonTest(unittest.TestCase):
+    """ensure_person inserts a fresh UnknownN only — #153: no group row is
+    seeded, so new persons start Ungrouped (the virtual Unknown branch is
+    name-driven; grouping an UnknownN is the user's act)."""
+
+    def _con(self) -> tuple[sqlite3.Connection, tempfile.TemporaryDirectory]:
+        """A real: file DB built from database/schema.sql via --create-db."""
+        tmp = tempfile.TemporaryDirectory()
+        db = Path(tmp.name) / "faces.db"
+        with redirect_stdout(io.StringIO()):
+            self.assertTrue(ir.create_database(db, ir.cli_console.Console(quiet=True)))
+        return sqlite3.connect(db), tmp
+
+    def test_new_unknownn_gets_no_person_groups_row(self):
+        con, tmp = self._con()
+        try:
+            stub = ir.PersonStub(0, "Unknown1", False)
+            fresh: list[ir.PersonStub] = []
+            pid = ir.ensure_person(con, stub, fresh)
+            self.assertEqual(stub.person_id, pid)
+            self.assertEqual([s.person_id for s in fresh], [pid])
+            self.assertEqual(
+                con.execute(
+                    "SELECT COUNT(*) FROM person_groups WHERE person_id = ?", (pid,)
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                con.execute("SELECT name FROM persons WHERE id = ?", (pid,)).fetchone()[0],
+                "Unknown1",
+            )
+        finally:
+            con.close()
+            tmp.cleanup()
+
+    def test_matched_person_is_returned_untouched(self):
+        con, tmp = self._con()
+        try:
+            stub = ir.PersonStub(7, "Mary", True)
+            fresh: list[ir.PersonStub] = []
+            self.assertEqual(ir.ensure_person(con, stub, fresh), 7)
+            self.assertEqual(fresh, [])
+        finally:
+            con.close()
+            tmp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()
