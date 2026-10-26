@@ -30,3 +30,30 @@ export function acceptAdvancePlan(
   const next = sections[idx + 1];
   return next ? { sectionKey: next.key, faceIds: [...next.faceIds] } : null;
 }
+
+/** #159 (§4.30, v3.58) — the exhaust advance target: the first person in
+    the step list AFTER the marked person that still has a face of the
+    review status. The marked person's index is re-derived from the
+    CURRENT list (the Show filter prunes it out on their last decision —
+    §4.10); when it is gone, the index captured at mark time marks the gap
+    the pruning left behind and the scan starts there. Returns null when
+    no forward candidate remains (the caller reports "no more persons to
+    review" and leaves the user where they are). */
+export function exhaustAdvanceTarget(
+  stepIds: number[],
+  markedPid: number | null,
+  capturedAt: number,
+  hasReviewableFace: (id: number) => boolean,
+): number | null {
+  if (markedPid == null) return null;
+  let first = stepIds.indexOf(markedPid) + 1;
+  if (first <= 0) {
+    // pruned between mark and consume: continue from the captured gap
+    first = Math.max(0, Math.min(capturedAt, stepIds.length));
+  }
+  return (
+    stepIds
+      .slice(first)
+      .find((id) => id !== markedPid && hasReviewableFace(id)) ?? null
+  );
+}

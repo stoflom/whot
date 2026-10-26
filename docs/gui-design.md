@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.54** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.59** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -93,10 +93,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
 - **Left pane — person tree.** Hierarchy built from `person_groups.path`
   (segments split on `|`). **Group first** (#153): a person with a group
-  row renders under their first path even when named `UnknownN` — the
+  row renders under their path even when named `UnknownN` — the
   user may group an UnknownN they remember by face but not by name.
-  Virtual branches hold the rest: `Ungrouped` (persons with no group
-  row) and `Unknown` (**ungrouped** persons named `UnknownN` — purely
+  **Multi-group persons render under every listed path** (#156, v3.56):
+  the §9 harvest importer legally leaves several `person_groups` rows per
+  person (§9.6, #128 — additive shell groups), and the earlier
+  `groups[0]`-only placement made such a person unfindable in the branch
+  the user filed them under. Each distinct row is one placement; the
+  person is stepped (‹ › / arrows) **once**, at the first placement
+  reached, and branch bulk operations (§4.13 subtree remove) dedupe the
+  ids across placements. Virtual branches hold the rest: `Ungrouped`
+  (persons with no group row) and `Unknown` (**ungrouped** persons
+  named `UnknownN` — purely
   name-driven). The importer writes **no group rows at all** for the
   `UnknownN` persons it seeds: all new persons start Ungrouped (an
   empty group field means Ungrouped — never a literal `Unknown`
@@ -420,11 +428,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    evidence, `0.0`, keeping every stored similarity finite — and no
    comparison site may `unwrap` a `partial_cmp` on non-finite data
    (orderings use `unwrap_or(Ordering::Equal)`).
-   A **cluster-group toggle** sits in the top bar, left of the status
-   filter (#99): `Accuracy` (default) keeps the rule above; `Description`
+   A **cluster-group toggle** sits in the Person view's centre toolbar,
+   hugging its right edge (#99) — the Show filter it once hugged there is
+   a **global** control and was moved to the top bar (#158, v3.57):
+   `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
    over the visible faces — no similarity split: the threshold is not
-   consulted and `person_face_clusters` is not called (no IPC). Sections
+   consulted and `person_face_clusters` is not called (no IPC). The
+   §4.24 staged preview drives the grouping too (#155): a face with a
+   **staged** description groups under the description it will land in
+   on **Accept** — the preview shows the staged label in the section it
+   belongs to; commit, Undo and Cancel return the committed grouping.
+   Sections
    are ordered by first appearance with the empty description last,
    titled `(no description)` (Ungrouped convention), and make no
    similarity claims in this mode. The choice persists as
@@ -533,6 +548,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     confirm dialog), person menu (*move to group…* for the selection), and
     drag-and-drop of persons/selections/branches onto branch nodes or
     Ungrouped (virtual nodes are not draggable/renameable themselves).
+    **D&D move semantics** (#157, v3.59, owner ruling): a person drop
+    re-homes **the dragged membership only** — the row's own group path
+    (its placement) is removed from the person, the person is filed into
+    the target branch (`move_persons_between_groups`; `INSERT OR IGNORE`
+    dedupes when the target row already exists, e.g. dragging Christiaan
+    Swart from `Friends` onto `Friends|Swartse` leaves exactly
+    `Friends|Swartse`), and **all other memberships are kept** — a
+    multi-group person stays multi-group. Dragging onto the `Ungrouped`
+    virtual node removes only the dragged membership (the person renders
+    Ungrouped only when no row remains). Dropping onto a branch the row
+    already belongs to is a **no-op** (the person already renders there).
+    The §4.16 dialog entry points (person menu *move to group…*, review
+    bulk group apply) keep the replace-all meaning — they do not carry a
+    placement context.
 
     **Display guarantees** (#127/#129): group paths are **case-significant**
     — `Family|Lombards` and `family|Lombard` are distinct data and each
@@ -546,8 +575,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     by switching Show to All. The badges of the persons that stay listed
     always carry their raw totals (#129); the filter changes who is
     listed and which faces render in the middle pane, never whose faces
-    exist or their counts. A person always renders under its **first**
-    group (`groups[0]`); further groups stay visible in the row tooltip.
+    exist or their counts. #156 (v3.56) supersedes the single-placement
+    rule: a person renders under **every** listed path (see §3); further
+    groups stay visible in the row tooltip.
     The virtual `Unknown`/`Ungrouped` nodes are
     never pruned while they hold (listed) persons — a virtual branch
     whose persons are all filtered out disappears with them.
@@ -724,10 +754,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       `{faceIds, name?, group?, desc?}` bound to that Apply's scope.
       The working loop is **Apply → change → Apply → … until Accept or
       Cancel**: Apply never commits, it only extends the set (screen
-      preview on the labels, the `staged: …` strip shows the whole
-      set); **Accept commits every op** through the #77 routing and
-      drives the review advance off the committed ids; a re-Apply on
-      the **same faceIds** replaces that op (latest wins); **Undo and
+      preview on the labels, the `staged: …` strip shows the whole set;
+      in Description mode (#99) the preview includes the **section
+      regrouping** — #155); **Accept commits every op** through the #77
+      routing and drives the review advance off the committed ids; a
+      re-Apply on the **same faceIds** replaces that op (latest wins); **Undo and
       Cancel/Esc discard the whole set** (owner ruling: Undo = Cancel —
       re-editing is just opening Edit… again).
       **Apply always has a concrete target** (#147): the bar's Apply
@@ -1040,6 +1071,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       ‹ › code path, so cursor-as-target (#75) and list-end behaviour
       follow the stepping rules. At the end of the list the context
       stays and a toast says the review is exhausted.
+      **The advance skips persons with nothing left to review** (#159,
+      v3.58): the target is the first person **after** the drained one in
+      the step list that still holds a face of the review status — not
+      the raw successor, which under Show=All can be a faceless shell or
+      under Show=New a person whose matching faces were just decided
+      (that person may also have dropped out of the list on this very
+      refresh via the §4.10 pruning; the marked person's current index is
+      then re-derived — `exhaustAdvanceTarget` — and the captured index
+      serves as the pruning gap to continue from). With no forward
+      candidate the context stays and "no more persons to review" is
+      reported.
       **The exhaust mark is strictly bound** (#148): the pre-mutation
       mark (`exhaustAtRef`) remembers **which person** it was set for,
       is consumed unconditionally (so it can never linger across view

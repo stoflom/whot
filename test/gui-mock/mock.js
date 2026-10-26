@@ -182,6 +182,16 @@
         if (p) p.groups = group ? [group] : [];
       }
     },
+    // #157 (v3.59): tree D&D move — re-home ONE membership per person
+    move_persons_between_groups: ({ personIds, fromGroup, toGroup }) => {
+      for (const pid of personIds) {
+        const p = SNAP.persons.find((x) => x.id === pid);
+        if (!p) continue;
+        if (fromGroup !== toGroup)
+          p.groups = p.groups.filter((g) => g !== fromGroup);
+        if (toGroup && !p.groups.includes(toGroup)) p.groups.push(toGroup);
+      }
+    },
     rename_group: ({ oldPath, newPath }) => {
       for (const p of SNAP.persons)
         if (p.groups.some((g) => g === oldPath || g.startsWith(oldPath + "|")))

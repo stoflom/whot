@@ -38,6 +38,24 @@ Checks (contract refs: docs/gui-design.md):
       whose faces are all decided (v3.54 — exact removal, confirm
       dialog) (#154)
   C18 rolls with 0 images are never listed (#151)
+  C19 staged dialog-Apply (§4.24) regroups the Description-mode sections
+      live (#155, v3.55): Undo returns the committed grouping; bar Accept
+      commits the description
+  C20 a person with SEVERAL group rows renders under EVERY path
+      (§4.16, #156, v3.56 — stepped once; branch bulk-ops dedupe)
+  C21 the Show filter (a global control) lives in the top bar (#158,
+      v3.57): topbar select present, centre-toolbar select gone, the
+      view-local cluster-group seg stays in the person view
+  C22 the review exhaust advance lands on the first person after the
+      drained one with a reviewable face (§4.30, #159, v3.58) — never on
+      the raw successor with nothing left to review
+  C23 person-tree D&D re-homes ONE membership (§4.16, #157, v3.59):
+      dragged-from row removed, target filed (INSERT OR IGNORE), other
+      memberships kept; src==dst drop is a no-op
+  C24 the theme is dark: :root sets color-scheme dark and the top-bar
+      Show select renders its value text in the theme text colour
+      (#158 follow-up — WebKit's light-scheme defaults washed the value
+      out against the dark panel)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -432,9 +450,15 @@ def c8_tree_counts_ignore_filter(t):
 
 
 def tree_person_ids(t):
+    """Distinct person ids in tree display order — #156: a multi-group
+    person renders under every path, so raw row order holds duplicates."""
     return js(t, """
-      return [...document.querySelectorAll('.tree-person')]
-        .map(p => String(p.getAttribute('data-person-id')));
+      const out = []; const seen = new Set();
+      for (const p of document.querySelectorAll('.tree-person')) {
+        const id = String(p.getAttribute('data-person-id'));
+        if (!seen.has(id)) { seen.add(id); out.push(id); }
+      }
+      return out;
     """)
 
 
@@ -442,6 +466,7 @@ def c16_filter_prunes_tree(t):
     """#152 (§4.10): with Show=New, persons without a provisional face are
     not listed; Show=All lists everyone again (incl. faceless shells)."""
     fresh(t)
+    set_show_filter(t, "all")  # the persisted whotrc filter must not tilt the baseline
     all_ids = tree_person_ids(t)
     set_show_filter(t, "provisional")
     new_ids = tree_person_ids(t)
@@ -555,6 +580,170 @@ def c18_zero_image_rolls_hidden(t):
     ok = sections == total - zeros
     record("C18 rolls with 0 images are never listed (#151)", ok,
            f"imports={total} (zero-image: {zeros}) → sections shown={sections}")
+
+
+def c19_staged_desc_regroups(t):
+    """#155 (v3.55): in Description mode (cluster-group toggle), a staged
+    description edit (dialog Apply, §4.24) regroups the sections LIVE —
+    the face moves under the description it will land in on Accept;
+    Undo returns the committed grouping; Accept commits it."""
+    fresh(t)
+    # a person with >= 2 visible faces — target face `a` gets the staged
+    # desc, face `b` must stay put
+    pick = js(t, """
+      const vis = f => f.person_id != null && (f.state ?? '') !== 'discarded'
+                     && f.link_status !== 'rejected';
+      for (const p of window.__MOCK_SNAP.persons) {
+        const fs = window.__MOCK_SNAP.faces.filter(f => vis(f) && f.person_id === p.id);
+        if (fs.length >= 2)
+          return {pid: p.id, a: fs[0].id, aDesc: fs[0].description ?? '',
+                  b: fs[1].id};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C19 staged Apply regroups Description sections (#155)", True,
+               f"no person with 2+ visible faces in the dump — vacuous")
+        return
+    set_show_filter(t, "all")  # the §4.10 pruning must not hide the target
+    js(t, "document.querySelectorAll('.topbar nav button')[2]?.click();")  # Person tab
+    time.sleep(0.8)
+    t.find_element(By.CSS_SELECTOR,
+                   f".tree-person[data-person-id='{pick['pid']}']").click()
+    time.sleep(0.8)
+    seg = js(t, """
+      // the cluster-group seg lives in the person view's center toolbar
+      const s = document.querySelector('.center-toolbar .seg')
+             ?? document.querySelector('.seg');
+      const d = [...(s?.querySelectorAll('button') ?? [])]
+        .find(b => b.textContent.trim() === 'Description');
+      if (!d) return null;
+      const act = s.querySelector('button.active')?.textContent.trim() ?? null;
+      if (!d.classList.contains('active')) d.click();
+      return act;
+    """)
+    time.sleep(0.8)
+
+    def header_for(face_id):
+        return js(t, """
+          const secs = [...document.querySelectorAll('.face-section')];
+          const f = secs.find(s =>
+            [...s.querySelectorAll('.face-card')]
+              .some(c => c.getAttribute('data-face-id') === String(arguments[0])));
+          return f ? f.querySelector('.face-section-title')
+                   ?.textContent?.trim() ?? '' : null;
+        """, face_id)
+
+    before = js(t, """
+      return {
+        both: [...document.querySelectorAll('.face-section')]
+          .map(s => s.querySelector('.face-section-title')?.textContent?.trim()),
+        aCard: !!document.querySelector(`.face-card[data-face-id='${arguments[0]}']`)
+      };
+    """, pick["a"])
+    if not before["aCard"]:
+        record("C19 staged Apply regroups Description sections (#155)", True,
+               f"target card {pick['a']} not rendered — vacuous")
+        return
+    old_a = header_for(pick["a"])
+
+    # stage the desc change on the card scope
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-card[data-face-id='{pick['a']}'] .card-edit").click()
+    time.sleep(0.6)
+    inp = t.find_element(By.CSS_SELECTOR, ".edit-dialog .input-desc")
+    inp.click()
+    inp.clear()
+    inp.send_keys("gui19hat")
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+     if b.text.strip() == "Apply"][0].click()
+    time.sleep(0.8)
+    staged_a = header_for(pick["a"])
+
+    # Undo (discard) restores the committed grouping
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+     if b.text.strip().startswith("Undo")][0].click()
+    time.sleep(0.8)
+    undone_a = header_for(pick["a"])
+
+    # re-stage and commit through bar Accept — desc write + accept
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-card[data-face-id='{pick['a']}'] .card-edit").click()
+    time.sleep(0.6)
+    inp = t.find_element(By.CSS_SELECTOR, ".edit-dialog .input-desc")
+    inp.click()
+    inp.clear()
+    inp.send_keys("gui19hat")
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+     if b.text.strip() == "Apply"][0].click()
+    time.sleep(0.5)
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+     if b.text.strip() == "Accept"][0].click()
+    time.sleep(1.5)
+    committed_a = header_for(pick["a"])
+    mock_desc = js(t, """
+      return window.__MOCK_SNAP.faces.find(x => x.id === arguments[0])
+        ?.description ?? null;
+    """, pick["a"])
+
+    changed = (
+        old_a is not None and staged_a is not None
+        and "gui19hat" in (staged_a or "")
+        and (old_a or "") not in ("gui19hat",)
+        and undone_a == old_a
+    )
+    final = committed_a is not None and "gui19hat" in (committed_a or "") \
+        and mock_desc == "gui19hat"
+    ok = changed and final
+    record("C19 staged Apply regroups Description sections (#155)", ok,
+           f"mode switch: {seg!r}→Description; person={pick['pid']} "
+           f"description {old_a!r} -> {staged_a!r} (staged) -> "
+           f"{undone_a!r} (Undo) -> {committed_a!r} (Accept, mock desc={mock_desc!r})")
+
+
+def c20_multi_group_renders_everywhere(t):
+    """#156 (§4.16, v3.56): a person with SEVERAL person_groups rows
+    renders under EVERY listed path — the §9 harvest importer leaves
+    multiple rows (additive shell groups, #128), and the old groups[0]
+    placement made such a person unfindable in the branch the user filed
+    them under."""
+    fresh(t)
+    set_show_filter(t, "all")  # the §4.10 pruning must not interfere
+    pick = js(t, """
+      // first person with >= 2 DISTINCT group rows and a matching face
+      for (const p of window.__MOCK_SNAP.persons) {
+        if (!p.groups || new Set(p.groups).size < 2) continue;
+        if (!window.__MOCK_SNAP.faces.some(f => f.person_id === p.id
+            && f.link_status !== 'rejected' && (f.state ?? '') !== 'discarded'))
+          continue;
+        return {pid: p.id, name: p.name, groups: p.groups};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C20 multi-group renders under every path (#156)", True,
+               "no multi-group person in the dump — vacuous")
+        return
+    rows = js(t, """
+      return [...document.querySelectorAll('.tree-person')]
+        .filter(x => x.getAttribute('data-person-id') === String(arguments[0]))
+        .map(x => {
+          // enclosing branch of this placement = the .tree-node whose
+          // row block directly holds this row's .tree-children
+          const kids = x.closest('.tree-children');
+          const holder = kids ? kids.parentElement : null;
+          const name = holder?.querySelector('.tree-node-name')?.textContent ?? '';
+          return name;
+        });
+    """, pick["pid"])
+    # each distinct group row → one placement, whose enclosing leaf name
+    # is the row's last segment
+    want = sorted({seg for seg in (g.split("|")[-1] for g in pick["groups"]) if seg})
+    got = sorted(set(rows))
+    ok = len(rows) == len(set(pick["groups"])) and got == want
+    record("C20 multi-group renders under every path (#156)", ok,
+           f"{pick['name']} (rows={pick['groups']}) → {len(rows)} rendered "
+           f"placements under {got} (want {want})")
 
 
 
@@ -741,6 +930,7 @@ def drag_face(t, src_sel, dst_sel):
 
 def c12_face_drag_merges_into_person(t):
     fresh(t)
+    set_show_filter(t, "all")
     pick = js(t, r"""
       const rows = [...document.querySelectorAll('.tree-person')].map(n => {
         const name = n.querySelector('.tree-name')?.textContent.trim() ?? '';
@@ -853,6 +1043,7 @@ def c14_drag_sources(t):
 
 def c13_face_drag_copies_description(t):
     fresh(t)
+    set_show_filter(t, "all")
     pick = js(t, r"""
       const snap = window.__MOCK_SNAP;
       for (const p of snap.persons) {
@@ -976,6 +1167,259 @@ def c15_merge_dialog_scroll(t):
            else f"last rule .merge-spacer; cap {m['m']}")
 
 
+def c21_show_filter_in_topbar(t):
+    """:0158 (v3.57): the Show status filter is a GLOBAL control and lives
+    in the top bar where every tab can reach it — not in the person view's
+    centre toolbar next to the view-local cluster-group seg."""
+    fresh(t)
+    topbar = js(t, """
+      return {
+        sel: !!document.querySelector('.topbar select'),
+        opts: [...(document.querySelector('.topbar select')?.options ?? [])]
+          .map(o => o.value),
+        val: document.querySelector('.topbar select')?.value ?? null,
+        centre: !!document.querySelector('.center-toolbar select'),
+        seg: !!document.querySelector('.center-toolbar .seg'),
+      };
+    """)
+    ok = (topbar["sel"] and topbar["centre"] is False and topbar["seg"]
+          and set(["all", "provisional", "confirmed", "rejected"]
+                  ).issubset(set(topbar["opts"])))
+    record("C21 Show filter lives in the top bar (#158)", ok,
+           f"topbar select={topbar['sel']} (opts={topbar['opts']}, "
+           f"value={topbar['val']}), centre toolbar select={topbar['centre']}, "
+           f"view-local seg still present={topbar['seg']}")
+
+
+def c22_review_exhaust_skips_reviewed(t):
+    """#159 (§4.30, v3.58): after the last review verdict on a person the
+    exhaust advance lands on the first person AFTER them in the tree list
+    that still has a face of the review status — never on the raw
+    successor (which may hold nothing to review → 'nothing to show' with
+    pending faces elsewhere)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      // a person with pending faces whose NEXT tree-list entry has none
+      const seen = new Set(); const ids = [];
+      for (const el of document.querySelectorAll('.tree-person')) {
+        const id = String(el.getAttribute('data-person-id'));
+        if (!seen.has(id)) { seen.add(id); ids.push(id); }
+      }
+      const pend = id => window.__MOCK_SNAP.faces.filter(
+        f => f.person_id === Number(id) && f.link_status === 'provisional').length;
+      for (let i = 0; i + 1 < ids.length; i++)
+        if (pend(ids[i]) > 0 && pend(ids[i + 1]) === 0) {
+          const p = window.__MOCK_SNAP.persons.find(x => String(x.id) === ids[i]);
+          return {a: ids[i], aname: p?.name, b: ids[i + 1]};
+        }
+      return null;
+    """)
+    if not pick:
+        record("C22 review exhaust skips reviewed persons (#159)", True,
+               "no person followed by a pending-less neighbour — vacuous")
+        return
+    t.find_element(By.CSS_SELECTOR,
+                   f".tree-person[data-person-id='{pick['a']}']").click()
+    time.sleep(1.0)
+    js(t, "[...document.querySelectorAll('.topbar nav button')][0].click();")
+    time.sleep(1.0)
+    # select-all the acted person's review section, then Accept
+    acted = js(t, r"""
+      for (const s of document.querySelectorAll('.face-section')) {
+        const title = s.querySelector('.face-section-title')?.textContent ?? '';
+        if (title === arguments[0]) {
+          const cb = s.querySelector('.select-all input');
+          if (cb) cb.click();
+          return title;
+        }
+      }
+      return null;
+    """, pick["aname"])
+    time.sleep(0.6)
+    acc = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+           if b.text.strip() == "Accept"]
+    acc[0].click()
+    time.sleep(2.5)
+    landed = js(t, r"""
+      const id = Number(document.querySelector('.tree-person.selected')
+        ?.getAttribute('data-person-id'));
+      const info = document.querySelector('.info')?.textContent ?? null;
+      return {
+        landed: id,
+        landedHasPending: window.__MOCK_SNAP.faces.some(
+          f => f.person_id === id && f.link_status === 'provisional'),
+        info,
+        view: [...document.querySelectorAll('.topbar nav button')]
+          .filter(x => x.className.includes('active'))
+          .map(x => x.textContent.trim().split('\n')[0]),
+      };
+    """)
+    ok = landed["landedHasPending"] or (
+      landed["info"] is not None
+      and "no more persons to review" in landed["info"])
+    # the old bug parked on the raw successor — recorded either way
+    ok = ok and landed["landed"] != pick["b"]
+    record("C22 review exhaust skips reviewed persons (#159)", ok,
+           f"acted {pick['aname']} (next list entry {pick['b']} has nothing "
+           f"to review) → landed on person {landed['landed']} "
+           f"(pending={landed['landedHasPending']}, info={landed['info']!r})")
+
+
+def c23_dnd_moves_one_membership(t):
+    """#157 (§4.16, v3.59, owner ruling): dragging a person row onto a
+    branch re-homes THAT membership — remove the dragged-from row, file
+    into the target (INSERT OR IGNORE), keep every other membership.
+    Christiaan Swart (Friends + Friends|Swartse) dragged from Friends
+    onto Friends|Swartse ends up in exactly Friends|Swartse."""
+
+    drag = r"""
+      // find a person placement row by its branch path, and the target
+      // branch header by path — then dispatch an HTML5 drag (shimmed
+      // dataTransfer, like drag_face)
+      const pid = arguments[0], srcPath = arguments[1], dstPath = arguments[2];
+      const headerOf = (h) => {
+        // a branch wrapper = [div.tree-node (header), div.tree-children
+        // (rows only), child branch wrappers…] — so the parent header is
+        // the parent wrapper's FIRST child, and the root container (no
+        // direct .tree-node child) ends the climb
+        const parts = [];
+        let cur = h;
+        while (cur) {
+          const nm = cur.querySelector(':scope > .tree-node-name')
+            ?.textContent.trim();
+          if (nm == null) return null;
+          parts.unshift(nm);
+          const wrap = cur.parentElement;
+          const pw = wrap && wrap.parentElement;
+          if (!pw) break;
+          const parentHeader = pw.firstElementChild;
+          if (!parentHeader || !parentHeader.classList
+              || !parentHeader.classList.contains('tree-node')) break;
+          cur = parentHeader;
+        }
+        return parts.join('|');
+      };
+      const rows = [...document.querySelectorAll(
+        `.tree-person[data-person-id='${pid}']`)];
+      const src = rows.find((r) => {
+        const kids = r.closest('.tree-children');
+        const h = kids ? kids.previousElementSibling : null;
+        return h ? headerOf(h) === srcPath : false;
+      });
+      const dst = [...document.querySelectorAll('.tree-node')].find(
+        (n) => headerOf(n) === dstPath);
+      if (!src || !dst) return {src: !!src, dst: !!dst};
+      window.__dndmove = {started: true};
+      const mk = (type) => {
+        const ev = new Event(type, {bubbles: true, cancelable: true});
+        Object.defineProperty(ev, "dataTransfer", {
+          value: { _d: {}, effectAllowed: "", dropEffect: "",
+                   setData(k, v) { this._d[k] = v; },
+                   getData(k) { return this._d[k] ?? ""; } }});
+        return ev;
+      };
+      src.dispatchEvent(mk("dragstart"));
+      setTimeout(() => {
+        dst.dispatchEvent(mk("dragover"));
+        setTimeout(() => {
+          dst.dispatchEvent(mk("drop"));
+          src.dispatchEvent(mk("dragend"));
+          window.__dndmove.done = true;
+        }, 80);
+      }, 80);
+      return {src: true, dst: true};
+    """
+
+    def groups_of(t, pid):
+        return js(t, """
+          const p = window.__MOCK_SNAP.persons.find(x => x.id === Number(arguments[0]));
+          return p?.groups ?? null;
+        """, pid)
+
+    def placements(t, pid):
+        return js(t, """
+          return [...document.querySelectorAll(
+            `.tree-person[data-person-id='${arguments[0]}']`)].length;
+        """, pid)
+
+    # --- A: the owner's scenario — Christiaan Swart (1304)
+    # Friends + Friends|Swartse, Friends-row dropped on Friends|Swartse
+    fresh(t)
+    set_show_filter(t, "all")
+    before = groups_of(t, 1304)
+    if not (isinstance(before, list) and set(before) == {"Friends", "Friends|Swartse"}):
+        record("C23 D&D moves ONE membership (#157)", True,
+               f"Christiaan Swart rows changed in the dump (now {before}) — vacuous")
+        return
+    r = js(t, drag, 1304, "Friends", "Friends|Swartse")
+    time.sleep(1.6)
+    after = groups_of(t, 1304)
+    a_ok = (r.get("src") and r.get("dst") and after == ["Friends|Swartse"]
+            and placements(t, 1304) == 1)
+    detail_a = (f"owner case: {before} dropped Friends→Friends|Swartse: "
+                f"drag={r} → {after}, placements={placements(t, 1304)}")
+
+    # --- B: cross-move — Esther (1248) Friends + Friends|PHS, Friends-row
+    # dropped onto Friends|Swartse: Friends membership leaves, target filed
+    fresh(t)
+    set_show_filter(t, "all")
+    before = groups_of(t, 1248)
+    if not (isinstance(before, list) and set(before) == {"Friends", "Friends|PHS"}):
+        record("C23 D&D moves ONE membership (#157)", True,
+               f"Esther rows changed in the dump (now {before}) — vacuous")
+        return
+    r = js(t, drag, 1248, "Friends", "Friends|Swartse")
+    time.sleep(1.6)
+    after = groups_of(t, 1248)
+    b_ok = (r.get("src") and r.get("dst") and sorted(after)
+            == sorted(["Friends|PHS", "Friends|Swartse"]))
+    detail_b = (f"cross-move: {before} dropped Friends→Friends|Swartse → {after}")
+
+    # --- C: no-op — Esther's Friends|PHS placement dropped onto its own
+    # branch (src == dst): nothing changes, both rows remain
+    fresh(t)
+    set_show_filter(t, "all")
+    before = groups_of(t, 1248)
+    r = js(t, drag, 1248, "Friends|PHS", "Friends|PHS")
+    time.sleep(1.6)
+    after = groups_of(t, 1248)
+    c_ok = (r.get("src") and r.get("dst") and after == before
+            and placements(t, 1248) == 2)
+    detail_c = f"no-op drop: {before} onto itself → {after}, placements={placements(t, 1248)}"
+
+    record("C23 D&D moves ONE membership (#157)", a_ok and b_ok and c_ok,
+           f"{detail_a}; {detail_b}; {detail_c}")
+
+
+def c24_dark_scheme_native_controls(t):
+    """#158 follow-up (v3.59.1): the theme is dark — :root must declare
+    color-scheme: dark so native form controls (the select's dropdown
+    list and arrow, scrollbars) render dark-scheme, and the top-bar Show
+    select's value text must be the theme text colour. WebKit's
+    light-scheme defaults washed the value text out against the dark
+    panel."""
+    fresh(t)
+    r = js(t, """
+      const scheme = getComputedStyle(document.documentElement).colorScheme;
+      const sel = document.querySelector('.topbar-right select');
+      return {
+        scheme: scheme,
+        selColor: sel ? getComputedStyle(sel).color : null,
+      };
+    """)
+    # --text is #dce4ee
+    ok = (isinstance(r, dict)
+          and r.get("scheme") == "dark"
+          and r.get("selColor") == "rgb(220, 228, 238)")
+    detail = (f"color-scheme={r.get('scheme') if r else None} "
+              f"(want dark); topbar select value text="
+              f"{r.get('selColor') if r else None} "
+              f"(want rgb(220, 228, 238))")
+    record("C24 dark color-scheme, legible top-bar select (#158 follow-up)",
+           ok, detail)
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1002,6 +1446,12 @@ def main():
         c16_filter_prunes_tree(t)
         c17_remove_unknowns_button(t)
         c18_zero_image_rolls_hidden(t)
+        c19_staged_desc_regroups(t)
+        c20_multi_group_renders_everywhere(t)
+        c21_show_filter_in_topbar(t)
+        c22_review_exhaust_skips_reviewed(t)
+        c23_dnd_moves_one_membership(t)
+        c24_dark_scheme_native_controls(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

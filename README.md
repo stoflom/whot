@@ -231,9 +231,10 @@ npm run tauri build    # release bundles
 
 - **Top bar** — tabs `Review` / `Rolls` / `Person` (centre-pane mode; the
   person tab opens the tree's current selection); on the right the `Show`
-  face-status filter `All | New | Accepted | Rejected`, the persons-mode
-  cluster-group toggle `Description | Accuracy`, the `Remove Unknowns`
-  button, the manual refresh `↻` and the settings ⚙. The `Show` filter
+  face-status filter `All | New | Accepted | Rejected`, the `Remove
+  Unknowns` button, the manual refresh `↻` and the settings ⚙ (the
+  persons-mode cluster-group toggle sits in the Person view's centre
+  toolbar — it is view-local). The `Show` filter
   decides which faces exist anywhere: switching to `New`/`Accepted`/
   `Rejected` **also prunes the left-pane person tree** (#152) — persons
   without a face of that status are not listed; `All` lists everyone.
@@ -242,8 +243,13 @@ npm run tauri build    # release bundles
   group row) and `Unknown` (ungrouped `UnknownN` persons — purely
   name-driven). A person with a group renders under that group even when
   named `UnknownN` — filing an Unknown you remember by face but not by
-  name into a group is normal (#153). Right-click: rows, branches and
-  cards all carry menus.
+  name into a group is normal (#153). A person with **several** group
+  rows (the §9 harvest import can leave multiple) renders under every
+  listed path, and is stepped once (#156). Dragging a person row onto a
+  branch re-homes **that one membership** — the dragged-from row leaves
+  the person, the target group is filed, other memberships stay (#157);
+  the Ungrouped branch removes just the dragged membership.
+  Right-click: rows, branches and cards all carry menus.
 - **Centre pane** — the face grid, `Show`-filtered; Review groups the
   pending faces by the importer's `UnknownN` clusters, Rolls lists
   imports as expandable sections (a roll with **0 images** is never

@@ -33,12 +33,20 @@ function buildTree(persons: Person[]): TreeNode {
   // Ungrouped. The importer seeds no group rows, so fresh UnknownN
   // persons are ungrouped by construction (never a literal 'Unknown'
   // segment); historic rows still land on the same top-level branch.
+  // #156 (v3.56): a person with SEVERAL group rows renders under every
+  // listed path — the §9 harvest importer legally leaves multiple
+  // person_groups rows per person (§9.6/#128 additive shell groups), and
+  // hiding them on all but the alphabetically-first branch made the
+  // person unfindable in the branch the user filed them under. Each
+  // distinct row is one placement; duplicates are impossible (PK).
   for (const p of persons) {
     if (p.groups.length > 0) {
-      const parts = p.groups[0].split("|").filter(Boolean);
-      let node = root;
-      for (const part of parts) node = find(node, part);
-      node.personIds.push(p.id);
+      for (const g of p.groups) {
+        const parts = g.split("|").filter(Boolean);
+        let node = root;
+        for (const part of parts) node = find(node, part);
+        node.personIds.push(p.id);
+      }
     } else if (p.name.startsWith("Unknown")) {
       unknown.personIds.push(p.id);
     } else {
@@ -65,7 +73,9 @@ function buildTree(persons: Person[]): TreeNode {
 }
 
 /** Person ids in the tree's visual (filtered) display order — the
- * ‹ › / arrow-key person stepping walks this list (#31). */
+ * ‹ › / arrow-key person stepping walks this list (#31). A multi-group
+ * person renders under every path (#156) but is stepped once, at the
+ * first placement reached. */
 export function orderedVisiblePersonIds(persons: Person[], filter: string): number[] {
   const tree = buildTree(persons);
   const byId = new Map(persons.map((p) => [p.id, p]));
@@ -80,11 +90,16 @@ export function orderedVisiblePersonIds(persons: Person[], filter: string): numb
       return !!p && matches(p);
     }) || node.children.some(subtreeMatch);
   const out: number[] = [];
+  const seen = new Set<number>();
   const walk = (node: TreeNode, isRoot: boolean) => {
     if (!isRoot && !subtreeMatch(node)) return;
     for (const id of node.personIds) {
+      if (seen.has(id)) continue; // #156: one placement only per id
       const p = byId.get(id);
-      if (p && matches(p)) out.push(id);
+      if (p && matches(p)) {
+        out.push(id);
+        seen.add(id);
+      }
     }
     for (const c of node.children) walk(c, false);
   };
@@ -116,7 +131,7 @@ interface Props {
   /** #50 (§4.16) — delete a branch; its persons fall to Ungrouped */
   onDeleteGroup: (path: string) => void;
   /** #50 (§4.16) — move persons (or a selection) into a group */
-  onMovePersons: (ids: number[], path: string) => void;
+  onMovePersons: (ids: number[], path: string, src?: string) => void;
   /** drag-drop validation errors surface as toast */
   onError?: (msg: string) => void;
   /** #88 (§4.28) — open the Merge Similar Persons triage dialog */
@@ -297,7 +312,10 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   } | null>(null);
   // #50 — drag-and-drop state: what is dragged, and the hovered branch
   const dragRef = useRef<
-    { kind: "persons"; ids: number[] } | { kind: "branch"; path: string } | null
+    | { kind: "persons"; ids: number[]; /** #157: the dragged placement's branch path */
+      src: string }
+    | { kind: "branch"; path: string }
+    | null
   >(null);
   const [dropPath, setDropPath] = useState<string | null>(null); // '' = Ungrouped node
   const [dropPerson, setDropPerson] = useState<number | null>(null); // #88 merge target
@@ -347,11 +365,19 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   const rollUpAll = () => setCollapsed(new Set(collectBranchPaths(tree, "")));
   const rollDownAll = () => setCollapsed(new Set());
 
-  // structural (unfiltered) person ids of a branch — bulk remove (#35)
-  const collectSubtreeIds = (node: TreeNode): number[] => [
-    ...node.personIds,
-    ...node.children.flatMap(collectSubtreeIds),
-  ];
+  // structural (unfiltered) person ids of a branch — bulk remove (#35).
+  // #156: dedupe — a multi-group person sits in several sub-branches and
+  // must not be removed (or confirmed) twice.
+  const collectSubtreeIds = (node: TreeNode): number[] => {
+    const seen = new Set<number>();
+    const walk = (n: TreeNode): number[] => {
+      for (const id of n.personIds) seen.add(id);
+      n.children.forEach(walk);
+      return [];
+    };
+    walk(node);
+    return [...seen];
+  };
   const menuTargets = menu
     ? selectedIds.has(menu.id) && selectedIds.size > 1
       ? [...selectedIds]
@@ -361,15 +387,17 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
 
   // ------------------------------------------------------------ #50 drag & drop (§4.16)
 
-  /** virtual root nodes are display-only; every other branch is a real
-      group path that ops and drops act on */
   const isVirtual = (name: string, depth: number) =>
     depth === 0 && (name === "Unknown" || name === "Ungrouped");
 
-  const startDragPerson = (e: React.DragEvent, id: number) => {
+  const startDragPerson = (e: React.DragEvent, id: number, fromPath: string) => {
     // dragging a selected row moves the whole selection; otherwise just it
     const ids = selectedIds.has(id) && selectedIds.size > 1 ? [...selectedIds] : [id];
-    dragRef.current = { kind: "persons", ids };
+    // #157 (v3.59): the dragged placement's branch path rides along — the
+    // drop re-homes THAT membership (owner ruling: the dragged-from group
+    // leaves the person, the target group is filed, other memberships are
+    // kept)
+    dragRef.current = { kind: "persons", ids, src: fromPath };
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", `${ids.length} person(s)`); // firefox needs data
   };
@@ -447,7 +475,10 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     clearDrag();
     if (!d) return;
     if (d.kind === "persons") {
-      onMovePersons(d.ids, target);
+      // #157 (v3.59): the dragged placement's src rides along — the drop
+      // re-homes that membership; without src (no placement context) the
+      // §4.16 dialog-style replace-all keeps its meaning
+      onMovePersons(d.ids, target, d.src);
       return;
     }
     const src = d.path;
@@ -555,7 +586,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                     e.stopPropagation();
                     setMenu({ x: e.clientX, y: e.clientY, id: p.id });
                   }}
-                  onDragStart={(e) => startDragPerson(e, p.id)}
+                  onDragStart={(e) => startDragPerson(e, p.id, groupPath)}
                   onDragEnd={clearDrag}
                   dropTarget={dropPerson === p.id}
                   onDragOver={(e) => dragOverPerson(e, p.id)}

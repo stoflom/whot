@@ -122,6 +122,14 @@ export const setPersonNote = (personId: number, note: string) =>
     (empty ⇒ Ungrouped); faces/statuses untouched */
 export const movePersonsToGroup = (personIds: number[], group: string) =>
   invoke("move_persons_to_group", { personIds, group });
+/** §4.16 (#157, v3.59) — tree D&D: re-home ONE membership per person
+    (remove the dragged-from row when they have it, file into the target
+    branch, INSERT OR IGNORE dedupes); other memberships are kept */
+export const movePersonsBetweenGroups = (
+  personIds: number[],
+  fromGroup: string,
+  toGroup: string
+) => invoke("move_persons_between_groups", { personIds, fromGroup, toGroup });
 /** §4.16 (#50) — rename/move a branch: rewrite the path prefix of every
     person inside it (sub-branches follow); empty new ⇒ subtree to Ungrouped */
 export const renameGroup = (oldPath: string, newPath: string) =>

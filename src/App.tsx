@@ -15,7 +15,7 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
-import { acceptAdvancePlan } from "./reviewFlow";
+import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
@@ -976,7 +976,11 @@ export default function App() {
       const rg = renameGroup(selectedPerson ?? undefined);
       if (clusterGroup === "description") {
         // #99 Description mode: one section per distinct description over
-        // the visible faces — no similarity split, no clusters IPC
+        // the visible faces — no similarity split, no clusters IPC.
+        // #155: the §4.24 staged preview drives the grouping too — a face
+        // with a staged description is grouped under the description it
+        // will land in on Accept (Apply = screen preview), instead of
+        // showing the staged label under the old committed section.
         const visible = snap.faces.filter(
           (f) =>
             f.person_id === personId &&
@@ -984,7 +988,17 @@ export default function App() {
             f.link_status !== "rejected" &&
             matchesStatusFilter(f.link_status, faceFilter)
         );
-        groupByDescription(visible).forEach((g) => {
+        groupByDescription(
+          visible.map((f) => ({
+            id: f.id,
+            // F2 keeps rejected-touching ops out of the pending set, and
+            // rejected faces never reach this branch
+            description:
+              stagedFieldsForCard(pending, f.id).desc ??
+              f.description ??
+              ""
+          }))
+        ).forEach((g) => {
           out.push({
             key: `pd-${personId}-${g.description}`,
             title: g.description || "(no description)",
@@ -1073,7 +1087,8 @@ export default function App() {
         ruleDefaultGroup: renameGroup(p),
       }));
   }, [snap, view, imageId, personId, selectedPerson, clusters,
-      sectionsForImage, renameGroup, facesById, faceFilter, clusterGroup]);
+      sectionsForImage, renameGroup, facesById, faceFilter, clusterGroup,
+      pending]); // #155: staged (§4.24) descriptions drive the regroup
   sectionsRef.current = sections;
   sectionsForImageRef.current = sectionsForImage;
 
@@ -1142,9 +1157,20 @@ export default function App() {
     const status =
       faceFilter === "confirmed" || faceFilter === "rejected" ? faceFilter : "provisional";
     if (snap.faces.some((f) => f.person_id === pid && f.link_status === status)) return;
-    let j = at;
-    while (j < stepIds.length && stepIds[j] === pid) j += 1;
-    const nextId = stepIds[j];
+    // #159 (§4.30, v3.58): the advance target is the first person ANCHOR
+    // forward — in the tree list — that still has a face of the review
+    // status. The old code landed on the immediate successor whatever
+    // they hold, so under Show=All (faceless shell persons everywhere in
+    // the list) and Show=New (a fully reviewed person loses their last
+    // matching face) the advance parked on a person with nothing to
+    // review — the reported 'nothing to show' centre pane with pending
+    // faces elsewhere. reviewFlow.exhaustAdvanceTarget re-derives the
+    // marked person's position from the CURRENT list (the §4.10 pruning
+    // may have removed them on this very refresh) and falls back to the
+    // captured index as the pruning gap.
+    const nextId = exhaustAdvanceTarget(stepIds, pid, at, (id) =>
+      snap.faces.some((f) => f.person_id === id && f.link_status === status)
+    );
     if (nextId == null) {
       setInfo("no more persons to review");
       return;
@@ -1656,6 +1682,23 @@ export default function App() {
               <span className="dim">working…</span>
             </>
           )}
+          {/* #158 (§3, v3.57): the Show filter lives in the top bar — it is
+              a global control applied across all panes (#99, §4.10) and not
+              something the Person view (or any single pane) owns. */}
+          <label
+            title="Status filter — every view shows only faces with this status (#99, §4.10); switching it drops hidden faces from the selection"
+          >
+            show
+            <select
+              value={faceFilter}
+              onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
+            >
+              <option value="all">All</option>
+              <option value="provisional">New</option>
+              <option value="confirmed">Accepted</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </label>
           {/* #154 (§3): Unknown cleanup beside the refresh button — only
               Unknowns with nothing left to decide (all faces decided) */}
           <button
@@ -1707,7 +1750,20 @@ export default function App() {
             // #50 (§4.16) — group management: membership only, faces untouched
             onRenameGroup={(oldPath, newPath) => mutate(() => api.renameGroup(oldPath, newPath))}
             onDeleteGroup={(path) => mutate(() => api.deleteGroup(path))}
-            onMovePersons={(ids, path) => mutate(() => api.movePersonsToGroup(ids, path))}
+            onMovePersons={(ids, path, src) => {
+              // #157 (v3.59): a tree D&D drop carries the dragged
+              // placement's branch path — re-home THAT membership (remove
+              // the dragged-from row when the person has it, file into
+              // the target; other memberships kept). Same branch → no-op:
+              // the person already renders under the target. Without src
+              // (dialog paths) the §4.16 replace-all keeps its meaning.
+              if (src != null) {
+                if (src === path) return;
+                void mutate(() => api.movePersonsBetweenGroups(ids, src, path));
+                return;
+              }
+              void mutate(() => api.movePersonsToGroup(ids, path));
+            }}
             onError={setError}
             onOpenMerge={() => setMergeOpen(true)}
             onMergeInto={openMergeInto}
@@ -1760,7 +1816,9 @@ export default function App() {
                 ›
               </button>
             </span>
-            {/* #99/#100: cluster group + status filter hug the right side */}
+            {/* #99/#100: the cluster-group seg hugs the right side of the
+                person view — the Show filter is a global control and lives
+                in the top bar (#158, v3.57) */}
             <span className="toolbar-right">
             <span
               className="seg"
@@ -1779,18 +1837,6 @@ export default function App() {
                 Accuracy
               </button>
             </span>
-            <label title="Status filter — every view shows only faces with this status (#99, §4.10); switching it drops hidden faces from the selection">
-              show
-              <select
-                value={faceFilter}
-                onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
-              >
-                <option value="all">All</option>
-                <option value="provisional">New</option>
-                <option value="confirmed">Accepted</option>
-                <option value="rejected">Rejected</option>
-              </select>
-            </label>
             </span>
           </div>
           {/* #100: the bar is the pane's real header — only the area below

@@ -1,6 +1,7 @@
 // #99 (gui-design §4.10 status filter / §4.9 Description mode).
 // Run: npm test (vitest run)
 import { describe, expect, it } from "vitest";
+import { stagedFieldsForCard, type Stage } from "./stage";
 import {
   groupByDescription,
   matchesStatusFilter,
@@ -112,5 +113,46 @@ describe("groupByDescription", () => {
 
   it("an empty person yields no sections", () => {
     expect(groupByDescription([])).toEqual([]);
+  });
+
+  // #155: the Description-mode sections compose the §4.24 staged preview
+  // into the grouping — App.tsx maps each face to its effective
+  // description (staged over committed) before calling this
+  it("#155: grouping over staged descriptions — a staged face moves sections live", () => {
+    const committed = [
+      { id: 1, description: "beard" },
+      { id: 2, description: null },
+      { id: 3, description: "glasses" },
+    ];
+    // Apply with Description=hat on face 1, and a staged clear on face 2
+    const pending: Stage[] = [
+      { faceIds: [1], desc: "hat" },
+      { faceIds: [2], desc: "" },
+    ];
+    expect(
+      groupByDescription(
+        committed.map((f) => ({
+          id: f.id,
+          description: stagedFieldsForCard(pending, f.id).desc ?? f.description ?? ""
+        }))
+      )
+    ).toEqual([
+      { description: "hat", faceIds: [1] },
+      { description: "glasses", faceIds: [3] },
+      { description: "", faceIds: [2] }, // staged to (no description)
+    ]);
+    // no stages at all → committed grouping, unchanged
+    expect(
+      groupByDescription(
+        committed.map((f) => ({
+          id: f.id,
+          description: stagedFieldsForCard([], f.id).desc ?? f.description ?? ""
+        }))
+      )
+    ).toEqual([
+      { description: "beard", faceIds: [1] },
+      { description: "glasses", faceIds: [3] },
+      { description: "", faceIds: [2] },
+    ]);
   });
 });
