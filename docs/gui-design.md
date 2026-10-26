@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.59** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.60** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -34,7 +34,7 @@ user:
 - give a face a **description** (e.g. `beard|glasses`);
 - pick each person's **primary face** (icon);
 - browse persons in a **hierarchical tree by group**, with a name/group filter;
-- browse **images by import roll**;
+- browse **images by their filesystem path** (#161);
 - maintain each person's **reference faces** for future recognition.
 
 All panes re-sync after every mutation.
@@ -138,25 +138,31 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     always sits on its own row above the card(s) — beside the card it left
     a tall black column next to a single card and rendered inconsistently
     between the review and person views (#120).
-  - **Rolls**: imports (roll path + date) as expandable sections; image
-    thumbnails per roll; clicking an image opens its faces (same face cards,
-    same operations) plus the image preview **annotated with its detected
-    face rectangles** (see below).
-    **The roll's face counts are per-roll image set** (#146): a roll
-    section lists its images by `first_import_id` (the roll that first
-    imported each image); counting by the face's producing `import_id`
-    instead would inflate the first roll and zero out a re-importing one
-    (re-imported faces land in the later roll). All four counts (img / new
-    / ✓ / ✗) are therefore taken over the faces *of the section's images*
-    (`image_id` in the `first_import_id` set), so the header always
-    summarises exactly what the section shows.
-    **A roll with zero images is never listed** (#151): the section set
-    keys images on `first_import_id`, so a re-import of only
-    already-known files creates an import row with no images of its own —
-    a shell that offers nothing to open (its faces belong to the images
-    shown in the earlier roll). Such rolls are irrelevant: to work on
-    that content again the user re-imports it, which creates a fresh
-    roll.
+  - **Rolls**: the images sorted into a **hierarchy mirroring their actual
+    filesystem path** (#161) — each image's `primary_path` split into its
+    path segments: every segment is an expandable branch and the images
+    sit in their file's directory branch, so there is a close connection
+    between the filesystem and the pictures and the user can drill in to
+    a smaller set. The view **no longer shows the import rolls**: the
+    roll sections, their dates, and the `first_import_id`-keyed counting
+    (#146) and zero-image-roll rule (#151) are gone — the pane simply
+    organises the pictures according to their paths. (The imports
+    themselves stay in the DB and snapshot; the pane just ignores them.)
+    A branch header shows the segment name and the branch totals —
+    `{n} img · {n} new · {n} ✓ · {n} ✗` — counted over **every** image
+    under the branch, filter-independent like the person tree's raw
+    badges (#129): the Show filter changes who is listed, never any
+    counters. Clicking a header expands/collapses the branch; branches
+    start collapsed, listed alphabetically by segment (leaf images by
+    filename). A leaf image renders as the same thumbnail as before:
+    clicking opens that image's faces and its preview **annotated with
+    its detected face rectangles** (see below, #142); the context menu is
+    the image-tile menu (#32). **Show prunes the tree** (§4.10): under a
+    filter other than All an image is listed only if it holds at least
+    one face matching the filter, and a branch holding no listing image
+    is pruned entirely (set Show back to All to see everything again —
+    the branch raw counts keep such branches discoverable). An empty DB
+    shows `no images yet`.
 - **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
   pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
   face-status filter applied by every view (default All; **New** is the
@@ -455,7 +461,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     section, image grids and full-image rectangles, the review grid, the
     **left-pane person presence** (#152) — a person holding no face that
     matches the filter leaves the tree (set Show back to All to list
-    everyone again, including the faceless shells) — and the
+    everyone again, including the faceless shells) — the
+    **Rolls path tree** (#161) — an image holding no face that matches
+    the filter is dropped from its branch and a branch left without a
+    listing image is pruned entirely (raw branch counts stay, so the
+    pruned branch is discoverable) — and the
     **right-pane overview totals**. The badges of the persons that stay
     listed carry their raw totals (#129): the filter changes who is
     listed, never any counters. A selection survives its person dropping
