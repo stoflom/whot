@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.64** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.65** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -260,11 +260,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   **Tree rows** additionally support **multi-select** (click sets the
   selection, ctrl/cmd-click toggles, shift-click extends over the tree's
   visible order; the anchor row stays the person shown) and offer
-  **Remove person / Remove N persons** (§4.13); **real group branches**
+  **Remove person / Remove N persons** (§4.13) and — #164 —
+  ***Add group…*** beside *Move to group…* (the typed path becomes an
+  **additional** membership; Move replaces); **real group branches**
   have their own menu — *remove all persons in this branch* (counts shown,
-  confirm dialog required) plus *rename/move group…*, *delete group* and
-  *add group…* (§4.16/§4.18, #50/#54; the tree root offers *add group…*
-  too); the virtual `Unknown`/`Ungrouped` branches offer **no** branch
+  confirm dialog required) plus *rename/move group…* and *delete group*
+  (§4.16/§4.18, #50 — **#164 removed *add group…* from the branch and
+  root menus**, superseding #54: a group is added *to a person* now, and
+  the root's empty-space menu goes with its only item); the virtual
+  `Unknown`/`Ungrouped` branches offer **no** branch
   menu — bulk actions target real branches only, and Unknown cleanup
   moved to a dedicated top-bar button (below). **`Remove Unknowns`**
   (#154) sits in the top bar beside the refresh button: **filter-independent**
@@ -288,13 +292,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   node or onto Ungrouped; whole branches drag the same way (a drop onto
   the branch itself or into its own subtree is refused). Drops and dialog
   submits normalise the path like every other group write (#42).
-- **Add group…** (#54, §4.18): the branch/root context menu offers *add
-  group…* — a path dialog prefilled with `<parent>|` (root: empty) that
-  moves the **current tree selection** into the new group. Groups are
-  derived from person paths, so an empty group cannot exist: the entry is
-  disabled without a selection, and the virtual `Unknown`/`Ungrouped`
-  nodes do not offer it (a path under them is meaningless — Unknown is
-  name-driven, Ungrouped reserved).
+- **Add group…** (#164 supersedes #54, §4.18): the **person-row**
+  context menu offers *add group…* (multi-select: *add group to N
+  persons…*) — a path dialog whose submit adds the typed path as an
+  **additional** membership: every current group of the person(s) is kept
+  (`move_persons_to_group`-replace stays with *Move to group…*; the add
+  runs `move_persons_between_groups` with `from = ''`, §4.16), so the
+  group can never be empty — the person is in it — and the entry is
+  never disabled. The **branch and root menus no longer offer it**
+  (#164): branches derive from person paths, so the branch entry only
+  ever moved the selection or did nothing; the root's empty-space menu
+  disappears with its only item.
 - **Full images get their own context menu** (#33): the webview default
   menu's entries ("open image in new window", …) are not functional inside
   Tauri, so image areas intercept `contextmenu` and offer a WhoT menu —
@@ -629,24 +637,26 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     select all. Shortcuts obey the existing guards (never while an input
     or dialog has focus, `preventDefault` so webkit cannot steal Ctrl-G)
     and are listed in the settings popover.
-18. **Add group…** (#54) ⇒ context menu of every *real* branch and of the
-    tree root; a `GroupDialog` prefilled with `<parent>|` (root: empty)
-    that runs `move_persons_to_group` (§4.16) over the **current tree
-    selection**. Since branches derive from person paths, "creating" a
-    group *is* moving persons into it (option 3 of #54) — the entry is
-    disabled when no persons are selected; virtual `Unknown`/`Ungrouped`
-    nodes do not offer it.
+18. **Add group…** (#164 supersedes #54) ⇒ context menu of **person
+    rows** (*add group…*; multi-select: *add group to N persons…*): a
+    `GroupDialog` (empty prefill, wholesale-select #67) whose submit
+    **adds** the typed path as another membership via
+    `move_persons_between_groups(ids, '', path)` (§4.16 — `INSERT OR
+    IGNORE`, every other membership kept; *Move to group…* keeps the
+    replace-all semantics beside it). The group can never be empty (the
+    person joins it), so the entry is never disabled. The **branch and
+    root menus do not offer it** — with branches derived from person
+    paths the branch entry could only move the selection (disabled
+    without one) or, wrongly read, "create" something invisible; the
+    tree root's empty-space menu is gone with its only item. Virtual
+    `Unknown`/`Ungrouped` nodes still offer no group menu of their own.
 
-    **Append mode** (#92): a `|`-terminated prefill — what a root/branch
-    right-click produces — opens the input in *append* mode: the text is
-    kept, the caret is placed after the pipe and **no select-all** fires.
-    The user right-clicked that branch precisely to type a new twig after
-    it; the #67 wholesale-replacement rule (select the structural path)
-    stays for every non-`|`-terminated prefill — rename/move a branch,
-    move persons to a group, and the empty top-level prefill where
-    selecting nothing is a no-op. `groupInputMode()` in `src/autoText.ts`
-    derives the mode from the prefill itself, so the dialog cannot open
-    in the wrong one.
+    **Append mode retired** (#92, retired by #164): no menu pre-fills a
+    `|`-terminated path anymore — the root/branch *Add group…* producer
+    is gone — so every group dialog opens in *replace* mode: the
+    structural path is selected wholesale on focus (#67), selecting an
+    empty value is a no-op. `groupInputMode()` was removed from
+    `src/autoText.ts` together with its producer.
 19. **Full-image focus mode** (#55) ⇒ opening a full image (card
     double-click or *Open full image*) turns the center pane into a
     focused workspace: the annotated image spans the pane's full width
