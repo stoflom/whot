@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.58** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.59** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -548,6 +548,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     confirm dialog), person menu (*move to group…* for the selection), and
     drag-and-drop of persons/selections/branches onto branch nodes or
     Ungrouped (virtual nodes are not draggable/renameable themselves).
+    **D&D move semantics** (#157, v3.59, owner ruling): a person drop
+    re-homes **the dragged membership only** — the row's own group path
+    (its placement) is removed from the person, the person is filed into
+    the target branch (`move_persons_between_groups`; `INSERT OR IGNORE`
+    dedupes when the target row already exists, e.g. dragging Christiaan
+    Swart from `Friends` onto `Friends|Swartse` leaves exactly
+    `Friends|Swartse`), and **all other memberships are kept** — a
+    multi-group person stays multi-group. Dragging onto the `Ungrouped`
+    virtual node removes only the dragged membership (the person renders
+    Ungrouped only when no row remains). Dropping onto a branch the row
+    already belongs to is a **no-op** (the person already renders there).
+    The §4.16 dialog entry points (person menu *move to group…*, review
+    bulk group apply) keep the replace-all meaning — they do not carry a
+    placement context.
 
     **Display guarantees** (#127/#129): group paths are **case-significant**
     — `Family|Lombards` and `family|Lombard` are distinct data and each
@@ -561,8 +575,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     by switching Show to All. The badges of the persons that stay listed
     always carry their raw totals (#129); the filter changes who is
     listed and which faces render in the middle pane, never whose faces
-    exist or their counts. A person always renders under its **first**
-    group (`groups[0]`); further groups stay visible in the row tooltip.
+    exist or their counts. #156 (v3.56) supersedes the single-placement
+    rule: a person renders under **every** listed path (see §3); further
+    groups stay visible in the row tooltip.
     The virtual `Unknown`/`Ungrouped` nodes are
     never pruned while they hold (listed) persons — a virtual branch
     whose persons are all filtered out disappears with them.
