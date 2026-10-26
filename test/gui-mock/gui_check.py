@@ -60,6 +60,11 @@ Checks (contract refs: docs/gui-design.md):
   C25 the Merge Similar Persons dialog has a visible cancel button in
       its action row — it closes the dialog with nothing applied (#160,
       v3.61 — Esc worked but was invisible)
+  C26 the Rolls pinned path-filter row (#162, v3.62): typed folder
+      becomes the tree root (branches = its children), typed image file
+      opens full-image (root kept), invalid path shows a hint (root
+      kept), browse… picks a folder via the mocked native picker, empty
+      input roots at '/'
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1506,6 +1511,107 @@ def c25_merge_dialog_cancel_button(t):
            f"opened={opened}; button={btn}; click={closed}; closed={gone}")
 
 
+def c26_rolls_path_filter(t):
+    """#162 (v3.62): the Rolls pane's pinned path-filter row — a typed
+    folder becomes the root the hierarchy branches from, a typed image
+    path opens that image full-image (root untouched), an invalid path
+    is refused with a dim hint (root kept), and browse… feeds the
+    mocked native folder picker through the same validation."""
+    fresh(t)
+    set_show_filter(t, "all")
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
+    time.sleep(1.2)
+
+    def set_path(v):
+        js(t, r"""
+          const el = document.querySelector('.roll-filter input');
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+          el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+        """, v)
+        time.sleep(0.5)
+
+    def headers():
+        return js(t, "return [...document.querySelectorAll('.roll-path')].map(x => x.textContent)")
+
+    def input_value():
+        return js(t, "return document.querySelector('.roll-filter input')?.value ?? null")
+
+    def expected_children(root):
+        return js(t, r"""
+          const root = arguments[0];
+          const pre = root === '/' ? '/' : root + '/';
+          const kids = new Set();
+          for (const i of window.__MOCK_SNAP.images) {
+            if (!i.primary_path.startsWith(pre)) continue;
+            const rest = root === '/' ? i.primary_path.slice(1) : i.primary_path.slice(root.length + 1);
+            const seg = rest.split('/').filter(Boolean)[0];
+            if (seg) kids.add(seg);
+          }
+          return [...kids].sort();
+        """, root)
+
+    # row pinned at the top of the pane (sticky, like the tree header)
+    row = js(t, r"""
+      const el = document.querySelector('.roll-filter');
+      if (!el) return {row: false};
+      const inp = el.querySelector('input');
+      const btn = [...el.querySelectorAll('button')].find(b => b.textContent.includes('browse'));
+      return {row: true, pos: getComputedStyle(el).position, input: !!inp, browse: !!btn};
+    """)
+
+    # 1) typed folder → root: top-level branches = its child segments
+    root1 = "/home/stoflom/Pictures/OtherPictures"
+    set_path(root1)
+    h1 = headers()
+    exp1 = expected_children(root1)
+
+    # 2) invalid path → hint, root kept
+    set_path("/no/such/dir")
+    hint = js(t, "return document.querySelector('.roll-filter-hint')?.textContent ?? null")
+    h2 = headers()
+
+    # 3) typed image file → full-image mode, root untouched
+    img_path = js(t, "return window.__MOCK_SNAP.images.find(i => i.primary_path.includes('Camera'))?.primary_path ?? null")
+    set_path(img_path)
+    detail = js(t, r"""
+      const d = document.querySelector('.image-detail');
+      return d ? (d.querySelector('.image-meta div')?.textContent ?? null) : null;
+    """)
+    js(t, "[...document.querySelectorAll('.image-detail-top button')].find(b => b.textContent.includes('rolls'))?.click();")
+    time.sleep(0.6)
+    back_val = input_value()
+
+    # 4) browse… (mocked native picker) → same validation, new root
+    root2 = "/home/stoflom/Pictures"
+    js(t, "window.__MOCK_DIALOG_PICK__ = arguments[0];", root2)
+    js(t, "[...document.querySelectorAll('.roll-filter button')].find(b => b.textContent.includes('browse')).click();")
+    time.sleep(0.6)
+    h4 = headers()
+    exp4 = expected_children(root2)
+
+    # 5) empty input → '/' → whole tree (top segment = 'home')
+    js(t, "delete window.__MOCK_DIALOG_PICK__;")
+    set_path("")
+    h5 = headers()
+    exp5 = expected_children("/")
+
+    ok = (
+        row.get("row") and row.get("pos") == "sticky" and row.get("input") and row.get("browse")
+        and h1 == exp1 and len(h1) > 0
+        and hint is not None and "no images under" in hint and h2 == h1
+        and detail == img_path and back_val == root1
+        and h4 == exp4 and len(h4) > 0
+        and h5 == exp5 and input_value() == "/"
+    )
+    record("C26 Rolls path filter: root / filename-open / refusal / browse (#162)", ok,
+           f"row={row}; typed root {len(h1)} branch(es) expected={len(exp1)} exact={h1 == exp1}; "
+           f"hint={hint!r}; file → detail={detail is not None} "
+           f"(root kept={back_val == root1}); browse {len(h4)}/{len(exp4)} exact={h4 == exp4}; "
+           f"clear → {len(h5)}/{len(exp5)} exact={h5 == exp5}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1539,6 +1645,7 @@ def main():
         c23_dnd_moves_one_membership(t)
         c24_dark_scheme_native_controls(t)
         c25_merge_dialog_cancel_button(t)
+        c26_rolls_path_filter(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
