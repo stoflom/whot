@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { groupInputMode } from "../autoText";
 import PathTypeahead, { type SuggestOption } from "./PathTypeahead";
 import { useOwnsKeyboard } from "../overlays";
 
@@ -30,11 +29,10 @@ export default function GroupDialog({
   useOwnsKeyboard(); // #138
   const [path, setPath] = useState(defaultPath);
   useEffect(() => setPath(defaultPath), [defaultPath]);
-  // #92/#97 — a '|'-terminated prefill (root/branch right-click → Add
-  // group…) is an append target: keep `parent|`, caret after the pipe,
-  // no select-all; every other prefill keeps the wholesale replacement
-  // (#67). The mode derives from the prefill itself (groupInputMode).
-  const append = groupInputMode(defaultPath) === "append";
+  // #67/#92: group paths are structural — the default selects them whole.
+  // #164 retired #92's append mode: no menu pre-fills a '|'-terminated
+  // path anymore (the root/branch Add group… producer is gone), so every
+  // open is wholesale-replacement.
   const submit = () => onSubmit(path);
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
@@ -57,13 +55,7 @@ export default function GroupDialog({
             value={path}
             onChange={setPath}
             options={options}
-            select={append ? "none" : "all"}
-            caretEnd={append}
-            title={
-              append
-                ? "Pre-filled '<path>|' — type the new segment after the pipe (#92)"
-                : "Group path — '|' separated, e.g. family|lombards (empty = ungrouped)"
-            }
+            title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped)"
             placeholder="e.g. family|lombards (empty = ungrouped)"
             onSubmit={submit}
             onEscape={onCancel}
