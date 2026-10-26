@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.57** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.58** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1056,6 +1056,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       ‹ › code path, so cursor-as-target (#75) and list-end behaviour
       follow the stepping rules. At the end of the list the context
       stays and a toast says the review is exhausted.
+      **The advance skips persons with nothing left to review** (#159,
+      v3.58): the target is the first person **after** the drained one in
+      the step list that still holds a face of the review status — not
+      the raw successor, which under Show=All can be a faceless shell or
+      under Show=New a person whose matching faces were just decided
+      (that person may also have dropped out of the list on this very
+      refresh via the §4.10 pruning; the marked person's current index is
+      then re-derived — `exhaustAdvanceTarget` — and the captured index
+      serves as the pruning gap to continue from). With no forward
+      candidate the context stays and "no more persons to review" is
+      reported.
       **The exhaust mark is strictly bound** (#148): the pre-mutation
       mark (`exhaustAtRef`) remembers **which person** it was set for,
       is consumed unconditionally (so it can never linger across view
