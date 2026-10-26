@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.54** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.55** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -424,7 +424,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    filter (#99): `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
    over the visible faces — no similarity split: the threshold is not
-   consulted and `person_face_clusters` is not called (no IPC). Sections
+   consulted and `person_face_clusters` is not called (no IPC). The
+   §4.24 staged preview drives the grouping too (#155): a face with a
+   **staged** description groups under the description it will land in
+   on **Accept** — the preview shows the staged label in the section it
+   belongs to; commit, Undo and Cancel return the committed grouping.
+   Sections
    are ordered by first appearance with the empty description last,
    titled `(no description)` (Ungrouped convention), and make no
    similarity claims in this mode. The choice persists as
@@ -724,10 +729,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       `{faceIds, name?, group?, desc?}` bound to that Apply's scope.
       The working loop is **Apply → change → Apply → … until Accept or
       Cancel**: Apply never commits, it only extends the set (screen
-      preview on the labels, the `staged: …` strip shows the whole
-      set); **Accept commits every op** through the #77 routing and
-      drives the review advance off the committed ids; a re-Apply on
-      the **same faceIds** replaces that op (latest wins); **Undo and
+      preview on the labels, the `staged: …` strip shows the whole set;
+      in Description mode (#99) the preview includes the **section
+      regrouping** — #155); **Accept commits every op** through the #77
+      routing and drives the review advance off the committed ids; a
+      re-Apply on the **same faceIds** replaces that op (latest wins); **Undo and
       Cancel/Esc discard the whole set** (owner ruling: Undo = Cancel —
       re-editing is just opening Edit… again).
       **Apply always has a concrete target** (#147): the bar's Apply
