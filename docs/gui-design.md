@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.62** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.63** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -180,12 +180,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     The root lives for the session (it survives tab switches; not
     persisted to whotrc) and the Show filter keeps pruning under it
     (§4.10). The native picker is stubbed in the GUI-mock harness.
-- **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
-  pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
-  face-status filter applied by every view (default All; **New** is the
-  `provisional` status, spelled the way the face-card badge spells it) —
-  and, to its left, the persons-mode cluster-group toggle
-  `[Description | Accuracy]`, both grouped at the bar's right side. The
+- **Status filter + cluster group** (§4.10/§4.9, #99/#100): `Show
+  [All | New | Accepted | Rejected]` — the face-status filter applied by
+  every view (default All; **New** is the `provisional` status, spelled
+  the way the face-card badge spells it) — lives in the **top bar**
+  (#158, v3.57). The center pane's toolbar right side carries the
+  persons-mode cluster-group toggle `[Description | Accuracy]`, and
+  **only in the person view** (#163): `cluster_group` shapes only how
+  the person view forms its sections (§4.9), so the seg is hidden in
+  the Review and Rolls views, where it would change nothing (the
+  toolbar's navigation cluster stays in every view). The
   toolbar is the center pane's **fixed header**: the sections scroll
   beneath it in their own, shorter scroll area — nothing can scroll past
   above it (#100). While a mutation is in flight the bar's
@@ -451,8 +455,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    evidence, `0.0`, keeping every stored similarity finite — and no
    comparison site may `unwrap` a `partial_cmp` on non-finite data
    (orderings use `unwrap_or(Ordering::Equal)`).
-   A **cluster-group toggle** sits in the Person view's centre toolbar,
-   hugging its right edge (#99) — the Show filter it once hugged there is
+   A **cluster-group toggle** sits in the Person view's centre toolbar —
+   **only** there (#163: hidden in Review and Rolls, where it changes
+   nothing) — hugging its right edge (#99) — the Show filter it once hugged there is
    a **global** control and was moved to the top bar (#158, v3.57):
    `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
