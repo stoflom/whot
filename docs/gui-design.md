@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.53** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.54** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -225,15 +225,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   too); the virtual `Unknown`/`Ungrouped` branches offer **no** branch
   menu — bulk actions target real branches only, and Unknown cleanup
   moved to a dedicated top-bar button (below). **`Remove Unknowns`**
-  (#154) sits in the top bar beside the refresh button: it removes every
-  `UnknownN` person holding **no face that meets the current Show filter
-  (§4.10)** — no face left to show means nothing left to decide on;
-  Unknowns that still have a visible face are never touched (with Show =
-  All this degenerates to zero candidates — §4.27's stale-shell sweep
-  already deletes zero-attached-face UnknownN on every read). It is
-  disabled when no such Unknown exists, opens the §4.13 confirm dialog
-  (every face becomes rejected and unowned; no undo), and its
-  tooltip spells out the filter-relative semantics. The reference-set
+  (#154) sits in the top bar beside the refresh button: **filter-independent**
+  (v3.54 — the original filter-relative rule offered the still-unfinished
+  review queue when Show = Accepted/Rejected); it removes every
+  `UnknownN` person whose faces are **all decided** — zero New
+  (`provisional`) and zero Accepted (`confirmed`) faces left, meaning
+  nothing remains to show or decide on. Unknowns that still hold a new or
+  accepted face are never touched (zero-attached-face UnknownN do not
+  appear anyway: §4.27's stale-shell sweep deletes them on every read).
+  The button is disabled when no such Unknown exists, opens the §4.13
+  confirm dialog (every face becomes rejected and unowned; no undo), and
+  its tooltip spells out the rule. The reference-set
   pane exposes **Remove person** as a button.
 - **Group management & drag-and-drop** (#50, §4.16): real group branches
   (not the virtual `Unknown`/`Ungrouped` nodes) can be **renamed/moved**
