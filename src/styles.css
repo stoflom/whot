@@ -377,6 +377,9 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .roll-path { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roll-date { color: var(--dim); font-size: 0.85rem; flex: none; }
 .roll-counts { margin-left: auto; color: var(--dim); font-size: 0.85rem; flex: none; }
+/* #161: nested path branches — sub-directories render indented below their parent */
+.roll-children { display: flex; flex-direction: column; gap: 0.5rem; padding: 0 0.6rem 0.6rem; }
+.roll-children .img-grid { padding: 0; }
 
 .img-grid {
   display: grid;

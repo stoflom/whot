@@ -37,7 +37,8 @@ Checks (contract refs: docs/gui-design.md):
   C17 top-bar 'Remove Unknowns': filter-independent, removes Unknowns
       whose faces are all decided (v3.54 — exact removal, confirm
       dialog) (#154)
-  C18 rolls with 0 images are never listed (#151)
+  C18 Rolls pane mirrors the filesystem path hierarchy and Show prunes
+      it (#161, v3.60)
   C19 staged dialog-Apply (§4.24) regroups the Description-mode sections
       live (#155, v3.55): Undo returns the committed grouping; bar Accept
       commits the description
@@ -561,25 +562,60 @@ def c17_remove_unknowns_button(t):
            f"persons (all candidates gone: {gone == 0})")
 
 
-def c18_zero_image_rolls_hidden(t):
-    """#151: the Rolls pane lists only rolls holding >= 1 image — the dump
-    carries re-import rolls with zero images (one section must remain)."""
+def c18_rolls_path_tree(t):
+    """#161 (v3.60): the Rolls pane is a filesystem-path tree — branch
+    headers mirror the primary_path segments (collapsed at start), every
+    image is filed under its own file's directory branch once expanded,
+    and Show=New prunes images/branches without a provisional face."""
     fresh(t)
+    set_show_filter(t, "all")  # the persisted whotrc filter must not tilt the baseline
     js(t, """
       document.querySelectorAll('.topbar nav button')[1]?.click();
     """)  # the Rolls tab
     time.sleep(1.2)
-    sections = js(t, "return document.querySelectorAll('.roll-header').length")
-    zeros = js(t, """
-      const imgs = {};
-      for (const i of window.__MOCK_SNAP.images)
-        imgs[i.first_import_id] = (imgs[i.first_import_id] ?? 0) + 1;
-      return window.__MOCK_SNAP.imports.filter(i => !imgs[i.id]).length;
+    # branches start collapsed: one header per distinct top-level segment
+    top = js(t, """
+      return [...new Set(window.__MOCK_SNAP.images
+        .map(i => i.primary_path.split('/').filter(Boolean)[0]))].length;
     """)
-    total = js(t, "return window.__MOCK_SNAP.imports.length")
-    ok = sections == total - zeros
-    record("C18 rolls with 0 images are never listed (#151)", ok,
-           f"imports={total} (zero-image: {zeros}) → sections shown={sections}")
+    headers0 = js(t, "return document.querySelectorAll('.roll-header').length")
+    # drill in: expand every closed header until none is left
+    for _ in range(60):
+        n = js(t, """
+          const closed = [...document.querySelectorAll('.roll-header')]
+            .filter(h => h.querySelector('.roll-arrow')?.textContent.trim() === '▸');
+          closed.forEach(h => h.click());
+          return closed.length;
+        """)
+        time.sleep(0.1)
+        if not n:
+            break
+    time.sleep(0.5)
+    # every image renders exactly under its own primary_path
+    thumbs = js(t, """
+      return [...document.querySelectorAll('.img-thumb')].map(b => b.title);
+    """)
+    all_paths = js(t, "return window.__MOCK_SNAP.images.map(i => i.primary_path)")
+    open_ok = sorted(thumbs) == sorted(all_paths)
+    # Show=New (branches stay open): only images holding a provisional
+    # face survive, elsewhere pruned
+    set_show_filter(t, "provisional")
+    time.sleep(0.8)
+    thumbs_new = js(t, """
+      return [...document.querySelectorAll('.img-thumb')].map(b => b.title);
+    """)
+    expected_new = js(t, """
+      const ids = new Set(window.__MOCK_SNAP.faces
+        .filter(f => f.link_status === 'provisional').map(f => f.image_id));
+      return window.__MOCK_SNAP.images.filter(i => ids.has(i.id)).map(i => i.primary_path);
+    """)
+    prune_ok = sorted(thumbs_new) == sorted(expected_new)
+    set_show_filter(t, "all")
+    ok = headers0 == top and open_ok and prune_ok
+    record("C18 Rolls pane mirrors the filesystem path tree, Show prunes (#161)", ok,
+           f"top-level headers={headers0} (expected {top}); fully expanded "
+           f"thumbs={len(thumbs)}/{len(all_paths)} exact={open_ok}; Show=New "
+           f"thumbs={len(thumbs_new)}/{len(expected_new)} exact={prune_ok}")
 
 
 def c19_staged_desc_regroups(t):
@@ -1445,7 +1481,7 @@ def main():
         c15_merge_dialog_scroll(t)
         c16_filter_prunes_tree(t)
         c17_remove_unknowns_button(t)
-        c18_zero_image_rolls_hidden(t)
+        c18_rolls_path_tree(t)
         c19_staged_desc_regroups(t)
         c20_multi_group_renders_everywhere(t)
         c21_show_filter_in_topbar(t)

@@ -1911,9 +1911,12 @@ export default function App() {
               <>
           {view === "rolls" && imageId == null ? (
             <RollsPane
-              imports={snap.imports}
               images={snap.images}
               faces={snap.faces}
+              // #161: Show is active in the Rolls path tree — an image is
+              // listed only if it holds a matching face (branch counters
+              // stay raw; see RollsPane)
+              faceFilter={faceFilter}
               // #142: opening an image from the rolls grid is a full
               // view-context change and must honour the #123 drop-or-
               // accept dialog when a staged set is live
