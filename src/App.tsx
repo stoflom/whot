@@ -577,7 +577,11 @@ export default function App() {
   /** Q1/G3 + invocation-site defaults (§4.24): Edit on a card → Card,
       header → Group, bottom bar → Selection */
   const openEdit = useCallback(
-    (defaultScope: StageScope, target?: { card?: number; group?: number[] }) => {
+    (
+      defaultScope: StageScope,
+      target?: { card?: number; group?: number[] },
+      selectionOverride?: number[]
+    ) => {
       if (!snap) return;
       const card = target?.card != null ? [target.card] : [];
       const group =
@@ -590,7 +594,10 @@ export default function App() {
         objIds.length > 0 && !objectInsideSelection(objIds, selRef.current);
       // selection rules: inside keeps the selection, outside becomes the object
       if (reselect) changeSel(new Set(objIds));
-      const selIds = reselect ? objIds : [...selRef.current];
+      const selIds = selectionOverride ?? (reselect ? objIds : [...selRef.current]);
+      // #147: never open the shared dialog without a concrete target —
+      // every scope would read "0 face(s)" and all its actions be no-ops
+      if (selIds.length === 0) return;
       setEdit({
         defaultScope,
         card,
@@ -1209,9 +1216,19 @@ export default function App() {
   );
 
   /** bottom-bar Apply (Q2/Q9, #123): opens the dialog on the selection —
-      the Apply loop extends the set; it never re-scopes or commits */
+      the Apply loop extends the set; it never re-scopes or commits.
+      #147: with a live stage but an empty selection (staged ops survive
+      selection changes by design) the dialog scopes onto the staged
+      set's faces instead of opening dead at every scope = 0 */
   const barApply = () => {
     if (!snap) return;
+    if (selRef.current.size === 0) {
+      const staged = [...new Set(pendingRef.current.flatMap((o) => o.faceIds))];
+      if (staged.length === 0) return; // undoable only in theory; RuleBar
+                                       // disables Apply here anyway
+      openEdit("selection", undefined, staged);
+      return;
+    }
     openEdit("selection");
   };
 
