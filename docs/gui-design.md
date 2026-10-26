@@ -1,8 +1,11 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.34** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.35** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
-version in `package.json` tracks it)
+version in `package.json` tracks it). The Tauri bundle version
+(`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
+`package.json` exactly — the built installer reports the bundle version, so
+drift there ships a wrong version to users (#150, v3.35).
 
 Revision history is not kept in this document — it lives in the GitHub
 issues. The version above is bumped with every change and referenced in
