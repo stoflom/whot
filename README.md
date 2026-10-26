@@ -5,7 +5,7 @@ Face database and review GUI for photo rolls. Faces detected at import
 is used to review, name, accept, reject and annotate them. Image files are
 BLAKE3 hashed for identification, file paths are regarded as mutable.
 
-This is still in very early stage. Future functionality will inlude:
+This is still in very early stage. Future functionality will include:
   i) Script to export data to Lap asset management
   ii) Script to export person tag group hierarchy to darktable sidecars.
 
@@ -78,6 +78,9 @@ never created implicitly — use `--create-db` (design `docs/gui-design.md`
 §4.29).
 
 Every cluster becomes an `UnknownN` person; all faces start `provisional`.
+New `UnknownN` persons start **Ungrouped** (#153): the importer writes no
+person group rows at all — the tree's `Unknown` branch is purely
+name-driven until you file an Unknown person into a group yourself.
 
 ### Legacy recovery (harvest → import)
 
@@ -224,9 +227,45 @@ npm run tauri dev      # development
 npm run tauri build    # release bundles
 ```
 
-Main flows: rename an `UnknownN` group (accepts & names it, moving it into a
-group path, e.g. family|Smith, friends|college), assign selected faces to an existing or new person, reject or
-re-accept faces, per-face descriptions (beard|sun_glasses, baby, side), primary face, reference faces per-face descriptions.
+### The window at a glance
+
+- **Top bar** — tabs `Review` / `Rolls` / `Person` (centre-pane mode; the
+  person tab opens the tree's current selection); on the right the `Show`
+  face-status filter `All | New | Accepted | Rejected`, the persons-mode
+  cluster-group toggle `Description | Accuracy`, the `Remove Unknowns`
+  button, the manual refresh `↻` and the settings ⚙. The `Show` filter
+  decides which faces exist anywhere: switching to `New`/`Accepted`/
+  `Rejected` **also prunes the left-pane person tree** (#152) — persons
+  without a face of that status are not listed; `All` lists everyone.
+- **Left pane — person tree**, hierarchical by `person_groups.path`.
+  Two virtual branches hold the ungrouped: `Ungrouped` (persons with no
+  group row) and `Unknown` (ungrouped `UnknownN` persons — purely
+  name-driven). A person with a group renders under that group even when
+  named `UnknownN` — filing an Unknown you remember by face but not by
+  name into a group is normal (#153). Right-click: rows, branches and
+  cards all carry menus.
+- **Centre pane** — the face grid, `Show`-filtered; Review groups the
+  pending faces by the importer's `UnknownN` clusters, Rolls lists
+  imports as expandable sections (a roll with **0 images** is never
+  listed — re-imported shells from #151), and double-clicking a card
+  opens the annotated full-size image.
+- **Detail pane** — person name, group path, note, primary face,
+  refcrops.
+- **Rule bar** — selection-wide actions (Apply/Accept/Assign/Reject…).
+
+**`Remove Unknowns`** (§3, #154): removes every Unknown person whose
+faces are **all decided** — zero New and zero Accepted faces left, so
+nothing remains to show or decide on. The button is unaffected by the
+`Show` filter, disabled when there is nothing to clean, sits behind a
+confirmation dialog, and there is no undo (the faces stay in the DB as
+rejected, unowned records).
+
+**Main flows**: review the pending faces — rename an `UnknownN` person
+(accepts & names it, moving it into a group path, e.g. `family|Smith`,
+`friends|college`), assign selected faces to an existing or new person,
+reject or re-accept faces, per-face description (`beard`, `sun_glasses`,
+… — the full derived label is `person-name-description-seq`), primary
+face and per-appearance reference faces.
 
 **Merge Similar Persons** (`⧉ merge similar` in the person-tree header,
 §4.28/#88): triages clusters of near-identical names (case, seq
@@ -235,6 +274,10 @@ generational-suffix aliases) with per-pair evidence, then merge / bulk
 rename / bulk group the selection — merging always goes through a
 confirmation dialog (from the dialog, the context menu **or** by
 dragging a selection onto a person row) because it cannot be undone.
+
+Behaviour is specified in `docs/gui-design.md` (§3 layout, §4 the ~30
+decided behaviour rules) — that document is the contract; this section
+only orients.
 
 ## Tauri commands (Rust)
 
@@ -247,9 +290,9 @@ rules are `docs/gui-design.md` §4, architecture is
 - `get_snapshot()` → `{ persons: [{id, name, state, note, primary_face_id,
   primary_pinned, created_at, groups[], counts{total, provisional, confirmed, rejected}}],
   faces: [{id, image_id, person_id, x, y, w, h, name, seq, description,
-  confidence, link_status, state, import_id, created_at}],
-  images: [{id, primary_path, width, height, orientation, type, state,
-  roll_id, first_import_id}], imports: [{id, path, started_at}],
+  confidence, link_status, state, rotation, import_id, created_at}],
+  images: [{id, primary_path, width, height, orientation, rotation, rtype, state,
+  first_import_id, last_import_id}], imports: [{id, path, started_at}],
   settings {cluster_threshold, refcrop_n, face_filter, cluster_group,
   merge_name_distance, merge_suffix_aliases} }`
 - `get_face_preview(face_id) → String` (base64 JPEG from `faces.preview`)
@@ -257,8 +300,9 @@ rules are `docs/gui-design.md` §4, architecture is
   `get_image_preview(image_id) → Option<String>`
 - `get_refcrops(person_id) → [{seq, description, pinned, face_id, image: base64}]
   grouped by appearance (§4.6)`
-- `open_image(image_id) → ()` — write `images.preview` to a temp file and
-  open it with the system viewer (opener plugin; §3 context menus)
+- `open_image(image_id) → ()` — write `images.preview` to a unique temp
+  file and open it with the system viewer (opener plugin; §3 context
+  menus, #144)
 - `person_face_clusters(person_id, threshold) →
   [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
   similarity clusters inside each (§4.9)
@@ -266,9 +310,12 @@ rules are `docs/gui-design.md` §4, architecture is
 **Mutations** (each ends with refcrops recompute + primary backfill for all
 affected persons; all return an error string on constraint violation)
 
-- `assign_person(face_ids, name, group_path)` — §4.1
+- `assign_person(face_ids, name, group_path)` — §4.1 (empty group ⇒
+  Ungrouped; a rename keeps the person's current group path, #153)
 - `accept_faces(face_ids)` — §4.3
 - `reject_faces(face_ids)` — §4.2
+- `rotate_image(image_id, delta)` / `rotate_face(face_id, delta)` —
+  display rotation in 90° steps (§4.32, #122)
 - `set_face_description(face_id, description)` — §4.4
 - `set_primary_face(person_id, face_id)` — §4.5
 - `set_person_name(person_id, name)` / `set_person_group(person_id, path)` /
@@ -289,17 +336,27 @@ Section numbers (`§4.x`) refer to `docs/gui-design.md`.
 ```
 whot/
   package.json  vite.config.ts  index.html      # frontend
-  src/                              # React app
+  src/                              # React app (TypeScript)
     main.tsx  App.tsx  api.ts      # api.ts = typed tauri invoke wrapper
-    components/  PersonTree.tsx  FaceCard.tsx  FaceGrid.tsx
-                 RuleBar.tsx  DetailPane.tsx  RollsPane.tsx  AssignDialog.tsx
-                 GroupDialog.tsx  FaceOverlay.tsx   # active rectangles on full-size images
+    components/                    # PersonTree, FaceCard, FaceGrid, RuleBar,
+      DetailPane.tsx  RollsPane.tsx # DetailPane, RollsPane, FaceOverlay
+      EditDialog.tsx  GroupDialog.tsx          # (active rectangles on
+      ConfirmDialog.tsx  ContextMenu.tsx       # full-size images) and the
+      MergeIntoDialog.tsx                      # dialogs (Edit, Group,
+      MergeSimilarDialog.tsx                   # Confirm, MergeInto,
+      FaceMergeDialog.tsx                      # MergeSimilar, FaceMerge);
+      NameTypeahead.tsx  PathTypeahead.tsx     # typeaheads + suggestions
+      SuggestInput.tsx  SettingsPopover.tsx    # (Name/Path/Suggest); settings
+    viewFilters.ts  reviewFlow.ts  stage.ts  faceDrop.ts    # pure logic
+    nameCluster.ts  autoText.ts  rotation.ts  hooks.ts      # helpers
+    overlays.tsx                   # #138: one overlay registry (Q8 Esc/keys)
     styles.css
+    *.test.ts                      # vitest unit tests (`npm test`)
   src-tauri/
     tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde, base64
     src/main.rs  src/lib.rs        # lib.rs: #[tauri::command] surface
     src/db.rs                      # db.rs: queries + embeddings + refcrops
-    tests/                         # Rust integration tests (self-built fixture DB)
+    tests/workflow.rs              # Rust integration tests (embeds dist/; fixture DB)
   scripts/                         # Python tooling (dev-time only)
     cli_console.py                 # shared header/status/quiet console (scripts-design §10)
     pathmap.py                     # legacy path-map file (scripts-design §8.6)
@@ -309,25 +366,34 @@ whot/
     import_harvested.py            # scripts-design §9: attach harvested persons (copy-only)
     legacy/                        # archived importers, superseded by harvest_legacy.py
   database/
-    schema.sql                     # faces.db DDL (v1.5)
-    harvest_schema.sql             # staging DDL for harvest_legacy.py (v1.0)
-  test/                            # Python unit tests (import + harvest helpers)
+    schema.sql                     # faces.db DDL (v1.6)
+    harvest_schema.sql             # staging DDL for harvest_legacy.py (v1.2)
+  test/
+    test_*.py                      # Python unit tests (import + harvest helpers)
+    gui-mock/                      # Firefox-driven GUI contract checks (see test/gui-mock/README.md)
   docs/                            # design documents (see Docs below)
-  config/whotrc.json              # created at runtime
-  data/faces.db                   # (existing; never touched by the §8/§9 scripts)
+  config/whotrc.json               # created at runtime
+  data/faces.db                    # (existing; never touched by the §8/§9 scripts)
+  dist/                            # vite build output (npm run build); dist must be
+                                   # current for cargo test and test/gui-mock
 ```
 
 ## Tests
 
 ```sh
-(cd src-tauri && cargo test)    # Rust integration tests (fixture DB built from database/schema.sql)
-npx tsc --noEmit                # TypeScript
-npm run lint                    # ESLint (incl. react-hooks rules)
-python3 -m unittest discover -s test   # harvest + import unit tests (needs numpy + blake3)
-```
+npm test                          # vitest unit tests (src/*.test.ts)
+npx tsc --noEmit                  # TypeScript
+npm run lint                      # ESLint (incl. react-hooks rules)
+npm run build                     # dist/ first — cargo test and gui-mock need it
+(cd src-tauri && cargo test)      # Rust integration tests (fixture DB built from database/schema.sql)
+python3 -m unittest discover -s test   # Python: harvest + import + annotation helpers (needs numpy + blake3)
 
-Note: `cargo test` compiles the Tauri context, which embeds `dist/` — run
-`npm run build` once first on a fresh clone.
+# GUI contract checks against the mocked backend (headless Firefox;
+# needs selenium + a firefox binary, snap.json, and the mock server):
+python3 test/gui-mock/dump_snap.py
+python3 test/gui-mock/server.py &
+python3 test/gui-mock/gui_check.py
+```
 
 ## Docs
 
@@ -337,3 +403,4 @@ Note: `cargo test` compiles the Tauri context, which embeds `dist/` — run
 - `docs/scripts-design.md` — Python tooling: §8 harvest, §9 harvest import
 - `docs/schema-design.md` — `faces.db` DDL design: identities, version gate, drop & recreate
 - `docs/backend-design.md` — Rust backend architecture (`lib.rs`/`db.rs`)
+- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C18`)
