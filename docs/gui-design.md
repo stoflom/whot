@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.52** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.53** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -92,8 +92,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 ```
 
 - **Left pane — person tree.** Hierarchy built from `person_groups.path`
-  (segments split on `|`). Virtual branches: `Unknown` (persons whose only
-  group is `Unknown`) and `Ungrouped` (known persons with no group row).
+  (segments split on `|`). **Group first** (#153): a person with a group
+  row renders under their first path even when named `UnknownN` — the
+  user may group an UnknownN they remember by face but not by name.
+  Virtual branches hold the rest: `Ungrouped` (persons with no group
+  row) and `Unknown` (**ungrouped** persons named `UnknownN` — purely
+  name-driven). The importer writes **no group rows at all** for the
+  `UnknownN` persons it seeds: all new persons start Ungrouped (an
+  empty group field means Ungrouped — never a literal `Unknown`
+  segment; §4.18 keeps the `Ungrouped` path segment reserved).
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
   rejected). The tree's header — **roll up/down buttons on the left,
   filter box on the right, then the Review button** — is **pinned flush
@@ -344,11 +351,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      GUI rename** (tree, context menu, detail pane) via one rename-merge
      helper: the `set_person_name` collision error can never surface in
      the GUI; a *faceless* person renamed to an existing name merges by
-     deletion, an empty input is a no-op, and renaming an `UnknownN` in
-     these flows clears its `Unknown` group (F7 — the group argument is
-     not user-visible there; the review-section rule bar likewise defaults
-     the group to empty for `UnknownN` sections, so a rename always leaves
-     the Unknown branch from every entry point).
+     deletion, an empty input is a no-op, and a rename keeps the
+     person's current group path (#153 — #38's UnknownN force-to-empty
+     is obsolete since the importer no longer seeds an `Unknown` group
+     row: an ungrouped UnknownN stays ungrouped and holds its virtual
+     Unknown-branch seat until renamed, after which a real name simply
+     falls to Ungrouped).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
      are per `(person, description)` — see §4.12.
