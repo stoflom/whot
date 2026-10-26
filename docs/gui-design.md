@@ -1,24 +1,25 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.47** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.49** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
 `package.json` exactly — the built installer reports the bundle version, so
-drift there ships a wrong version to users (#150, v3.35).
+drift there ships a wrong version to users.
 
-Revision history is not kept in this document — it lives in the GitHub
+This document describes the **current designed behaviour only**: no change
+history, no was-broken narratives. Revision history lives in the GitHub
 issues. The version above is bumped with every change and referenced in
 the closing comment of the issue(s) it implements.
 
 Tauri-based desktop app for reviewing, naming, accepting, rejecting and
 annotating faces imported by `scripts/import_roll.py` into `data/faces.db`.
 
-v3.16 **split** this document: the script sections (formerly §8/§9) moved
-to `docs/scripts-design.md` *keeping their section numbers*, the Tauri
-command reference and repository layout moved to `README.md`, and the
-database and Rust backend designs live in `docs/schema-design.md` and
-`docs/backend-design.md` (§5 below lists every document).
+The script designs (§8/§9) live in `docs/scripts-design.md` *keeping their
+section numbers*, the Tauri command reference and repository layout in
+`README.md`, and the database and Rust backend designs in
+`docs/schema-design.md` and `docs/backend-design.md` (§5 below lists every
+document).
 
 ## 1. Goals
 
@@ -38,10 +39,10 @@ user:
 
 All panes re-sync after every mutation.
 
-Non-goals (v1): deleting faces (persons *can* be removed — §4.13; their
+Non-goals: deleting faces (persons *can* be removed — §4.13; their
 faces become rejected, unowned records), editing embeddings, multi-group
 membership UI (one group path per person), i18n. (Moving faces between
-persons by drag & drop is now a feature — rule 34, #135/#136.)
+persons by drag & drop is a feature — rule 34, #135/#136.)
 
 ## 2. Stack
 
@@ -119,25 +120,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     Each group section has: select-all checkbox, face count, the current
     `UnknownN` name, and **name / group / description labels** with one
     **Edit…** button — the shared dialog, scope Group (§4.24). The heading
-    always sits on its own row above the card(s) — the compact one-row
-    layout (#108) was withdrawn in #120: a heading beside the card left a
-    tall black column next to a single card and read as broken, and the
-    same person rendered differently in the review vs person views.
+    always sits on its own row above the card(s) — beside the card it left
+    a tall black column next to a single card and rendered inconsistently
+    between the review and person views (#120).
   - **Rolls**: imports (roll path + date) as expandable sections; image
     thumbnails per roll; clicking an image opens its faces (same face cards,
     same operations) plus the image preview **annotated with its detected
     face rectangles** (see below).
-    **Implementation note — the roll's face counts are per-roll image set**
-    (#146, v3.40): a roll section lists its images by `first_import_id`
-    (the roll that first imported each image), but the used to count
-    faces with `import_id` matching the roll id — the roll that
-    *produced* the face. On a re-import (same file in a later roll) the
-    new faces land in the later roll (its `import_id`), which
-    consequently showed "0 img, N new" for images it did not display,
-    while the original roll showed images with inflated counts. All four
-    counts (img / new / ✓ / ✗) are now taken over the faces *of the
-    section's images* (`image_id` in the `first_import_id` set), so the
-    header always summarises exactly what the section shows.
+    **The roll's face counts are per-roll image set** (#146): a roll
+    section lists its images by `first_import_id` (the roll that first
+    imported each image); counting by the face's producing `import_id`
+    instead would inflate the first roll and zero out a re-importing one
+    (re-imported faces land in the later roll). All four counts (img / new
+    / ✓ / ✗) are therefore taken over the faces *of the section's images*
+    (`image_id` in the `first_import_id` set), so the header always
+    summarises exactly what the section shows.
 - **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
   pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
   face-status filter applied by every view (default All; **New** is the
@@ -146,8 +143,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   `[Description | Accuracy]`, both grouped at the bar's right side. The
   toolbar is the center pane's **fixed header**: the sections scroll
   beneath it in their own, shorter scroll area — nothing can scroll past
-  above it (#100; sticky pinning was clamped by the pane's padding and
-  left that strip). While a mutation is in flight the bar's
+  above it (#100). While a mutation is in flight the bar's
   right side shows an animated **busy roller** beside `working…` (the
   `busy` state; `prefers-reduced-motion` disables the spin).
 - **Full-image views** (§4.11): every full-size image — the Rolls image
@@ -178,24 +174,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   (the strip inside the image frame), not an input — editing goes through
   the shared Edit dialog scoped to the card (§4.24); a name commit
   **assigns that person** — an existing person is merged into, a new one is
-  created (`assign_person` semantics, never a collision error). (The #29
-  face-vs-group disambiguation dialog is retired, #101 — the dialog's scope
-  selector is the disambiguation.) The full
+  created (`assign_person` semantics, never a collision error); the shared
+  Edit dialog's scope selector is the disambiguation between face and
+  group (§4.24). The full
   derived label stays in the tooltip; the detail pane's rename routes
   through the same rename-merge helper (§4.1).
 - **Inline rename** (#29): double-clicking a person row in the tree turns
   its name into an entry field (Enter/blur commits via the rename-merge
   helper, §4.1, Esc cancels — same pattern as the detail-pane fields;
   validation errors surface as toast).
-  **Implementation note — the renaming row is not a `<button>`** (#143,
-  v3.39): the row used to stay the same `<button>` while its name
-  expanded into `NameTypeahead` — an `<input>` nested inside a
-  `<button>`, which is invalid HTML (buttons may not contain interactive
-  content). WebKit mis-handles it: clicks in the input bubbled to the
-  row's `onClick` (re-selecting the person mid-rename) and DOM focus
-  juggling fought the typeahead. While `renaming`, the row renders as a
-  `<div>` carrying the same class/`data-person-id`/title (CSS class
-  styling means the geometry is identical), without the select/drag
+  **The renaming row is never a `<button>` while renaming** (#143):
+  an entry field must not nest inside a button (invalid HTML; WebKit
+  mis-handles it — clicks in the input bubble to the row's `onClick` and
+  focus juggling fights the typeahead). While `renaming`, the row renders
+  as a `<div>` carrying the same class/`data-person-id`/title (CSS class
+  styling keeps the geometry identical), without the select/drag
   handlers: the rename input owns the interaction, blur (click-away)
   commits via `onLeave` exactly as documented above.
 - **Section stepping** (#31): ‹ › buttons in the center toolbar — and the
@@ -234,28 +227,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   disabled without a selection, and the virtual `Unknown`/`Ungrouped`
   nodes do not offer it (a path under them is meaningless — Unknown is
   name-driven, Ungrouped reserved).
-- **Full images get their own context menu** (#33
-  correction): the webkit
-  default menu appears but its entries ("open image in new window", …)
-  are not functional inside Tauri, so image areas intercept
-  `contextmenu` too and offer a working **open in system viewer** (the
-  Rust `open_image` command writes the BLOB to a temp file and hands it
-  to the opener plugin).
-  **Implementation notes — open_image temp file + rejection handling**
-  (#144, v3.37): (1) the temp file name was a fixed
-  `whot-image-{image_id}.jpg` — predictable (another local user could
-  squat the path first and have their file opened instead) and shared
-  across every open of that image, so a slow viewer still reading the
-  file raced a later overwrite. The name is now unique per open
-  (`whot-image-{image_id}-{pid}-{unix_nanos}.jpg`): same image opened
-  twice never clobbers the first viewer's file, and the path cannot be
-  pre-squatted. The file extension is derived from the pixel magic
-  (JPEG default, PNG recognised) instead of hard-coding `.jpg`.
-  (2) The frontend promise from "Open in system viewer" was fire-and-
-  forget: a rejection (no preview blob, viewer not found) surfaced as an
-  unhandled-rejection console error with no user feedback. The handler
-  now routes the failure through the standard error toast like every
-  other mutation path (#132).
+- **Full images get their own context menu** (#33): the webview default
+  menu's entries ("open image in new window", …) are not functional inside
+  Tauri, so image areas intercept `contextmenu` and offer a WhoT menu —
+  the **open in system viewer** entry (the Rust `open_image` command
+  writes the BLOB to a temp file and hands it to the opener plugin) and
+  the rotate entries (§4.32).
+  **The `open_image` temp file is unique and magic-sniffed** (#144):
+  the name `whot-image-{image_id}-{pid}-{unix_nanos}.jpg` is unique per
+  open — the same image opened twice never clobbers the first viewer's
+  still-loading file, and the path cannot be pre-squatted by another
+  local user — and the extension is derived from the pixel magic
+  (JPEG default, PNG recognised), not hard-coded. The frontend handler
+  routes a failure (no preview blob, viewer not found) through the
+  standard error toast like every other mutation path (#132).
 - **Resizable panes** (#34): the left/right pane dividers and the #25 split
   divider are draggable with clamps and double-click reset (session state);
   the face/image grids already reflow via `auto-fill` and follow the pane
@@ -270,16 +255,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Right pane — person detail** (when a person is selected): name (editable
   for known persons), group path (editable, `|`-separated; empty ⇒
   Ungrouped), note, primary-face picker, refcrops list.
-  **Implementation note — the avatar click** (#145, v3.38): the note above
-  says "primary-face picker", but the picker is the refcrop list; the
-  large avatar *is* the primary face and its click handler used to call
-  `setPrimary(primary_face_id)` — a self-no-op that silently ignored every
-  click under a tooltip claiming "make this the primary face". The avatar
-  click now opens the **full-image focus mode** for the primary face's
-  image (the same `confirmContext` → `setSplitImageId` path as the card
-  double-click and the "Open full image" menu entries), with the
-  tooltip/title saying so; when the person has no primary face there is
-  nothing to open and the click stays inert.
+  **The avatar click opens the primary face's image** (#145): the large
+  avatar *is* the primary face, and clicking it opens the **full-image
+  focus mode** for that face's image (the same `confirmContext` →
+  `setSplitImageId` path as the card double-click and the "Open full
+  image" menu entries), with the tooltip/title saying so; when the person
+  has no primary face there is nothing to open and the click stays inert.
+  (Primary-face *setting* is the refcrop list above, not the avatar.)
 - **Rule bar (bottom)**: always visible when ≥1 face is selected **or a
   stage is live**, in any center-pane view: `N selected · [Apply] [Accept]
   [Undo°] [Assign name…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
@@ -296,14 +278,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   An **empty** group or description label shows a **dimmed hint** instead of
   a bare dash — group: e.g. `Friends|School`, description: the neutral word
   **`description`** — so the row reads as “where this may go / what may be
-  noted” rather than as a hole (#119; #130 replaced the feature-example
-  hint `glasses|beard`, which read as inappropriate on women — the useful
-  example stays where it helps: the **Edit dialog placeholder**
+  noted” rather than as a hole (#119/#130; the feature-example hint
+  `glasses|beard` lives in the Edit dialog's placeholder
   `e.g. beard|glasses`). The section-heading rule labels use
   the same hints. The hint is dim like the old empty colour; real values
-  keep their current colours. (The label’s old `empty` modifier class
-  collided with the app-level `.empty` no-results rule — 3rem of padding on
-  every empty label row — and was renamed `is-empty`, #119.)
+  keep their current colours. (The empty-state modifier class is
+  `is-empty`, distinct from the app-level `.empty` no-results rule,
+  #119.)
   Double-click opens the full-image focus mode (§3).
 - **Accept/reject asymmetry** (#63): *accepted* (`confirmed`) is the
   default status, so the card's reject **button** is the only styled
@@ -382,8 +363,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    inside the group (PK `(person_id, description, seq)`). Manual promotion
    of any confirmed face is possible; pinned rows carry `pinned=1`, are
    excluded from auto-selection and survive recomputation. `face_id` is
-   UNIQUE per row (a face is a refcrop of at most one person). The old
-   `pin:`-prefix convention is gone (schema v1.5).
+   UNIQUE per row (a face is a refcrop of at most one person).
 7. **Face `name` derivation** ⇒ `person.name[-description]-seq`; `seq` is
    per (person, description) as in the importer, computed as `MAX(seq)+1`
    (gap-proof, so labels stay unique within a person even after faces are
@@ -402,24 +382,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    cosine rule and default 0.40 threshold as the importer — it is a display
    aid for impostors, it does *not* re-cluster or reassign anything; the
    importer's grouping is authoritative (no redundant global re-clustering).
-   Since 1.4 the clustering runs **within each appearance group** (distinct
+   The clustering runs **within each appearance group** (distinct
    `COALESCE(description,'')`), against the same primary-face reference
    (§4.9/§3), so another legitimate appearance reads as its own appearance
    section instead of an impostor cluster — and a true impostor still shows
    as a low-similarity cluster inside the appearance it impersonates.
-   **Implementation notes — corrupted embeddings must degrade, not panic**
-   (#149, v3.36): the clustering is display-only code that must never take
-   the command down. A length-valid embedding blob can still decode to
-   non-finite f32 components, and `f32::partial_cmp` returns `None` for
-   `NaN`, so the historical `sort_by(...partial_cmp(...).unwrap())` sites
-   panicked the Tauri command on rows that #45's length check lets
-   through. (1) Similarities are computed defensively: a non-finite cosine
-   result (`NaN`/±inf) is treated exactly like the #41 missing-embedding
-   case — "no similarity evidence", `0.0` — which also keeps every stored
-   similarity finite. (2) The two ordering unwraps that remained after the
-   cluster/appearance sorts already went `unwrap_or(Ordering::Equal)` in
-   v1.6 use `.unwrap_or(Ordering::Equal)` too, so no comparison site can
-   panic on non-finite data.
+   The clustering is display-only code that must **degrade, not panic**,
+   on corrupted embeddings (#149): a non-finite cosine result (`NaN`/±inf)
+   is treated exactly like the #41 missing-embedding case — no similarity
+   evidence, `0.0`, keeping every stored similarity finite — and no
+   comparison site may `unwrap` a `partial_cmp` on non-finite data
+   (orderings use `unwrap_or(Ordering::Equal)`).
    A **cluster-group toggle** sits in the top bar, left of the status
    filter (#99): `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
@@ -433,17 +406,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     `Show [All | New | Accepted | Rejected]` in the top bar: one
     setting (whotrc `face_filter`: `all` (default) | `provisional` — UI
     label **New**, the face-card badge's word (#100) — | `confirmed` —
-    UI label **Accepted** — | `rejected`) replacing
-    `show_rejected` (whose default `true` *was* `all`; the legacy key is
-    ignored on read). The chosen status decides **every view's**
+    UI label **Accepted** — | `rejected`). A legacy `show_rejected` key
+    in the config file is ignored on read. The chosen status decides
+    **every view's**
     visibility: the person view's cluster sections and its Rejected
     section, image grids and full-image rectangles, the review grid, the
     **left-pane person presence and counts** — a person with no matching
     face leaves the tree and the surviving bucket drives its counts (#28
     generalised) — and the **right-pane overview totals**. `link_status`
     never changes: the filter is pure display. Switching it **drops
-    non-matching faces from the selection** (§4.10's original rule,
-    generalised): faces the filter hides can never be bulk-acted on.
+    non-matching faces from the selection**: faces the filter hides can
+    never be bulk-acted on.
     **Review special case**: `All`/`Provisional` show the pending set
     (provisional — the default review is unchanged), `Accepted` shows
     confirmed faces, `Rejected` shows rejected faces.
@@ -489,24 +462,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     entry point. Actions that cannot apply to more than one face —
     **★ set as primary** and **◈ add as reference** — are greyed out
     (disabled) whenever the effective scope would exceed one face, never
-    silently applied to a single card. **Per-card inputs (name,
-    description) honour the same scope** (#58): editing one on a card that
-    is part of a selection applies the change to the **whole
-    selection**, following the general GUI rule that whenever a
-    selection is active, edits apply to the whole set — for all
-    editable properties, unless an action is explicitly single-item.
-    For the name input this also means the #29 disambiguation dialog is
-    suppressed while the card is selected: an active selection — **of
-    any size, including a single face** (#59) — is itself the answer to
-    "just this face or whole group?", so the dialog appears only for
-    cards outside any selection.
+    silently applied to a single card. **Opening the shared Edit dialog
+    follows the selection** (#101, §4.24): on a card inside the current
+    selection the selection is kept — an active selection, **of any size,
+    including a single face** (#59), is itself the answer to "just this
+    face or whole group?"; on a card outside it, the selection becomes
+    that card. Cards and headers carry labels, not inputs (§4.24).
 15. **Split-pane lifecycle** (#51/#52, #62) ⇒ the double-click image
     split:
     - a **tree-row select** (plain, ctrl/cmd or shift) and **person
       stepping** (‹ › / ← →) **always** end it — selecting another
       person means the attention has shifted to them, whether or not
-      they have a face on the open image (#62, superseding #52's
-      relevance check);
+      they have a face on the open image (#62);
     - a **card/rectangle select** ends it when the new selection's
       `image_id` differs from `splitImageId` and it **stays open** when
       the new selection is a face **on the open image** (focus mode
@@ -549,7 +516,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     The virtual `Unknown`/`Ungrouped` nodes are never pruned while they
     hold persons.
 17. **Selection accelerators** (#53) ⇒ Ctrl/⌘-click on a face-card body
-    toggles that card in the selection — the tree's idiom, now mirrored
+    toggles that card in the selection — the tree's idiom, mirrored
     on cards; plain click stays inert so double-click-to-open is
     unaffected. **Ctrl-G** toggles the whole section: the one holding the
     hovered card, else the one holding the most recently selected card
@@ -588,8 +555,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     is hidden while the mode is active; it returns when the mode ends:
     × / **Esc**, a left-pane selection or person stepping (§4.15), or
     explicit navigation (top-bar tabs, *Review*). Selection and view
-    state survive as before; the former side-by-side split and its
-    draggable divider are gone.
+    state survive as before; there is no side-by-side split (the regular
+    grid replaces it when the mode ends).
 20. **Input families** (#56) ⇒ group-path inputs (`family|lombards`) and
     face-description inputs (`beard|glasses`) are **visually distinct**
     everywhere they appear: group paths get a solid accent-tinted frame
@@ -599,7 +566,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     colour-blind users, the hues only reinforce it. Applied to the
     section rule bar's group field, the face-card desc input, the
     AssignDialog/GroupDialog group fields and the detail pane's Group
-    field (Name/Note keep the default look; `Editable` gains a variant).
+    field (Name/Note keep the default look; `Editable` has a variant).
     The tints stay legible in the dark theme and clear of the
     warn/ok/bad status colours.
 21. **Auto-filled fields & name typeahead** (#67) ⇒ two related input
@@ -664,8 +631,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     anchor when it selects; Space follows the hovered card. A vanished
     anchor (filtered/removed card) degrades shift-click to a plain
     select. Double-click-to-open is unaffected.
-24. **Grid editing: labels + one Edit dialog** (#101 — replaces the
-    inline rule inputs of #72/#73 and their blur rules of #93) ⇒
+24. **Grid editing: labels + one Edit dialog** (#101) ⇒
     - **Cards and cluster headers show labels, not inputs**: the three
       value fields — **name, group, description** (headers gain the
       description label; cards show all three) — are per-object,
@@ -717,10 +683,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       selector is the *only* object-vs-selection disambiguation,
       chosen before anything runs — the confirmation dialog the Q2
       alignment circled around is unnecessary.
-    - **Stage / preview state — the pending set** (#123, replaces the
-      single-replacing stage and Q4’s selection-change dialog): the
+    - **Stage / preview state — the pending set** (#123): the
       stage is an **accumulating set of pending ops**, one per Apply —
-      `{faceIds, name?, group?, desc?}` bound to that Apply’s scope.
+      `{faceIds, name?, group?, desc?}` bound to that Apply's scope.
       The working loop is **Apply → change → Apply → … until Accept or
       Cancel**: Apply never commits, it only extends the set (screen
       preview on the labels, the `staged: …` strip shows the whole
@@ -729,30 +694,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the **same faceIds** replaces that op (latest wins); **Undo and
       Cancel/Esc discard the whole set** (owner ruling: Undo = Cancel —
       re-editing is just opening Edit… again).
-      **Implementation note — Apply always has a concrete target** (#147,
-      v3.45): the bar's Apply stays enabled while a staged set is live,
-      but the selection can be empty at that moment (staged ops survive
-      selection changes by design). Opening the Edit dialog then showed
-      every scope at `0 face(s)` — a dead dialog. With an empty
-      selection, `barApply` scopes the dialog's Selection onto the
-      **staged set's face ids** (largest staged set first), so the
+      **Apply always has a concrete target** (#147): the bar's Apply
+      stays enabled while a staged set is live even when the selection
+      is empty (staged ops survive selection changes by design) — with
+      an empty selection, `barApply` scopes the dialog's Selection onto
+      the **staged set's face ids** (largest staged set first), so the
       opened dialog always has a concrete target; when neither a
       selection nor a staged set exists, Apply is disabled anyway
       (RuleBar's `none && !stageLive`).
-      **Implementation note — a failed commit keeps the staged set**
-      (#139, v3.44): Accept used to wipe the set **before the first
-      write**, and each staged op ran as its own backend transaction —
-      a failure at op *k* silently discarded ops *k..n* (Q3 'text is
-      never dropped silently') while ops *1..k−1* stayed applied, and
-      `acceptFaces` never ran. The set is now cleared **only after the
-      whole commit lands**: the ops execute one by one and a failure
-      re-stages the failed op **and everything after it** (the applied
-      prefix stays; the error toast names the op that stopped the
-      commit), so the staged strip keeps showing what remains and
-      Accept can simply be retried. (The staged field writes are
-      idempotent, so the retry re-applies nothing visibly; the
-      all-or-nothing single-transaction backend command remains the
-      fuller fix and stays an open option.)
+      **A failed commit keeps the staged set** (#139): the set is
+      cleared **only after the whole commit lands** — the ops execute
+      one by one, and a failure re-stages the failed op **and everything
+      after it** (the applied prefix stays; the error toast names the op
+      that stopped the commit), so the staged strip keeps showing what
+      remains and Accept can simply be retried. The staged field writes
+      are idempotent, so the retry re-applies nothing visibly.
     - **No dialog inside the context** (#123): changing the selection
       while the set is live — clicking another card, extending the
       selection, opening Edit… on another card (whose selection rule
@@ -764,22 +720,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       (as Q4 always did): *accept* commits the set first, then the
       context switches; *cancel* discards it, then the context switches.
       Text is never dropped silently (Q3).
-      **Implementation note — "Open image" is a view-context change**
-      (#142, v3.46): the image menu's "Open image" and the RollsPane
-      image-tile click rebound the centre pane to another image with a
-      bare `setView/setImageId` — silently carrying a live staged set
-      into the new context, one menu row below a "Open full image
-      (focused)" entry that correctly asked. Both entry points now go
-      through `confirmContext` like every tab/step/tree/focus route.
-    - **Implementation note — the stored action is object-wrapped**
-      (#123 fix, v3.31): the pending action is kept as `useState<{fn} | null>`
-      and set with `setContextConfirm({ fn: action })`. A bare function passed
-      to a `useState` setter is read by React as a function-form updater and
-      is **executed immediately** (storing its `undefined` return) instead of
-      being stored — which silently disabled the context-change dialog (the
-      action ran on its own and the dialog never rendered). Found via the
-      gui-mock C5 check; the object wrapper makes the value non-callable so
-      React stores it verbatim.
+      **"Open image" is a view-context change** (#142): the image menu's
+      "Open image" and the RollsPane image-tile click rebind the centre
+      pane to another image and therefore go through `confirmContext`
+      (discard-or-accept of a live staged set) like every
+      tab/step/tree/focus route.
+    - **The stored context-confirm action is object-wrapped** (#123):
+      the pending action is kept as `useState<{fn} | null>` and set with
+      `setContextConfirm({ fn: action })` — a bare function passed to a
+      `useState` setter is read by React as a function-form updater and
+      **executed immediately** (storing its `undefined` return) instead
+      of being stored, which would silently disable the dialog (gui-mock
+      C5 locks the wrapper in place).
     - Commit keeps the #77 field routing — a name change through
       `assign_person` (group applied on create/UnknownN-rename, later
       explicit groups via `set_person_group`), a group-only change
@@ -787,25 +739,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       setter — an empty field counts as unchanged, unowned faces
       surface a toast. **Rejected faces stay sticky** (§4.2): a stage
       may display on them, the commit skips them (F2).
-      **Implementation note — the F2 drop is owned by `doReject` and the
-      filter change** (#141, v3.43): the last-seen "pending ops touching
-      rejected faces are dropped" only ran on the Edit-dialog Reject
-      branch; the bar ✗, the `R` key, card ✗ and the context-menu Reject
-      left the staged previews in place — a preview lying on
-      now-rejected faces, committed by the next Accept anyway — and a
-      filter switch (§4.10) only un-selected the hidden faces, leaving
-      their invisible ops in the set for the next commit. The drop now
-      lives inside `doReject` (so every reject entry point drops the
-      moot stages by construction) and `changeFaceFilter` drops the
-      stages of the faces the new filter hides — invisible staged ops
-      would otherwise be both unseen and silently committed.
-    - **Retired**: inline inputs on cards and headers, the header
-      `apply` button, the #29 FaceAssignDialog, the AssignDialog as a
-      separate component (`Assign name…` opens this dialog with scope
-      preset to Selection), the #93 `focusLeftHeading` machinery, and
-      every auto-apply-on-focus rule. The right-panel DetailPane and
+      **The F2 drop is owned by `doReject` and the filter change**
+      (#141): dropped pending ops ("rejected faces stay sticky", §4.2)
+      are not special-cased per entry point — the drop lives inside
+      `doReject`, so every reject path (bar ✗, `R` key, card ✗,
+      context-menu Reject, Edit-dialog Reject) drops staged ops touching
+      now-rejected faces by construction, and `changeFaceFilter` drops
+      the stages of the faces the new filter hides — staged ops on
+      rejected or hidden faces must never remain in the set for the
+      next commit (invisible and silently committed otherwise).
+    - The right-panel DetailPane and
       the tree inline rename **stay inline** (G4: a single person, no
-      scope ambiguity).
+      scope ambiguity); the grid's cards, cluster headers and rule bar
+      carry only labels plus the shared Edit dialog (no inline inputs, no
+      per-object apply buttons, no auto-apply on focus).
 25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
     selection the mouse cursor decides the target: a face-card context
     menu opened on an **empty selection selects that card first**
@@ -826,8 +773,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - a **Copy** button writes the full, untruncated message to the
       clipboard (one click; includes the operation that failed and the
       raw error string);
-    - the toast no longer dismisses on a plain click (which swallowed
-      selections): dismissal is an explicit **✕** button, or the toast
+    - the toast does **not** dismiss on a plain click (clicks exist for
+      selecting the text): dismissal is an explicit
+      **✕** button, or the toast
       stays until replaced/cleared; selecting text inside it never
       dismisses it.
     - **info vs error** (#132): expected no-ops and guidance — “nothing to
@@ -917,28 +865,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     *Apply group…*) so right-clicking a person finds the exit without
     knowing the selection-first flow.
 
-    **Implementation notes — making the #126 cap actually apply** (v3.34):
-    1. **`src/styles.css` was corrupted since `631a90e` (#67, v3.2)**: the
-       typeahead block had been appended twice, the first copy **truncated
-       mid-declaration** (`.typeahead-list li.hi { background: color-mix(
-       in srgb, var(--accent) 30` — no `)`, no `;`, no `}`). The
-       unterminated `color-mix(` desyncs the CSS parser: the browser
-       discards the broken rule while resyncing, and in Firefox the last
-       rule applied in the whole sheet was the *second* (complete) `li.hi`
-       copy — so **nothing after the typeahead section was ever applied**,
-       including this entire dialog (viewport cap, scrolling list, pinned
-       action row, member-row and chip styling). That is why #126 looked
-       broken on its first live test. Fixed by deleting the truncated
-       duplicate; gui-mock **C15** locks it: the served sheet must parse to
-       its final rule (`.merge-spacer`) and the open dialog's computed
-       `max-height` must be the 86vh cap, not `none`.
-    2. **`.merge-cluster` carries `flex-shrink: 0`** — `.merge-list` is a
-       flex column, and without it a capped list does not scroll, it
-       *shrinks every cluster item* down to its border height (the
-       cluster's `overflow: hidden` then clips the rows away), so a real
-       person set would still not scroll.
+    **Dialog-cap contracts** (#126, gui-mock C15): the cap must actually
+    apply when the dialog is open — the served style sheet parses to its
+    final rule (`.merge-spacer`) and the open dialog's computed
+    `max-height` is the 86vh cap, not `none` (a truncated earlier copy
+    of the typeahead block desyncs the whole sheet: nothing after the
+    typeahead section applies, this dialog included — C15 locks both).
+    Also **`.merge-cluster` carries `flex-shrink: 0`** — `.merge-list`
+    is a flex column, and without it a capped list does not scroll, it
+    *shrinks every cluster item* down to its border height (the
+    cluster's `overflow: hidden` then clips the rows away).
 
-    **Settings**: `whotrc.json` gains `merge_name_distance` (default 2,
+    **Settings**: `whotrc.json` carries `merge_name_distance` (default 2,
     clamped 1–3) and `merge_suffix_aliases` (default `[]`), with serde
     defaults so existing files keep loading; editable from the review
     dialog. The detection functions live in one pure TS module,
@@ -1008,14 +946,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     create when needed, then continue with the import.
 
     **Provider selection** (#91): **CPU is the default** — MIGraphX over
-    this machine's amdgpu wedges the GPU (verified 2026-10-21 09:37:
-    `ring gfx_0.0.0 timeout` → `MES unrecoverable` → every reset fails →
-    gnome-shell SIGABRT kills the session; the then-running app died
-    afterwards as a victim in WebKit's `createEGLFence`), so the unsafe
-    path must be requested: `--gpu` opts in to MIGraphX (keeping the
+    this machine's amdgpu wedges the GPU (ring timeout → MES unrecoverable
+    → every reset fails → the session itself crashes), so the unsafe path
+    must be requested: `--gpu` opts in to MIGraphX (keeping the
     existing automatic CPU fallback when the provider fails to initialise
     or probe), while `--cpu` stays accepted as a **deprecated no-op** —
-    it now *is* the default, so old invocations keep working. The
+    it *is* the default, so old invocations keep working. The
     startup header reports the selected provider (always printed, even
     under `-q`), so every run's log states which one executed.
     `build_parser()` / `validate_args()` are extracted from `main()` so
@@ -1053,11 +989,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       selection (#105, #110, #123). Global `Enter` accepts **in Review
       only** (`A` works in every view, Q10); the advance plan anchors at
       the **last-selected card**, else the hovered card, else the first
-      accepted id (#110). The rewrite runs **only on success** (#140,
-      v3.42): a failed accept surfaces its error toast and leaves the
-      selection — the old code wiped the set and pointed the cursor at a
-      plan computed from pre-failure state even though nothing had
-      changed.
+      accepted id (#110). The rewrite runs **only on success** (#140): a
+      failed accept surfaces its error toast and leaves the selection —
+      nothing about the selection, the staged set or the advance plan
+      changes on failure.
     - **Person-exhausted fall-through** (#125): in Review, when
       **Accept, Reject or Delete Person** leaves the current person with
       **no faces left** (no sections for it in the refreshed snapshot,
@@ -1069,43 +1004,31 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       ‹ › code path, so cursor-as-target (#75) and list-end behaviour
       follow the stepping rules. At the end of the list the context
       stays and a toast says the review is exhausted.
-      **Implementation note — the exhaust mark is strictly bound**
-      (#148, v3.41): the pre-mutation mark (`exhaustAtRef`) stored only a
-      step index. Two holes let a stale mark fire much later: the consume
-      effect returned early **without resetting** when the refreshed
-      snapshot landed while the user had left Review, and consumption
-      read *whenever* the current `personId` happened to be — a
-      window-refocus refresh long after the verdict could auto-advance a
-      different person from the *marked* step index. The mark now
-      remembers which person it was set for, is consumed
-      unconditionally (so it can never linger across view switches), and
-      acts only when the consumer is still the marked person in Review —
+      **The exhaust mark is strictly bound** (#148): the pre-mutation
+      mark (`exhaustAtRef`) remembers **which person** it was set for,
+      is consumed unconditionally (so it can never linger across view
+      switches, even if the snapshot refresh lands elsewhere), and acts
+      only when the consumer is still the marked person in Review —
       anything else silently drops it.
     - **An open modal owns the keyboard**: while any layer above
       preview-undo in Q8's stack is open (dialog, menu, settings), every
       other shortcut is suppressed (#107, #110).
-      **Implementation note — one overlay registry instead of hand lists**
-      (#138, v3.47): the rule was enforced by two hand-maintained state
-      lists in App (the Esc-stack guard and the letter/arrow guard), and
-      they had drifted from the dialog inventory: the FaceMergeDialog,
-      the tree's context menus and GroupDialog, the
-      MergeSimilarDialog's row menu and (in the shortcut list only)
-      SettingsPopover were invisible to them — e.g. Esc with a
-      face-merge confirm open also closed the full image behind it, and
-      A/R/Space/arrows acted on the grid under a tree menu. Every modal
-      component now registers itself with a tiny `OverlayProvider`
+      **One overlay registry instead of hand lists** (#138): every modal
+      component registers itself with the `OverlayProvider`
       (`src/overlays.tsx`) while it is mounted — all overlays are
       mounted exactly while they are open, so the mount lifetime is the
-      open lifetime, covering App-owned *and* child-owned layers — and
-      App's both guards derive from the single count. One source of
-      truth: adding a modal in the future means using the hook, not
-      remembering two lists.
+      open lifetime, covering App-owned *and* child-owned layers (tree
+      menus, GroupDialog, the merge dialogs' row menus, SettingsPopover)
+      — and App's both guards (Esc stack, letter/arrow shortcuts) derive
+      from the single `useOverlayCount()`. One source of truth: adding a
+      modal in the future means using the hook, not remembering state
+      lists.
     - Rejected faces stay sticky (F2); the Esc ordering of Q8 holds:
       dropdown → menus and dialogs → preview-undo → cancel field edit →
       split close.
 31. **Render-performance contract** (#98) ⇒ Review mode must stay
-    interactive over thousands of cards (4116 faces in ~1226 sections,
-    ~70k DOM nodes today):
+    interactive over thousands of cards (4116 faces, ~1061 sections,
+    ~56k DOM nodes in the default review view):
     - **Hover is not app state**: the pointer crossing cards must not
       re-render the tree — a `hoverRef` feeds the cursor-as-target
       shortcuts (#75) and the highlight is pure CSS
@@ -1120,12 +1043,24 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       signature (which of its face ids are selected) and a
       staged-fields key — a card toggle re-renders the one or two
       touched sections, not all ~1200. Measured on the 4116-face DB
-      (gui-mock R2): 87–153 ms per toggle before #109, 16–50 ms after —
-      the interactive cost is tens of ms, not the full-tree re-render.
-    - Deferred, tracked in #111:
-      section/window virtualisation (IntersectionObserver, no new
-      dependency) and snapshot payload size — decide after measuring
-      1–4, not before.
+      (gui-mock R2): a toggle's interactive cost is tens of ms
+      (~16–50 ms), not a full-tree re-render.
+    - **Deferred: section/window virtualisation and snapshot payload
+      thinning** (#111 review, measured post-wave on gui-mock R2 +
+      DOM census, headless Firefox): the interactive bar is met —
+      selection toggles 14–17 ms at the very tail of the ~356k px
+      scroll (worst case for the section memos), 8×8-page scroll jumps
+      11–29 ms per frame after warm-up. Virtualisation would improve
+      only the initial mount (2044 cards / 1061 sections / 56.3k DOM
+      nodes; ~350 ms to paint the cards, lazy image fetches settle
+      ~2 s in) — acceptable, so it stays deferred; revisit if
+      board-scale DBs (10k+ faces in one view) make the mount or scroll
+      cost user-visible. Snapshot payload: 2.06 MB JSON over IPC
+      (faces ≈ 298 B/face, images 0.56 MB, persons 0.27 MB), **no
+      BLOBs** (crops/thumbnails are lazily fetched per card, §2); the
+      thinnable fields (`created_at`, `state`, derived `name` ≈ 200 KB
+      total) are not worth a contract churn — payload thinning is
+      likewise deferred.
 32. **Image & face-crop rotation** (#122; import half in
     `docs/scripts-design.md` #118) ⇒ display rotation is **server
     state**, one column per entity, applied on every load:
@@ -1135,14 +1070,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the rectangles stay aligned; no coordinate math for display).
       Controls: **⟲/⟳ buttons** on the focus mode's pinned header row
       and **context-menu entries** on the image (“Rotate 90°
-      counter-clockwise / clockwise”) — the image gains a WhoT context
-      menu, superseding #33's “full images keep the default webview
-      menu” for these entries. Persisted by `rotate_image(image_id,
+      counter-clockwise / clockwise”) — these complete the image's WhoT
+      context menu (§3: system viewer, rotate; not the webview default
+      menu). Persisted by `rotate_image(image_id,
       ±90)`; the snapshot carries the angle and the renderer applies
       `transform: rotate(⟨angle⟩deg)` from it — rotate once, it sticks.
-    - **`faces.rotation`** — the former dead `faces.orientation`
-      column (0/4116 set), **renamed** and repurposed (0/90/180/270,
-      default 0): display rotation of the **face crop**, **independent
+    - **`faces.rotation`** — display rotation of the **face crop**
+      (0/90/180/270, default 0), **independent
       of the image rotation** (crop pixels are fixed at creation; both
       rotations are pure display state — image 90° CW + crop 90° CCW is
       legal). Same control pattern on the card: ⟲/⟳ buttons on the card
@@ -1199,8 +1133,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - No other drop targets (no branch, no image area, no section header)
       and no other drag sources (card drags only — section headers are not
       draggable).
-    - **Implementation notes — WebKit drag fixes** (v3.33, live-test fixes
-      to the v3.32 feature):
+    - **WebKit drag contracts**:
       1. **The face crop (and the tree avatar) are `draggable={false}`**.
          Without this, pressing on the image — most of a card's area —
          starts a **native image drag** (a `text/uri-list` URL drag with
@@ -1226,8 +1159,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
 | Document | Contents |
 | --- | --- |
-| `README.md` | user-facing setup & usage, **Tauri command reference** (the former §5), **repository layout** (the former §6), run/build (the former §7) |
-| `docs/scripts-design.md` | Python tooling: **§8** legacy harvest (staging DB), **§9** harvest import (staging → copy of `faces.db`) — section numbers unchanged from this document's v2.0/v3.0 |
+| `README.md` | user-facing setup & usage, **Tauri command reference**, **repository layout**, run/build |
+| `docs/scripts-design.md` | Python tooling: **§8** legacy harvest (staging DB), **§9** harvest import (staging → copy of `faces.db`) — section numbers shared with this document's § numbering |
 | `docs/schema-design.md` | `faces.db` DDL design: tables, identities, schema-version gate, drop & recreate |
 | `docs/backend-design.md` | Rust backend architecture: `lib.rs` command surface, `db.rs` data layer, path/env resolution, derived-state maintenance |
 | `AGENTS.md` | agent conventions: branching, versioning, testing |
