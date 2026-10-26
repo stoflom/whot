@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.47** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.48** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1125,7 +1125,22 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - Deferred, tracked in #111:
       section/window virtualisation (IntersectionObserver, no new
       dependency) and snapshot payload size — decide after measuring
-      1–4, not before.
+      1–4, not before. **#111 review (v3.48, post-wave, gui-mock R2 +
+      census, 4116-face DB, headless Firefox)**: the interactive bar is
+      met — selection toggles 14–17 ms at the very tail of the scroll
+      (worst case for the section memos), 8×8-page scroll jumps 11–29 ms
+      per frame after warm-up, all 17 contract checks pass. Initial
+      mount stays the one axis virtualisation would improve: the default
+      review view (2044 cards / 1061 sections, 56.3k DOM nodes, 356k px
+      scroll height) paints its cards in ~350 ms and settles image
+      fetches ~2 s in — acceptable, so virtualisation stays deferred;
+      revisit if board-scale DBs (10k+ faces in one view) make the mount
+      or scroll cost user-visible. Snapshot payload: 2.06 MB JSON over
+      IPC (faces 1.23 MB ≈ 298 B/face, images 0.56 MB, persons 0.27 MB),
+      **no BLOBs** (crops/thumbnails are lazily fetched per card, §2);
+      the thinnable fields (`created_at`, `state`, derived `name` ≈
+      200 KB total) are not worth a contract churn — payload thinning is
+      likewise deferred.
 32. **Image & face-crop rotation** (#122; import half in
     `docs/scripts-design.md` #118) ⇒ display rotation is **server
     state**, one column per entity, applied on every load:
