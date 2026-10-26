@@ -23,23 +23,11 @@ export function selectAllIfAuto(e: { currentTarget: HTMLInputElement }): void {
 /** onFocus/onClick handler for group-path inputs in *replace* mode:
     select the whole value — a group path is a structural value that is
     normally replaced wholesale, never edited in place (#67 follow-up).
-    Bound only when the prefill is not an append target (#92 — see
-    groupInputMode). */
+    Every group dialog opens in replace mode (#164 retired #92's append
+    mode with its producer). */
 export function selectAll(e: { currentTarget: HTMLInputElement }): void {
   const el = e.currentTarget;
   requestAnimationFrame(() => {
     if (document.activeElement === el) el.select();
   });
-}
-
-/** #92 — how a group-path dialog opens (gui-design §4.18):
-    'append'  the caller prefilled `<path>|` (root/branch right-click →
-              Add group…): keep the text, caret after the pipe, no
-              select-all — the user is adding a twig under that path;
-    'replace' anything else — rename/move a whole branch path, move
-              persons to a group, the empty top-level prefill: select
-              the structural value wholesale (#67); selecting an empty
-              value is a no-op. */
-export function groupInputMode(defaultPath: string): "append" | "replace" {
-  return defaultPath.endsWith("|") ? "append" : "replace";
 }

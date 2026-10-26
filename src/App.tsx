@@ -1770,6 +1770,12 @@ export default function App() {
               }
               void mutate(() => api.movePersonsToGroup(ids, path));
             }}
+            // #164 (§4.18): 'Add group…' on person rows — ADD a membership
+            // (from='' deletes nothing, INSERT OR IGNORE files them; every
+            // current group is kept)
+            onAddGroup={(ids, path) =>
+              void mutate(() => api.movePersonsBetweenGroups(ids, "", path))
+            }
             onError={setError}
             onOpenMerge={() => setMergeOpen(true)}
             onMergeInto={openMergeInto}
