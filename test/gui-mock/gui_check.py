@@ -69,6 +69,11 @@ Checks (contract refs: docs/gui-design.md):
       renders no toolbar at all (nav + seg gone, full grid height) and
       ←/→ are inert there (no person-view yank); Review keeps nav only;
       the person view keeps nav + seg
+  C28 'Add group…' lives on person rows only (#164, v3.65): branch
+      menu keeps rename/move + delete but no add entry, the root empty
+      space offers no menu at all, and the person dialog ADDS the typed
+      path as another membership (current groups kept; Move keeps
+      replace-all)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1659,6 +1664,114 @@ def c27_center_toolbar_view_matrix(t):
            f"bar={after_key_bar} (want Rolls/False)")
 
 
+def c28_add_group_person_rows_only(t):
+    """#164 (v3.65): 'Add group…' lives on person rows only — the branch
+    menu keeps Rename/move + Delete but no add entry, the tree root's
+    empty space offers no menu at all (#54 superseded), and the person
+    dialog ADDS the typed path as another membership: every current
+    group is kept (Move to group… keeps the replace-all semantics)."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def ctx_labels():
+        return js(t, "return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim())")
+
+    def close_menu():
+        js(t, "document.body.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}))")
+        time.sleep(0.3)
+
+    # 1) branch menu — real branch 'Friends': no Add, keeps rename/delete
+    js(t, r"""
+      const n = [...document.querySelectorAll('.tree-node')]
+        .find(x => x.querySelector('.tree-node-name')?.textContent === 'Friends');
+      if (n) n.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 80, clientY: 220}));
+      window.__C28_branch = !!n;
+    """)
+    time.sleep(0.4)
+    branch_found = js(t, "return window.__C28_branch")
+    branch_items = ctx_labels()
+    close_menu()
+    branch_closed = js(t, "return document.querySelectorAll('.ctx-menu').length") == 0
+
+    # 2) root empty space — no menu at all
+    js(t, r"""
+      const root = [...document.querySelectorAll('.person-tree > div')]
+        .find(d => !d.classList.contains('tree-header'));
+      root?.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 60, clientY: 420}));
+    """)
+    time.sleep(0.4)
+    root_menus = js(t, "return document.querySelectorAll('.ctx-menu').length")
+
+    # 3) person row — 'Add group…' → dialog → typed path becomes ANOTHER membership
+    picked = js(t, r"""
+      const p = window.__MOCK_SNAP.persons.find(x =>
+        (x.groups?.length ?? 0) > 0 && x.counts?.total > 0 && !/^Unknown/.test(x.name));
+      if (!p) return null;
+      window.__C28 = {id: p.id, groups: p.groups.slice()};
+      const row = document.querySelector(`.tree-person[data-person-id='${p.id}']`);
+      if (!row) return null;
+      row.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 120, clientY: 300}));
+      return {id: p.id, groups: p.groups.slice()};
+    """)
+    time.sleep(0.4)
+    person_items = ctx_labels()
+    clicked = js(t, r"""
+      const it = [...document.querySelectorAll('.ctx-item')]
+        .find(x => x.textContent.trim() === 'Add group…');
+      if (!it) return null;
+      it.click();
+      return true;
+    """)
+    time.sleep(0.5)
+    dlg = js(t, r"""
+      const h = document.querySelector('.dialog h3')?.textContent ?? null;
+      return {open: !!document.querySelector('.dialog'), title: h};
+    """)
+    new_path = "GuiC28Grp"
+    typed = js(t, r"""
+      const el = document.querySelector('.dialog input');
+      if (!el) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, arguments[0]);
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      return true;
+    """, new_path)
+    submitted = js(t, r"""
+      const b = [...document.querySelectorAll('.dialog-actions button')]
+        .find(x => x.textContent.trim() === 'add group');
+      if (!b) return false;
+      b.click();
+      return true;
+    """)
+    time.sleep(1.4)
+    after = js(t, r"""
+      const p = window.__MOCK_SNAP.persons.find(x => x.id === window.__C28.id);
+      const rows = document.querySelectorAll(`.tree-person[data-person-id='${window.__C28.id}']`).length;
+      return {groups: p ? p.groups.slice() : null, rows: rows,
+              dialogGone: !document.querySelector('.dialog')};
+    """)
+
+    no_add_on_branch = not any(x.startswith("Add group") for x in branch_items)
+    branch_keeps = (any("Rename/move group" in x for x in branch_items)
+                    and any("Delete group" in x for x in branch_items))
+    person_has_add = "Add group…" in person_items
+    groups_ok = (after.get("groups") is not None and picked is not None
+                 and new_path in after["groups"]
+                 and all(g in after["groups"] for g in picked["groups"]))
+    rows_ok = after.get("rows") == len(after.get("groups") or [])
+    ok = (branch_found and branch_closed and no_add_on_branch and branch_keeps
+          and root_menus == 0 and picked is not None and person_has_add
+          and clicked and dlg.get("open") and typed and submitted
+          and after.get("dialogGone") and groups_ok and rows_ok)
+    record("C28 branch/root have no Add group…, person row adds a membership (#164)", ok,
+           f"branch found={branch_found} closed={branch_closed} items={branch_items}; "
+           f"root menus={root_menus}; person items has-add={person_has_add}; "
+           f"dialog={dlg} typed={typed} submitted={submitted}; groups "
+           f"{picked['groups'] if picked else None} → {after.get('groups')} "
+           f"(kept + {new_path}: {groups_ok}); rows={after.get('rows')} "
+           f"(want {len(after.get('groups') or [])}): {rows_ok}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1694,6 +1807,7 @@ def main():
         c25_merge_dialog_cancel_button(t)
         c26_rolls_path_filter(t)
         c27_center_toolbar_view_matrix(t)
+        c28_add_group_person_rows_only(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
