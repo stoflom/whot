@@ -1060,13 +1060,10 @@ export default function App() {
   // user's own hand there). The plan comes from the pre-accept sections,
   // which stay valid across the refresh — see reviewFlow.ts.
   const acceptAndNext = useCallback(
-    async (ids: number[], preCommit?: () => Promise<void>) => {
+    async (ids: number[]) => {
       if (!snap) return;
       if (view !== "review" || splitImageId != null) {
-        await mutate(async () => {
-          await preCommit?.();
-          await api.acceptFaces(ids);
-        }, true);
+        await mutate(() => api.acceptFaces(ids), true);
         return;
       }
       markExhaust(); // #125: accepting may empty the current person
@@ -1080,10 +1077,9 @@ export default function App() {
       // unconditionally — a failed accept (error toast from mutate) wiped
       // the selection and pointed the cursor at a plan built from
       // pre-failure state. Everything below runs only on success.
-      const ok = await mutate(async () => {
-        await preCommit?.();
-        await api.acceptFaces(ids);
-      }, false);
+      // (#139: commitPending runs the staged ops before calling this —
+      // each op its own mutate so a mid-set failure can be re-staged.)
+      const ok = await mutate(() => api.acceptFaces(ids), false);
       if (!ok) return;
       setSel(new Set(plan?.faceIds ?? []));
       const first = plan?.faceIds[0];
@@ -1188,11 +1184,26 @@ export default function App() {
   const commitPending = useCallback(
     async (all: Stage[]) => {
       if (all.length === 0) return;
-      setPending([]);
+      // #139: the whole set stays staged until the commit lands — the
+      // old code wiped it before the first write, so a mid-commit
+      // failure silently discarded every not-yet-applied op (§4.24
+      // 'Accept commits every op'; Q3 text is never dropped silently)
       const union = [...new Set(all.flatMap((o) => o.faceIds))];
-      await acceptAndNext(union, async () => {
-        for (const op of all) await stageOps(op);
-      });
+      let done = 0;
+      try {
+        for (; done < all.length; done++) {
+          await stageOps(all[done]);
+        }
+      } catch (e) {
+        // the applied prefix (ops 1..done−1) is in; the failed op and
+        // everything after it stays staged and retryable — Accept again
+        // re-runs the idempotent field writes and continues from here
+        setError(`Accept stopped at op ${done + 1}/${all.length}: ${e}`);
+        setPending(all.slice(done));
+        return;
+      }
+      await acceptAndNext(union);
+      setPending([]);
     },
     [acceptAndNext, stageOps]
   );
