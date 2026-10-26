@@ -21,6 +21,7 @@ import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
   groupByDescription,
   matchesStatusFilter,
+  personTreeMembers,
   type ClusterGroup,
   type FaceFilter,
 } from "./viewFilters";
@@ -196,18 +197,21 @@ export default function App() {
   const faceFilter = (snap?.settings.face_filter ?? "all") as FaceFilter;
   const clusterGroup = snap?.settings.cluster_group ?? "accuracy";
   const faceVisible = (f: Face) => matchesStatusFilter(f.link_status, faceFilter);
-  // #127/#129 (§4.16): the tree ALWAYS shows every snapshot person, and
-  // the badges ALWAYS carry the raw totals — the face filter changes only
-  // which faces render in the grid, never which persons exist or their
-  // counts (faceless named shells from #128 stay findable under their
-  // branch or Ungrouped)
+  // #127/#128 → #152 (§4.16): the face-status filter decides the tree's
+  // person presence (§4.10) — All lists every snapshot person (faceless
+  // shells stay findable), New/Accepted/Rejected list only persons
+  // holding ≥ 1 face of that status; the listed badges stay raw totals
+  // (#129's badge rule — unchanged, only presence moved)
   const treePersons = useMemo(
-    () => (snap ? snap.persons : []),
-    [snap],
+    () => (snap ? personTreeMembers(snap.persons, snap.faces, faceFilter) : []),
+    [snap, faceFilter],
   );
+  // #152: the selection survives its person dropping out of the tree —
+  // the detail pane keeps working off the unfiltered snapshot (the person
+  // view shows no faces for them under the filter)
   const displayPerson = useMemo(
-    () => (personId != null ? treePersons.find((p) => p.id === personId) ?? null : null),
-    [treePersons, personId]
+    () => (personId != null ? personsById.get(personId) ?? null : null),
+    [personsById, personId]
   );
   // #122: person id -> primary face's stored crop rotation (tree avatars)
   const primaryRot = useMemo(() => {

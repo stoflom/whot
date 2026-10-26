@@ -14,6 +14,24 @@ export function matchesStatusFilter(status: string, filter: FaceFilter): boolean
   return filter === "all" || status === filter;
 }
 
+/** #152 (§4.10): the left-pane tree's person presence. Under 'all' every
+    snapshot person is listed (faceless shells stay findable, #127/#128);
+    under New/Accepted/Rejected only persons holding ≥ 1 face of that
+    status survive — a person with no matching face leaves the tree while
+    the badges of those that stay carry raw totals (#129). */
+export function personTreeMembers<P extends { id: number }>(
+  persons: P[],
+  faces: { person_id: number | null; link_status: string }[],
+  filter: FaceFilter,
+): P[] {
+  if (filter === "all") return persons;
+  const visible = new Set<number>();
+  for (const f of faces)
+    if (f.person_id != null && matchesStatusFilter(f.link_status, filter))
+      visible.add(f.person_id);
+  return persons.filter((p) => visible.has(p.id));
+}
+
 /** Description mode (#99): one cluster per distinct description over the
     faces given (already visibility-filtered by the caller) — ordered by
     first appearance, the empty description last (Ungrouped convention). */
