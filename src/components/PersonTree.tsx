@@ -131,7 +131,7 @@ interface Props {
   /** #50 (§4.16) — delete a branch; its persons fall to Ungrouped */
   onDeleteGroup: (path: string) => void;
   /** #50 (§4.16) — move persons (or a selection) into a group */
-  onMovePersons: (ids: number[], path: string) => void;
+  onMovePersons: (ids: number[], path: string, src?: string) => void;
   /** drag-drop validation errors surface as toast */
   onError?: (msg: string) => void;
   /** #88 (§4.28) — open the Merge Similar Persons triage dialog */
@@ -312,7 +312,10 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   } | null>(null);
   // #50 — drag-and-drop state: what is dragged, and the hovered branch
   const dragRef = useRef<
-    { kind: "persons"; ids: number[] } | { kind: "branch"; path: string } | null
+    | { kind: "persons"; ids: number[]; /** #157: the dragged placement's branch path */
+      src: string }
+    | { kind: "branch"; path: string }
+    | null
   >(null);
   const [dropPath, setDropPath] = useState<string | null>(null); // '' = Ungrouped node
   const [dropPerson, setDropPerson] = useState<number | null>(null); // #88 merge target
@@ -384,15 +387,17 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
 
   // ------------------------------------------------------------ #50 drag & drop (§4.16)
 
-  /** virtual root nodes are display-only; every other branch is a real
-      group path that ops and drops act on */
   const isVirtual = (name: string, depth: number) =>
     depth === 0 && (name === "Unknown" || name === "Ungrouped");
 
-  const startDragPerson = (e: React.DragEvent, id: number) => {
+  const startDragPerson = (e: React.DragEvent, id: number, fromPath: string) => {
     // dragging a selected row moves the whole selection; otherwise just it
     const ids = selectedIds.has(id) && selectedIds.size > 1 ? [...selectedIds] : [id];
-    dragRef.current = { kind: "persons", ids };
+    // #157 (v3.59): the dragged placement's branch path rides along — the
+    // drop re-homes THAT membership (owner ruling: the dragged-from group
+    // leaves the person, the target group is filed, other memberships are
+    // kept)
+    dragRef.current = { kind: "persons", ids, src: fromPath };
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", `${ids.length} person(s)`); // firefox needs data
   };
@@ -470,7 +475,10 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     clearDrag();
     if (!d) return;
     if (d.kind === "persons") {
-      onMovePersons(d.ids, target);
+      // #157 (v3.59): the dragged placement's src rides along — the drop
+      // re-homes that membership; without src (no placement context) the
+      // §4.16 dialog-style replace-all keeps its meaning
+      onMovePersons(d.ids, target, d.src);
       return;
     }
     const src = d.path;
@@ -578,7 +586,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                     e.stopPropagation();
                     setMenu({ x: e.clientX, y: e.clientY, id: p.id });
                   }}
-                  onDragStart={(e) => startDragPerson(e, p.id)}
+                  onDragStart={(e) => startDragPerson(e, p.id, groupPath)}
                   onDragEnd={clearDrag}
                   dropTarget={dropPerson === p.id}
                   onDragOver={(e) => dragOverPerson(e, p.id)}

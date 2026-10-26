@@ -1750,7 +1750,20 @@ export default function App() {
             // #50 (§4.16) — group management: membership only, faces untouched
             onRenameGroup={(oldPath, newPath) => mutate(() => api.renameGroup(oldPath, newPath))}
             onDeleteGroup={(path) => mutate(() => api.deleteGroup(path))}
-            onMovePersons={(ids, path) => mutate(() => api.movePersonsToGroup(ids, path))}
+            onMovePersons={(ids, path, src) => {
+              // #157 (v3.59): a tree D&D drop carries the dragged
+              // placement's branch path — re-home THAT membership (remove
+              // the dragged-from row when the person has it, file into
+              // the target; other memberships kept). Same branch → no-op:
+              // the person already renders under the target. Without src
+              // (dialog paths) the §4.16 replace-all keeps its meaning.
+              if (src != null) {
+                if (src === path) return;
+                void mutate(() => api.movePersonsBetweenGroups(ids, src, path));
+                return;
+              }
+              void mutate(() => api.movePersonsToGroup(ids, path));
+            }}
             onError={setError}
             onOpenMerge={() => setMergeOpen(true)}
             onMergeInto={openMergeInto}

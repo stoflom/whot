@@ -157,6 +157,20 @@ fn move_persons_to_group(
     db::move_persons_to_group(state.paths()?, &person_ids, &group).map_err(|e| e.to_string())
 }
 
+/// §4.16 (#157, v3.59) — tree D&D: re-home ONE membership of each dragged
+/// person (remove the dragged-from row if present, file them into the
+/// target branch); other memberships are kept.
+#[tauri::command]
+fn move_persons_between_groups(
+    state: State<AppState>,
+    person_ids: Vec<i64>,
+    from_group: String,
+    to_group: String,
+) -> Result<(), String> {
+    db::move_persons_between_groups(state.paths()?, &person_ids, &from_group, &to_group)
+        .map_err(|e| e.to_string())
+}
+
 /// §4.16 (#50) — rename/move a group branch (path-prefix rewrite).
 #[tauri::command]
 fn rename_group(state: State<AppState>, old_path: String, new_path: String) -> Result<(), String> {
@@ -220,6 +234,7 @@ pub fn run() {
             set_person_group,
             set_person_note,
             move_persons_to_group,
+            move_persons_between_groups,
             rename_group,
             delete_group,
             remove_persons,

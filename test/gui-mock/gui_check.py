@@ -49,6 +49,9 @@ Checks (contract refs: docs/gui-design.md):
   C22 the review exhaust advance lands on the first person after the
       drained one with a reviewable face (§4.30, #159, v3.58) — never on
       the raw successor with nothing left to review
+  C23 person-tree D&D re-homes ONE membership (§4.16, #157, v3.59):
+      dragged-from row removed, target filed (INSERT OR IGNORE), other
+      memberships kept; src==dst drop is a no-op
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1259,6 +1262,132 @@ def c22_review_exhaust_skips_reviewed(t):
            f"(pending={landed['landedHasPending']}, info={landed['info']!r})")
 
 
+def c23_dnd_moves_one_membership(t):
+    """#157 (§4.16, v3.59, owner ruling): dragging a person row onto a
+    branch re-homes THAT membership — remove the dragged-from row, file
+    into the target (INSERT OR IGNORE), keep every other membership.
+    Christiaan Swart (Friends + Friends|Swartse) dragged from Friends
+    onto Friends|Swartse ends up in exactly Friends|Swartse."""
+
+    drag = r"""
+      // find a person placement row by its branch path, and the target
+      // branch header by path — then dispatch an HTML5 drag (shimmed
+      // dataTransfer, like drag_face)
+      const pid = arguments[0], srcPath = arguments[1], dstPath = arguments[2];
+      const headerOf = (h) => {
+        // a branch wrapper = [div.tree-node (header), div.tree-children
+        // (rows only), child branch wrappers…] — so the parent header is
+        // the parent wrapper's FIRST child, and the root container (no
+        // direct .tree-node child) ends the climb
+        const parts = [];
+        let cur = h;
+        while (cur) {
+          const nm = cur.querySelector(':scope > .tree-node-name')
+            ?.textContent.trim();
+          if (nm == null) return null;
+          parts.unshift(nm);
+          const wrap = cur.parentElement;
+          const pw = wrap && wrap.parentElement;
+          if (!pw) break;
+          const parentHeader = pw.firstElementChild;
+          if (!parentHeader || !parentHeader.classList
+              || !parentHeader.classList.contains('tree-node')) break;
+          cur = parentHeader;
+        }
+        return parts.join('|');
+      };
+      const rows = [...document.querySelectorAll(
+        `.tree-person[data-person-id='${pid}']`)];
+      const src = rows.find((r) => {
+        const kids = r.closest('.tree-children');
+        const h = kids ? kids.previousElementSibling : null;
+        return h ? headerOf(h) === srcPath : false;
+      });
+      const dst = [...document.querySelectorAll('.tree-node')].find(
+        (n) => headerOf(n) === dstPath);
+      if (!src || !dst) return {src: !!src, dst: !!dst};
+      window.__dndmove = {started: true};
+      const mk = (type) => {
+        const ev = new Event(type, {bubbles: true, cancelable: true});
+        Object.defineProperty(ev, "dataTransfer", {
+          value: { _d: {}, effectAllowed: "", dropEffect: "",
+                   setData(k, v) { this._d[k] = v; },
+                   getData(k) { return this._d[k] ?? ""; } }});
+        return ev;
+      };
+      src.dispatchEvent(mk("dragstart"));
+      setTimeout(() => {
+        dst.dispatchEvent(mk("dragover"));
+        setTimeout(() => {
+          dst.dispatchEvent(mk("drop"));
+          src.dispatchEvent(mk("dragend"));
+          window.__dndmove.done = true;
+        }, 80);
+      }, 80);
+      return {src: true, dst: true};
+    """
+
+    def groups_of(t, pid):
+        return js(t, """
+          const p = window.__MOCK_SNAP.persons.find(x => x.id === Number(arguments[0]));
+          return p?.groups ?? null;
+        """, pid)
+
+    def placements(t, pid):
+        return js(t, """
+          return [...document.querySelectorAll(
+            `.tree-person[data-person-id='${arguments[0]}']`)].length;
+        """, pid)
+
+    # --- A: the owner's scenario — Christiaan Swart (1304)
+    # Friends + Friends|Swartse, Friends-row dropped on Friends|Swartse
+    fresh(t)
+    set_show_filter(t, "all")
+    before = groups_of(t, 1304)
+    if not (isinstance(before, list) and set(before) == {"Friends", "Friends|Swartse"}):
+        record("C23 D&D moves ONE membership (#157)", True,
+               f"Christiaan Swart rows changed in the dump (now {before}) — vacuous")
+        return
+    r = js(t, drag, 1304, "Friends", "Friends|Swartse")
+    time.sleep(1.6)
+    after = groups_of(t, 1304)
+    a_ok = (r.get("src") and r.get("dst") and after == ["Friends|Swartse"]
+            and placements(t, 1304) == 1)
+    detail_a = (f"owner case: {before} dropped Friends→Friends|Swartse: "
+                f"drag={r} → {after}, placements={placements(t, 1304)}")
+
+    # --- B: cross-move — Esther (1248) Friends + Friends|PHS, Friends-row
+    # dropped onto Friends|Swartse: Friends membership leaves, target filed
+    fresh(t)
+    set_show_filter(t, "all")
+    before = groups_of(t, 1248)
+    if not (isinstance(before, list) and set(before) == {"Friends", "Friends|PHS"}):
+        record("C23 D&D moves ONE membership (#157)", True,
+               f"Esther rows changed in the dump (now {before}) — vacuous")
+        return
+    r = js(t, drag, 1248, "Friends", "Friends|Swartse")
+    time.sleep(1.6)
+    after = groups_of(t, 1248)
+    b_ok = (r.get("src") and r.get("dst") and sorted(after)
+            == sorted(["Friends|PHS", "Friends|Swartse"]))
+    detail_b = (f"cross-move: {before} dropped Friends→Friends|Swartse → {after}")
+
+    # --- C: no-op — Esther's Friends|PHS placement dropped onto its own
+    # branch (src == dst): nothing changes, both rows remain
+    fresh(t)
+    set_show_filter(t, "all")
+    before = groups_of(t, 1248)
+    r = js(t, drag, 1248, "Friends|PHS", "Friends|PHS")
+    time.sleep(1.6)
+    after = groups_of(t, 1248)
+    c_ok = (r.get("src") and r.get("dst") and after == before
+            and placements(t, 1248) == 2)
+    detail_c = f"no-op drop: {before} onto itself → {after}, placements={placements(t, 1248)}"
+
+    record("C23 D&D moves ONE membership (#157)", a_ok and b_ok and c_ok,
+           f"{detail_a}; {detail_b}; {detail_c}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1289,6 +1418,7 @@ def main():
         c20_multi_group_renders_everywhere(t)
         c21_show_filter_in_topbar(t)
         c22_review_exhaust_skips_reviewed(t)
+        c23_dnd_moves_one_membership(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

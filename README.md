@@ -245,8 +245,11 @@ npm run tauri build    # release bundles
   named `UnknownN` — filing an Unknown you remember by face but not by
   name into a group is normal (#153). A person with **several** group
   rows (the §9 harvest import can leave multiple) renders under every
-  listed path, and is stepped once (#156). Right-click: rows, branches
-  and cards all carry menus.
+  listed path, and is stepped once (#156). Dragging a person row onto a
+  branch re-homes **that one membership** — the dragged-from row leaves
+  the person, the target group is filed, other memberships stay (#157);
+  the Ungrouped branch removes just the dragged membership.
+  Right-click: rows, branches and cards all carry menus.
 - **Centre pane** — the face grid, `Show`-filtered; Review groups the
   pending faces by the importer's `UnknownN` clusters, Rolls lists
   imports as expandable sections (a roll with **0 images** is never

@@ -1184,6 +1184,62 @@ pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> 
     Ok(())
 }
 
+/// §4.16 (#157, v3.59) — tree D&D move for the §9 multi-row world: **one
+/// membership re-homes**. Dropping a person row from placement `from` onto
+/// branch `to` removes the `from` row (when the person has it — every
+/// placement is one stored row) and files the person into `to`; any other
+/// membership is kept, so a multi-group person stays multi-group
+/// (`INSERT OR IGNORE` dedupes the PK when `to` is already present). A
+/// person dragged from a branch they are not in (another member of the
+/// dragged selection) is simply filed into `to`. `to = ""` (the Ungrouped
+/// virtual branch) only removes the dragged membership — the person
+/// renders Ungrouped only when no row remains (§3). `from = to` is a
+/// no-op: the person is already rendered under the target.
+pub fn move_persons_between_groups(
+    paths: &Paths,
+    person_ids: &[i64],
+    from_group: &str,
+    to_group: &str,
+) -> Result<()> {
+    let ids: HashSet<i64> = person_ids.iter().copied().collect();
+    if ids.is_empty() {
+        bail!("no persons selected");
+    }
+    let from = normalize_group_path(from_group);
+    let to = normalize_group_path(to_group);
+    if !to.is_empty() {
+        validate_group_path(&to)?;
+    }
+    let mut con = connect(paths)?;
+    let tx = con.transaction()?;
+    let mut moved = 0;
+    for pid in ids {
+        let exists: i64 =
+            tx.query_row("SELECT COUNT(*) FROM persons WHERE id = ?", params![pid], |r| r.get(0))?;
+        if exists == 0 {
+            continue;
+        }
+        if from != to {
+            tx.execute(
+                "DELETE FROM person_groups WHERE person_id = ? AND path = ?",
+                params![pid, from],
+            )?;
+        }
+        if !to.is_empty() {
+            tx.execute(
+                "INSERT OR IGNORE INTO person_groups (person_id, path) VALUES (?, ?)",
+                params![pid, to],
+            )?;
+        }
+        moved += 1;
+    }
+    if moved == 0 {
+        bail!("none of the selected persons exist any more");
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<()> {
     let con = connect(paths)?;
     con.execute(
