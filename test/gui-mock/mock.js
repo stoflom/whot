@@ -242,6 +242,9 @@
     get_face_preview: ({ faceId }) => svg((faceId * 47) % 360, String(faceId)),
     get_image_thumb: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
     get_image_preview: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
+    // #162: the native folder picker (tauri-plugin-dialog) — tests seed
+    // window.__MOCK_DIALOG_PICK__ with the path to "select" (null = cancel)
+    "plugin:dialog|open": () => Promise.resolve(window.__MOCK_DIALOG_PICK__ ?? null),
   };
 
   window.__TAURI_INTERNALS__ = {

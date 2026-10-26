@@ -1,4 +1,5 @@
-import { useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import type { Face, ImageRow } from "../api";
 import { useImageThumbImg } from "../hooks";
 import { rotStyle } from "../rotation";
@@ -18,6 +19,9 @@ interface Props {
   images: ImageRow[];
   faces: Face[];
   faceFilter: FaceFilter;
+  /** #162: the path-filter root ('/' = whole tree) — session-scoped, lives in App */
+  root: string;
+  onRootChange: (path: string) => void;
   onOpenImage: (id: number) => void;
   /** right-click menu on image tiles (#32) */
   onContextMenuImage: (image: ImageRow, e: ReactMouseEvent) => void;
@@ -43,12 +47,16 @@ function basename(p: string): string {
   return i === -1 ? p : p.slice(i + 1);
 }
 
-/** split every primary_path into segments and file the image under its directory */
-function buildTree(images: ImageRow[]): DirNode {
-  const root: DirNode = { name: "", children: new Map(), images: [] };
-  for (const img of images) {
-    let node = root;
-    for (const seg of img.primary_path.split("/").filter(Boolean)) {
+/** split every primary_path into segments relative to the #162 root and
+    file the image under its directory */
+function buildTree(images: ImageRow[], root: string): DirNode {
+  const rootPrefix = root === "/" ? "/" : `${root}/`;
+  const inRoot = images.filter((x) => x.primary_path.startsWith(rootPrefix));
+  const rel = (p: string) => (root === "/" ? p : p.slice(root.length + 1));
+  const tree: DirNode = { name: "", children: new Map(), images: [] };
+  for (const img of inRoot) {
+    let node = tree;
+    for (const seg of rel(img.primary_path).split("/").filter(Boolean)) {
       let next = node.children.get(seg);
       if (!next) {
         next = { name: seg, children: new Map(), images: [] };
@@ -58,7 +66,7 @@ function buildTree(images: ImageRow[]): DirNode {
     }
     node.images.push(img);
   }
-  return root;
+  return tree;
 }
 
 /** branch totals over every image beneath the branch — raw, filter-independent (#129) */
@@ -166,8 +174,8 @@ function BranchView({ node, path, openSet, onToggle, listed, faceTotals, onOpenI
   );
 }
 
-export default function RollsPane({ images, faces, faceFilter, onOpenImage, onContextMenuImage }: Props) {
-  const tree = useMemo(() => buildTree(images), [images]);
+export default function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, onContextMenuImage }: Props) {
+  const tree = useMemo(() => buildTree(images, root), [images, root]);
 
   // per-image raw face counters + the Show-filter presence set: an image
   // is listed iff it holds ≥ 1 face matching the filter; under 'all'
@@ -201,26 +209,98 @@ export default function RollsPane({ images, faces, faceFilter, onOpenImage, onCo
       return next;
     });
 
-  if (images.length === 0) return <div className="empty">no images yet</div>;
-  const roots = [...tree.children.values()].filter((c) => hasListed(c, listed))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  if (roots.length === 0) return <div className="empty">nothing to show</div>;
+  // #162: the pinned path-filter row — committed on Enter or by the
+  // folder picker, validated against the snapshot (no fs IPC): a path
+  // containing ≥ 1 image becomes the root the hierarchy branches from,
+  // a path equal to an image's primary_path opens that image in
+  // full-image mode (#142 view-context change), anything else is
+  // refused with a dim hint and the current root stays
+  const [text, setText] = useState(root);
+  const [hint, setHint] = useState<string | null>(null);
+  useEffect(() => setText(root), [root]);
+
+  const commitPath = (raw: string) => {
+    const trimmed = raw.trim();
+    const noSlash = trimmed.replace(/\/+$/, "");
+    const path = noSlash === "" ? "/" : noSlash;
+    const exact = images.find((x) => x.primary_path === path);
+    if (exact) {
+      setHint(null);
+      onOpenImage(exact.id); // file → full-image mode, root untouched
+      return;
+    }
+    const prefix = path === "/" ? "/" : `${path}/`;
+    if (images.some((x) => x.primary_path.startsWith(prefix))) {
+      setHint(null);
+      onRootChange(path);
+      setText(path);
+      return;
+    }
+    setHint(`no images under ${trimmed}`);
+  };
+
+  const browse = async () => {
+    try {
+      const picked = await openFolderDialog({ directory: true, multiple: false });
+      if (typeof picked === "string") commitPath(picked);
+    } catch (e) {
+      setHint(String(e));
+    }
+  };
+
+  const roots =
+    images.length === 0
+      ? []
+      : [...tree.children.values()]
+          .filter((c) => hasListed(c, listed))
+          .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <div className="rolls">
-      {roots.map((c) => (
-        <BranchView
-          key={c.name}
-          node={c}
-          path={c.name}
-          openSet={openSet}
-          onToggle={toggle}
-          listed={listed}
-          faceTotals={faceTotals}
-          onOpenImage={onOpenImage}
-          onContextMenuImage={onContextMenuImage}
+    <div className="rolls-pane">
+      <div className="roll-filter">
+        <label
+          title="Root the path tree at this path (#162) — Enter commits: a folder with images under it becomes the root, an image file opens full-image, anything else is refused"
+        >
+          path
+        </label>
+        <input
+          value={text}
+          placeholder="/path/to/folder (or an image file)"
+          onChange={(e) => {
+            setText(e.target.value);
+            setHint(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitPath(text);
+          }}
+          title="Enter: root the tree at this folder, or open this image file; empty = the whole tree"
         />
-      ))}
+        <button className="secondary" onClick={browse} title="pick a root folder from the filesystem">
+          browse…
+        </button>
+        {hint && <span className="roll-filter-hint dim">{hint}</span>}
+      </div>
+      {images.length === 0 ? (
+        <div className="empty">no images yet</div>
+      ) : roots.length === 0 ? (
+        <div className="empty">nothing to show</div>
+      ) : (
+        <div className="rolls">
+          {roots.map((c) => (
+            <BranchView
+              key={c.name}
+              node={c}
+              path={c.name}
+              openSet={openSet}
+              onToggle={toggle}
+              listed={listed}
+              faceTotals={faceTotals}
+              onOpenImage={onOpenImage}
+              onContextMenuImage={onContextMenuImage}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

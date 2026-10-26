@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.60** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.62** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -34,7 +34,8 @@ user:
 - give a face a **description** (e.g. `beard|glasses`);
 - pick each person's **primary face** (icon);
 - browse persons in a **hierarchical tree by group**, with a name/group filter;
-- browse **images by their filesystem path** (#161);
+- browse **images by their filesystem path** (#161), rooted at any
+  chosen path (#162);
 - maintain each person's **reference faces** for future recognition.
 
 All panes re-sync after every mutation.
@@ -163,6 +164,22 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     is pruned entirely (set Show back to All to see everything again —
     the branch raw counts keep such branches discoverable). An empty DB
     shows `no images yet`.
+    **Path filter** (#162): the pane is topped by a pinned (sticky)
+    path-filter row — a text input plus a **browse…** button opening the
+    native **folder picker** (tauri-plugin-dialog). The typed/picked path
+    is validated against the snapshot (no fs IPC):
+    - a path that **contains ≥ 1 image's `primary_path`** becomes the
+      **root path** — the hierarchy branches from it (the branches are
+      the root's immediate sub-directories; empty input = `/` = the
+      whole tree);
+    - a path **equal to an image's `primary_path`** opens **that one
+      image in full-image mode** (the same view-context change as the
+      tile click, #142 incl. the staged-set confirm);
+    - anything else is refused with a dim hint (`no images under …`) and
+      the current root stays.
+    The root lives for the session (it survives tab switches; not
+    persisted to whotrc) and the Show filter keeps pruning under it
+    (§4.10). The native picker is stubbed in the GUI-mock harness.
 - **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
   pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
   face-status filter applied by every view (default All; **New** is the
@@ -930,7 +947,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **Pane UX** (#126): the dialog is **viewport-capped** — the member
     list scrolls, while the title/intro and the action row (`apply
     group`, `rename to…`, `Merge into…`) stay visible (action row
-    pinned at the bottom). The intro states the contract: tick the
+    pinned at the bottom). The row ends with a visible **cancel**
+    button (#160 — Esc and an overlay click already closed the dialog,
+    but the escape was invisible): same dismiss as Esc, styled like
+    every other dialog's cancel (`secondary`). The intro states the contract: tick the
     persons to combine — **they may come from different clusters** (a
     neighbour beyond the distance can be the same person) — and
     **everything ticked merges into ONE target person, picked in the

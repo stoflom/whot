@@ -358,6 +358,14 @@ export default function MergeSimilarDialog({
           >
             Merge into…
           </button>
+          {/* #160: the dismiss was Esc/overlay-click only — invisible */}
+          <button
+            className="secondary"
+            onClick={() => onClose()}
+            title="Close without doing anything (same as Esc)"
+          >
+            cancel
+          </button>
         </div>
       </div>
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
