@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.36** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.37** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -219,6 +219,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   `contextmenu` too and offer a working **open in system viewer** (the
   Rust `open_image` command writes the BLOB to a temp file and hands it
   to the opener plugin).
+  **Implementation notes — open_image temp file + rejection handling**
+  (#144, v3.37): (1) the temp file name was a fixed
+  `whot-image-{image_id}.jpg` — predictable (another local user could
+  squat the path first and have their file opened instead) and shared
+  across every open of that image, so a slow viewer still reading the
+  file raced a later overwrite. The name is now unique per open
+  (`whot-image-{image_id}-{pid}-{unix_nanos}.jpg`): same image opened
+  twice never clobbers the first viewer's file, and the path cannot be
+  pre-squatted. The file extension is derived from the pixel magic
+  (JPEG default, PNG recognised) instead of hard-coding `.jpg`.
+  (2) The frontend promise from "Open in system viewer" was fire-and-
+  forget: a rejection (no preview blob, viewer not found) surfaced as an
+  unhandled-rejection console error with no user feedback. The handler
+  now routes the failure through the standard error toast like every
+  other mutation path (#132).
 - **Resizable panes** (#34): the left/right pane dividers and the #25 split
   divider are draggable with clamps and double-click reset (session state);
   the face/image grids already reflow via `auto-fill` and follow the pane
