@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.41** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.42** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1010,7 +1010,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       selection (#105, #110, #123). Global `Enter` accepts **in Review
       only** (`A` works in every view, Q10); the advance plan anchors at
       the **last-selected card**, else the hovered card, else the first
-      accepted id (#110).
+      accepted id (#110). The rewrite runs **only on success** (#140,
+      v3.42): a failed accept surfaces its error toast and leaves the
+      selection — the old code wiped the set and pointed the cursor at a
+      plan computed from pre-failure state even though nothing had
+      changed.
     - **Person-exhausted fall-through** (#125): in Review, when
       **Accept, Reject or Delete Person** leaves the current person with
       **no faces left** (no sections for it in the refreshed snapshot,
