@@ -1671,6 +1671,23 @@ export default function App() {
               <span className="dim">working…</span>
             </>
           )}
+          {/* #158 (§3, v3.57): the Show filter lives in the top bar — it is
+              a global control applied across all panes (#99, §4.10) and not
+              something the Person view (or any single pane) owns. */}
+          <label
+            title="Status filter — every view shows only faces with this status (#99, §4.10); switching it drops hidden faces from the selection"
+          >
+            show
+            <select
+              value={faceFilter}
+              onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
+            >
+              <option value="all">All</option>
+              <option value="provisional">New</option>
+              <option value="confirmed">Accepted</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </label>
           {/* #154 (§3): Unknown cleanup beside the refresh button — only
               Unknowns with nothing left to decide (all faces decided) */}
           <button
@@ -1775,7 +1792,9 @@ export default function App() {
                 ›
               </button>
             </span>
-            {/* #99/#100: cluster group + status filter hug the right side */}
+            {/* #99/#100: the cluster-group seg hugs the right side of the
+                person view — the Show filter is a global control and lives
+                in the top bar (#158, v3.57) */}
             <span className="toolbar-right">
             <span
               className="seg"
@@ -1794,18 +1813,6 @@ export default function App() {
                 Accuracy
               </button>
             </span>
-            <label title="Status filter — every view shows only faces with this status (#99, §4.10); switching it drops hidden faces from the selection">
-              show
-              <select
-                value={faceFilter}
-                onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
-              >
-                <option value="all">All</option>
-                <option value="provisional">New</option>
-                <option value="confirmed">Accepted</option>
-                <option value="rejected">Rejected</option>
-              </select>
-            </label>
             </span>
           </div>
           {/* #100: the bar is the pane's real header — only the area below

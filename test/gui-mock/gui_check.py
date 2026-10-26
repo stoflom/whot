@@ -43,6 +43,9 @@ Checks (contract refs: docs/gui-design.md):
       commits the description
   C20 a person with SEVERAL group rows renders under EVERY path
       (§4.16, #156, v3.56 — stepped once; branch bulk-ops dedupe)
+  C21 the Show filter (a global control) lives in the top bar (#158,
+      v3.57): topbar select present, centre-toolbar select gone, the
+      view-local cluster-group seg stays in the person view
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1154,6 +1157,30 @@ def c15_merge_dialog_scroll(t):
            else f"last rule .merge-spacer; cap {m['m']}")
 
 
+def c21_show_filter_in_topbar(t):
+    """:0158 (v3.57): the Show status filter is a GLOBAL control and lives
+    in the top bar where every tab can reach it — not in the person view's
+    centre toolbar next to the view-local cluster-group seg."""
+    fresh(t)
+    topbar = js(t, """
+      return {
+        sel: !!document.querySelector('.topbar select'),
+        opts: [...(document.querySelector('.topbar select')?.options ?? [])]
+          .map(o => o.value),
+        val: document.querySelector('.topbar select')?.value ?? null,
+        centre: !!document.querySelector('.center-toolbar select'),
+        seg: !!document.querySelector('.center-toolbar .seg'),
+      };
+    """)
+    ok = (topbar["sel"] and topbar["centre"] is False and topbar["seg"]
+          and set(["all", "provisional", "confirmed", "rejected"]
+                  ).issubset(set(topbar["opts"])))
+    record("C21 Show filter lives in the top bar (#158)", ok,
+           f"topbar select={topbar['sel']} (opts={topbar['opts']}, "
+           f"value={topbar['val']}), centre toolbar select={topbar['centre']}, "
+           f"view-local seg still present={topbar['seg']}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1182,6 +1209,7 @@ def main():
         c18_zero_image_rolls_hidden(t)
         c19_staged_desc_regroups(t)
         c20_multi_group_renders_everywhere(t)
+        c21_show_filter_in_topbar(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

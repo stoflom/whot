@@ -231,9 +231,10 @@ npm run tauri build    # release bundles
 
 - **Top bar** — tabs `Review` / `Rolls` / `Person` (centre-pane mode; the
   person tab opens the tree's current selection); on the right the `Show`
-  face-status filter `All | New | Accepted | Rejected`, the persons-mode
-  cluster-group toggle `Description | Accuracy`, the `Remove Unknowns`
-  button, the manual refresh `↻` and the settings ⚙. The `Show` filter
+  face-status filter `All | New | Accepted | Rejected`, the `Remove
+  Unknowns` button, the manual refresh `↻` and the settings ⚙ (the
+  persons-mode cluster-group toggle sits in the Person view's centre
+  toolbar — it is view-local). The `Show` filter
   decides which faces exist anywhere: switching to `New`/`Accepted`/
   `Rejected` **also prunes the left-pane person tree** (#152) — persons
   without a face of that status are not listed; `All` lists everyone.
