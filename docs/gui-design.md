@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.50** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.51** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -418,9 +418,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **every view's**
     visibility: the person view's cluster sections and its Rejected
     section, image grids and full-image rectangles, the review grid, the
-    **left-pane person presence and counts** — a person with no matching
-    face leaves the tree and the surviving bucket drives its counts (#28
-    generalised) — and the **right-pane overview totals**. `link_status`
+    **left-pane person presence** (#152) — a person holding no face that
+    matches the filter leaves the tree (set Show back to All to list
+    everyone again, including the faceless shells) — and the
+    **right-pane overview totals**. The badges of the persons that stay
+    listed carry their raw totals (#129): the filter changes who is
+    listed, never any counters. A selection survives its person dropping
+    out of the tree — the person view simply shows nothing for them under
+    the filter. `link_status`
     never changes: the filter is pure display. Switching it **drops
     non-matching faces from the selection**: faces the filter hides can
     never be bulk-acted on.
@@ -512,16 +517,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **Display guarantees** (#127/#129): group paths are **case-significant**
     — `Family|Lombards` and `family|Lombard` are distinct data and each
     renders its own branch (the builder is case-sensitive; do not fold).
-    Under **any** face-status filter (All/New/Accepted/Rejected) and an
-    empty text filter, **every person in the snapshot is findable in the
-    tree** — including faceless named persons (their own branch, or the
-    virtual `Ungrouped` node when ungrouped) — and the status filter
-    **never changes which persons exist or the counts the badges show**: a
-    badge always carries the person's raw totals; the filter only changes
-    which faces render in the middle pane (#129). A person always renders under its **first**
+    Under the **All** face-status filter and an empty text filter, **every
+    person in the snapshot is findable in the tree** — including faceless
+    named persons (#127/#128; their own branch, or the virtual
+    `Ungrouped` node when ungrouped). Under New/Accepted/Rejected the
+    tree lists only persons holding ≥ 1 face of that status (#152,
+    §4.10) — a person with no matching face is not listed, so reach them
+    by switching Show to All. The badges of the persons that stay listed
+    always carry their raw totals (#129); the filter changes who is
+    listed and which faces render in the middle pane, never whose faces
+    exist or their counts. A person always renders under its **first**
     group (`groups[0]`); further groups stay visible in the row tooltip.
-    The virtual `Unknown`/`Ungrouped` nodes are never pruned while they
-    hold persons.
+    The virtual `Unknown`/`Ungrouped` nodes are
+    never pruned while they hold (listed) persons — a virtual branch
+    whose persons are all filtered out disappears with them.
 17. **Selection accelerators** (#53) ⇒ Ctrl/⌘-click on a face-card body
     toggles that card in the selection — the tree's idiom, mirrored
     on cards; plain click stays inert so double-click-to-open is
