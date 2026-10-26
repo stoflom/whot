@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.44** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.45** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -729,6 +729,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the **same faceIds** replaces that op (latest wins); **Undo and
       Cancel/Esc discard the whole set** (owner ruling: Undo = Cancel —
       re-editing is just opening Edit… again).
+      **Implementation note — Apply always has a concrete target** (#147,
+      v3.45): the bar's Apply stays enabled while a staged set is live,
+      but the selection can be empty at that moment (staged ops survive
+      selection changes by design). Opening the Edit dialog then showed
+      every scope at `0 face(s)` — a dead dialog. With an empty
+      selection, `barApply` scopes the dialog's Selection onto the
+      **staged set's face ids** (largest staged set first), so the
+      opened dialog always has a concrete target; when neither a
+      selection nor a staged set exists, Apply is disabled anyway
+      (RuleBar's `none && !stageLive`).
       **Implementation note — a failed commit keeps the staged set**
       (#139, v3.44): Accept used to wipe the set **before the first
       write**, and each staged op ran as its own backend transaction —
