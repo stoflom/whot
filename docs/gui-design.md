@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.56** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.57** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -428,8 +428,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    evidence, `0.0`, keeping every stored similarity finite — and no
    comparison site may `unwrap` a `partial_cmp` on non-finite data
    (orderings use `unwrap_or(Ordering::Equal)`).
-   A **cluster-group toggle** sits in the top bar, left of the status
-   filter (#99): `Accuracy` (default) keeps the rule above; `Description`
+   A **cluster-group toggle** sits in the Person view's centre toolbar,
+   hugging its right edge (#99) — the Show filter it once hugged there is
+   a **global** control and was moved to the top bar (#158, v3.57):
+   `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
    over the visible faces — no similarity split: the threshold is not
    consulted and `person_face_clusters` is not called (no IPC). The
