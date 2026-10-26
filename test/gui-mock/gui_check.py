@@ -65,6 +65,10 @@ Checks (contract refs: docs/gui-design.md):
       opens full-image (root kept), invalid path shows a hint (root
       kept), browse… picks a folder via the mocked native picker, empty
       input roots at '/'
+  C27 the centre toolbar is view-scoped (#163, v3.63/v3.64): Rolls
+      renders no toolbar at all (nav + seg gone, full grid height) and
+      ←/→ are inert there (no person-view yank); Review keeps nav only;
+      the person view keeps nav + seg
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1226,13 +1230,13 @@ def c21_show_filter_in_topbar(t):
         seg: !!document.querySelector('.center-toolbar .seg'),
       };
     """)
-    ok = (topbar["sel"] and topbar["centre"] is False and topbar["seg"]
+    ok = (topbar["sel"] and topbar["centre"] is False
           and set(["all", "provisional", "confirmed", "rejected"]
                   ).issubset(set(topbar["opts"])))
     record("C21 Show filter lives in the top bar (#158)", ok,
            f"topbar select={topbar['sel']} (opts={topbar['opts']}, "
            f"value={topbar['val']}), centre toolbar select={topbar['centre']}, "
-           f"view-local seg still present={topbar['seg']}")
+           f"centre seg on review={topbar['seg']} (hidden, #163 → C27)")
 
 
 def c22_review_exhaust_skips_reviewed(t):
@@ -1612,6 +1616,49 @@ def c26_rolls_path_filter(t):
            f"clear → {len(h5)}/{len(exp5)} exact={h5 == exp5}")
 
 
+def c27_center_toolbar_view_matrix(t):
+    """#163 (v3.63/v3.64): the centre toolbar is view-scoped — Rolls
+    renders NO toolbar at all (nav cluster + Description/Accuracy seg
+    both gone; the grid gets the pane's full height) and ←/→ person
+    stepping is inert there (stepPerson always lands in the person view
+    — it used to yank a rolls browser away); Review keeps the nav
+    cluster without the seg; the person view keeps both (seg = §4.9)."""
+    fresh(t)  # lands on Review
+    def bar():
+        return js(t, "return document.querySelector('.center-toolbar') != null")
+    def seg():
+        return js(t, "return !!document.querySelector('.center-toolbar .seg')")
+    def nav():
+        return js(t, "return document.querySelectorAll('.center-toolbar .toolbar-left button').length")
+    def active_tab():
+        return js(t, "return document.querySelector('.topbar nav .active')?.textContent.split(' ')[0] ?? null")
+    def go(i):
+        js(t, "[...document.querySelectorAll('.topbar nav button')][arguments[0]].click();", i)
+        time.sleep(0.8)
+    review_bar, review_seg, review_nav = bar(), seg(), nav()
+    go(1)  # Rolls
+    rolls_bar, rolls_seg, rolls_nav = bar(), seg(), nav()
+    # ←/→ must be inert in Rolls — no yank to the person view
+    js(t, "window.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true}));")
+    time.sleep(0.6)
+    after_key_tab = active_tab()
+    after_key_bar = bar()
+    js(t, "document.querySelector('.tree-person')?.click();")  # personId (tab is disabled without one)
+    time.sleep(0.8)
+    go(2)  # Person
+    person_bar, person_seg, person_nav = bar(), seg(), nav()
+    ok = (review_bar and review_seg is False and review_nav == 2
+          and rolls_bar is False and rolls_seg is False and rolls_nav == 0
+          and after_key_tab == "Rolls" and after_key_bar is False
+          and person_bar and person_seg is True and person_nav == 2)
+    record("C27 centre toolbar is view-scoped: none in Rolls, seg person-only (#163)", ok,
+           f"bar/seg/nav — review={review_bar}/{review_seg}/{review_nav} "
+           f"(want True/False/2), rolls={rolls_bar}/{rolls_seg}/{rolls_nav} "
+           f"(want False/-/0), person={person_bar}/{person_seg}/{person_nav} "
+           f"(want True/True/2); ArrowRight in rolls → tab={after_key_tab} "
+           f"bar={after_key_bar} (want Rolls/False)")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1646,6 +1693,7 @@ def main():
         c24_dark_scheme_native_controls(t)
         c25_merge_dialog_cancel_button(t)
         c26_rolls_path_filter(t)
+        c27_center_toolbar_view_matrix(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

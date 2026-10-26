@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.62** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.64** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -180,13 +180,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     The root lives for the session (it survives tab switches; not
     persisted to whotrc) and the Show filter keeps pruning under it
     (§4.10). The native picker is stubbed in the GUI-mock harness.
-- **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
-  pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
-  face-status filter applied by every view (default All; **New** is the
-  `provisional` status, spelled the way the face-card badge spells it) —
-  and, to its left, the persons-mode cluster-group toggle
-  `[Description | Accuracy]`, both grouped at the bar's right side. The
-  toolbar is the center pane's **fixed header**: the sections scroll
+- **Status filter + cluster group** (§4.10/§4.9, #99/#100): `Show
+  [All | New | Accepted | Rejected]` — the face-status filter applied by
+  every view (default All; **New** is the `provisional` status, spelled
+  the way the face-card badge spells it) — lives in the **top bar**
+  (#158, v3.57). The center pane's toolbar right side carries the
+  persons-mode cluster-group toggle `[Description | Accuracy]`, and
+  **only in the person view** (#163): `cluster_group` shapes only how
+  the person view forms its sections (§4.9), so the seg is hidden in
+  the Review and Rolls views, where it would change nothing. **Rolls
+  renders no centre toolbar at all** (#163): neither the navigation
+  cluster nor the seg appear there — the grid gets the pane's full
+  height (Review and Person keep the navigation cluster). The
+  toolbar is the center pane's **fixed header** (in the views that have
+  one): the sections scroll
   beneath it in their own, shorter scroll area — nothing can scroll past
   above it (#100). While a mutation is in flight the bar's
   right side shows an animated **busy roller** beside `working…` (the
@@ -239,7 +246,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Section stepping** (#31): ‹ › buttons in the center toolbar — and the
   `←`/`→` **shortcuts** — step through the persons in the tree's current
   (filtered) display order, selecting each (person view); disabled at the
-  ends, `n/m` indicator in the toolbar. Shortcuts never fire while an
+  ends, `n/m` indicator in the toolbar. **Neither exists in the Rolls
+  view** (#163): the toolbar is not rendered there and the shortcuts are
+  inert — person stepping always lands in the person view, which used to
+  yank a rolls browser to Person at the press of ‹/← (confusing, and it
+  stole the pane's height). Shortcuts never fire while an
   input or dialog has focus; the current set is listed in the settings
   popover (`Esc` closes overlays, `Enter` commits fields).
 - **Context menus** (#32): face cards, person rows and image thumbs show a
@@ -451,8 +462,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    evidence, `0.0`, keeping every stored similarity finite — and no
    comparison site may `unwrap` a `partial_cmp` on non-finite data
    (orderings use `unwrap_or(Ordering::Equal)`).
-   A **cluster-group toggle** sits in the Person view's centre toolbar,
-   hugging its right edge (#99) — the Show filter it once hugged there is
+   A **cluster-group toggle** sits in the Person view's centre toolbar —
+   **only** there (#163: hidden in Review and Rolls, where it changes
+   nothing) — hugging its right edge (#99) — the Show filter it once hugged there is
    a **global** control and was moved to the top bar (#158, v3.57):
    `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
@@ -706,7 +718,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     to the hovered/last-selected card's section (#53); **Space** toggles
     the card itself, **Ctrl-A** selects
     all cards of the current view, **A**/**R** accept/reject the
-    selection (the rule-bar buttons' scope), ←/→ step persons (#31) and
+    selection (the rule-bar buttons' scope), ←/→ step persons (#31,
+    **not in Rolls**) and
     Esc closes split/dialog/menu (§4.19). Shortcuts are suppressed while
     typing in any input and while a menu or dialog is open. Context-menu
     items display their shortcut as a right-aligned dim hint
