@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.37** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.38** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -248,6 +248,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Right pane — person detail** (when a person is selected): name (editable
   for known persons), group path (editable, `|`-separated; empty ⇒
   Ungrouped), note, primary-face picker, refcrops list.
+  **Implementation note — the avatar click** (#145, v3.38): the note above
+  says "primary-face picker", but the picker is the refcrop list; the
+  large avatar *is* the primary face and its click handler used to call
+  `setPrimary(primary_face_id)` — a self-no-op that silently ignored every
+  click under a tooltip claiming "make this the primary face". The avatar
+  click now opens the **full-image focus mode** for the primary face's
+  image (the same `confirmContext` → `setSplitImageId` path as the card
+  double-click and the "Open full image" menu entries), with the
+  tooltip/title saying so; when the person has no primary face there is
+  nothing to open and the click stays inert.
 - **Rule bar (bottom)**: always visible when ≥1 face is selected **or a
   stage is live**, in any center-pane view: `N selected · [Apply] [Accept]
   [Undo°] [Assign name…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
