@@ -76,10 +76,15 @@ function RollSection({ imp, images, faces, initialOpen, onOpenImage, onContextMe
 }
 
 export default function RollsPane({ imports, images, faces, onOpenImage, onContextMenuImage }: Props) {
-  if (imports.length === 0) return <div className="empty">no rolls imported yet</div>;
+  // #151: a roll with zero images is never listed — a re-import of only
+  // already-known files leaves an import row with no images of its own
+  // (§3 keys the section set on first_import_id); the shell offers
+  // nothing to open, so it is irrelevant
+  const listed = imports.filter((imp) => images.some((x) => x.first_import_id === imp.id));
+  if (listed.length === 0) return <div className="empty">no rolls imported yet</div>;
   return (
     <div className="rolls">
-      {imports.map((imp, i) => (
+      {listed.map((imp, i) => (
         <RollSection
           key={imp.id}
           imp={imp}
