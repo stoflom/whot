@@ -1403,11 +1403,11 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
 
     // reference = primary face's vector (fallback: highest-confidence face)
     let ref_idx = faces.iter().position(|(id, _, _, _)| Some(*id) == primary).unwrap_or(0);
-    /// #149: a length-valid blob can still decode to non-finite
-    /// components; a non-finite cosine (NaN/±inf) is "no similarity
-    /// evidence", exactly like the #41 missing-embedding 0.0 — this also
-    /// keeps every stored similarity finite so `partial_cmp` irreflexivity
-    /// can never trip a comparison unwrap below.
+    // #149: a length-valid blob can still decode to non-finite
+    // components; a non-finite cosine (NaN/±inf) is "no similarity
+    // evidence", exactly like the #41 missing-embedding 0.0 — this also
+    // keeps every stored similarity finite so `partial_cmp` irreflexivity
+    // can never trip a comparison unwrap below.
     let clean = |s: f64| if s.is_finite() { s } else { 0.0 };
     let sims: Vec<f64> = faces
         .iter()

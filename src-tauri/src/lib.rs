@@ -54,7 +54,19 @@ fn open_image(state: State<AppState>, image_id: i64) -> Result<(), String> {
     let bytes = db::image_preview_bytes(paths, image_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("image {image_id} has no preview"))?;
-    let path = std::env::temp_dir().join(format!("whot-image-{image_id}.jpg"));
+    // #144: the name used to be a fixed `whot-image-{image_id}.jpg` —
+    // predictable (path pre-squatting by another local user) and shared by
+    // every open, so a slow viewer still reading the file raced the next
+    // overwrite. Unique per open (pid + unix nanos); the viewer holding
+    // the old path is never disturbed by a later open.
+    let ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    // extension follows the pixel magic; JPEG is the only format the
+    // importer/GUI ever write, PNG is recognised defensively
+    let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) { "png" } else { "jpg" };
+    let path = std::env::temp_dir().join(format!("whot-image-{image_id}-{}-{ns}.{ext}", std::process::id()));
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| e.to_string())

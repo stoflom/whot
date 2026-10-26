@@ -685,7 +685,10 @@ export default function App() {
     openMenu(e, [
       {
         items: [
-          { label: "Open in system viewer", onClick: () => api.openImage(imageId) },
+          // #144: the promise used to be fire-and-forget — a rejection
+          // (no preview blob, viewer not found) never reached the user;
+          // errors surface through the standard error toast (#132)
+          { label: "Open in system viewer", onClick: () => api.openImage(imageId).catch((e) => setError(String(e))) },
           {
             // #122: stored display rotation (EXIF key, #118)
             label: "Rotate 90° CW",
