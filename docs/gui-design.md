@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.43** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.44** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -729,6 +729,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the **same faceIds** replaces that op (latest wins); **Undo and
       Cancel/Esc discard the whole set** (owner ruling: Undo = Cancel —
       re-editing is just opening Edit… again).
+      **Implementation note — a failed commit keeps the staged set**
+      (#139, v3.44): Accept used to wipe the set **before the first
+      write**, and each staged op ran as its own backend transaction —
+      a failure at op *k* silently discarded ops *k..n* (Q3 'text is
+      never dropped silently') while ops *1..k−1* stayed applied, and
+      `acceptFaces` never ran. The set is now cleared **only after the
+      whole commit lands**: the ops execute one by one and a failure
+      re-stages the failed op **and everything after it** (the applied
+      prefix stays; the error toast names the op that stopped the
+      commit), so the staged strip keeps showing what remains and
+      Accept can simply be retried. (The staged field writes are
+      idempotent, so the retry re-applies nothing visibly; the
+      all-or-nothing single-transaction backend command remains the
+      fuller fix and stays an open option.)
     - **No dialog inside the context** (#123): changing the selection
       while the set is live — clicking another card, extending the
       selection, opening Edit… on another card (whose selection rule
