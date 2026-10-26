@@ -17,7 +17,8 @@ interface Props {
   onName: (id: number, name: string) => void;
   onGroup: (id: number, group: string) => void;
   onNote: (id: number, note: string) => void;
-  onSetPrimary: (faceId: number) => void;
+  // #145: the avatar opens the primary face's full image in focus mode
+  onOpenPrimary: (faceId: number) => void;
   onRemoveRefcrop: (faceId: number) => void;
   /** remove this person (§4.13, #35) */
   onRemovePerson?: (id: number) => void;
@@ -106,7 +107,7 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
   return [...m.entries()];
 }
 
-function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSetPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
+function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
   // #122: crop rotations are per-face — the primary face and every
   // refcrop spin with their own stored angle
@@ -115,7 +116,15 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onSet
   const pathOptions = useGroupPathOptions(snapshot?.persons ?? []);   // #97
   return (
     <div className="dp-person" key={person.id}>
-      <div className="dp-avatar" title="Click to make this the primary face" onClick={() => person.primary_face_id && onSetPrimary(person.primary_face_id)}>
+      {/* #145: this avatar IS the primary face — clicking it opens the
+          face's full image in focus mode (the old handler called
+          setPrimary(primary_face_id): a self-no-op). Opening is the
+          view-context-change path, honouring the confirm dialog (#123). */}
+      <div
+        className="dp-avatar"
+        title={person.primary_face_id ? "Open the primary face's full image (focus mode)" : undefined}
+        onClick={() => person.primary_face_id && onOpenPrimary(person.primary_face_id)}
+      >
         {primaryImg ? (
           <img src={primaryImg} alt="" style={rotStyle(rotOf(person.primary_face_id ?? -1))} />
         ) : (

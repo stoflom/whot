@@ -1849,9 +1849,13 @@ export default function App() {
             onGroup={(id, g) => mutate(() => api.setPersonGroup(id, g))}
             onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}
             onRemovePerson={(id) => doRemovePersons([id])}
-            onSetPrimary={(fid) =>
-              personId != null && mutate(() => api.setPrimaryFace(personId, fid))
-            }
+            // #145: the detail-pane avatar opens the primary face's full
+            // image in focus mode — the same confirmContext path as the
+            // card double-click / "Open full image" menu entries
+            onOpenPrimary={(fid) => {
+              const f = facesById.get(fid);
+              if (f) confirmContext(() => setSplitImageId(f.image_id));
+            }}
             onRemoveRefcrop={(fid) =>
               personId != null && mutate(() => api.removeRefcrop(personId, fid))
             }
