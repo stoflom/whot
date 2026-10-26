@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.46** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.47** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1084,6 +1084,22 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - **An open modal owns the keyboard**: while any layer above
       preview-undo in Q8's stack is open (dialog, menu, settings), every
       other shortcut is suppressed (#107, #110).
+      **Implementation note — one overlay registry instead of hand lists**
+      (#138, v3.47): the rule was enforced by two hand-maintained state
+      lists in App (the Esc-stack guard and the letter/arrow guard), and
+      they had drifted from the dialog inventory: the FaceMergeDialog,
+      the tree's context menus and GroupDialog, the
+      MergeSimilarDialog's row menu and (in the shortcut list only)
+      SettingsPopover were invisible to them — e.g. Esc with a
+      face-merge confirm open also closed the full image behind it, and
+      A/R/Space/arrows acted on the grid under a tree menu. Every modal
+      component now registers itself with a tiny `OverlayProvider`
+      (`src/overlays.tsx`) while it is mounted — all overlays are
+      mounted exactly while they are open, so the mount lifetime is the
+      open lifetime, covering App-owned *and* child-owned layers — and
+      App's both guards derive from the single count. One source of
+      truth: adding a modal in the future means using the hook, not
+      remembering two lists.
     - Rejected faces stay sticky (F2); the Esc ordering of Q8 holds:
       dropdown → menus and dialogs → preview-undo → cancel field edit →
       split close.
