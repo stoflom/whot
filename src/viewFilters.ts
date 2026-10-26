@@ -32,6 +32,29 @@ export function personTreeMembers<P extends { id: number }>(
   return persons.filter((p) => visible.has(p.id));
 }
 
+/** #154 (§3): the 'Remove Unknowns' top-bar cleanup set — ids of the
+    UnknownN persons holding no face that meets the current Show filter
+    (§4.10). Under 'all' this is normally empty: the §4.27 stale-shell
+    sweep deletes zero-attached-face UnknownN on every read. */
+export function removableUnknownShellIds(
+  persons: { id: number; name: string }[],
+  faces: { person_id: number | null; link_status: string }[],
+  filter: FaceFilter,
+): number[] {
+  const visible = new Set<number>(
+    faces
+      .filter(
+        (f) =>
+          f.person_id != null &&
+          matchesStatusFilter(f.link_status, filter)
+      )
+      .map((f) => f.person_id as number)
+  );
+  return persons
+    .filter((p) => /^Unknown/.test(p.name) && !visible.has(p.id))
+    .map((p) => p.id);
+}
+
 /** Description mode (#99): one cluster per distinct description over the
     faces given (already visibility-filtered by the caller) — ordered by
     first appearance, the empty description last (Ungrouped convention). */

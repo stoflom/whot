@@ -22,6 +22,7 @@ import {
   groupByDescription,
   matchesStatusFilter,
   personTreeMembers,
+  removableUnknownShellIds,
   type ClusterGroup,
   type FaceFilter,
 } from "./viewFilters";
@@ -212,6 +213,16 @@ export default function App() {
   const displayPerson = useMemo(
     () => (personId != null ? personsById.get(personId) ?? null : null),
     [personsById, personId]
+  );
+  // #154 — 'Remove Unknowns' (§3): UnknownN persons holding no face that
+  // meets the current Show filter (§4.10). Under All the §4.27 sweep
+  // already deletes zero-attached-face UnknownN on every read, so the
+  // candidates here are the decided shells — unknowns whose faces the
+  // filter all hides (the button is disabled when the list is empty)
+  const unknownShells = useMemo(
+    () =>
+      snap ? removableUnknownShellIds(snap.persons, snap.faces, faceFilter) : [],
+    [snap, faceFilter]
   );
   // #122: person id -> primary face's stored crop rotation (tree avatars)
   const primaryRot = useMemo(() => {
@@ -1646,6 +1657,16 @@ export default function App() {
               <span className="dim">working…</span>
             </>
           )}
+          {/* #154 (§3): Unknown cleanup beside the refresh button — only
+              Unknowns with no face to show under the current filter */}
+          <button
+            className="ghost"
+            disabled={unknownShells.length === 0}
+            onClick={() => doRemovePersons(unknownShells)}
+            title="Remove Unknowns — removes only Unknown persons with no face to show under the current Show filter; Unknowns that still have a face meeting the filter are never touched."
+          >
+            Remove Unknowns
+          </button>
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}
