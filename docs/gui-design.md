@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.38** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.39** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -176,6 +176,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   its name into an entry field (Enter/blur commits via the rename-merge
   helper, §4.1, Esc cancels — same pattern as the detail-pane fields;
   validation errors surface as toast).
+  **Implementation note — the renaming row is not a `<button>`** (#143,
+  v3.39): the row used to stay the same `<button>` while its name
+  expanded into `NameTypeahead` — an `<input>` nested inside a
+  `<button>`, which is invalid HTML (buttons may not contain interactive
+  content). WebKit mis-handles it: clicks in the input bubbled to the
+  row's `onClick` (re-selecting the person mid-rename) and DOM focus
+  juggling fought the typeahead. While `renaming`, the row renders as a
+  `<div>` carrying the same class/`data-person-id`/title (CSS class
+  styling means the geometry is identical), without the select/drag
+  handlers: the rename input owns the interaction, blur (click-away)
+  commits via `onLeave` exactly as documented above.
 - **Section stepping** (#31): ‹ › buttons in the center toolbar — and the
   `←`/`→` **shortcuts** — step through the persons in the tree's current
   (filtered) display order, selecting each (person view); disabled at the
