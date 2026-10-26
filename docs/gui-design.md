@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.63** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.64** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -188,9 +188,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   persons-mode cluster-group toggle `[Description | Accuracy]`, and
   **only in the person view** (#163): `cluster_group` shapes only how
   the person view forms its sections (§4.9), so the seg is hidden in
-  the Review and Rolls views, where it would change nothing (the
-  toolbar's navigation cluster stays in every view). The
-  toolbar is the center pane's **fixed header**: the sections scroll
+  the Review and Rolls views, where it would change nothing. **Rolls
+  renders no centre toolbar at all** (#163): neither the navigation
+  cluster nor the seg appear there — the grid gets the pane's full
+  height (Review and Person keep the navigation cluster). The
+  toolbar is the center pane's **fixed header** (in the views that have
+  one): the sections scroll
   beneath it in their own, shorter scroll area — nothing can scroll past
   above it (#100). While a mutation is in flight the bar's
   right side shows an animated **busy roller** beside `working…` (the
@@ -243,7 +246,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Section stepping** (#31): ‹ › buttons in the center toolbar — and the
   `←`/`→` **shortcuts** — step through the persons in the tree's current
   (filtered) display order, selecting each (person view); disabled at the
-  ends, `n/m` indicator in the toolbar. Shortcuts never fire while an
+  ends, `n/m` indicator in the toolbar. **Neither exists in the Rolls
+  view** (#163): the toolbar is not rendered there and the shortcuts are
+  inert — person stepping always lands in the person view, which used to
+  yank a rolls browser to Person at the press of ‹/← (confusing, and it
+  stole the pane's height). Shortcuts never fire while an
   input or dialog has focus; the current set is listed in the settings
   popover (`Esc` closes overlays, `Enter` commits fields).
 - **Context menus** (#32): face cards, person rows and image thumbs show a
@@ -711,7 +718,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     to the hovered/last-selected card's section (#53); **Space** toggles
     the card itself, **Ctrl-A** selects
     all cards of the current view, **A**/**R** accept/reject the
-    selection (the rule-bar buttons' scope), ←/→ step persons (#31) and
+    selection (the rule-bar buttons' scope), ←/→ step persons (#31,
+    **not in Rolls**) and
     Esc closes split/dialog/menu (§4.19). Shortcuts are suppressed while
     typing in any input and while a menu or dialog is open. Context-menu
     items display their shortcut as a right-aligned dim hint
