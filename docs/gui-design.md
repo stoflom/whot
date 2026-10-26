@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.45** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.46** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -764,6 +764,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       (as Q4 always did): *accept* commits the set first, then the
       context switches; *cancel* discards it, then the context switches.
       Text is never dropped silently (Q3).
+      **Implementation note — "Open image" is a view-context change**
+      (#142, v3.46): the image menu's "Open image" and the RollsPane
+      image-tile click rebound the centre pane to another image with a
+      bare `setView/setImageId` — silently carrying a live staged set
+      into the new context, one menu row below a "Open full image
+      (focused)" entry that correctly asked. Both entry points now go
+      through `confirmContext` like every tab/step/tree/focus route.
     - **Implementation note — the stored action is object-wrapped**
       (#123 fix, v3.31): the pending action is kept as `useState<{fn} | null>`
       and set with `setContextConfirm({ fn: action })`. A bare function passed
