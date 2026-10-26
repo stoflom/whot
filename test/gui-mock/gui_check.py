@@ -52,6 +52,10 @@ Checks (contract refs: docs/gui-design.md):
   C23 person-tree D&D re-homes ONE membership (§4.16, #157, v3.59):
       dragged-from row removed, target filed (INSERT OR IGNORE), other
       memberships kept; src==dst drop is a no-op
+  C24 the theme is dark: :root sets color-scheme dark and the top-bar
+      Show select renders its value text in the theme text colour
+      (#158 follow-up — WebKit's light-scheme defaults washed the value
+      out against the dark panel)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1388,6 +1392,34 @@ def c23_dnd_moves_one_membership(t):
            f"{detail_a}; {detail_b}; {detail_c}")
 
 
+def c24_dark_scheme_native_controls(t):
+    """#158 follow-up (v3.59.1): the theme is dark — :root must declare
+    color-scheme: dark so native form controls (the select's dropdown
+    list and arrow, scrollbars) render dark-scheme, and the top-bar Show
+    select's value text must be the theme text colour. WebKit's
+    light-scheme defaults washed the value text out against the dark
+    panel."""
+    fresh(t)
+    r = js(t, """
+      const scheme = getComputedStyle(document.documentElement).colorScheme;
+      const sel = document.querySelector('.topbar-right select');
+      return {
+        scheme: scheme,
+        selColor: sel ? getComputedStyle(sel).color : null,
+      };
+    """)
+    # --text is #dce4ee
+    ok = (isinstance(r, dict)
+          and r.get("scheme") == "dark"
+          and r.get("selColor") == "rgb(220, 228, 238)")
+    detail = (f"color-scheme={r.get('scheme') if r else None} "
+              f"(want dark); topbar select value text="
+              f"{r.get('selColor') if r else None} "
+              f"(want rgb(220, 228, 238))")
+    record("C24 dark color-scheme, legible top-bar select (#158 follow-up)",
+           ok, detail)
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1419,6 +1451,7 @@ def main():
         c21_show_filter_in_topbar(t)
         c22_review_exhaust_skips_reviewed(t)
         c23_dnd_moves_one_membership(t)
+        c24_dark_scheme_native_controls(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

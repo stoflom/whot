@@ -14,6 +14,11 @@
   --tag: #a78bfa;
   --radius: 8px;
   font-size: 14px;
+  /* the theme is dark — native form controls (select dropdown lists and
+     arrows, scrollbars) must render dark-scheme, or their platform
+     defaults wash out the value text against the dark panel (#158 follow-up)
+     */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -122,7 +127,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .topbar-right select {
   font: inherit;
   background: var(--panel2);
-  color: inherit;
+  /* #158 follow-up: native <select> value text does not reliably inherit
+     on WebKit without the dark color-scheme on :root — pin it explicitly
+     so the value stays legible on the dark panel */
+  color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1px 4px;
