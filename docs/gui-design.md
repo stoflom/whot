@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.51** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.52** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -211,13 +211,23 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   **Tree rows** additionally support **multi-select** (click sets the
   selection, ctrl/cmd-click toggles, shift-click extends over the tree's
   visible order; the anchor row stays the person shown) and offer
-  **Remove person / Remove N persons** (§4.13); **branch headers** have
-  their own menu — *remove all unknown persons* on the `Unknown` root,
-  *remove all persons in this branch* on any group branch (counts shown,
-  confirm dialog required) — and, on real group branches, *rename/move
-  group…*, *delete group* and *add group…* (§4.16/§4.18, #50/#54; the
-  tree root offers *add group…* too). The reference-set pane exposes
-  **Remove person** as a button.
+  **Remove person / Remove N persons** (§4.13); **real group branches**
+  have their own menu — *remove all persons in this branch* (counts shown,
+  confirm dialog required) plus *rename/move group…*, *delete group* and
+  *add group…* (§4.16/§4.18, #50/#54; the tree root offers *add group…*
+  too); the virtual `Unknown`/`Ungrouped` branches offer **no** branch
+  menu — bulk actions target real branches only, and Unknown cleanup
+  moved to a dedicated top-bar button (below). **`Remove Unknowns`**
+  (#154) sits in the top bar beside the refresh button: it removes every
+  `UnknownN` person holding **no face that meets the current Show filter
+  (§4.10)** — no face left to show means nothing left to decide on;
+  Unknowns that still have a visible face are never touched (with Show =
+  All this degenerates to zero candidates — §4.27's stale-shell sweep
+  already deletes zero-attached-face UnknownN on every read). It is
+  disabled when no such Unknown exists, opens the §4.13 confirm dialog
+  (every face becomes rejected and unowned; no undo), and its
+  tooltip spells out the filter-relative semantics. The reference-set
+  pane exposes **Remove person** as a button.
 - **Group management & drag-and-drop** (#50, §4.16): real group branches
   (not the virtual `Unknown`/`Ungrouped` nodes) can be **renamed/moved**
   (a path dialog, prefilled; the whole subtree follows the prefix rewrite)
