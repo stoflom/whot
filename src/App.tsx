@@ -15,7 +15,7 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
-import { acceptAdvancePlan } from "./reviewFlow";
+import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
@@ -1157,9 +1157,20 @@ export default function App() {
     const status =
       faceFilter === "confirmed" || faceFilter === "rejected" ? faceFilter : "provisional";
     if (snap.faces.some((f) => f.person_id === pid && f.link_status === status)) return;
-    let j = at;
-    while (j < stepIds.length && stepIds[j] === pid) j += 1;
-    const nextId = stepIds[j];
+    // #159 (§4.30, v3.58): the advance target is the first person ANCHOR
+    // forward — in the tree list — that still has a face of the review
+    // status. The old code landed on the immediate successor whatever
+    // they hold, so under Show=All (faceless shell persons everywhere in
+    // the list) and Show=New (a fully reviewed person loses their last
+    // matching face) the advance parked on a person with nothing to
+    // review — the reported 'nothing to show' centre pane with pending
+    // faces elsewhere. reviewFlow.exhaustAdvanceTarget re-derives the
+    // marked person's position from the CURRENT list (the §4.10 pruning
+    // may have removed them on this very refresh) and falls back to the
+    // captured index as the pruning gap.
+    const nextId = exhaustAdvanceTarget(stepIds, pid, at, (id) =>
+      snap.faces.some((f) => f.person_id === id && f.link_status === status)
+    );
     if (nextId == null) {
       setInfo("no more persons to review");
       return;

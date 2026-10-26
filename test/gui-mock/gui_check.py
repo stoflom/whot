@@ -46,6 +46,9 @@ Checks (contract refs: docs/gui-design.md):
   C21 the Show filter (a global control) lives in the top bar (#158,
       v3.57): topbar select present, centre-toolbar select gone, the
       view-local cluster-group seg stays in the person view
+  C22 the review exhaust advance lands on the first person after the
+      drained one with a reviewable face (§4.30, #159, v3.58) — never on
+      the raw successor with nothing left to review
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1181,6 +1184,81 @@ def c21_show_filter_in_topbar(t):
            f"view-local seg still present={topbar['seg']}")
 
 
+def c22_review_exhaust_skips_reviewed(t):
+    """#159 (§4.30, v3.58): after the last review verdict on a person the
+    exhaust advance lands on the first person AFTER them in the tree list
+    that still has a face of the review status — never on the raw
+    successor (which may hold nothing to review → 'nothing to show' with
+    pending faces elsewhere)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      // a person with pending faces whose NEXT tree-list entry has none
+      const seen = new Set(); const ids = [];
+      for (const el of document.querySelectorAll('.tree-person')) {
+        const id = String(el.getAttribute('data-person-id'));
+        if (!seen.has(id)) { seen.add(id); ids.push(id); }
+      }
+      const pend = id => window.__MOCK_SNAP.faces.filter(
+        f => f.person_id === Number(id) && f.link_status === 'provisional').length;
+      for (let i = 0; i + 1 < ids.length; i++)
+        if (pend(ids[i]) > 0 && pend(ids[i + 1]) === 0) {
+          const p = window.__MOCK_SNAP.persons.find(x => String(x.id) === ids[i]);
+          return {a: ids[i], aname: p?.name, b: ids[i + 1]};
+        }
+      return null;
+    """)
+    if not pick:
+        record("C22 review exhaust skips reviewed persons (#159)", True,
+               "no person followed by a pending-less neighbour — vacuous")
+        return
+    t.find_element(By.CSS_SELECTOR,
+                   f".tree-person[data-person-id='{pick['a']}']").click()
+    time.sleep(1.0)
+    js(t, "[...document.querySelectorAll('.topbar nav button')][0].click();")
+    time.sleep(1.0)
+    # select-all the acted person's review section, then Accept
+    acted = js(t, r"""
+      for (const s of document.querySelectorAll('.face-section')) {
+        const title = s.querySelector('.face-section-title')?.textContent ?? '';
+        if (title === arguments[0]) {
+          const cb = s.querySelector('.select-all input');
+          if (cb) cb.click();
+          return title;
+        }
+      }
+      return null;
+    """, pick["aname"])
+    time.sleep(0.6)
+    acc = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+           if b.text.strip() == "Accept"]
+    acc[0].click()
+    time.sleep(2.5)
+    landed = js(t, r"""
+      const id = Number(document.querySelector('.tree-person.selected')
+        ?.getAttribute('data-person-id'));
+      const info = document.querySelector('.info')?.textContent ?? null;
+      return {
+        landed: id,
+        landedHasPending: window.__MOCK_SNAP.faces.some(
+          f => f.person_id === id && f.link_status === 'provisional'),
+        info,
+        view: [...document.querySelectorAll('.topbar nav button')]
+          .filter(x => x.className.includes('active'))
+          .map(x => x.textContent.trim().split('\n')[0]),
+      };
+    """)
+    ok = landed["landedHasPending"] or (
+      landed["info"] is not None
+      and "no more persons to review" in landed["info"])
+    # the old bug parked on the raw successor — recorded either way
+    ok = ok and landed["landed"] != pick["b"]
+    record("C22 review exhaust skips reviewed persons (#159)", ok,
+           f"acted {pick['aname']} (next list entry {pick['b']} has nothing "
+           f"to review) → landed on person {landed['landed']} "
+           f"(pending={landed['landedHasPending']}, info={landed['info']!r})")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -1210,6 +1288,7 @@ def main():
         c19_staged_desc_regroups(t)
         c20_multi_group_renders_everywhere(t)
         c21_show_filter_in_topbar(t)
+        c22_review_exhaust_skips_reviewed(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
