@@ -546,14 +546,15 @@ def blake3_hex(path: Path) -> str:
 def ensure_person(con: sqlite3.Connection, stub: PersonStub, unknowns: list[PersonStub]) -> int:
     """Return the matched person's id, or insert a brand-new UnknownN for a
     fresh cluster. #45: minting is collision-free, so a fresh cluster is NEVER
-    reused/linked by name — `persons.name` UNIQUE is the backstop."""
+    reused/linked by name — `persons.name` UNIQUE is the backstop. #153: no
+    group row is seeded — all new persons start Ungrouped (the virtual
+    `Unknown` tree branch is name-driven; putting an UnknownN into a real
+    group drops a row and is the *user's* act)."""
     if stub.person_id:
         return stub.person_id
     cur = con.execute("INSERT INTO persons(name, state, created_at) VALUES (?, 'created', datetime('now'))",
                       (stub.name,))
     stub.person_id = cur.lastrowid
-    con.execute("INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, 'Unknown')",
-                (stub.person_id,))
     unknowns.append(stub)
     return stub.person_id
 

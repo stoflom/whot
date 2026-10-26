@@ -495,11 +495,13 @@ export default function App() {
     if (ids.length > 0) setConfirmRemove(ids);
   };
 
-  // group argument for rename-style assigns: an UnknownN must leave the
-  // 'Unknown' branch (F7) — the group isn't user-visible in these flows;
-  // otherwise the person keeps their current path (pure — stable ref)
+  // group argument for rename-style assigns: keep the person's current
+  // path (#153) — the old UnknownN force-to-empty (#38/F7) is obsolete
+  // now that the importer seeds no 'Unknown' row; a grouped UnknownN
+  // keeps their group through a rename, an ungrouped one stays Ungrouped
+  // (pure — stable ref)
   const renameGroup = useCallback(
-    (p: Person | undefined) => (p && p.name.startsWith("Unknown") ? "" : (p?.groups[0] ?? "")),
+    (p: Person | undefined) => p?.groups[0] ?? "",
     []
   );
 
@@ -954,7 +956,7 @@ export default function App() {
           title: p?.name ?? "unassigned",
           faceIds: fl.map((f) => f.id),
           ruleDefaultName: p?.name,
-          // #38: an UnknownN must leave the Unknown branch on rename
+          // #153: the rename keeps the person's current group path
           ruleDefaultGroup: renameGroup(p),
         };
       });
@@ -991,7 +993,7 @@ export default function App() {
             description: g.description || undefined,
             faceIds: g.faceIds,
             ruleDefaultName: pname,
-            // #38: an UnknownN must leave the Unknown branch on rename
+            // #153: the rename keeps the person's current group path
             ruleDefaultGroup: rg,
           });
         });
@@ -1030,7 +1032,7 @@ export default function App() {
               // appearance (display only — the title stays cluster-derived,
               // F6)
               description: g.description || undefined,
-              // #38: an UnknownN must leave the Unknown branch on rename
+              // #153: the rename keeps the person's current group path
               ruleDefaultGroup: rg,
             });
           });
@@ -1069,8 +1071,7 @@ export default function App() {
         subtitle: p.counts.total > byPerson.get(p.id)!.length ? `${p.counts.total} faces total` : undefined,
         faceIds: byPerson.get(p.id)!.map((f) => f.id),
         ruleDefaultName: p.name,
-        // #38: review sections come from UnknownN importer clusters — a
-        // rename must leave the Unknown branch (F7)
+        // #153: the rename keeps the person's current group path
         ruleDefaultGroup: renameGroup(p),
       }));
   }, [snap, view, imageId, personId, selectedPerson, clusters,

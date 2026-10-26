@@ -26,16 +26,23 @@ function buildTree(persons: Person[]): TreeNode {
   };
   const unknown = find(root, "Unknown");
   const ungrouped = find(root, "Ungrouped");
+  // #153 (§3): group placement first — a person with a group row renders
+  // under their first path even when named UnknownN (the user may group
+  // an UnknownN they remember by face but not by name). The virtual
+  // branches hold the ungrouped: UnknownN names to Unknown, the rest to
+  // Ungrouped. The importer seeds no group rows, so fresh UnknownN
+  // persons are ungrouped by construction (never a literal 'Unknown'
+  // segment); historic rows still land on the same top-level branch.
   for (const p of persons) {
-    if (p.name.startsWith("Unknown")) {
-      unknown.personIds.push(p.id);
-    } else if (p.groups.length === 0) {
-      ungrouped.personIds.push(p.id);
-    } else {
+    if (p.groups.length > 0) {
       const parts = p.groups[0].split("|").filter(Boolean);
       let node = root;
       for (const part of parts) node = find(node, part);
       node.personIds.push(p.id);
+    } else if (p.name.startsWith("Unknown")) {
+      unknown.personIds.push(p.id);
+    } else {
+      ungrouped.personIds.push(p.id);
     }
   }
   // #61 (§3): within every branch, biggest clusters first — persons
