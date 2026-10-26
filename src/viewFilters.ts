@@ -33,25 +33,26 @@ export function personTreeMembers<P extends { id: number }>(
 }
 
 /** #154 (§3): the 'Remove Unknowns' top-bar cleanup set — ids of the
-    UnknownN persons holding no face that meets the current Show filter
-    (§4.10). Under 'all' this is normally empty: the §4.27 stale-shell
-    sweep deletes zero-attached-face UnknownN on every read. */
+    UnknownN persons whose faces are **all decided** (zero provisional/New
+    and zero confirmed/Accepted faces left). Filter-independent by design:
+    the §4.27 sweep keeps zero-attached-face UnknownN out of the snapshot
+    anyway, so these are the Unknowns that still exist but whose review is
+    finished — nothing left to show means nothing left to keep. */
 export function removableUnknownShellIds(
   persons: { id: number; name: string }[],
   faces: { person_id: number | null; link_status: string }[],
-  filter: FaceFilter,
 ): number[] {
-  const visible = new Set<number>(
+  const undecided = new Set<number>(
     faces
       .filter(
         (f) =>
           f.person_id != null &&
-          matchesStatusFilter(f.link_status, filter)
+          (f.link_status === "provisional" || f.link_status === "confirmed")
       )
       .map((f) => f.person_id as number)
   );
   return persons
-    .filter((p) => /^Unknown/.test(p.name) && !visible.has(p.id))
+    .filter((p) => /^Unknown/.test(p.name) && !undecided.has(p.id))
     .map((p) => p.id);
 }
 

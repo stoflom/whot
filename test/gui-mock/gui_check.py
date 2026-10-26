@@ -34,8 +34,9 @@ Checks (contract refs: docs/gui-design.md):
       86vh cap, scrolling list, pinned action row (v3.34/#137)
   C16 Show filter prunes the tree person list (#152, §4.10 — sees
       C8 updated accordingly)
-  C17 top-bar 'Remove Unknowns': filter-relative candidates,
-      §4.13 confirm dialog, exact removal (mock-backed) (#154)
+  C17 top-bar 'Remove Unknowns': filter-independent, removes Unknowns
+      whose faces are all decided (v3.54 — exact removal, confirm
+      dialog) (#154)
   C18 rolls with 0 images are never listed (#151)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
@@ -463,9 +464,10 @@ def c16_filter_prunes_tree(t):
 
 
 def c17_remove_unknowns_button(t):
-    """#154: a top-bar 'Remove Unknowns' button, disabled under a filter
-    with no candidates, removes exactly the Unknown persons with no face
-    under the current filter — after the §4.13 confirm dialog."""
+    """#154 (v3.54): the top-bar 'Remove Unknowns' button is FILTER-
+    INDEPENDENT — it removes exactly the Unknown persons whose faces are
+    all decided (zero New and zero Accepted left), same set under every
+    Show filter, after the §4.13 confirm dialog."""
     fresh(t)
 
     def state():
@@ -473,9 +475,8 @@ def c17_remove_unknowns_button(t):
           const b = [...document.querySelectorAll('.topbar button')]
             .find(x => x.textContent.includes('Remove Unknowns'));
           if (!b) return {missing: true};
-          const f = window.__MOCK_SNAP.settings.face_filter ?? 'all';
           const sees = new Set(window.__MOCK_SNAP.faces
-            .filter(x => f === 'all' || x.link_status === f)
+            .filter(x => x.link_status === 'provisional' || x.link_status === 'confirmed')
             .map(x => String(x.person_id)));
           const cand = window.__MOCK_SNAP.persons
             .filter(p => /^Unknown/.test(p.name) && !sees.has(String(p.id)))
@@ -484,14 +485,19 @@ def c17_remove_unknowns_button(t):
         """)
 
     under_all = state()
-    if "missing" in under_all:
-        record("C17 Remove Unknowns filter-relative button (#154)",
-               False, "no 'Remove Unknowns' button in the top bar")
-        return
     set_show_filter(t, "provisional")
     under_new = state()
+    set_show_filter(t, "rejected")
+    under_rejected = state()
+    set_show_filter(t, "confirmed")
+    under_confirmed = state()
+    set_show_filter(t, "all")
+    cand = (under_all.get("candidates") or [])
+    if not cand or "missing" in under_all:
+        record("C17 Remove Unknowns (all faces decided) (#154)", False,
+               f"button {'missing' if 'missing' in under_all else 'has no candidates'}")
+        return
     before_count = js(t, "return window.__MOCK_SNAP.persons.length")
-    cand = under_new.get("candidates") or []
     js(t, """
       const b = [...document.querySelectorAll('.topbar button')]
         .find(x => x.textContent.includes('Remove Unknowns'));
@@ -514,18 +520,19 @@ def c17_remove_unknowns_button(t):
         .filter(p => arguments[0].includes(p.id)).length;
     """, cand)
     ok = (
-        under_all.get("disabled") is True
-        and len(cand) > 0
-        and under_new.get("disabled") is False
+        under_all.get("disabled") is False
+        and under_new.get("candidates") == cand
+        and under_rejected.get("candidates") == cand
+        and under_confirmed.get("candidates") == cand
         and "Remove" in (dlg_title or "")
         and after_count == before_count - len(cand)
         and gone == 0
     )
-    set_show_filter(t, "all")
-    record("C17 Remove Unknowns filter-relative button (#154)", ok,
-           f"all: disabled={under_all.get('disabled')}; new: {len(cand)} "
-           f"candidates enabled={under_new.get('disabled') is False}; "
-           f"confirm title='{dlg_title}'; delta={before_count - after_count} "
+    record("C17 Remove Unknowns is filter-independent (all faces decided) (#154)", ok,
+           f"candidates={len(cand)} identical under All/New/Rejected/Accepted "
+           f"[{under_all.get('disabled')}, {under_new.get('disabled')}] "
+           f"{under_rejected.get('disabled')}, {under_confirmed.get('disabled')}]"
+           f" - disabled); confirm title='{dlg_title}'; delta={before_count - after_count} "
            f"persons (all candidates gone: {gone == 0})")
 
 

@@ -8,32 +8,28 @@ import {
   removableUnknownShellIds,
 } from "./viewFilters";
 
-describe("removableUnknownShellIds (#154)", () => {
+describe("removableUnknownShellIds (#154, v3.54)", () => {
   const persons = [
-    { id: 10, name: "Unknown1" }, // provisional only
+    { id: 10, name: "Unknown1" }, // provisional remains
     { id: 11, name: "Unknown2" }, // all decided
-    { id: 12, name: "Unknown3" }, // faceless (sweep already handles it)
+    { id: 12, name: "Unknown3" }, // faceless (the §4.27 sweep keeps it out of the snapshot anyway)
     { id: 13, name: "Mary" }, // named — never a target
     { id: 14, name: "Unknown-hat" }, // Unknown-prefixed but not UnknownN — still a target (GLOB 'Unknown*' rule)
   ];
   const faces = [
     { person_id: 10, link_status: "provisional" },
-    { person_id: 12, link_status: "confirmed" }, // visible under 'all'/'confirmed'
+    { person_id: 11, link_status: "rejected" },
+    { person_id: 12, link_status: "confirmed" }, // arms an Unknown, same rule as 'rejected'
     { person_id: 13, link_status: "rejected" },
   ];
 
-  it("leaves Unknowns with a face meeting the current filter", () => {
-    expect(removableUnknownShellIds(persons, faces, "provisional")).toEqual([11, 12, 14]);
-    expect(removableUnknownShellIds(persons, faces, "confirmed")).toEqual([10, 11, 14]);
-    expect(removableUnknownShellIds(persons, faces, "rejected")).toEqual([10, 11, 12, 14]);
-  });
-
-  it("with 'all', only the zero-face unknowns are candidates (the §4.27 sweep keeps them out of the snapshot anyway)", () => {
-    expect(removableUnknownShellIds(persons, faces, "all")).toEqual([11, 14]);
+  it("removes only Unknowns with zero New and zero Accepted faces — no filter argument", () => {
+    expect(removableUnknownShellIds(persons, faces)).toEqual([11, 14]);
+    expect(removableUnknownShellIds(persons, [])).toEqual([10, 11, 12, 14]);
   });
 
   it("named persons are never targets", () => {
-    expect(removableUnknownShellIds(persons, [], "all")).toEqual([10, 11, 12, 14]);
+    expect(removableUnknownShellIds(persons, faces)).not.toContain(13);
   });
 });
 

@@ -214,15 +214,13 @@ export default function App() {
     () => (personId != null ? personsById.get(personId) ?? null : null),
     [personsById, personId]
   );
-  // #154 — 'Remove Unknowns' (§3): UnknownN persons holding no face that
-  // meets the current Show filter (§4.10). Under All the §4.27 sweep
-  // already deletes zero-attached-face UnknownN on every read, so the
-  // candidates here are the decided shells — unknowns whose faces the
-  // filter all hides (the button is disabled when the list is empty)
+  // #154 — 'Remove Unknowns' (§3): UnknownN persons whose faces are all
+  // decided (zero New and zero Accepted faces left) — filter-independent
+  // (v3.54; the first filter-relative rule offered the unfinished queue
+  // under Accepted/Rejected). Disabled when the list is empty.
   const unknownShells = useMemo(
-    () =>
-      snap ? removableUnknownShellIds(snap.persons, snap.faces, faceFilter) : [],
-    [snap, faceFilter]
+    () => (snap ? removableUnknownShellIds(snap.persons, snap.faces) : []),
+    [snap]
   );
   // #122: person id -> primary face's stored crop rotation (tree avatars)
   const primaryRot = useMemo(() => {
@@ -1659,12 +1657,17 @@ export default function App() {
             </>
           )}
           {/* #154 (§3): Unknown cleanup beside the refresh button — only
-              Unknowns with no face to show under the current filter */}
+              Unknowns with nothing left to decide (all faces decided) */}
           <button
             className="ghost"
             disabled={unknownShells.length === 0}
             onClick={() => doRemovePersons(unknownShells)}
-            title="Remove Unknowns — removes only Unknown persons with no face to show under the current Show filter; Unknowns that still have a face meeting the filter are never touched."
+            title={
+              "Remove Unknowns — removes only Unknown persons with no face left " +
+              "to show or decide on (all their faces rejected); Unknowns that " +
+              "still hold a new or accepted face are never touched. Untouched " +
+              "by the Show filter."
+            }
           >
             Remove Unknowns
           </button>
