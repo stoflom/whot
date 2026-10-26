@@ -38,6 +38,9 @@ Checks (contract refs: docs/gui-design.md):
       whose faces are all decided (v3.54 — exact removal, confirm
       dialog) (#154)
   C18 rolls with 0 images are never listed (#151)
+  C19 staged dialog-Apply (§4.24) regroups the Description-mode sections
+      live (#155, v3.55): Undo returns the committed grouping; bar Accept
+      commits the description
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -442,6 +445,7 @@ def c16_filter_prunes_tree(t):
     """#152 (§4.10): with Show=New, persons without a provisional face are
     not listed; Show=All lists everyone again (incl. faceless shells)."""
     fresh(t)
+    set_show_filter(t, "all")  # the persisted whotrc filter must not tilt the baseline
     all_ids = tree_person_ids(t)
     set_show_filter(t, "provisional")
     new_ids = tree_person_ids(t)
@@ -556,6 +560,124 @@ def c18_zero_image_rolls_hidden(t):
     record("C18 rolls with 0 images are never listed (#151)", ok,
            f"imports={total} (zero-image: {zeros}) → sections shown={sections}")
 
+
+def c19_staged_desc_regroups(t):
+    """#155 (v3.55): in Description mode (cluster-group toggle), a staged
+    description edit (dialog Apply, §4.24) regroups the sections LIVE —
+    the face moves under the description it will land in on Accept;
+    Undo returns the committed grouping; Accept commits it."""
+    fresh(t)
+    # a person with >= 2 visible faces — target face `a` gets the staged
+    # desc, face `b` must stay put
+    pick = js(t, """
+      const vis = f => f.person_id != null && (f.state ?? '') !== 'discarded'
+                     && f.link_status !== 'rejected';
+      for (const p of window.__MOCK_SNAP.persons) {
+        const fs = window.__MOCK_SNAP.faces.filter(f => vis(f) && f.person_id === p.id);
+        if (fs.length >= 2)
+          return {pid: p.id, a: fs[0].id, aDesc: fs[0].description ?? '',
+                  b: fs[1].id};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C19 staged Apply regroups Description sections (#155)", True,
+               f"no person with 2+ visible faces in the dump — vacuous")
+        return
+    set_show_filter(t, "all")  # the §4.10 pruning must not hide the target
+    js(t, "document.querySelectorAll('.topbar nav button')[2]?.click();")  # Person tab
+    time.sleep(0.8)
+    t.find_element(By.CSS_SELECTOR,
+                   f".tree-person[data-person-id='{pick['pid']}']").click()
+    time.sleep(0.8)
+    seg = js(t, """
+      // the cluster-group seg lives in the person view's center toolbar
+      const s = document.querySelector('.center-toolbar .seg')
+             ?? document.querySelector('.seg');
+      const d = [...(s?.querySelectorAll('button') ?? [])]
+        .find(b => b.textContent.trim() === 'Description');
+      if (!d) return null;
+      const act = s.querySelector('button.active')?.textContent.trim() ?? null;
+      if (!d.classList.contains('active')) d.click();
+      return act;
+    """)
+    time.sleep(0.8)
+
+    def header_for(face_id):
+        return js(t, """
+          const secs = [...document.querySelectorAll('.face-section')];
+          const f = secs.find(s =>
+            [...s.querySelectorAll('.face-card')]
+              .some(c => c.getAttribute('data-face-id') === String(arguments[0])));
+          return f ? f.querySelector('.face-section-title')
+                   ?.textContent?.trim() ?? '' : null;
+        """, face_id)
+
+    before = js(t, """
+      return {
+        both: [...document.querySelectorAll('.face-section')]
+          .map(s => s.querySelector('.face-section-title')?.textContent?.trim()),
+        aCard: !!document.querySelector(`.face-card[data-face-id='${arguments[0]}']`)
+      };
+    """, pick["a"])
+    if not before["aCard"]:
+        record("C19 staged Apply regroups Description sections (#155)", True,
+               f"target card {pick['a']} not rendered — vacuous")
+        return
+    old_a = header_for(pick["a"])
+
+    # stage the desc change on the card scope
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-card[data-face-id='{pick['a']}'] .card-edit").click()
+    time.sleep(0.6)
+    inp = t.find_element(By.CSS_SELECTOR, ".edit-dialog .input-desc")
+    inp.click()
+    inp.clear()
+    inp.send_keys("gui19hat")
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+     if b.text.strip() == "Apply"][0].click()
+    time.sleep(0.8)
+    staged_a = header_for(pick["a"])
+
+    # Undo (discard) restores the committed grouping
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+     if b.text.strip().startswith("Undo")][0].click()
+    time.sleep(0.8)
+    undone_a = header_for(pick["a"])
+
+    # re-stage and commit through bar Accept — desc write + accept
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-card[data-face-id='{pick['a']}'] .card-edit").click()
+    time.sleep(0.6)
+    inp = t.find_element(By.CSS_SELECTOR, ".edit-dialog .input-desc")
+    inp.click()
+    inp.clear()
+    inp.send_keys("gui19hat")
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+     if b.text.strip() == "Apply"][0].click()
+    time.sleep(0.5)
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+     if b.text.strip() == "Accept"][0].click()
+    time.sleep(1.5)
+    committed_a = header_for(pick["a"])
+    mock_desc = js(t, """
+      return window.__MOCK_SNAP.faces.find(x => x.id === arguments[0])
+        ?.description ?? null;
+    """, pick["a"])
+
+    changed = (
+        old_a is not None and staged_a is not None
+        and "gui19hat" in (staged_a or "")
+        and (old_a or "") not in ("gui19hat",)
+        and undone_a == old_a
+    )
+    final = committed_a is not None and "gui19hat" in (committed_a or "") \
+        and mock_desc == "gui19hat"
+    ok = changed and final
+    record("C19 staged Apply regroups Description sections (#155)", ok,
+           f"mode switch: {seg!r}→Description; person={pick['pid']} "
+           f"description {old_a!r} -> {staged_a!r} (staged) -> "
+           f"{undone_a!r} (Undo) -> {committed_a!r} (Accept, mock desc={mock_desc!r})")
 
 
 def dialog_actions_above_typeahead(dlg_js):
@@ -741,6 +863,7 @@ def drag_face(t, src_sel, dst_sel):
 
 def c12_face_drag_merges_into_person(t):
     fresh(t)
+    set_show_filter(t, "all")
     pick = js(t, r"""
       const rows = [...document.querySelectorAll('.tree-person')].map(n => {
         const name = n.querySelector('.tree-name')?.textContent.trim() ?? '';
@@ -853,6 +976,7 @@ def c14_drag_sources(t):
 
 def c13_face_drag_copies_description(t):
     fresh(t)
+    set_show_filter(t, "all")
     pick = js(t, r"""
       const snap = window.__MOCK_SNAP;
       for (const p of snap.persons) {
@@ -1002,6 +1126,7 @@ def main():
         c16_filter_prunes_tree(t)
         c17_remove_unknowns_button(t)
         c18_zero_image_rolls_hidden(t)
+        c19_staged_desc_regroups(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

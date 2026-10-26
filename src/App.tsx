@@ -976,7 +976,11 @@ export default function App() {
       const rg = renameGroup(selectedPerson ?? undefined);
       if (clusterGroup === "description") {
         // #99 Description mode: one section per distinct description over
-        // the visible faces — no similarity split, no clusters IPC
+        // the visible faces — no similarity split, no clusters IPC.
+        // #155: the §4.24 staged preview drives the grouping too — a face
+        // with a staged description is grouped under the description it
+        // will land in on Accept (Apply = screen preview), instead of
+        // showing the staged label under the old committed section.
         const visible = snap.faces.filter(
           (f) =>
             f.person_id === personId &&
@@ -984,7 +988,17 @@ export default function App() {
             f.link_status !== "rejected" &&
             matchesStatusFilter(f.link_status, faceFilter)
         );
-        groupByDescription(visible).forEach((g) => {
+        groupByDescription(
+          visible.map((f) => ({
+            id: f.id,
+            // F2 keeps rejected-touching ops out of the pending set, and
+            // rejected faces never reach this branch
+            description:
+              stagedFieldsForCard(pending, f.id).desc ??
+              f.description ??
+              ""
+          }))
+        ).forEach((g) => {
           out.push({
             key: `pd-${personId}-${g.description}`,
             title: g.description || "(no description)",
@@ -1073,7 +1087,8 @@ export default function App() {
         ruleDefaultGroup: renameGroup(p),
       }));
   }, [snap, view, imageId, personId, selectedPerson, clusters,
-      sectionsForImage, renameGroup, facesById, faceFilter, clusterGroup]);
+      sectionsForImage, renameGroup, facesById, faceFilter, clusterGroup,
+      pending]); // #155: staged (§4.24) descriptions drive the regroup
   sectionsRef.current = sections;
   sectionsForImageRef.current = sectionsForImage;
 
