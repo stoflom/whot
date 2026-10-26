@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.55** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.56** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -93,10 +93,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
 - **Left pane — person tree.** Hierarchy built from `person_groups.path`
   (segments split on `|`). **Group first** (#153): a person with a group
-  row renders under their first path even when named `UnknownN` — the
+  row renders under their path even when named `UnknownN` — the
   user may group an UnknownN they remember by face but not by name.
-  Virtual branches hold the rest: `Ungrouped` (persons with no group
-  row) and `Unknown` (**ungrouped** persons named `UnknownN` — purely
+  **Multi-group persons render under every listed path** (#156, v3.56):
+  the §9 harvest importer legally leaves several `person_groups` rows per
+  person (§9.6, #128 — additive shell groups), and the earlier
+  `groups[0]`-only placement made such a person unfindable in the branch
+  the user filed them under. Each distinct row is one placement; the
+  person is stepped (‹ › / arrows) **once**, at the first placement
+  reached, and branch bulk operations (§4.13 subtree remove) dedupe the
+  ids across placements. Virtual branches hold the rest: `Ungrouped`
+  (persons with no group row) and `Unknown` (**ungrouped** persons
+  named `UnknownN` — purely
   name-driven). The importer writes **no group rows at all** for the
   `UnknownN` persons it seeds: all new persons start Ungrouped (an
   empty group field means Ungrouped — never a literal `Unknown`
