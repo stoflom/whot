@@ -3,6 +3,7 @@ import type { Person, Settings } from "../api";
 import { aliasesToText, clusterPersons, textToAliases, type MergeCluster } from "../nameCluster";
 import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
 import ContextMenu, { type MenuState } from "./ContextMenu";
+import { useOwnsKeyboard } from "../overlays";
 
 // #88 (gui-design §4.28) — the Merge Similar Persons triage view:
 // clusters of near-identical names with per-pair link evidence, bulk
@@ -45,6 +46,7 @@ export default function MergeSimilarDialog({
   onClose,
   escActive,
 }: Props) {
+  useOwnsKeyboard(); // #138
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [dist, setDist] = useState(settings.merge_name_distance);
   const [aliasText, setAliasText] = useState(aliasesToText(settings.merge_suffix_aliases));

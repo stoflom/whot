@@ -38,6 +38,7 @@ import {
 } from "./stage";
 import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
+import { useOverlayCount } from "./overlays";
 import FaceGrid, { type Section } from "./components/FaceGrid";
 import FaceOverlay from "./components/FaceOverlay";
 import PersonTree, { orderedVisiblePersonIds } from "./components/PersonTree";
@@ -254,6 +255,10 @@ export default function App() {
   }, [personId, snap]);
 
   // #25 — Esc closes the double-click image split
+  // #138: which overlays are open is ONE registry count, not a list of
+  // states — the ladder state list has drifted before (face-merge, tree
+  // menus, group dialog were invisible to it)
+  const overlayCount = useOverlayCount();
   useEffect(() => {
     // #47/#101 (§4.19 + the Q8 stack): dialogs/menus/popovers own Esc
     // first, then a live stage's preview-undo (F1), then the split —
@@ -261,16 +266,7 @@ export default function App() {
     // context-change dialog is one of those dialogs: dropping the set
     // under it both violates the stack and unmounts the dialog
     // mid-dispatch
-    if (
-      edit != null ||
-      confirmRemove != null ||
-      menu != null ||
-      settingsOpen ||
-      mergeOpen ||
-      mergeInto != null ||
-      contextConfirm != null
-    )
-      return;
+    if (overlayCount > 0) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       const tgt = e.target as HTMLElement | null;
@@ -291,7 +287,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [edit, confirmRemove, menu, settingsOpen, mergeOpen, mergeInto, contextConfirm, splitImageId]);
+  }, [overlayCount, splitImageId]);
 
   // #133: resolves to whether the operation AND the refresh succeeded —
   // callers may act only on success (errors are still surfaced as the
@@ -395,9 +391,17 @@ export default function App() {
   // #125: a verdict that might empty the current person in Review marks
   // the step index pre-mutation; the refreshed-snapshot effect below
   // consumes it and steps past (exactly what “›” does)
+  // #148: the mark also remembers the person it was set for and is
+  // consumed unconditionally — a mark that lingers (e.g. the refresh
+  // lands after the user left Review) must never fire much later against
+  // whatever person the selection holds then
   const exhaustAtRef = useRef(-1);
+  const exhaustPidRef = useRef<number | null>(null);
   const markExhaust = useCallback(() => {
-    if (view === "review" && personId != null) exhaustAtRef.current = stepIdx;
+    if (view === "review" && personId != null) {
+      exhaustAtRef.current = stepIdx;
+      exhaustPidRef.current = personId;
+    }
   }, [view, personId, stepIdx]);
   const doAccept = useCallback(
     (ids: number[]) => {
@@ -409,6 +413,12 @@ export default function App() {
   const doReject = useCallback(
     (ids: number[]) => {
       markExhaust();
+      // #141 (F2): ops touching the newly-rejected faces are moot (the
+      // commit skips rejected faces anyway) — drop them from the staged
+      // set, however the rejection was committed (bar ✗, keyboard, card
+      // ✗, Edit dialog — the dialog previously handled this itself and
+      // the other paths never did)
+      setPending((p) => dropStagesForFaces(p, ids));
       return mutate(() => api.rejectFaces(ids), true);
     },
     [mutate, markExhaust]
@@ -509,6 +519,10 @@ export default function App() {
     );
     const kept = [...selRef.current].filter((id) => visible.has(id));
     if (kept.length !== selRef.current.size) changeSel(new Set(kept));
+    // #141 (F2): pending ops on now-hidden faces are invisible to the
+    // user yet still committed by the next Accept, with the staged strip
+    // counting faces that no longer display anywhere — drop them
+    setPending((p) => dropStagesForFaces(p, [...selRef.current].filter((id) => !visible.has(id))));
     mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
   };
   // #99 (§4.9): persons-view cluster grouping — accuracy (default) or one
@@ -559,7 +573,11 @@ export default function App() {
   /** Q1/G3 + invocation-site defaults (§4.24): Edit on a card → Card,
       header → Group, bottom bar → Selection */
   const openEdit = useCallback(
-    (defaultScope: StageScope, target?: { card?: number; group?: number[] }) => {
+    (
+      defaultScope: StageScope,
+      target?: { card?: number; group?: number[] },
+      selectionOverride?: number[]
+    ) => {
       if (!snap) return;
       const card = target?.card != null ? [target.card] : [];
       const group =
@@ -572,7 +590,10 @@ export default function App() {
         objIds.length > 0 && !objectInsideSelection(objIds, selRef.current);
       // selection rules: inside keeps the selection, outside becomes the object
       if (reselect) changeSel(new Set(objIds));
-      const selIds = reselect ? objIds : [...selRef.current];
+      const selIds = selectionOverride ?? (reselect ? objIds : [...selRef.current]);
+      // #147: never open the shared dialog without a concrete target —
+      // every scope would read "0 face(s)" and all its actions be no-ops
+      if (selIds.length === 0) return;
       setEdit({
         defaultScope,
         card,
@@ -685,7 +706,10 @@ export default function App() {
     openMenu(e, [
       {
         items: [
-          { label: "Open in system viewer", onClick: () => api.openImage(imageId) },
+          // #144: the promise used to be fire-and-forget — a rejection
+          // (no preview blob, viewer not found) never reached the user;
+          // errors surface through the standard error toast (#132)
+          { label: "Open in system viewer", onClick: () => api.openImage(imageId).catch((e) => setError(String(e))) },
           {
             // #122: stored display rotation (EXIF key, #118)
             label: "Rotate 90° CW",
@@ -715,11 +739,16 @@ export default function App() {
       {
         items: [
           {
+            // #123 + #142: opening an image is a full view-context change
+            // (the centre pane rebinds to that image's faces) and honours
+            // the drop-or-accept dialog exactly like the focused-open
+            // entry just below — it never silently carries a staged set
             label: "Open image",
-            onClick: () => {
-              setView("rolls");
-              setImageId(image.id);
-            },
+            onClick: () =>
+              confirmContext(() => {
+                setView("rolls");
+                setImageId(image.id);
+              }),
           },
           {
             // #123: opening focus mode is a view-context change
@@ -1039,13 +1068,10 @@ export default function App() {
   // user's own hand there). The plan comes from the pre-accept sections,
   // which stay valid across the refresh — see reviewFlow.ts.
   const acceptAndNext = useCallback(
-    async (ids: number[], preCommit?: () => Promise<void>) => {
+    async (ids: number[]) => {
       if (!snap) return;
       if (view !== "review" || splitImageId != null) {
-        await mutate(async () => {
-          await preCommit?.();
-          await api.acceptFaces(ids);
-        }, true);
+        await mutate(() => api.acceptFaces(ids), true);
         return;
       }
       markExhaust(); // #125: accepting may empty the current person
@@ -1055,10 +1081,14 @@ export default function App() {
           ? null
           : sections.find((s) => s.faceIds.includes(anchor))?.key ?? null;
       const plan = acceptAdvancePlan(sections, actedKey, ids);
-      await mutate(async () => {
-        await preCommit?.();
-        await api.acceptFaces(ids);
-      }, false);
+      // #140: the selection rewrite / scroll-to-next used to run
+      // unconditionally — a failed accept (error toast from mutate) wiped
+      // the selection and pointed the cursor at a plan built from
+      // pre-failure state. Everything below runs only on success.
+      // (#139: commitPending runs the staged ops before calling this —
+      // each op its own mutate so a mid-set failure can be re-staged.)
+      const ok = await mutate(() => api.acceptFaces(ids), false);
+      if (!ok) return;
       setSel(new Set(plan?.faceIds ?? []));
       const first = plan?.faceIds[0];
       if (first != null) {
@@ -1083,10 +1113,18 @@ export default function App() {
   // never fire it.
   useEffect(() => {
     const at = exhaustAtRef.current;
-    if (at < 0 || view !== "review") return;
+    if (at < 0) return;
+    // #148: consume unconditionally — the mark must never linger across
+    // view switches / person changes and fire from stale state later
+    const markedPid = exhaustPidRef.current;
     exhaustAtRef.current = -1;
+    exhaustPidRef.current = null;
     const pid = personId;
-    if (pid == null || !snap) return;
+    // #148: the mark only ever advances the person it was set for — if
+    // the user navigated between mark and refresh, the verdict's
+    // fall-through no longer applies (that person's own verdict either
+    // set a fresh mark or the user took over)
+    if (pid == null || pid !== markedPid || !snap) return;
     const status =
       faceFilter === "confirmed" || faceFilter === "rejected" ? faceFilter : "provisional";
     if (snap.faces.some((f) => f.person_id === pid && f.link_status === status)) return;
@@ -1154,19 +1192,44 @@ export default function App() {
   const commitPending = useCallback(
     async (all: Stage[]) => {
       if (all.length === 0) return;
-      setPending([]);
+      // #139: the whole set stays staged until the commit lands — the
+      // old code wiped it before the first write, so a mid-commit
+      // failure silently discarded every not-yet-applied op (§4.24
+      // 'Accept commits every op'; Q3 text is never dropped silently)
       const union = [...new Set(all.flatMap((o) => o.faceIds))];
-      await acceptAndNext(union, async () => {
-        for (const op of all) await stageOps(op);
-      });
+      let done = 0;
+      try {
+        for (; done < all.length; done++) {
+          await stageOps(all[done]);
+        }
+      } catch (e) {
+        // the applied prefix (ops 1..done−1) is in; the failed op and
+        // everything after it stays staged and retryable — Accept again
+        // re-runs the idempotent field writes and continues from here
+        setError(`Accept stopped at op ${done + 1}/${all.length}: ${e}`);
+        setPending(all.slice(done));
+        return;
+      }
+      await acceptAndNext(union);
+      setPending([]);
     },
     [acceptAndNext, stageOps]
   );
 
   /** bottom-bar Apply (Q2/Q9, #123): opens the dialog on the selection —
-      the Apply loop extends the set; it never re-scopes or commits */
+      the Apply loop extends the set; it never re-scopes or commits.
+      #147: with a live stage but an empty selection (staged ops survive
+      selection changes by design) the dialog scopes onto the staged
+      set's faces instead of opening dead at every scope = 0 */
   const barApply = () => {
     if (!snap) return;
+    if (selRef.current.size === 0) {
+      const staged = [...new Set(pendingRef.current.flatMap((o) => o.faceIds))];
+      if (staged.length === 0) return; // undoable only in theory; RuleBar
+                                       // disables Apply here anyway
+      openEdit("selection", undefined, staged);
+      return;
+    }
     openEdit("selection");
   };
 
@@ -1274,17 +1337,11 @@ export default function App() {
       )
         return;
       // an open modal dialog owns the keyboard (Q8 stack): never act
-      // behind it — the Q4 escape-or-accept dialog in particular used
-      // to have the letter shortcuts fire under it
-      if (
-        edit != null ||
-        confirmRemove != null ||
-        menu != null ||
-        mergeOpen ||
-        mergeInto != null ||
-        contextConfirm != null
-      )
-        return;
+      // behind it — the #138 registry count covers EVERY overlay layer,
+      // App-owned or child-owned (the old state list let the face-merge
+      // dialog, tree menus/group dialog and the settings popover slip
+      // through)
+      if (overlayCount > 0) return;
       // #53 (§4.17): Ctrl-G toggles the whole section — the one under
       // the mouse cursor first (#74), else the hovered card's, else the
       // most recently selected card's; preventDefault so webkit cannot
@@ -1379,7 +1436,7 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, acceptAndNext, commitPending, edit, confirmRemove, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto, contextConfirm]);
+  }, [stepPerson, acceptAndNext, commitPending, overlayCount, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto, contextConfirm]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -1782,7 +1839,15 @@ export default function App() {
               imports={snap.imports}
               images={snap.images}
               faces={snap.faces}
-              onOpenImage={(id) => setImageId(id)}
+              // #142: opening an image from the rolls grid is a full
+              // view-context change and must honour the #123 drop-or-
+              // accept dialog when a staged set is live
+              onOpenImage={(id) =>
+                confirmContext(() => {
+                  setView("rolls");
+                  setImageId(id);
+                })
+              }
               onContextMenuImage={imageMenu}
             />
           ) : view === "rolls" && imageId != null && imgRow ? (
@@ -1846,9 +1911,13 @@ export default function App() {
             onGroup={(id, g) => mutate(() => api.setPersonGroup(id, g))}
             onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}
             onRemovePerson={(id) => doRemovePersons([id])}
-            onSetPrimary={(fid) =>
-              personId != null && mutate(() => api.setPrimaryFace(personId, fid))
-            }
+            // #145: the detail-pane avatar opens the primary face's full
+            // image in focus mode — the same confirmContext path as the
+            // card double-click / "Open full image" menu entries
+            onOpenPrimary={(fid) => {
+              const f = facesById.get(fid);
+              if (f) confirmContext(() => setSplitImageId(f.image_id));
+            }}
             onRemoveRefcrop={(fid) =>
               personId != null && mutate(() => api.removeRefcrop(personId, fid))
             }
@@ -1961,8 +2030,7 @@ export default function App() {
             if (unreject) {
               void doAccept(ids); // “Un-reject (accept)” — the plain accept
             } else {
-              // F2: ops on the rejected faces are moot — drop them
-              setPending((p) => dropStagesForFaces(p, ids));
+              // F2: doReject drops the newly-moot stages itself (#141)
               void doReject(ids);
             }
           }}

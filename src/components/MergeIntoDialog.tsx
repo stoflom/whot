@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
+import { useOwnsKeyboard } from "../overlays";
 
 // Shared merge confirmation (#88, gui-design §4.28). All three entry
 // points feed it — context menu, drag-and-drop (target pre-filled) and
@@ -22,6 +23,7 @@ interface Props {
 }
 
 export default function MergeIntoDialog({ sources, defaultTarget, persons, onConfirm, onCancel }: Props) {
+  useOwnsKeyboard(); // #138
   const candidates = persons.filter((p) => !UNKNOWN_RE.test(p.name));
   const [name, setName] = useState(defaultTarget?.name ?? "");
   useEffect(() => {

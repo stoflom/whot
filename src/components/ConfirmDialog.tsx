@@ -1,7 +1,9 @@
 import { useEffect } from "react";
+import { useOwnsKeyboard } from "../overlays";
 
 // Generic confirmation dialog (#35): used for destructive actions such as
-// removing persons.
+// removing persons. // #138: registered with the overlay registry while
+// mounted (Q8: an open dialog owns the keyboard).
 
 interface Props {
   title: string;
@@ -15,6 +17,7 @@ interface Props {
 }
 
 export default function ConfirmDialog({ title, body, confirmLabel, cancelLabel, danger, onConfirm, onCancel }: Props) {
+  useOwnsKeyboard(); // #138
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();

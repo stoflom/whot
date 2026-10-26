@@ -1,8 +1,11 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.34** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.47** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
-version in `package.json` tracks it)
+version in `package.json` tracks it). The Tauri bundle version
+(`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
+`package.json` exactly — the built installer reports the bundle version, so
+drift there ships a wrong version to users (#150, v3.35).
 
 Revision history is not kept in this document — it lives in the GitHub
 issues. The version above is bumped with every change and referenced in
@@ -124,6 +127,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     thumbnails per roll; clicking an image opens its faces (same face cards,
     same operations) plus the image preview **annotated with its detected
     face rectangles** (see below).
+    **Implementation note — the roll's face counts are per-roll image set**
+    (#146, v3.40): a roll section lists its images by `first_import_id`
+    (the roll that first imported each image), but the used to count
+    faces with `import_id` matching the roll id — the roll that
+    *produced* the face. On a re-import (same file in a later roll) the
+    new faces land in the later roll (its `import_id`), which
+    consequently showed "0 img, N new" for images it did not display,
+    while the original roll showed images with inflated counts. All four
+    counts (img / new / ✓ / ✗) are now taken over the faces *of the
+    section's images* (`image_id` in the `first_import_id` set), so the
+    header always summarises exactly what the section shows.
 - **Status filter + cluster group** (§4.10/§4.9, #99/#100): the center
   pane's toolbar carries `Show [All | New | Accepted | Rejected]` — the
   face-status filter applied by every view (default All; **New** is the
@@ -173,6 +187,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   its name into an entry field (Enter/blur commits via the rename-merge
   helper, §4.1, Esc cancels — same pattern as the detail-pane fields;
   validation errors surface as toast).
+  **Implementation note — the renaming row is not a `<button>`** (#143,
+  v3.39): the row used to stay the same `<button>` while its name
+  expanded into `NameTypeahead` — an `<input>` nested inside a
+  `<button>`, which is invalid HTML (buttons may not contain interactive
+  content). WebKit mis-handles it: clicks in the input bubbled to the
+  row's `onClick` (re-selecting the person mid-rename) and DOM focus
+  juggling fought the typeahead. While `renaming`, the row renders as a
+  `<div>` carrying the same class/`data-person-id`/title (CSS class
+  styling means the geometry is identical), without the select/drag
+  handlers: the rename input owns the interaction, blur (click-away)
+  commits via `onLeave` exactly as documented above.
 - **Section stepping** (#31): ‹ › buttons in the center toolbar — and the
   `←`/`→` **shortcuts** — step through the persons in the tree's current
   (filtered) display order, selecting each (person view); disabled at the
@@ -216,6 +241,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   `contextmenu` too and offer a working **open in system viewer** (the
   Rust `open_image` command writes the BLOB to a temp file and hands it
   to the opener plugin).
+  **Implementation notes — open_image temp file + rejection handling**
+  (#144, v3.37): (1) the temp file name was a fixed
+  `whot-image-{image_id}.jpg` — predictable (another local user could
+  squat the path first and have their file opened instead) and shared
+  across every open of that image, so a slow viewer still reading the
+  file raced a later overwrite. The name is now unique per open
+  (`whot-image-{image_id}-{pid}-{unix_nanos}.jpg`): same image opened
+  twice never clobbers the first viewer's file, and the path cannot be
+  pre-squatted. The file extension is derived from the pixel magic
+  (JPEG default, PNG recognised) instead of hard-coding `.jpg`.
+  (2) The frontend promise from "Open in system viewer" was fire-and-
+  forget: a rejection (no preview blob, viewer not found) surfaced as an
+  unhandled-rejection console error with no user feedback. The handler
+  now routes the failure through the standard error toast like every
+  other mutation path (#132).
 - **Resizable panes** (#34): the left/right pane dividers and the #25 split
   divider are draggable with clamps and double-click reset (session state);
   the face/image grids already reflow via `auto-fill` and follow the pane
@@ -230,6 +270,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Right pane — person detail** (when a person is selected): name (editable
   for known persons), group path (editable, `|`-separated; empty ⇒
   Ungrouped), note, primary-face picker, refcrops list.
+  **Implementation note — the avatar click** (#145, v3.38): the note above
+  says "primary-face picker", but the picker is the refcrop list; the
+  large avatar *is* the primary face and its click handler used to call
+  `setPrimary(primary_face_id)` — a self-no-op that silently ignored every
+  click under a tooltip claiming "make this the primary face". The avatar
+  click now opens the **full-image focus mode** for the primary face's
+  image (the same `confirmContext` → `setSplitImageId` path as the card
+  double-click and the "Open full image" menu entries), with the
+  tooltip/title saying so; when the person has no primary face there is
+  nothing to open and the click stays inert.
 - **Rule bar (bottom)**: always visible when ≥1 face is selected **or a
   stage is live**, in any center-pane view: `N selected · [Apply] [Accept]
   [Undo°] [Assign name…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
@@ -357,6 +407,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    (§4.9/§3), so another legitimate appearance reads as its own appearance
    section instead of an impostor cluster — and a true impostor still shows
    as a low-similarity cluster inside the appearance it impersonates.
+   **Implementation notes — corrupted embeddings must degrade, not panic**
+   (#149, v3.36): the clustering is display-only code that must never take
+   the command down. A length-valid embedding blob can still decode to
+   non-finite f32 components, and `f32::partial_cmp` returns `None` for
+   `NaN`, so the historical `sort_by(...partial_cmp(...).unwrap())` sites
+   panicked the Tauri command on rows that #45's length check lets
+   through. (1) Similarities are computed defensively: a non-finite cosine
+   result (`NaN`/±inf) is treated exactly like the #41 missing-embedding
+   case — "no similarity evidence", `0.0` — which also keeps every stored
+   similarity finite. (2) The two ordering unwraps that remained after the
+   cluster/appearance sorts already went `unwrap_or(Ordering::Equal)` in
+   v1.6 use `.unwrap_or(Ordering::Equal)` too, so no comparison site can
+   panic on non-finite data.
    A **cluster-group toggle** sits in the top bar, left of the status
    filter (#99): `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
@@ -666,6 +729,30 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the **same faceIds** replaces that op (latest wins); **Undo and
       Cancel/Esc discard the whole set** (owner ruling: Undo = Cancel —
       re-editing is just opening Edit… again).
+      **Implementation note — Apply always has a concrete target** (#147,
+      v3.45): the bar's Apply stays enabled while a staged set is live,
+      but the selection can be empty at that moment (staged ops survive
+      selection changes by design). Opening the Edit dialog then showed
+      every scope at `0 face(s)` — a dead dialog. With an empty
+      selection, `barApply` scopes the dialog's Selection onto the
+      **staged set's face ids** (largest staged set first), so the
+      opened dialog always has a concrete target; when neither a
+      selection nor a staged set exists, Apply is disabled anyway
+      (RuleBar's `none && !stageLive`).
+      **Implementation note — a failed commit keeps the staged set**
+      (#139, v3.44): Accept used to wipe the set **before the first
+      write**, and each staged op ran as its own backend transaction —
+      a failure at op *k* silently discarded ops *k..n* (Q3 'text is
+      never dropped silently') while ops *1..k−1* stayed applied, and
+      `acceptFaces` never ran. The set is now cleared **only after the
+      whole commit lands**: the ops execute one by one and a failure
+      re-stages the failed op **and everything after it** (the applied
+      prefix stays; the error toast names the op that stopped the
+      commit), so the staged strip keeps showing what remains and
+      Accept can simply be retried. (The staged field writes are
+      idempotent, so the retry re-applies nothing visibly; the
+      all-or-nothing single-transaction backend command remains the
+      fuller fix and stays an open option.)
     - **No dialog inside the context** (#123): changing the selection
       while the set is live — clicking another card, extending the
       selection, opening Edit… on another card (whose selection rule
@@ -677,6 +764,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       (as Q4 always did): *accept* commits the set first, then the
       context switches; *cancel* discards it, then the context switches.
       Text is never dropped silently (Q3).
+      **Implementation note — "Open image" is a view-context change**
+      (#142, v3.46): the image menu's "Open image" and the RollsPane
+      image-tile click rebound the centre pane to another image with a
+      bare `setView/setImageId` — silently carrying a live staged set
+      into the new context, one menu row below a "Open full image
+      (focused)" entry that correctly asked. Both entry points now go
+      through `confirmContext` like every tab/step/tree/focus route.
     - **Implementation note — the stored action is object-wrapped**
       (#123 fix, v3.31): the pending action is kept as `useState<{fn} | null>`
       and set with `setContextConfirm({ fn: action })`. A bare function passed
@@ -693,6 +787,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       setter — an empty field counts as unchanged, unowned faces
       surface a toast. **Rejected faces stay sticky** (§4.2): a stage
       may display on them, the commit skips them (F2).
+      **Implementation note — the F2 drop is owned by `doReject` and the
+      filter change** (#141, v3.43): the last-seen "pending ops touching
+      rejected faces are dropped" only ran on the Edit-dialog Reject
+      branch; the bar ✗, the `R` key, card ✗ and the context-menu Reject
+      left the staged previews in place — a preview lying on
+      now-rejected faces, committed by the next Accept anyway — and a
+      filter switch (§4.10) only un-selected the hidden faces, leaving
+      their invisible ops in the set for the next commit. The drop now
+      lives inside `doReject` (so every reject entry point drops the
+      moot stages by construction) and `changeFaceFilter` drops the
+      stages of the faces the new filter hides — invisible staged ops
+      would otherwise be both unseen and silently committed.
     - **Retired**: inline inputs on cards and headers, the header
       `apply` button, the #29 FaceAssignDialog, the AssignDialog as a
       separate component (`Assign name…` opens this dialog with scope
@@ -947,7 +1053,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       selection (#105, #110, #123). Global `Enter` accepts **in Review
       only** (`A` works in every view, Q10); the advance plan anchors at
       the **last-selected card**, else the hovered card, else the first
-      accepted id (#110).
+      accepted id (#110). The rewrite runs **only on success** (#140,
+      v3.42): a failed accept surfaces its error toast and leaves the
+      selection — the old code wiped the set and pointed the cursor at a
+      plan computed from pre-failure state even though nothing had
+      changed.
     - **Person-exhausted fall-through** (#125): in Review, when
       **Accept, Reject or Delete Person** leaves the current person with
       **no faces left** (no sections for it in the refreshed snapshot,
@@ -959,9 +1069,37 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       ‹ › code path, so cursor-as-target (#75) and list-end behaviour
       follow the stepping rules. At the end of the list the context
       stays and a toast says the review is exhausted.
+      **Implementation note — the exhaust mark is strictly bound**
+      (#148, v3.41): the pre-mutation mark (`exhaustAtRef`) stored only a
+      step index. Two holes let a stale mark fire much later: the consume
+      effect returned early **without resetting** when the refreshed
+      snapshot landed while the user had left Review, and consumption
+      read *whenever* the current `personId` happened to be — a
+      window-refocus refresh long after the verdict could auto-advance a
+      different person from the *marked* step index. The mark now
+      remembers which person it was set for, is consumed
+      unconditionally (so it can never linger across view switches), and
+      acts only when the consumer is still the marked person in Review —
+      anything else silently drops it.
     - **An open modal owns the keyboard**: while any layer above
       preview-undo in Q8's stack is open (dialog, menu, settings), every
       other shortcut is suppressed (#107, #110).
+      **Implementation note — one overlay registry instead of hand lists**
+      (#138, v3.47): the rule was enforced by two hand-maintained state
+      lists in App (the Esc-stack guard and the letter/arrow guard), and
+      they had drifted from the dialog inventory: the FaceMergeDialog,
+      the tree's context menus and GroupDialog, the
+      MergeSimilarDialog's row menu and (in the shortcut list only)
+      SettingsPopover were invisible to them — e.g. Esc with a
+      face-merge confirm open also closed the full image behind it, and
+      A/R/Space/arrows acted on the grid under a tree menu. Every modal
+      component now registers itself with a tiny `OverlayProvider`
+      (`src/overlays.tsx`) while it is mounted — all overlays are
+      mounted exactly while they are open, so the mount lifetime is the
+      open lifetime, covering App-owned *and* child-owned layers — and
+      App's both guards derive from the single count. One source of
+      truth: adding a modal in the future means using the hook, not
+      remembering two lists.
     - Rejected faces stay sticky (F2); the Esc ordering of Q8 holds:
       dropdown → menus and dialogs → preview-undo → cancel field edit →
       split close.

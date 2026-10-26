@@ -1,8 +1,11 @@
 import { useEffect, useRef } from "react";
+import { useOwnsKeyboard } from "../overlays";
 
 // Right-click context menu for tiles (#32): grouped entries, closes on
 // click-outside/Esc/resize. Only tile surfaces mount this — full images
-// keep the default webview menu (#33).
+// keep the default webview menu (#33). // #138: while mounted it
+// registers with the overlay registry (Q8: an open menu owns the
+// keyboard)
 
 export interface MenuItem {
   label: string;
@@ -31,6 +34,7 @@ const ITEM_H = 26;
 
 export default function ContextMenu({ menu, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  useOwnsKeyboard(); // #138
   useEffect(() => {
     const down = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();

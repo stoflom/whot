@@ -35,9 +35,18 @@ function RollSection({ imp, images, faces, initialOpen, onOpenImage, onContextMe
   onContextMenuImage: (image: ImageRow, e: ReactMouseEvent) => void;
 }) {
   const [open, setOpen] = useState(initialOpen);
-  const pending = faces.filter((f) => f.import_id === imp.id && f.link_status === "provisional").length;
-  const done = faces.filter((f) => f.import_id === imp.id && f.link_status === "confirmed").length;
-  const rejected = faces.filter((f) => f.import_id === imp.id && f.link_status === "rejected").length;
+  // #146: count the faces of the images the section actually displays
+  // (first_import_id set). Faces carry the import_id of the roll that
+  // produced them, so on a re-import of the same file the later roll's
+  // faces said import_id = later roll while the image stays in the first
+  // roll's section — the later roll showed "0 img, N new" for images it
+  // does not display and the first roll had inflated counts. Face counts
+  // are per-roll image set, so the header summarises what is shown.
+  const imgIds = new Set(images.map((x) => x.id));
+  const inRoll = (f: Face) => imgIds.has(f.image_id);
+  const pending = faces.filter((f) => inRoll(f) && f.link_status === "provisional").length;
+  const done = faces.filter((f) => inRoll(f) && f.link_status === "confirmed").length;
+  const rejected = faces.filter((f) => inRoll(f) && f.link_status === "rejected").length;
   return (
     <section className={`roll${open ? " open" : ""}`}>
       <header className="roll-header" onClick={() => setOpen(!open)}>

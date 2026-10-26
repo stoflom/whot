@@ -184,21 +184,10 @@ function PersonRow({
     if (v && v !== person.name) onRename(person.id, v);
     onRenameCancel();
   };
-  return (
-    <button
-      data-person-id={person.id} // #76: cursor hit-test for ←/→ stepping
-      className={`tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}${dropTarget ? " merge-target" : ""}`}
-      onClick={onSelect}
-      onDoubleClick={onStartRename}
-      onContextMenu={onContextMenu}
-      draggable={!renaming}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      title={`${person.groups.join(", ") || "Ungrouped"} — double-click to rename`}
-    >
+  const cls = `tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}${dropTarget ? " merge-target" : ""}`;
+  const title = `${person.groups.join(", ") || "Ungrouped"} — double-click to rename`;
+  const inner = (
+    <>
       <span className="tree-avatar">
         {img ? (
           // v3.33: a press on the avatar must not start a native image
@@ -232,6 +221,37 @@ function PersonRow({
       <span className="tree-count total" title="all faces">
         {person.counts.total}
       </span>
+    </>
+  );
+  // #143: while renaming, the row must NOT stay a <button> — the
+  // NameTypeahead input nesting inside a button is invalid HTML and
+  // WebKit bubbles input clicks to the row's select handler / fights the
+  // typeahead over focus. The renaming row is a bare <div> with the same
+  // class/identity data (CSS class styling ⇒ identical geometry); the
+  // input owns the interaction, click-away commits via onLeave.
+  if (renaming) {
+    return (
+      <div data-person-id={person.id} className={`${cls} renaming`} title={title}>
+        {inner}
+      </div>
+    );
+  }
+  return (
+    <button
+      data-person-id={person.id} // #76: cursor hit-test for ←/→ stepping
+      className={cls}
+      onClick={onSelect}
+      onDoubleClick={onStartRename}
+      onContextMenu={onContextMenu}
+      draggable={!renaming}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      title={title}
+    >
+      {inner}
     </button>
   );
 }
