@@ -1066,10 +1066,15 @@ export default function App() {
           ? null
           : sections.find((s) => s.faceIds.includes(anchor))?.key ?? null;
       const plan = acceptAdvancePlan(sections, actedKey, ids);
-      await mutate(async () => {
+      // #140: the selection rewrite / scroll-to-next used to run
+      // unconditionally — a failed accept (error toast from mutate) wiped
+      // the selection and pointed the cursor at a plan built from
+      // pre-failure state. Everything below runs only on success.
+      const ok = await mutate(async () => {
         await preCommit?.();
         await api.acceptFaces(ids);
       }, false);
+      if (!ok) return;
       setSel(new Set(plan?.faceIds ?? []));
       const first = plan?.faceIds[0];
       if (first != null) {
