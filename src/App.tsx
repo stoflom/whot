@@ -417,6 +417,12 @@ export default function App() {
   const doReject = useCallback(
     (ids: number[]) => {
       markExhaust();
+      // #141 (F2): ops touching the newly-rejected faces are moot (the
+      // commit skips rejected faces anyway) — drop them from the staged
+      // set, however the rejection was committed (bar ✗, keyboard, card
+      // ✗, Edit dialog — the dialog previously handled this itself and
+      // the other paths never did)
+      setPending((p) => dropStagesForFaces(p, ids));
       return mutate(() => api.rejectFaces(ids), true);
     },
     [mutate, markExhaust]
@@ -517,6 +523,10 @@ export default function App() {
     );
     const kept = [...selRef.current].filter((id) => visible.has(id));
     if (kept.length !== selRef.current.size) changeSel(new Set(kept));
+    // #141 (F2): pending ops on now-hidden faces are invisible to the
+    // user yet still committed by the next Accept, with the staged strip
+    // counting faces that no longer display anywhere — drop them
+    setPending((p) => dropStagesForFaces(p, [...selRef.current].filter((id) => !visible.has(id))));
     mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
   };
   // #99 (§4.9): persons-view cluster grouping — accuracy (default) or one
@@ -1989,8 +1999,7 @@ export default function App() {
             if (unreject) {
               void doAccept(ids); // “Un-reject (accept)” — the plain accept
             } else {
-              // F2: ops on the rejected faces are moot — drop them
-              setPending((p) => dropStagesForFaces(p, ids));
+              // F2: doReject drops the newly-moot stages itself (#141)
               void doReject(ids);
             }
           }}
