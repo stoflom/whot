@@ -395,9 +395,17 @@ export default function App() {
   // #125: a verdict that might empty the current person in Review marks
   // the step index pre-mutation; the refreshed-snapshot effect below
   // consumes it and steps past (exactly what “›” does)
+  // #148: the mark also remembers the person it was set for and is
+  // consumed unconditionally — a mark that lingers (e.g. the refresh
+  // lands after the user left Review) must never fire much later against
+  // whatever person the selection holds then
   const exhaustAtRef = useRef(-1);
+  const exhaustPidRef = useRef<number | null>(null);
   const markExhaust = useCallback(() => {
-    if (view === "review" && personId != null) exhaustAtRef.current = stepIdx;
+    if (view === "review" && personId != null) {
+      exhaustAtRef.current = stepIdx;
+      exhaustPidRef.current = personId;
+    }
   }, [view, personId, stepIdx]);
   const doAccept = useCallback(
     (ids: number[]) => {
@@ -1086,10 +1094,18 @@ export default function App() {
   // never fire it.
   useEffect(() => {
     const at = exhaustAtRef.current;
-    if (at < 0 || view !== "review") return;
+    if (at < 0) return;
+    // #148: consume unconditionally — the mark must never linger across
+    // view switches / person changes and fire from stale state later
+    const markedPid = exhaustPidRef.current;
     exhaustAtRef.current = -1;
+    exhaustPidRef.current = null;
     const pid = personId;
-    if (pid == null || !snap) return;
+    // #148: the mark only ever advances the person it was set for — if
+    // the user navigated between mark and refresh, the verdict's
+    // fall-through no longer applies (that person's own verdict either
+    // set a fresh mark or the user took over)
+    if (pid == null || pid !== markedPid || !snap) return;
     const status =
       faceFilter === "confirmed" || faceFilter === "rejected" ? faceFilter : "provisional";
     if (snap.faces.some((f) => f.person_id === pid && f.link_status === status)) return;
