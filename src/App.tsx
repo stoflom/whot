@@ -56,6 +56,9 @@ export default function App() {
   const [view, setView] = useState<View>("review");
   const [personId, setPersonId] = useState<number | null>(null);
   const [imageId, setImageId] = useState<number | null>(null);
+  // #162: the Rolls path-filter root — session state so it survives tab
+  // switches (RollsPane unmounts when the view changes); '/' = whole tree
+  const [rollRoot, setRollRoot] = useState("/");
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [selPersons, setSelPersons] = useState<Set<number>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
@@ -1917,6 +1920,8 @@ export default function App() {
               // listed only if it holds a matching face (branch counters
               // stay raw; see RollsPane)
               faceFilter={faceFilter}
+              root={rollRoot}
+              onRootChange={setRollRoot}
               // #142: opening an image from the rolls grid is a full
               // view-context change and must honour the #123 drop-or-
               // accept dialog when a staged set is live

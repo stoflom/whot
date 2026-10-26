@@ -212,6 +212,8 @@ fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), String
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // #162: native folder picker for the Rolls path filter
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             paths: Paths::resolve().map_err(|e| e.to_string()),
         })

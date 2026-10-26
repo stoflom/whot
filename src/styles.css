@@ -380,6 +380,21 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 /* #161: nested path branches — sub-directories render indented below their parent */
 .roll-children { display: flex; flex-direction: column; gap: 0.5rem; padding: 0 0.6rem 0.6rem; }
 .roll-children .img-grid { padding: 0; }
+/* #162: pinned path-filter row — mirrors the tree-header sticky pin */
+.rolls-pane { position: relative; }
+.roll-filter {
+  position: sticky;
+  top: -0.5rem;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: -0.5rem -0.5rem 0;
+  padding: 0.5rem 0.5rem 0.4rem;
+  background: var(--panel);
+}
+.roll-filter input { flex: 1; min-width: 0; }
+.roll-filter-hint { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
 
 .img-grid {
   display: grid;
