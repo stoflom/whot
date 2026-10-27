@@ -84,7 +84,7 @@ function FaceCard({
   const nameVal = staged.name ?? personName ?? "";
   const groupVal = staged.group ?? personGroup ?? "";
   const descVal = staged.desc ?? face.description ?? "";
-  // unowned faces (removed person, §4.13): no primary/reference actions
+  // unowned faces (defensive — none exist since #165, §4.13): no primary/reference actions
   const unowned = face.person_id == null;
   // #49 (§4.14): this card is part of a multi-selection — ★/◈ cannot
   // apply to more than one face, so they are greyed out, never re-routed

@@ -21,7 +21,9 @@ export interface Person {
 export interface Face {
   id: number;
   image_id: number;
-  /** null for faces whose person was removed (§4.13) — rejected, unowned */
+  /** null never occurs since #165 — every writer homes its faces
+      (§4.13 re-homes removed persons' onto `Rejected`); kept nullable
+      only for legacy rows */
   person_id: number | null;
   x: number;
   y: number;
@@ -134,9 +136,9 @@ export const movePersonsBetweenGroups = (
     person inside it (sub-branches follow); empty new ⇒ subtree to Ungrouped */
 export const renameGroup = (oldPath: string, newPath: string) =>
   invoke("rename_group", { oldPath, newPath });
-/** §4.16 (#50) — delete a branch: members (incl. sub-branches) become Ungrouped */
+/** §4.16 (#50) — delete a branch: members (incl. sub-branches) fall to their status seats (#165, §4.35) */
 export const deleteGroup = (path: string) => invoke("delete_group", { path });
-/** §4.13 (#35) — reject + detach faces, delete the person(s); no undo */
+/** §4.13 (#35/#165) — reject + re-home faces onto `Rejected`, delete the person(s); no undo */
 export const removePersons = (personIds: number[]) =>
   invoke("remove_persons", { personIds });
 export const addRefcrop = (personId: number, faceId: number) =>

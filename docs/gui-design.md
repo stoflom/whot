@@ -516,7 +516,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     config file is ignored on read. The Show control's **tooltip spells
     this out** (#165 — the user-facing contract): `All = everything
     except rejected; rejected faces appear only under Show → Rejected
-    (#99, §4.10); switching it drops hidden faces from the selection`.
+    (#165, §4.10); switching it drops hidden faces from the selection`.
     The chosen status decides **every view's**
     visibility: the person view's cluster sections and its Rejected
     section, image grids and full-image rectangles, the review grid, the
@@ -1357,7 +1357,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       furniture (no branch menu, no drops, no rename) while the persons
       inside them are ordinary rows. The virtual `Ungrouped`/`Unknown`
       branches are gone: every person is grouped, so the tree is real
-      branches plus the three seats.
+      branches plus the three seats — the renderer keeps the retired
+      bucket names only as a **lazily-created, fail-visible fallback**
+      (only an invariant breach could populate one, so a healthy tree
+      never shows them and no writer can produce one).
     - **The group invariant**: every person has **≥ 1 group row** — the
       “no group” state ceases to exist. Everything that used to leave a
       person groupless now **seats** them instead: an empty assign or

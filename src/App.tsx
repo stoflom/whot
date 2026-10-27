@@ -1559,7 +1559,7 @@ export default function App() {
         return;
       }
       // one assign_person call = one transaction, §4.1 merge semantics
-      // (sticky rejected, emptied shells deleted, derived state recomputed)
+      // (claim on rejected, emptied shells deleted, derived state recomputed)
       const ok = await mutate(() => api.assignPerson(faceIds, target.name, target.groups[0] ?? ""));
       if (ok) {
         // #133 (§4.28): the centre pane opens the merged target — all the
@@ -1610,7 +1610,7 @@ export default function App() {
     setFaceMerge(null);
     if (!target) return;
     // one assign_person call = one transaction, §4.1 merge semantics
-    // (sticky rejected, emptied shells deleted, derived state recomputed)
+    // (claim on rejected, emptied shells deleted, derived state recomputed)
     const ok = await mutate(() =>
       api.assignPerson(faceIds, target.name, target.groups[0] ?? ""),
     );
@@ -2197,9 +2197,10 @@ export default function App() {
           }
           body={
             `All faces of ${confirmRemove.length > 1 ? "these persons" : "this person"} ` +
-            `become rejected and ${confirmRemove.length > 1 ? "the persons are" : "the person is"} ` +
-            "deleted — the faces stay in the database as rejected, unowned records " +
-            "and can be claimed again. This cannot be undone."
+            `become rejected and join the system person Rejected; ` +
+            `${confirmRemove.length > 1 ? "the persons are" : "the person is"} deleted — ` +
+            "the faces stay in the database and can be claimed again by " +
+            "assigning them a person (#165, §4.13). This cannot be undone."
           }
           confirmLabel="remove"
           danger

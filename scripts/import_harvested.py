@@ -650,7 +650,7 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
             continue
         cname = person_name_by_id.get(current)
         if not (cname and UNKNOWN_NAME_RE.match(cname)):
-            continue                     # real/unowned faces decide alone
+            continue                     # a face on a real (named) person decides alone
         cluster_deletes.add(current)      # deleted in execute if emptied
         if current in contested_clusters:
             continue                     # contradictory evidence: no co-move

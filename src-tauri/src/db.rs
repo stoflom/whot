@@ -300,8 +300,9 @@ pub struct Person {
 pub struct Face {
     pub id: i64,
     pub image_id: i64,
-    /// NULL for faces whose person was removed (§4.13) — they stay in the
-    /// DB as rejected, unowned records
+    /// NULL never occurs since #165 — every writer homes its faces
+    /// (§4.13 re-homes removed persons' onto `Rejected`); the column
+    /// stays nullable only for legacy rows
     pub person_id: Option<i64>,
     pub x: i64,
     pub y: i64,

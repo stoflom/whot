@@ -210,7 +210,7 @@ function PersonRow({
   const cls = `tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}${dropTarget ? " merge-target" : ""}`;
   const title = system
     ? "Rejected — the system person for rejected faces (#165); assignment is its only way out"
-    : `${person.groups.join(", ") || "Ungrouped"} — double-click to rename`;
+    : `${person.groups.join(", ") || "(no group)"} — double-click to rename`;
   const inner = (
     <>
       <span className="tree-avatar">
@@ -743,9 +743,8 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
             y: branchMenu.y,
             groups: [
               // #50 (§4.16): real branches can be renamed/moved and
-              // deleted (#154: virtual branches never open this menu at
-              // all — Unknown cleanup is the top-bar 'Remove Unknowns'
-              // button)
+              // deleted; virtual and status branches never open this
+              // menu (status branches are system furniture, #165/§4.35)
               {
                 title: "Group",
                 items: [

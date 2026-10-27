@@ -573,9 +573,9 @@ class CreateDatabaseTest(unittest.TestCase):
 
 
 class EnsurePersonTest(unittest.TestCase):
-    """ensure_person inserts a fresh UnknownN only — #153: no group row is
-    seeded, so new persons start Ungrouped (the virtual Unknown branch is
-    name-driven; grouping an UnknownN is the user's act)."""
+    """ensure_person mints a fresh UnknownN seated in `New` — #165/§4.35:
+    every person carries ≥ 1 group row from birth; filing an UnknownN
+    remains the user's act."""
 
     def _con(self) -> tuple[sqlite3.Connection, tempfile.TemporaryDirectory]:
         """A real: file DB built from database/schema.sql via --create-db."""

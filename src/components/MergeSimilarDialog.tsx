@@ -292,7 +292,7 @@ export default function MergeSimilarDialog({
                       {m.counts.rejected}r
                     </span>
                     <span className="merge-groups dim" title="group path(s)">
-                      {m.groups.join(", ") || "Ungrouped"}
+                      {m.groups.join(", ") || "(no group)"}
                     </span>
                     <span className="merge-when dim" title="created (UTC)">
                       {m.created_at}
