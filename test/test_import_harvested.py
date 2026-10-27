@@ -483,6 +483,55 @@ class ScenarioTests(Fixture):
                      " ON p.id=f.person_id WHERE f.id=4")[0]
         self.assertEqual(row["name"], "Winnie Pelser")
 
+    def test_claim_reseats_origin_and_leaves_filed_groups(self):
+        """#165/§4.35: a claim takes faces AWAY — the origin's status seat
+        re-derives (New → Accepted; a still-pending origin stays New),
+        while a filed person's real group is never touched and each new
+        claimant is seated by state."""
+        con = sqlite3.connect(self.faces_db)
+        con.executescript(f"""
+            INSERT INTO persons(id, name, state, created_at) VALUES
+              (20, 'SeatedX', 'created', '{NOW}'),
+              (21, 'FiledY',  'created', '{NOW}'),
+              (22, 'MixedZ',  'created', '{NOW}');
+            INSERT INTO person_groups VALUES (20, 'New'), (21, 'Family|X'), (22, 'New');
+            INSERT INTO faces(id, image_id, x, y, w, h, person_id, link_status, state,
+                              origin, name, seq, confidence, created_at) VALUES
+              (10, 2, 100,  10, 20, 20, 20, 'provisional', 'detected', 'insightface', 'SeatedX-1', 1, 0.85, '{NOW}'),
+              (11, 2, 140,  10, 20, 20, 20, 'confirmed',   'detected', 'insightface', 'SeatedX-2', 2, 0.80, '{NOW}'),
+              (12, 2, 100,  60, 20, 20, 21, 'provisional', 'detected', 'insightface', 'FiledY-1',  1, 0.85, '{NOW}'),
+              (13, 2, 140,  60, 20, 20, 21, 'confirmed',   'detected', 'insightface', 'FiledY-2',  2, 0.80, '{NOW}'),
+              (14, 2, 100, 110, 20, 20, 22, 'provisional', 'detected', 'insightface', 'MixedZ-1',  1, 0.85, '{NOW}'),
+              (15, 2, 140, 110, 20, 20, 22, 'provisional', 'detected', 'insightface', 'MixedZ-2',  2, 0.80, '{NOW}');
+            """)
+        con.commit()
+        con.close()
+        img = self.s_image(H2, w=200, h=200)
+        # three NEW staging identities claim one face each → the face moves
+        self.s_face(img, "HarvestGuy", 100,  10, 20, 20)   # ← f10 out of SeatedX
+        self.s_face(img, "HarvestGal", 100,  60, 20, 20)   # ← f12 out of FiledY
+        self.s_face(img, "HarvestHal", 100, 110, 20, 20)   # ← f14 out of MixedZ
+        self.con.commit()
+        rep = self.run_plan()
+        self.assertGreaterEqual(rep.counters["faces_moved"], 3)
+        paths = lambda pid: [x["path"] for x in self.q(
+            "SELECT path FROM person_groups WHERE person_id = ?", pid)]
+        # SeatedX lost its last provisional (f10) but keeps confirmed f11
+        self.assertEqual(paths(20), ["Accepted"],
+                         "#165: origin seat re-derives after the claim")
+        # FiledY lost a face but its real group is never touched
+        self.assertEqual(paths(21), ["Family|X"],
+                         "#165: real groups are never touched")
+        # MixedZ keeps f15 provisional → seat stays New
+        self.assertEqual(paths(22), ["New"])
+        # each new claimant is seated by state (provisional → New)
+        got = [(x["name"], x["path"]) for x in self.q(
+            "SELECT p.name, g.path FROM persons p JOIN person_groups g"
+            " ON g.person_id = p.id WHERE p.name LIKE 'Harvest%'"
+            " ORDER BY p.name")]
+        self.assertEqual(got, [("HarvestGal", "New"), ("HarvestGuy", "New"),
+                               ("HarvestHal", "New")])
+
     def test_housekeeping_primary_and_refcrop(self):
         # f1 is Unknown7's primary and a pinned refcrop; f4 is Mary's primary
         con = sqlite3.connect(self.faces_db)

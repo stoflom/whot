@@ -533,6 +533,7 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
     shell_groups: dict[int, set[str]] = {}  # #128: pid -> groups to append
     new_by_identity: dict[tuple, int] = {}  # (cf name, cf groups) -> rep spid
     taken_cf = {n.casefold() for n in existing_name_of.values()}
+    taken_cf.add("rejected")   # #165: the system person's name is never mintable
     for spid in claiming_spids:           # ascending id = first source wins
         name = spersons[spid]
         gs = translated_groups(spid)
@@ -735,11 +736,16 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
 
     moved_ids: list[int] = []
     moved_to: dict[int, int] = {}
+    claim_origins: set[int] = set()      # #165/§4.35: origins lose faces → re-seat
     for mv in plan["moves"]:
         kind, key = mv["person"]
         pid = resolve_person(kind, key)
         person_name = dbcon.execute("SELECT name FROM persons WHERE id=?",
                                     (pid,)).fetchone()[0]
+        origin = dbcon.execute("SELECT person_id FROM faces WHERE id=?",
+                               (mv["db_face"],)).fetchone()[0]
+        if origin is not None:
+            claim_origins.add(origin)   # BEFORE relabel reparents the face
         relabel(mv["db_face"], pid, person_name)
         moved_ids.append(mv["db_face"])
         moved_to[mv["db_face"]] = pid
@@ -784,7 +790,10 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
     # seated person's seat re-derives from the faces it has left; a real
     # group (or the system person's `Rejected`) is never touched.
     seats = ("New", "Accepted", "Rejected")
-    touched = set(person_id_of.values()) | set(plan.get("shell_groups", {}))
+    # destinations + shell appendees + CLAIM ORIGINS (a claim takes faces
+    # away — their seat must re-derive, §4.35: New → Accepted etc.)
+    touched = (set(person_id_of.values()) | set(plan.get("shell_groups", {}))
+               | claim_origins)
     for pid in sorted(touched):
         if not dbcon.execute("SELECT 1 FROM persons WHERE id=?", (pid,)).fetchone():
             continue                       # deleted by the sweep above

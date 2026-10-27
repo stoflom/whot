@@ -183,6 +183,30 @@ class FixStatusGroupsTest(unittest.TestCase):
             self.run_main(str(self.db), "-q")
         self.assertIn("empty schema_version", str(ctx.exception))
 
+    def test_system_person_holding_non_rejected_faces_refuses(self):
+        # reverse direction of the invariant: system-shaped rows but a
+        # LEGACY confirmed face on 'Rejected' → refuse + full rollback
+        con = sqlite3.connect(self.db)
+        con.execute(
+            "INSERT INTO persons(id, name, state, created_at)"
+            " VALUES (9, 'Rejected', 'created', 'now')")
+        con.execute("INSERT INTO person_groups VALUES (9, 'Rejected')")
+        con.execute(
+            "INSERT INTO faces(id, image_id, x, y, w, h, person_id,"
+            " link_status, name, seq, confidence, created_at)"
+            " VALUES (20, 1, 0, 0, 10, 10, 9, 'confirmed', 'legacy-20',"
+            " 1, 0.5, 'now')")
+        con.commit()
+        con.close()
+        rc, _, err = self.run_main(str(self.db), "-q")
+        self.assertEqual(rc, 1)
+        self.assertIn("non-rejected face(s) on the system person", err)
+        self.assertEqual(self.q("SELECT version FROM schema_version")[0]["version"], "1.6",
+                         "rollback restored the marker")
+        self.assertEqual(
+            self.q("SELECT COUNT(*) AS n FROM faces WHERE person_id = 9")[0]["n"], 1,
+            "rollback restored the unmoved legacy face")
+
     def test_missing_database_fails_cleanly(self):
         rc, _, err = self.run_main(str(self.dir / "nope.db"))
         self.assertEqual(rc, 1)
