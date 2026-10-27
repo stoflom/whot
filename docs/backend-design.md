@@ -1,7 +1,8 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.2** (#99: whotrc keys `face_filter` + `cluster_group`
-replace `show_rejected`) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.3** (#99: whotrc keys `face_filter` + `cluster_group`
+replace `show_rejected`; #165: status-seat writers, system person
+`Rejected`, gate `'1.7'`) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -65,9 +66,16 @@ gui-design became the 4-state `face_filter` in #99).
 
 - `connect()` opens SQLite with `foreign_keys = ON` and immediately runs
   `check_schema`: exact match against `SCHEMA_VERSION` (currently
-  `'1.5'`, equal to `database/schema.sql`'s marker row) — a mismatch is
-  refused with recreate instructions, never worked around (no
+  `'1.7'`, equal to `database/schema.sql`'s marker row) — a mismatch is
+  refused: a stale `'1.6'` marker is pointed at
+  `scripts/fix_status_groups.py` (#165, gui-design §4.35), anything else
+  at recreate instructions; never worked around (no
   migrations; `docs/schema-design.md` §5).
+- The derived-state machinery of `db.rs` (names, primaries, refcrops)
+  additionally owns the #165 **status seats** and the **system person
+  `Rejected`** — behaviour rules in gui-design §4.35; both are
+  writer-maintained like the rest of the derived state (no triggers,
+  schema-design §4).
 - Reads that only need one row batch use short-lived connections;
   mutations open one connection, run **one transaction** and commit.
 - All connections set `PRAGMA foreign_keys = ON` explicitly — the DDL's
