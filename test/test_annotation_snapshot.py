@@ -94,7 +94,7 @@ class RoundTripTest(unittest.TestCase):
     def test_export_reports_schema_and_decisions(self):
         data = ansi.do_export(self.old)
         self.assertEqual(data["format"], 1)
-        self.assertEqual(data["source_schema"], "1.6")
+        self.assertEqual(data["source_schema"], "1.7")
         self.assertEqual([p["name"] for p in data["persons"]], ["Alice"])
         self.assertEqual(data["persons"][0]["groups"], ["family|test"])
         self.assertEqual(data["persons"][0]["note"], "mom")
@@ -123,26 +123,34 @@ class RoundTripTest(unittest.TestCase):
         self.assertEqual(alice[2], 1, "primary resolved to the matched face")
         f3 = con.execute(
             "SELECT person_id, link_status, name FROM faces WHERE id = 3").fetchone()
-        self.assertEqual(f3[0], alice[0],
-                         "a rejected face of a renamed cluster stays with that person")
-        self.assertEqual(f3[1:], ("rejected", "Alice-3"))
+        rej = con.execute("SELECT id FROM persons WHERE name = 'Rejected'").fetchone()
+        self.assertIsNotNone(rej, "#165: the restore creates the system person")
+        self.assertEqual(
+            [r[0] for r in con.execute(
+                "SELECT path FROM person_groups WHERE person_id = ?", (rej[0],))],
+            ["Rejected"], "#165: the system person carries its seat")
+        self.assertEqual(f3[0], rej[0],
+                         "#165: a rejected face homes on the system person, not its old cluster")
+        self.assertEqual(f3[1:], ("rejected", "Rejected-1"))
         f4 = con.execute(
             "SELECT person_id, link_status, name FROM faces WHERE id = 4").fetchone()
-        self.assertEqual(f4[0], 2, "face of an unnamed person stays with its import person")
-        self.assertEqual(f4[1:], ("rejected", "Unknown2-1"),
-                         "link_status restored even without a person move")
+        self.assertEqual(f4[0], rej[0],
+                         "#165: every restored rejected face homes on the system person")
+        self.assertEqual(f4[1:], ("rejected", "Rejected-2"),
+                         "seq/name re-derived against the system person (§4.7)")
         pin = con.execute(
             "SELECT description, pinned, seq FROM person_refcrops WHERE person_id = ?",
             (alice[0],)).fetchone()
         self.assertEqual(pin, ("glasses", 1, 1), "pin restored with its group")
-        # #37: Unknown1 lost all three faces to Alice -> shell deleted;
-        # Unknown2 keeps its face and survives
+        # #37: Unknown1 lost all three faces -> shell deleted; #165: the
+        # rejected face of Unknown2 homes on the system person as well,
+        # so that shell loses its last face and is swept (§4.27)
         self.assertEqual(
             con.execute("SELECT count(*) FROM persons WHERE id = 1").fetchone()[0], 0,
             "emptied UnknownN shell must be deleted")
         self.assertEqual(
-            con.execute("SELECT count(*) FROM persons WHERE id = 2").fetchone()[0], 1,
-            "person keeping a face must survive")
+            con.execute("SELECT count(*) FROM persons WHERE id = 2").fetchone()[0], 0,
+            "#165: its rejected face left for the system person — the shell is swept")
         con.close()
 
     def test_legacy_pre15_export(self):

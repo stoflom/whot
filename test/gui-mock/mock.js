@@ -11,9 +11,13 @@
 //     and interaction checks only, never pixel checks.
 //   - person_face_clusters returns one cluster per description over the
 //     person's confirmed faces (sim 0.9) — no real embedding math.
-//   - assign_person emulates §4.1: rename-in-place when the whole scope is
-//     one person with that name, otherwise move/create; sticky rejected;
-//     zero-face shells deleted; derived names re-derived (person[-desc]-seq).
+//   - assign_person emulates §4.1/#165: rename-in-place when the whole
+//     scope is one person with that name, otherwise move/create; the CLAIM
+//     rule (an assignment always confirms what it touches, incl. rejected
+//     faces); zero-face shells deleted; derived names re-derived.
+//   - #165/§4.35: reject re-homes onto the system person `Rejected`;
+//     accept never un-rejects; every person keeps >= 1 group row (an empty
+//     group input seats by state: provisional ⇒ New, else Accepted).
 //
 // window.__MOCK_SNAP exposes the live in-memory snapshot to test scripts.
 
@@ -84,6 +88,37 @@
     return p;
   };
 
+  // ---- #165/§4.35: status seats, reserved paths, the system person ----
+  const SEATS = ["New", "Accepted", "Rejected"];
+  const RESERVED = ["Ungrouped", "New", "Accepted", "Rejected", "Unknown"];
+  // seat derivation: any provisional face ⇒ New, else Accepted
+  const seatFor = (pid) =>
+    SNAP.faces.some((f) => f.person_id === pid && f.link_status === "provisional")
+      ? "New"
+      : "Accepted";
+  const validatePath = (path) => {
+    if (String(path ?? "").split("|").some((s) => RESERVED.includes(s)))
+      throw new Error("reserved group name (#165)");
+  };
+  // invariant: >= 1 group row — groupless gets its seat; a seat-only
+  // person re-derives; filed persons and the system seat are untouched
+  const reseat = (p) => {
+    if (p.name === "Rejected") return;
+    if (!p.groups.length) p.groups = [seatFor(p.id)];
+    else if (p.groups.every((g) => SEATS.includes(g))) p.groups = [seatFor(p.id)];
+  };
+  const reseatAll = () => SNAP.persons.forEach(reseat);
+  const ensureRejected = () => {
+    let p = getPerson("Rejected");
+    if (!p) return makePerson("Rejected", "Rejected");
+    p.groups = ["Rejected"];
+    return p;
+  };
+  const assertNotSystem = (p) => {
+    if (p && p.name === "Rejected")
+      throw new Error("'Rejected' is the system person (#165)");
+  };
+
   const fixPrimaries = () => {
     for (const p of SNAP.persons) {
       const fs = SNAP.faces.filter(
@@ -101,12 +136,17 @@
     }
   };
 
-  // §4.1 assign: rename-in-place when the whole scope is one person with
-  // that name; otherwise move/create. Sticky rejected. Zero-face shells
-  // deleted. Group applied on create / rename-in-place (F2).
+  // §4.1/#165 assign: rename-in-place when the whole scope is one person
+  // with that name; otherwise move/create. CLAIM rule: an assignment
+  // always confirms what it touches (incl. rejected faces). Zero-face
+  // shells deleted. Group applied on create / rename-in-place (F2) — an
+  // empty group seats by state (§4.35). Derived names re-derived.
   const assignPerson = ({ faceIds, name, group }) => {
     const name2 = String(name ?? "").trim();
     if (!name2) throw new Error("empty name");
+    if (name2.toLowerCase() === "rejected")
+      throw new Error("'Rejected' is reserved (#165)");
+    if (group) validatePath(group);
     const scope = new Set(faceIds);
     const faces = SNAP.faces.filter((f) => scope.has(f.id));
     const pids = new Set(faces.map((f) => f.person_id).filter((x) => x != null));
@@ -117,22 +157,22 @@
       const pid = [...pids][0];
       const p = SNAP.persons.find((x) => x.id === pid);
       if (p && p.name === name2) {
-        // rename in place: group replaces the path
-        p.groups = group ? [group] : [];
-        for (const f of faces)
-          if (f.link_status !== "rejected") f.link_status = "confirmed";
+        // rename in place: claim first, then the group lands (or the seat)
+        for (const f of faces) f.link_status = "confirmed";
+        p.groups = group ? [group] : [seatFor(p.id)];
         recount(); fixPrimaries(); return;
       }
     }
-    const dest = target ?? makePerson(name2, group);
+    const dest = target ?? makePerson(name2, group); // F2: an existing target's group is never touched
     for (const f of faces) {
       f.person_id = dest.id;
-      if (f.link_status !== "rejected") f.link_status = "confirmed";
+      f.link_status = "confirmed";
     }
     for (const pid of pids) {
       if (!SNAP.faces.some((f) => f.person_id === pid))
         SNAP.persons = SNAP.persons.filter((x) => x.id !== pid);
     }
+    reseat(dest);
     rederiveNames(); recount(); fixPrimaries();
   };
 
@@ -140,14 +180,23 @@
     get_snapshot: () => JSON.parse(JSON.stringify(SNAP)),
     assign_person: assignPerson,
     accept_faces: ({ faceIds }) => {
+      // #165/§4.3: plain accept never un-rejects; seat-holders re-derive
+      const scope = new Set(faceIds);
       for (const f of SNAP.faces)
-        if (faceIds.includes(f.id)) f.link_status = "confirmed";
-      recount(); fixPrimaries();
+        if (scope.has(f.id) && f.link_status !== "rejected")
+          f.link_status = "confirmed";
+      recount(); fixPrimaries(); reseatAll();
     },
     reject_faces: ({ faceIds }) => {
+      // #165/§4.2: every reject re-homes onto the system person
+      const rej = ensureRejected();
+      const scope = new Set(faceIds);
       for (const f of SNAP.faces)
-        if (faceIds.includes(f.id)) f.link_status = "rejected";
-      recount(); fixPrimaries();
+        if (scope.has(f.id)) {
+          f.link_status = "rejected";
+          f.person_id = rej.id;
+        }
+      rederiveNames(); recount(); fixPrimaries(); reseatAll();
     },
     set_face_description: ({ faceId, description }) => {
       const f = SNAP.faces.find((x) => x.id === faceId);
@@ -162,6 +211,9 @@
     set_person_name: ({ personId, name }) => {
       const p = SNAP.persons.find((x) => x.id === personId);
       if (!p) throw new Error("no person");
+      assertNotSystem(p); // #165: never rename the system person
+      if (String(name).toLowerCase() === "rejected")
+        throw new Error("'Rejected' is reserved (#165)");
       const other = getPerson(name);
       if (other && other.id !== personId)
         throw new Error("person already exists: " + name);
@@ -170,31 +222,48 @@
     },
     set_person_group: ({ personId, group }) => {
       const p = SNAP.persons.find((x) => x.id === personId);
-      if (p) p.groups = group ? [group] : [];
+      if (!p) return;
+      assertNotSystem(p); // #165
+      if (group) validatePath(group);
+      p.groups = group ? [group] : [seatFor(p.id)]; // empty ⇒ seat (§4.35)
     },
     set_person_note: ({ personId, note }) => {
       const p = SNAP.persons.find((x) => x.id === personId);
       if (p) p.note = note;
     },
     move_persons_to_group: ({ personIds, group }) => {
+      if (group) validatePath(group);
       for (const pid of personIds) {
         const p = SNAP.persons.find((x) => x.id === pid);
-        if (p) p.groups = group ? [group] : [];
+        if (!p) continue;
+        assertNotSystem(p); // #165
+        p.groups = group ? [group] : [seatFor(p.id)]; // empty ⇒ seat (§4.35)
       }
     },
     // #157 (v3.59): tree D&D move — re-home ONE membership per person
     move_persons_between_groups: ({ personIds, fromGroup, toGroup }) => {
+      if (toGroup) validatePath(toGroup);
       for (const pid of personIds) {
         const p = SNAP.persons.find((x) => x.id === pid);
         if (!p) continue;
+        assertNotSystem(p); // #165
         if (fromGroup !== toGroup)
           p.groups = p.groups.filter((g) => g !== fromGroup);
-        if (toGroup && !p.groups.includes(toGroup)) p.groups.push(toGroup);
+        if (toGroup) {
+          // #165/§4.35: filing replaces the status seat
+          p.groups = p.groups.filter((g) => !SEATS.includes(g));
+          if (!p.groups.includes(toGroup)) p.groups.push(toGroup);
+        } else if (!p.groups.length) {
+          p.groups = [seatFor(p.id)]; // last membership removed ⇒ seat
+        }
       }
     },
     rename_group: ({ oldPath, newPath }) => {
+      if (SEATS.includes(oldPath))
+        throw new Error("status branches are system furniture (#165)");
+      validatePath(newPath || "\u0000"); // empty target is fine; reserved segments are not
       for (const p of SNAP.persons)
-        if (p.groups.some((g) => g === oldPath || g.startsWith(oldPath + "|")))
+        if (p.groups.some((g) => g === oldPath || g.startsWith(oldPath + "|"))) {
           p.groups = p.groups
             .map((g) =>
               g === oldPath ? newPath :
@@ -202,20 +271,32 @@
                 ? newPath + (newPath ? "|" : "") + g.slice(oldPath.length + 1)
                 : g)
             .filter(Boolean);
+          if (!p.groups.length) p.groups = [seatFor(p.id)]; // empty ⇒ seat
+        }
     },
     delete_group: ({ path }) => {
-      for (const p of SNAP.persons)
+      if (SEATS.includes(path))
+        throw new Error("status branches are system furniture (#165)");
+      for (const p of SNAP.persons) {
         p.groups = p.groups.filter(
           (g) => !(g === path || g.startsWith(path + "|")));
+        if (!p.groups.length) p.groups = [seatFor(p.id)]; // §4.35
+      }
     },
     remove_persons: ({ personIds }) => {
+      // #165/§4.13: rejection re-homes — no writer detaches a face
+      for (const pid of personIds) {
+        const p = SNAP.persons.find((x) => x.id === pid);
+        assertNotSystem(p); // #165
+      }
+      const rej = ensureRejected();
       for (const f of SNAP.faces)
         if (personIds.includes(f.person_id)) {
-          f.person_id = null;
+          f.person_id = rej.id;
           f.link_status = "rejected";
         }
       SNAP.persons = SNAP.persons.filter((p) => !personIds.includes(p.id));
-      recount(); fixPrimaries();
+      recount(); fixPrimaries(); reseatAll();
     },
     add_refcrop: () => {},
     remove_refcrop: () => {},

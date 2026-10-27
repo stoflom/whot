@@ -34,9 +34,6 @@ Checks (contract refs: docs/gui-design.md):
       86vh cap, scrolling list, pinned action row (v3.34/#137)
   C16 Show filter prunes the tree person list (#152, §4.10 — sees
       C8 updated accordingly)
-  C17 top-bar 'Remove Unknowns': filter-independent, removes Unknowns
-      whose faces are all decided (v3.54 — exact removal, confirm
-      dialog) (#154)
   C18 Rolls pane mirrors the filesystem path hierarchy and Show prunes
       it (#161, v3.60)
   C19 staged dialog-Apply (§4.24) regroups the Description-mode sections
@@ -74,6 +71,9 @@ Checks (contract refs: docs/gui-design.md):
       space offers no menu at all, and the person dialog ADDS the typed
       path as another membership (current groups kept; Move keeps
       replace-all)
+  C29 Show=All excludes rejected entirely: the system person `Rejected`
+      and its branch list only under Show→Rejected, and the Show tooltip
+      spells the contract out (#165, §4.10)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -206,12 +206,16 @@ def blur(t):
 def c1_enter_stages_then_commits(t):
     fresh(t)
     fid = first_card_id(t)
+    pre = face_by_id(t, fid)
     edit_and_apply(t, "GuiCheck Enter")
     assert "GuiCheck Enter" in strip_text(t), "stage strip missing after Apply"
     assert not dialog_open(t), "dialog should close on Apply"
     mid = face_by_id(t, fid)
-    assert mid["person"].startswith("Unknown"), (
-        f"Apply must not write (person {mid['person']})")
+    # #165: whatever the face is (provisional on its cluster, or a
+    # rejected face on the system person) — Apply must not write
+    assert mid["person"] == pre["person"] and mid["status"] == pre["status"], (
+        f"Apply must not write (was {pre['status']}/{pre['person']}, "
+        f"now {mid['status']}/{mid['person']})")
     blur(t)
     AC(t.driver).send_keys(Keys.ENTER).perform()
     time.sleep(1.5)
@@ -457,6 +461,7 @@ def c8_tree_counts_ignore_filter(t):
     #152 makes presence itself filter-relative — a shrinking list is
     expected — so only persons listed under BOTH filters are compared."""
     fresh(t)
+    set_show_filter(t, "all")  # the persisted whotrc filter must not tilt the baseline
     before_all = tree_badges(t)
     set_show_filter(t, "provisional")
     after_new = tree_badges(t)
@@ -506,77 +511,48 @@ def c16_filter_prunes_tree(t):
            f"exact-vs-faces={exact}); Show=All restores everyone: {restores}")
 
 
-def c17_remove_unknowns_button(t):
-    """#154 (v3.54): the top-bar 'Remove Unknowns' button is FILTER-
-    INDEPENDENT — it removes exactly the Unknown persons whose faces are
-    all decided (zero New and zero Accepted left), same set under every
-    Show filter, after the §4.13 confirm dialog."""
+def c29_show_rejected_bin_165(t):
+    """#165/§4.10: Show=All excludes rejected entirely — the system
+    person `Rejected` and its branch list only under Show→Rejected, and
+    the Show tooltip spells the contract out."""
     fresh(t)
+    tip = js(t, """
+      const s = [...document.querySelectorAll('select')]
+        .find(x => [...x.options].some(o => o.value === 'rejected'));
+      return (s && s.closest('label') && s.closest('label').getAttribute('title')) || '';
+    """)
+    tip_ok = "except rejected" in tip and "Show → Rejected" in tip
 
-    def state():
+    def tree_state():
         return js(t, """
-          const b = [...document.querySelectorAll('.topbar button')]
-            .find(x => x.textContent.includes('Remove Unknowns'));
-          if (!b) return {missing: true};
-          const sees = new Set(window.__MOCK_SNAP.faces
-            .filter(x => x.link_status === 'provisional' || x.link_status === 'confirmed')
-            .map(x => String(x.person_id)));
-          const cand = window.__MOCK_SNAP.persons
-            .filter(p => /^Unknown/.test(p.name) && !sees.has(String(p.id)))
-            .map(p => p.id);
-          return {disabled: b.disabled, candidates: cand};
+          const nodes = [...document.querySelectorAll('.tree-node-name')]
+            .map(x => x.textContent);
+          const rej = window.__MOCK_SNAP.persons.find(p => p.name === 'Rejected');
+          const rows = rej
+            ? document.querySelectorAll(`.tree-person[data-person-id='${rej.id}']`).length
+            : 0;
+          return {branch: nodes.includes('Rejected'), rows: rows,
+                  snapRejected: window.__MOCK_SNAP.faces
+                    .filter(f => f.link_status === 'rejected').length};
         """)
 
-    under_all = state()
-    set_show_filter(t, "provisional")
-    under_new = state()
-    set_show_filter(t, "rejected")
-    under_rejected = state()
-    set_show_filter(t, "confirmed")
-    under_confirmed = state()
     set_show_filter(t, "all")
-    cand = (under_all.get("candidates") or [])
-    if not cand or "missing" in under_all:
-        record("C17 Remove Unknowns (all faces decided) (#154)", False,
-               f"button {'missing' if 'missing' in under_all else 'has no candidates'}")
-        return
-    before_count = js(t, "return window.__MOCK_SNAP.persons.length")
-    js(t, """
-      const b = [...document.querySelectorAll('.topbar button')]
-        .find(x => x.textContent.includes('Remove Unknowns'));
-      b.click();
-    """)
-    time.sleep(0.7)
-    dlg_title = js(t, """
-      const d = [...document.querySelectorAll('.overlay .dialog')][0];
-      return d ? d.querySelector('h3')?.textContent ?? '' : null;
-    """)
-    js(t, """
-      const btn = [...document.querySelectorAll('.overlay .dialog-actions button')]
-        .find(x => !x.className.includes('secondary'));
-      if (btn) btn.click();
-    """)
-    time.sleep(1.2)
-    after_count = js(t, "return window.__MOCK_SNAP.persons.length")
-    gone = js(t, """
-      return window.__MOCK_SNAP.persons
-        .filter(p => arguments[0].includes(p.id)).length;
-    """, cand)
-    ok = (
-        under_all.get("disabled") is False
-        and under_new.get("candidates") == cand
-        and under_rejected.get("candidates") == cand
-        and under_confirmed.get("candidates") == cand
-        and "Remove" in (dlg_title or "")
-        and after_count == before_count - len(cand)
-        and gone == 0
-    )
-    record("C17 Remove Unknowns is filter-independent (all faces decided) (#154)", ok,
-           f"candidates={len(cand)} identical under All/New/Rejected/Accepted "
-           f"[{under_all.get('disabled')}, {under_new.get('disabled')}] "
-           f"{under_rejected.get('disabled')}, {under_confirmed.get('disabled')}]"
-           f" - disabled); confirm title='{dlg_title}'; delta={before_count - after_count} "
-           f"persons (all candidates gone: {gone == 0})")
+    all_state = tree_state()
+    all_ok = (not all_state["branch"]) and all_state["rows"] == 0
+    set_show_filter(t, "provisional")
+    prov_state = tree_state()
+    prov_ok = (not prov_state["branch"]) and prov_state["rows"] == 0
+    set_show_filter(t, "rejected")
+    rej_state = tree_state()
+    rej_ok = rej_state["branch"] and rej_state["rows"] >= 1
+    set_show_filter(t, "all")
+    ok = tip_ok and all_ok and prov_ok and rej_ok and all_state["snapRejected"] > 0
+    record("C29 Show=All excludes the rejected bin — only Show→Rejected lists it (#165, §4.10)",
+           ok, f"tooltip ok={tip_ok} ({tip[:60]!r}); "
+               f"all: branch={all_state['branch']} rows={all_state['rows']}; "
+               f"new: branch={prov_state['branch']} rows={prov_state['rows']}; "
+               f"rejected: branch={rej_state['branch']} rows={rej_state['rows']}; "
+               f"snap rejected faces={all_state['snapRejected']}")
 
 
 def c18_rolls_path_tree(t):
@@ -1075,6 +1051,7 @@ def c14_drag_sources(t):
     # start an image/URL drag (copy-only) that WebKit never drops back
     # into the app; the card div and the person row are the sources
     fresh(t)
+    set_show_filter(t, "all")  # the persisted whotrc filter must not tilt the baseline
     bad = js(t, r"""
       const bad = [];
       document.querySelectorAll('.face-card img').forEach(i => {
@@ -1085,10 +1062,21 @@ def c14_drag_sources(t):
       });
       if (!document.querySelector('.face-card')?.draggable)
         bad.push('face-card not draggable');
-      const row = document.querySelector('.tree-person');
+      const rows = [...document.querySelectorAll('.tree-person')];
+      const row = rows.find(r =>
+        (r.querySelector('.tree-name')?.textContent ?? '').trim() !== 'Rejected');
       if (!row?.draggable) bad.push('tree-person not draggable');
       return bad;
     """)
+    # #165/§4.35: the system person's row (only listed under Show →
+    # Rejected) is never a drag source either
+    set_show_filter(t, "rejected")
+    bad += js(t, r"""
+      const row = [...document.querySelectorAll('.tree-person')]
+        .find(r => (r.querySelector('.tree-name')?.textContent ?? '').trim() === 'Rejected');
+      return row && row.draggable ? ['system person row draggable'] : [];
+    """)
+    set_show_filter(t, "all")
     record("C14 drag sources (v3.33 WebKit fixes)", not bad,
            "; ".join(bad) if bad
            else "face crops + avatars inert; cards + rows are the sources")
@@ -1705,7 +1693,10 @@ def c28_add_group_person_rows_only(t):
     # 3) person row — 'Add group…' → dialog → typed path becomes ANOTHER membership
     picked = js(t, r"""
       const p = window.__MOCK_SNAP.persons.find(x =>
-        (x.groups?.length ?? 0) > 0 && x.counts?.total > 0 && !/^Unknown/.test(x.name));
+        (x.groups?.length ?? 0) > 0 && x.counts?.total > 0 && !/^Unknown/.test(x.name) &&
+        // #165: pick a REAL group — filing drops a status seat, which this
+        // check's keep-all assertion does not model
+        x.groups.some(g => !['New', 'Accepted', 'Rejected'].includes(g)));
       if (!p) return null;
       window.__C28 = {id: p.id, groups: p.groups.slice()};
       const row = document.querySelector(`.tree-person[data-person-id='${p.id}']`);
@@ -1796,7 +1787,6 @@ def main():
         c14_drag_sources(t)
         c15_merge_dialog_scroll(t)
         c16_filter_prunes_tree(t)
-        c17_remove_unknowns_button(t)
         c18_rolls_path_tree(t)
         c19_staged_desc_regroups(t)
         c20_multi_group_renders_everywhere(t)
@@ -1808,6 +1798,7 @@ def main():
         c26_rolls_path_filter(t)
         c27_center_toolbar_view_matrix(t)
         c28_add_group_person_rows_only(t)
+        c29_show_rejected_bin_165(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

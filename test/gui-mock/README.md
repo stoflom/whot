@@ -23,7 +23,7 @@ without running the Rust backend or touching the real database.
 npm run build            # dist/ must be current
 python3 test/gui-mock/dump_snap.py
 python3 test/gui-mock/server.py &     # default http://127.0.0.1:8123/
-python3 test/gui-mock/gui_check.py    # exit 0 iff the contract checks (C1–C7, R1) pass
+python3 test/gui-mock/gui_check.py    # exit 0 iff the contract checks (C1–C29, R1–R2) pass
 ```
 
 Manual poking: open http://127.0.0.1:8123/ in any browser.
@@ -34,8 +34,11 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
   checks only, never pixel checks.
 - `person_face_clusters` is simplified (one cluster per description, sim
   0.9); the person view's cluster section is not exercised by the checks.
-- `assign_person` emulates §4.1 (rename-in-place / move / create, sticky
-  rejected, shell deletion, name re-derivation).
+- `assign_person` emulates §4.1/#165 (rename-in-place / move / create,
+  the CLAIM rule — an assignment always confirms what it touches —,
+  shell deletion, name re-derivation); reject re-homes onto the system
+  person `Rejected`, accept never un-rejects, and every person keeps
+  their group row or status seat (§4.35).
 - Mock state is in-memory and per page-load: every navigation reloads
   `snap.json`, so checks are independent and the real DB is never written.
 

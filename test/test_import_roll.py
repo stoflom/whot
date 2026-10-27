@@ -585,7 +585,7 @@ class EnsurePersonTest(unittest.TestCase):
             self.assertTrue(ir.create_database(db, ir.cli_console.Console(quiet=True)))
         return sqlite3.connect(db), tmp
 
-    def test_new_unknownn_gets_no_person_groups_row(self):
+    def test_new_unknownn_gets_new_status_seat(self):
         con, tmp = self._con()
         try:
             stub = ir.PersonStub(0, "Unknown1", False)
@@ -594,10 +594,14 @@ class EnsurePersonTest(unittest.TestCase):
             self.assertEqual(stub.person_id, pid)
             self.assertEqual([s.person_id for s in fresh], [pid])
             self.assertEqual(
-                con.execute(
-                    "SELECT COUNT(*) FROM person_groups WHERE person_id = ?", (pid,)
-                ).fetchone()[0],
-                0,
+                [
+                    r[0]
+                    for r in con.execute(
+                        "SELECT path FROM person_groups WHERE person_id = ?", (pid,)
+                    )
+                ],
+                ["New"],
+                "#165/§4.35: a fresh cluster is seeded with the status seat",
             )
             self.assertEqual(
                 con.execute("SELECT name FROM persons WHERE id = ?", (pid,)).fetchone()[0],
