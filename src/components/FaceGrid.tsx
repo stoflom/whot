@@ -36,7 +36,6 @@ interface GridShared {
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
   onReject: (id: number) => void;
-  onAccept: (id: number) => void;
   /** #101 (§4.24): the grid's only editable surface — the Edit dialog */
   onEditCard: (id: number) => void;
   onEditGroup: (ids: number[]) => void;
@@ -83,7 +82,6 @@ const SectionView = memo(
     onPrimary,
     onRefcrop,
     onReject,
-    onAccept,
     onEditCard,
     onEditGroup,
     onFaceDragStart,
@@ -214,7 +212,6 @@ const SectionView = memo(
                 onPrimary={onPrimary}
                 onRefcrop={onRefcrop}
                 onReject={onReject}
-                onAccept={onAccept}
                 onFaceDragStart={onFaceDragStart}
                 onFaceDragEnd={onFaceDragEnd}
                 onFaceDragOver={onFaceDragOver}
@@ -250,7 +247,6 @@ const SectionView = memo(
     a.onPrimary === b.onPrimary &&
     a.onRefcrop === b.onRefcrop &&
     a.onReject === b.onReject &&
-    a.onAccept === b.onAccept &&
     a.onEditCard === b.onEditCard &&
     a.onEditGroup === b.onEditGroup &&
     a.onFaceDragStart === b.onFaceDragStart &&

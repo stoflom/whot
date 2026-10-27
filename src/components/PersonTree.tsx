@@ -24,17 +24,15 @@ function buildTree(persons: Person[]): TreeNode {
     }
     return n;
   };
-  const unknown = find(root, "Unknown");
-  const ungrouped = find(root, "Ungrouped");
   // #153 (§3): group placement first — a person with a group row renders
   // under their first path even when named UnknownN (the user may group
-  // an UnknownN they remember by face but not by name). The virtual
-  // branches hold the ungrouped: UnknownN names to Unknown, the rest to
-  // Ungrouped. The importer seeds no group rows, so fresh UnknownN
-  // persons are ungrouped by construction (never a literal 'Unknown'
-  // segment); historic rows still land on the same top-level branch.
-  // #156 (v3.56): a person with SEVERAL group rows renders under every
-  // listed path — the §9 harvest importer legally leaves multiple
+  // an UnknownN they remember by face but not by name). #165 (§4.35):
+  // every person carries ≥ 1 group row since v1.7 — the virtual
+  // Unknown/Ungrouped branches are retired and appear only as a
+  // fail-visible fallback for a groupless person (an invariant breach no
+  // writer can produce; created lazily, so healthy snapshots never show
+  // them). #156 (v3.56): a person with SEVERAL group rows renders under
+  // every listed path — the §9 harvest importer legally leaves multiple
   // person_groups rows per person (§9.6/#128 additive shell groups), and
   // hiding them on all but the alphabetically-first branch made the
   // person unfindable in the branch the user filed them under. Each
@@ -47,10 +45,8 @@ function buildTree(persons: Person[]): TreeNode {
         for (const part of parts) node = find(node, part);
         node.personIds.push(p.id);
       }
-    } else if (p.name.startsWith("Unknown")) {
-      unknown.personIds.push(p.id);
     } else {
-      ungrouped.personIds.push(p.id);
+      find(root, p.name.startsWith("Unknown") ? "Unknown" : "Ungrouped").personIds.push(p.id);
     }
   }
   // #61 (§3): within every branch, biggest clusters first — persons
@@ -128,7 +124,8 @@ interface Props {
   onRemovePersons: (ids: number[]) => void;
   /** #50 (§4.16) — rename/move a whole branch (prefix rewrite) */
   onRenameGroup: (oldPath: string, newPath: string) => void;
-  /** #50 (§4.16) — delete a branch; its persons fall to Ungrouped */
+  /** #50 (§4.16) — delete a branch; its persons fall to their status
+      seats (#165, §4.35) */
   onDeleteGroup: (path: string) => void;
   /** #50 (§4.16) — move persons (or a selection) into a group */
   onMovePersons: (ids: number[], path: string, src?: string) => void;
@@ -202,6 +199,7 @@ function PersonRow({
   onDrop: (e: React.DragEvent) => void;
 }) {
   const img = useFaceImage(person.primary_face_id);
+  const system = person.name === "Rejected"; // #165/§4.35
   const [name, setName] = useState(person.name);
   useEffect(() => setName(person.name), [person.name, renaming]);
   const commit = () => {
@@ -210,7 +208,9 @@ function PersonRow({
     onRenameCancel();
   };
   const cls = `tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}${dropTarget ? " merge-target" : ""}`;
-  const title = `${person.groups.join(", ") || "Ungrouped"} — double-click to rename`;
+  const title = system
+    ? "Rejected — the system person for rejected faces (#165); assignment is its only way out"
+    : `${person.groups.join(", ") || "Ungrouped"} — double-click to rename`;
   const inner = (
     <>
       <span className="tree-avatar">
@@ -266,9 +266,9 @@ function PersonRow({
       data-person-id={person.id} // #76: cursor hit-test for ←/→ stepping
       className={cls}
       onClick={onSelect}
-      onDoubleClick={onStartRename}
+      onDoubleClick={() => !system && onStartRename()}
       onContextMenu={onContextMenu}
-      draggable={!renaming}
+      draggable={!renaming && !system}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
@@ -386,13 +386,21 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
       : [menu.id]
     : [];
   const branchIds = branchMenu ? collectSubtreeIds(branchMenu.node) : [];
+  // #165/§4.35: the system person offers no rename/move/file/merge/remove
+  const systemInMenu = menuTargets.some((id) => byId.get(id)?.name === "Rejected");
 
   // ------------------------------------------------------------ #50 drag & drop (§4.16)
 
   const isVirtual = (name: string, depth: number) =>
     depth === 0 && (name === "Unknown" || name === "Ungrouped");
+  // #165 (§4.35): the status branches are system furniture — no menu,
+  // not draggable, and NOT drop targets (their paths are reserved)
+  const isStatusBranch = (name: string, depth: number) =>
+    depth === 0 && (name === "New" || name === "Accepted" || name === "Rejected");
 
   const startDragPerson = (e: React.DragEvent, id: number, fromPath: string) => {
+    // #165/§4.35: the system person never drags (merge/move source)
+    if (byId.get(id)?.name === "Rejected") return;
     // dragging a selected row moves the whole selection; otherwise just it
     const ids = selectedIds.has(id) && selectedIds.size > 1 ? [...selectedIds] : [id];
     // #157 (v3.59): the dragged placement's branch path rides along — the
@@ -522,7 +530,9 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
       );
     }
     const virtual = isVirtual(node.name, depth);
-    // drop target for this node: '' = Ungrouped (virtual) — no group path
+    const system = isStatusBranch(node.name, depth);
+    // drop target for this node: '' = Ungrouped (virtual) — no group path;
+    // status branches accept no drops at all (#165/§4.35)
     const dropTarget = virtual && node.name === "Ungrouped" ? "" : groupPath;
     const isCollapsed = collapsed.has(path) && f === "";
     const collapsible = node.children.length > 0 || node.personIds.length > 0;
@@ -535,21 +545,20 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            // #154: virtual branches (Unknown/Ungrouped) offer no branch
-            // menu — Unknown cleanup lives in the top-bar 'Remove
-            // Unknowns' button
-            if (isVirtual(node.name, depth)) return;
+            // #154/#165: virtual and status branches offer no branch menu
+            // — status branches are system furniture (§4.35)
+            if (virtual || system) return;
             setBranchMenu({ x: e.clientX, y: e.clientY, node, groupPath });
           }}
-          draggable={!virtual}
-          onDragStart={(e) => !virtual && startDragBranch(e, groupPath)}
+          draggable={!virtual && !system}
+          onDragStart={(e) => !virtual && !system && startDragBranch(e, groupPath)}
           onDragEnd={clearDrag}
-          onDragOver={(e) => dragOver(e, dropTarget)}
+          onDragOver={(e) => (system ? undefined : dragOver(e, dropTarget))}
           onDragLeave={(e) => {
             e.stopPropagation();
             if (dropPath === dropTarget) setDropPath(null);
           }}
-          onDrop={(e) => acceptDrop(e, dropTarget)}
+          onDrop={(e) => (system ? undefined : acceptDrop(e, dropTarget))}
         >
           {collapsible ? (
             <span className="tree-arrow">{isCollapsed ? "▸" : "▾"}</span>
@@ -659,7 +668,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
               {
                 items: [
                   { label: "Open person", onClick: () => onSelect(menu.id) },
-                  { label: "Rename…", onClick: () => setRenamingId(menu.id) },
+                  { label: "Rename…", onClick: () => setRenamingId(menu.id), disabled: systemInMenu },
                   {
                     label: "Select their pending faces",
                     onClick: () => onSelectPending?.(menu.id),
@@ -677,6 +686,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                         ? `Move ${menuTargets.length} persons to group…`
                         : "Move to group…",
                     onClick: () => setGroupDialog({ kind: "move-persons", ids: menuTargets }),
+                    disabled: systemInMenu,
                   },
                   {
                     // #164 (§4.18): an ADDITIONAL membership — Move
@@ -687,6 +697,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                         ? `Add group to ${menuTargets.length} persons…`
                         : "Add group…",
                     onClick: () => setGroupDialog({ kind: "add-group", ids: menuTargets }),
+                    disabled: systemInMenu,
                   },
                   {
                     // #88 (§4.28): shared confirmation dialog, target via typeahead
@@ -696,6 +707,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                         : "Merge into…",
                     onClick: () => onMergeInto(menuTargets),
                     hint: "§4.28",
+                    disabled: systemInMenu,
                   },
                   // #88 (§4.28): rename-merge over all their faces (§4.1);
                   // a single person already has inline rename (double-click)
@@ -704,6 +716,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                         {
                           label: `Rename ${menuTargets.length} persons to…`,
                           onClick: () => onRenameSelection(menuTargets),
+                          disabled: systemInMenu,
                         },
                       ]
                     : []),
@@ -713,6 +726,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                         ? `Remove ${menuTargets.length} persons`
                         : "Remove person",
                     onClick: () => onRemovePersons(menuTargets),
+                    disabled: systemInMenu,
                     danger: true,
                   },
                 ],
@@ -788,11 +802,12 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           body={
             groupDialog.kind === "rename-branch"
               ? "The whole branch — including sub-branches — follows to the new path. " +
-                "Empty = move everything to Ungrouped."
+                "Empty = everybody falls to their status seat (#165, §4.35)."
             : groupDialog.kind === "add-group"
               ? "Adds this path as ANOTHER group — every current group of the person(s) " +
-                "is kept (a person can belong to several, §4.16). Faces and names are untouched."
-            : "Replaces each person's group path (empty = ungrouped). " +
+                "is kept (a person can belong to several, §4.16); a status seat, if any, " +
+                "is dropped instead (#165, §4.35). Faces and names are untouched."
+            : "Replaces each person's group path (empty = their status seat, §4.35). " +
               "Faces and names are untouched."
           }
           defaultPath={
@@ -831,7 +846,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           title={`Delete group '${confirmDeleteGroup.path}'`}
           body={
             `${confirmDeleteGroup.count} person(s) — including any sub-branches — ` +
-            "move to Ungrouped. Faces, names and statuses are untouched."
+            "fall to their status seat (#165, §4.35). Faces, names and statuses are untouched."
           }
           confirmLabel="delete group"
           danger

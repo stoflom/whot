@@ -36,7 +36,6 @@ interface Props {
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
   onReject: (id: number) => void;
-  onAccept: (id: number) => void;
   /** #135/#136 (rule 34): start dragging this card — or the whole
       selection it is part of (the payload rule lives in App) */
   onFaceDragStart: (id: number, e: ReactDragEvent) => void;
@@ -73,7 +72,6 @@ function FaceCard({
   onPrimary,
   onRefcrop,
   onReject,
-  onAccept,
   onFaceDragStart,
   onFaceDragEnd,
   onFaceDragOver,
@@ -247,20 +245,20 @@ function FaceCard({
         >
           ◈
         </button>
-        <button
-          title={
-            (face.link_status === "rejected"
-              ? "Un-reject (accept) face — back to the accepted default"
-              : "Reject face — only rejected faces get a ✗ marker; accepted is the default") +
-            scopeLabel
-          }
-          className={face.link_status === "rejected" ? "reject" : ""}
-          onClick={() =>
-            face.link_status === "rejected" ? onAccept(face.id) : onReject(face.id)
-          }
-        >
-          {face.link_status === "rejected" ? "undo" : "✗"}
-        </button>
+        {/* #165/§4.35: the Un-reject (undo) affordance retired — plain
+            accept never un-rejects, the way back is an assignment; a
+            rejected face renders with no action button. */}
+        {face.link_status !== "rejected" && (
+          <button
+            title={
+              "Reject face — only rejected faces get a ✗ marker; accepted is the default" +
+              scopeLabel
+            }
+            onClick={() => onReject(face.id)}
+          >
+            ✗
+          </button>
+        )}
       </div>
     </div>
   );

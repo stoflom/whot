@@ -22,7 +22,6 @@ import {
   groupByDescription,
   matchesStatusFilter,
   personTreeMembers,
-  removableUnknownShellIds,
   type ClusterGroup,
   type FaceFilter,
 } from "./viewFilters";
@@ -201,9 +200,11 @@ export default function App() {
   const faceFilter = (snap?.settings.face_filter ?? "all") as FaceFilter;
   const clusterGroup = snap?.settings.cluster_group ?? "accuracy";
   const faceVisible = (f: Face) => matchesStatusFilter(f.link_status, faceFilter);
-  // #127/#128 → #152 (§4.16): the face-status filter decides the tree's
-  // person presence (§4.10) — All lists every snapshot person (faceless
-  // shells stay findable), New/Accepted/Rejected list only persons
+  // #127/#128 → #152, #165 (§4.10): the face-status filter decides the
+  // tree's person presence — All now means everything EXCEPT rejected:
+  // persons holding ≥ 1 non-rejected face stay (plus the faceless
+  // shells, #127/#128), the system person `Rejected` never shows outside
+  // Show → Rejected (§4.35); New/Accepted/Rejected list only persons
   // holding ≥ 1 face of that status; the listed badges stay raw totals
   // (#129's badge rule — unchanged, only presence moved)
   const treePersons = useMemo(
@@ -216,14 +217,6 @@ export default function App() {
   const displayPerson = useMemo(
     () => (personId != null ? personsById.get(personId) ?? null : null),
     [personsById, personId]
-  );
-  // #154 — 'Remove Unknowns' (§3): UnknownN persons whose faces are all
-  // decided (zero New and zero Accepted faces left) — filter-independent
-  // (v3.54; the first filter-relative rule offered the unfinished queue
-  // under Accepted/Rejected). Disabled when the list is empty.
-  const unknownShells = useMemo(
-    () => (snap ? removableUnknownShellIds(snap.persons, snap.faces) : []),
-    [snap]
   );
   // #122: person id -> primary face's stored crop rotation (tree avatars)
   const primaryRot = useMemo(() => {
@@ -421,10 +414,20 @@ export default function App() {
   }, [view, personId, stepIdx]);
   const doAccept = useCallback(
     (ids: number[]) => {
+      // #165/§4.35: plain accept never un-rejects — a rejected-only scope
+      // is inert with guidance (an assignment is the claim path; the
+      // Edit dialog claims by staging a NAME, see commitPending)
+      if (
+        ids.length > 0 &&
+        ids.every((id) => facesById.get(id)?.link_status === "rejected")
+      ) {
+        setInfo("assign a person to bring it back");
+        return;
+      }
       markExhaust();
       return mutate(() => api.acceptFaces(ids), true);
     },
-    [mutate, markExhaust]
+    [mutate, markExhaust, facesById]
   );
   const doReject = useCallback(
     (ids: number[]) => {
@@ -502,7 +505,9 @@ export default function App() {
   // keeps their group through a rename, an ungrouped one stays Ungrouped
   // (pure — stable ref)
   const renameGroup = useCallback(
-    (p: Person | undefined) => p?.groups[0] ?? "",
+    // #165/§4.35: the system person's seat never prefills a group field
+    (p: Person | undefined) =>
+      p && p.name !== "Rejected" ? p.groups[0] ?? "" : "",
     []
   );
 
@@ -570,8 +575,11 @@ export default function App() {
       for (const id of ids) {
         const f = facesById.get(id);
         const p = f?.person_id != null ? personsById.get(f.person_id) : undefined;
-        names.add(p?.name ?? "");
-        groups.add(p?.groups[0] ?? "");
+        // #165/§4.35: the system person's reserved name/seat never
+        // prefills — a claim needs a typed name (untouched = no stage)
+        const system = p?.name === "Rejected";
+        names.add(system ? "" : p?.name ?? "");
+        groups.add(system ? "" : p?.groups[0] ?? "");
         descs.add(f?.description ?? "");
       }
       const mixed: Prefill["mixed"] = [];
@@ -665,7 +673,7 @@ export default function App() {
         title: multi ? `Face — ${scope.length} selected` : "Face",
         items: [
           {
-            label: label(f.link_status === "rejected" ? "Un-reject (accept)" : "Accept"),
+            label: label("Accept"),
             hint: "A",
             onClick: () => doAccept(scope),
           },
@@ -873,7 +881,6 @@ export default function App() {
     // selection when the card is part of it (member-preserving), else
     // just the card; bottom-bar/keys never confirm (Q2/Q9)
     onReject: (id: number) => doReject(actionScope(id)),
-    onAccept: (id: number) => doAccept(actionScope(id)),
     // #101: the grid's only editable surface — one dialog
     onEditCard: (id: number) => openEdit("card", { card: id }),
     onEditGroup: (ids: number[]) => openEdit("group", { group: ids }),
@@ -934,7 +941,7 @@ export default function App() {
       });
     },
   }), [facesById, personsById, faceMenu, toggle, selectOnly, rangeSelect,
-      toggleMany, doPrimary, doRefcrop, doReject, doAccept, actionScope, openEdit,
+      toggleMany, doPrimary, doRefcrop, doReject, actionScope, openEdit,
       confirmContext, mutate]);
 
   // one section per person over an image's faces — the Rolls image
@@ -1058,7 +1065,7 @@ export default function App() {
           (f) => f.person_id === personId && f.link_status === "rejected"
         );
         if (rej.length > 0)
-          out.push({ key: "rejected", title: "Rejected (undo to accept)", faceIds: rej.map((f) => f.id) });
+          out.push({ key: "rejected", title: "Rejected", faceIds: rej.map((f) => f.id) });
       }
       return out;
     }
@@ -1085,7 +1092,9 @@ export default function App() {
         title: p.name,
         subtitle: p.counts.total > byPerson.get(p.id)!.length ? `${p.counts.total} faces total` : undefined,
         faceIds: byPerson.get(p.id)!.map((f) => f.id),
-        ruleDefaultName: p.name,
+        // #165/§4.35: the system person's reserved name never prefills —
+        // committing a claim needs a typed name
+        ruleDefaultName: p.name === "Rejected" ? "" : p.name,
         // #153: the rename keeps the person's current group path
         ruleDefaultGroup: renameGroup(p),
       }));
@@ -1100,8 +1109,19 @@ export default function App() {
   // user's own hand there). The plan comes from the pre-accept sections,
   // which stay valid across the refresh — see reviewFlow.ts.
   const acceptAndNext = useCallback(
-    async (ids: number[]) => {
+    async (ids: number[], claimed = false) => {
       if (!snap) return;
+      // #165/§4.35: plain accept never un-rejects — a rejected-only scope
+      // is inert with guidance (commitPending passes claimed=true after a
+      // staged NAME assignment has already done the claiming)
+      if (
+        !claimed &&
+        ids.length > 0 &&
+        ids.every((id) => facesById.get(id)?.link_status === "rejected")
+      ) {
+        setInfo("assign a person to bring it back");
+        return;
+      }
       if (view !== "review" || splitImageId != null) {
         await mutate(() => api.acceptFaces(ids), true);
         return;
@@ -1134,7 +1154,7 @@ export default function App() {
         );
       }
     },
-    [snap, view, splitImageId, sections, mutate, markExhaust]
+    [snap, view, splitImageId, sections, mutate, markExhaust, facesById]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
@@ -1210,13 +1230,10 @@ export default function App() {
           ),
         ];
         if (pids.length === 0) {
-          setInfo("type a name first — unowned faces have no person to group");
+          // #165: no writer ever leaves a face unowned — defensive only
+          setInfo("nothing to group — these faces have no person");
         } else {
-          const unowned =
-            ids.length - ids.filter((id) => facesById.get(id)?.person_id != null).length;
           for (const pid of pids) await api.setPersonGroup(pid, st.group);
-          if (unowned > 0)
-            setInfo(`${unowned} unowned face(s) skipped — assign a name to group them`);
         }
       }
       if (st.desc != null) {
@@ -1253,7 +1270,10 @@ export default function App() {
         setPending(all.slice(done));
         return;
       }
-      await acceptAndNext(union);
+      // a staged NAME assignment already claimed rejected faces (#165) —
+      // the advance must not trip the rejected-only guard on stale state
+      const claimed = all.some((o) => (o.name ?? "").trim().length > 0);
+      await acceptAndNext(union, claimed);
       setPending([]);
     },
     [acceptAndNext, stageOps]
@@ -1692,7 +1712,7 @@ export default function App() {
               a global control applied across all panes (#99, §4.10) and not
               something the Person view (or any single pane) owns. */}
           <label
-            title="Status filter — every view shows only faces with this status (#99, §4.10); switching it drops hidden faces from the selection"
+            title="All = everything except rejected; rejected faces appear only under Show → Rejected (#165, §4.10); switching it drops hidden faces from the selection"
           >
             show
             <select
@@ -1705,21 +1725,6 @@ export default function App() {
               <option value="rejected">Rejected</option>
             </select>
           </label>
-          {/* #154 (§3): Unknown cleanup beside the refresh button — only
-              Unknowns with nothing left to decide (all faces decided) */}
-          <button
-            className="ghost"
-            disabled={unknownShells.length === 0}
-            onClick={() => doRemovePersons(unknownShells)}
-            title={
-              "Remove Unknowns — removes only Unknown persons with no face left " +
-              "to show or decide on (all their faces rejected); Unknowns that " +
-              "still hold a new or accepted face are never touched. Untouched " +
-              "by the Show filter."
-            }
-          >
-            Remove Unknowns
-          </button>
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}
@@ -2120,8 +2125,11 @@ export default function App() {
             // #123: Accept commits the whole set — this op included
             void commitPending(upsertStage(pendingRef.current, st));
           }}
-          onReject={(scope, unreject) => {
-            // #124: a verdict, not a field edit — commits immediately
+          onReject={(scope) => {
+            // #124: a verdict, not a field edit — commits immediately.
+            // #165/§4.35: the *Un-reject (accept)* relabel retired — an
+            // assignment claims (the dialog's Accept with a NAME), and
+            // the button is disabled on a fully-rejected scope.
             const ids =
               scope === "card"
                 ? edit.card
@@ -2129,12 +2137,8 @@ export default function App() {
                   ? edit.group
                   : [...selRef.current];
             setEdit(null);
-            if (unreject) {
-              void doAccept(ids); // “Un-reject (accept)” — the plain accept
-            } else {
-              // F2: doReject drops the newly-moot stages itself (#141)
-              void doReject(ids);
-            }
+            // F2: doReject drops the newly-moot stages itself (#141)
+            void doReject(ids);
           }}
           rejected={{
             card:
