@@ -62,7 +62,9 @@ export default function RuleBar({
         onClick={onAccept}
         title={
           stageLive
-            ? "Commit the staged preview and accept — advances in Review (#101, §4.30)"
+            ? none
+              ? "Commit the staged preview — with nothing selected it accepts the staged faces (#166, §4.30)"
+              : `Commit the staged preview, then accept the ${count} selected face(s) — advances in Review (#166, §4.30)`
             : `Accept the ${count} selected face(s) — advances in Review (shortcut: A) (#101, §4.30)`
         }
       >

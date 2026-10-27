@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.66** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.67** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -830,10 +830,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       answer): Edit on a **card → `Card`**, Edit on a **header →
       `Group`**, bottom bar → **`Selection`** (greyed at N = 0); the
       selector switches scope explicitly and **Apply binds the stage to
-      the chosen scope's faceIds**, which Accept then commits (the
-      review advance works off those ids too).
+      the chosen scope's faceIds**; Accept commits those staged ops and
+      then accepts the **chosen scope** (#166 — the staged set supplies
+      the edits, never the acceptance scope).
     - **Buttons**: `Apply` = stage + close (screen preview), `Accept` =
-      commit the whole pending set (the shortcut — “Accept is what makes
+      commit the staged ops, then accept the chosen scope (#166; the
+      shortcut — “Accept is what makes
       my changes permanent”, Q3), `Reject` = the scope’s verdict,
       `Cancel`/Esc = discard the pending set. **Enter = Accept**, **Esc
       = Cancel** — inside the dialog only (G2).
@@ -1161,10 +1163,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       confirmation dialog; selection actions grey out at N = 0 and
       `Undo` greys out without a preview. `Assign name…` opens the
       shared Edit dialog with scope preset to Selection.
-    - **Key/bar Accept with a live pending set commits the whole set** —
-      the dialog's Accept, the bar's Accept, `A` and global `Enter`
-      all take the one commit path (the set's ops, then the review
-      advance off the committed ids); without a set they act on the
+    - **Key/bar Accept with a live pending set commits the staged ops
+      first, then accepts the DISPLAYED scope** (#166) — the dialog's
+      Accept takes its chosen scope, the bar's Accept and `A`/`Enter`
+      take the selection (cursor-as-target when empty, §4.25); the staged
+      set supplies the edits, never the acceptance scope (an empty scope
+      falls back to the staged ids). Without a set they act on the
       selection (#105, #110, #123). Global `Enter` accepts **in Review
       only** (`A` works in every view, Q10); the advance plan anchors at
       the **last-selected card**, else the hovered card, else the first
