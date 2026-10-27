@@ -835,6 +835,27 @@ fn ensure_rejected_person(con: &Connection) -> Result<i64> {
         .query_row("SELECT id FROM persons WHERE name = 'Rejected'", [], |r| r.get(0))
         .optional()?
     {
+        // #165: never silently adopt a legacy person squatting the
+        // reserved name — the system person is seat-only and holds only
+        // rejected faces; fail loudly instead of corrupting the invariant
+        let (seats, others): (i64, i64) = con.query_row(
+            "SELECT COALESCE(SUM(path IN ('New', 'Accepted', 'Rejected')), 0), COUNT(*)
+               FROM person_groups WHERE person_id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let bad_faces: i64 = con.query_row(
+            "SELECT COUNT(*) FROM faces WHERE person_id = ?1 AND link_status != 'rejected'",
+            params![id],
+            |r| r.get(0),
+        )?;
+        if others > seats || bad_faces > 0 {
+            bail!(
+                "a legacy person named 'Rejected' conflicts with the system person (#165): \
+                 {others} group row(s) ({seats} seat(s)), {bad_faces} non-rejected face(s) — \
+                 rename that person before rejecting anything"
+            );
+        }
         con.execute(
             "INSERT OR IGNORE INTO person_groups (person_id, path) VALUES (?1, 'Rejected')",
             params![id],

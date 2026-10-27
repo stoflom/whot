@@ -313,6 +313,19 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
         """#165/§4.35: the system person `Rejected` + its seat, on demand."""
         row = con.execute("SELECT id FROM persons WHERE name = 'Rejected'").fetchone()
         if row:
+            # never silently adopt a legacy person squatting the reserved
+            # name — the system person is seat-only + rejected-faces-only
+            seats, others = con.execute(
+                "SELECT COALESCE(SUM(path IN ('New','Accepted','Rejected')),0),"
+                " COUNT(*) FROM person_groups WHERE person_id = ?", (row[0],)).fetchone()
+            bad = con.execute(
+                "SELECT COUNT(*) FROM faces WHERE person_id = ?"
+                " AND link_status != 'rejected'", (row[0],)).fetchone()[0]
+            if others > seats or bad:
+                sys.exit(
+                    f"a legacy person named 'Rejected' conflicts with the system "
+                    f"person (#165): {others} group row(s), {bad} non-rejected "
+                    f"face(s) — rename it (in the target DB or the snapshot) first")
             con.execute(
                 "INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, 'Rejected')",
                 (row[0],))

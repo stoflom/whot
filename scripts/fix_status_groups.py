@@ -233,6 +233,11 @@ def assert_invariant(con: sqlite3.Connection, rej_id: int) -> list[str]:
             " WHERE person_id = ? AND path != 'Rejected'", (rej_id,)).fetchone()[0]
         if n:
             bad.append(f"system person holds {n} non-seat group row(s)")
+        n = con.execute(
+            "SELECT COUNT(*) FROM faces"
+            " WHERE person_id = ? AND link_status != 'rejected'", (rej_id,)).fetchone()[0]
+        if n:
+            bad.append(f"{n} non-rejected face(s) on the system person")
     return bad
 
 
