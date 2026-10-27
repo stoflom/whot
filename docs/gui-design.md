@@ -1433,7 +1433,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 | --- | --- |
 | `README.md` | user-facing setup & usage, **Tauri command reference**, **repository layout**, run/build |
 | `docs/scripts-design.md` | Python tooling: **§8** legacy harvest (staging DB), **§9** harvest import (staging → copy of `faces.db`) — section numbers shared with this document's § numbering |
-| `docs/schema-design.md` | `faces.db` DDL design: tables, identities, schema-version gate, drop & recreate |
+| `docs/schema-design.md` | `faces.db` DDL design: tables, identities, state-transition model (§7), version gate, drop & recreate |
 | `docs/backend-design.md` | Rust backend architecture: `lib.rs` command surface, `db.rs` data layer, path/env resolution, derived-state maintenance |
 | `AGENTS.md` | agent conventions: branching, versioning, testing |
 
