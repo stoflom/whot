@@ -109,6 +109,7 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
 
 function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
+  const system = person.name === "Rejected"; // #165/§4.35
   // #122: crop rotations are per-face — the primary face and every
   // refcrop spin with their own stored angle
   const rotOf = (faceId: number) =>
@@ -131,23 +132,37 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onOpe
           <span>?</span>
         )}
       </div>
-      <Editable
-        label="Name"
-        value={person.name}
-        persons={snapshot?.persons}
-        title="Name — an existing person merges into (Enter commits)"
-        onCommit={(v) => onName(person.id, v)}
-      />
-      <Editable
-        label="Group"
-        value={person.groups[0] ?? ""}
-        placeholder="e.g. family|lombards (empty = ungrouped)"
-        variant="group"
-        pathOptions={pathOptions}
-        title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped)"
-        selectAllOnFocus
-        onCommit={(v) => onGroup(person.id, v)}
-      />
+      {system ? (
+        <div className="dp-field">
+          <span>Name</span>
+          <span className="dim">Rejected — the system person (#165), not renameable</span>
+        </div>
+      ) : (
+        <Editable
+          label="Name"
+          value={person.name}
+          persons={snapshot?.persons}
+          title="Name — an existing person merges into (Enter commits)"
+          onCommit={(v) => onName(person.id, v)}
+        />
+      )}
+      {system ? (
+        <div className="dp-field">
+          <span>Group</span>
+          <span className="dim">Rejected — the system seat (#165), not editable</span>
+        </div>
+      ) : (
+        <Editable
+          label="Group"
+          value={person.groups[0] ?? ""}
+          placeholder="e.g. family|lombards (empty = status seat, §4.35)"
+          variant="group"
+          pathOptions={pathOptions}
+          title="Group path — '|' separated, e.g. family|lombards (empty = the person's status seat, §4.35)"
+          selectAllOnFocus
+          onCommit={(v) => onGroup(person.id, v)}
+        />
+      )}
       <Editable
         label="Note"
         value={person.note ?? ""}
@@ -163,7 +178,12 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onOpe
       </div>
       <button
         className="bad dp-remove"
-        title="Reject all this person's faces and remove them (no undo)"
+        title={
+          system
+            ? "The system person cannot be removed (#165, §4.35)"
+            : "Reject all this person's faces onto the Rejected system person and remove them (no undo)"
+        }
+        disabled={system}
         onClick={() => onRemovePerson?.(person.id)}
       >
         Remove person

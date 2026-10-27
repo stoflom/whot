@@ -553,7 +553,7 @@ class ScenarioTests(Fixture):
 
     # ---------------------------------------------------- #80 regressions
 
-    def test_name_leaf_only_path_is_ungrouped(self):
+    def test_name_leaf_only_path_gets_status_seat(self):
         """§9.4 v2.1 (#80): 'People|<name>' leaves no group above the
         person -> ungrouped, never a same-named twig in the tree."""
         img = self.s_image(H1)
@@ -564,7 +564,7 @@ class ScenarioTests(Fixture):
         groups = self.q("SELECT path FROM person_groups pg"
                         " JOIN persons p ON p.id=pg.person_id"
                         " WHERE p.name='Winnie Pelser'")
-        self.assertEqual(groups, [])                       # ungrouped
+        self.assertEqual(groups, [{"path": "New"}])  # #165/§4.35: seated
 
     def test_harvested_persons_get_machine_primary(self):
         """§9.5 v2.1 (#80): the §4.5 machine rule backfills every empty

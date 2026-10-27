@@ -49,8 +49,10 @@ fn seed(con: &Connection) {
             "INSERT INTO persons(id, name, state, created_at) VALUES (?, ?, 'created', ?)",
             params![id, name, NOW],
         ).unwrap();
+        // #165/§4.35: every fresh cluster is seated — all seed faces are
+        // provisional, so the derived seat is `New`
         con.execute(
-            "INSERT INTO person_groups(person_id, path) VALUES (?, 'Unknown')",
+            "INSERT INTO person_groups(person_id, path) VALUES (?, 'New')",
             params![id],
         ).unwrap();
     }
@@ -112,13 +114,31 @@ fn full_workflow() {
     assert_eq!(f5.description.as_deref(), Some("beard|glasses"));
     assert!(f5.name.starts_with("Carol-beard|glasses-"), "{}", f5.name);
 
-    // 3) reject / re-accept roundtrip (§4.2/§4.3)
+    // 3) reject / claim roundtrip (#165 §4.2/§4.3/§4.35): reject re-homes
+    //    the face onto the system person, plain accept never un-rejects,
+    //    an assignment claims it back
     db::set_link_status(&p, &[5], "rejected").unwrap();
     let s = db::snapshot(&p).unwrap();
     let f5 = s.faces.iter().find(|f| f.id == 5).unwrap();
     assert_eq!(f5.link_status, "rejected");
+    let rej = s.persons.iter().find(|x| x.name == "Rejected").unwrap();
+    assert_eq!(f5.person_id, Some(rej.id), "reject re-homes onto the system person");
+    assert_eq!(rej.groups, vec!["Rejected".to_string()], "the system seat");
     assert!(s.persons.iter().find(|x| x.name == "Carol").unwrap().primary_face_id != Some(5));
     db::set_link_status(&p, &[5], "confirmed").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(
+        s.faces.iter().find(|f| f.id == 5).unwrap().link_status,
+        "rejected",
+        "plain accept never un-rejects (#165)"
+    );
+    db::assign_person(&p, &[5], "Carol", "family|test").unwrap(); // the claim
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(
+        s.faces.iter().find(|f| f.id == 5).unwrap().link_status,
+        "confirmed",
+        "assignment claims (#165)"
+    );
 
     // 4) appearance-partitioned clusters on Carol: step 2 gave face 5 the
     //    description 'beard|glasses' ⇒ two appearances, one face each (§4.9)
@@ -154,9 +174,10 @@ fn pin_survives_recompute() {
     db::set_link_status(&p, &[4, 5], "confirmed").unwrap();
     db::set_primary_face(&p, 3, 4).unwrap();
     db::add_refcrop(&p, 3, 5).unwrap();
-    // trigger two recomputes
-    db::set_link_status(&p, &[5], "rejected").unwrap();
-    db::set_link_status(&p, &[5], "confirmed").unwrap();
+    // trigger two recomputes WITHOUT moving the pinned face — since #165 a
+    // reject re-homes the face and takes its refcrop rows with it
+    db::set_face_description(&p, 4, "hat").unwrap();
+    db::set_link_status(&p, &[4], "confirmed").unwrap();
     let rc = db::get_refcrops(&p, 3).unwrap();
     let pin = rc.iter().find(|r| r.face_id == 5)
         .expect("pinned face must survive recompute");
@@ -222,18 +243,20 @@ fn seq_unique_after_move_out_and_in() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// F7 — renaming an UnknownN via the detail pane must drop the 'Unknown'
-/// group path so the person leaves the Unknown tree branch.
+/// F7 → #165: renaming an UnknownN keeps the person's group rows —
+/// memberships are never dropped by a rename (the retired `Unknown`
+/// value only survives in pre-#165 data; the fix script rewrites it to
+/// a status seat, and the fixture carries the modern `New` seat).
 #[test]
-fn rename_unknown_clears_unknown_group() {
+fn rename_unknown_keeps_group_rows() {
     let p = fixture_paths("rename");
     let s = db::snapshot(&p).unwrap();
     let u2 = s.persons.iter().find(|x| x.name == "Unknown2").unwrap();
-    assert_eq!(u2.groups, vec!["Unknown".to_string()]);
+    assert_eq!(u2.groups, vec!["New".to_string()]);
     db::set_person_name(&p, 2, "Erin").unwrap();
     let s = db::snapshot(&p).unwrap();
     let erin = s.persons.iter().find(|x| x.name == "Erin").unwrap();
-    assert!(erin.groups.is_empty(), "renamed person must leave the Unknown branch: {:?}", erin.groups);
+    assert_eq!(erin.groups, vec!["New".to_string()], "rename keeps the rows (#165/#153)");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
@@ -376,8 +399,9 @@ fn pin_occupies_group_seq_slot() {
     db::set_settings(&p, Settings { refcrop_n: 2, ..Settings::default() }).unwrap();
     db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // auto rows: f2=1, f6=2
     db::add_refcrop(&p, 1, 2).unwrap(); // upgrade f2's auto row -> pinned at seq 1
-    db::set_link_status(&p, &[6], "rejected").unwrap(); // trigger recompute
-    db::set_link_status(&p, &[6], "confirmed").unwrap();
+    // trigger a recompute WITHOUT moving an auto-row face (#165: a reject
+    // re-homes the face, which would take its refcrop rows along)
+    db::set_face_description(&p, 1, "hat").unwrap();
     let rc = db::get_refcrops(&p, 1).unwrap();
     let f2: Vec<_> = rc.iter().filter(|r| r.face_id == 2).collect();
     assert_eq!(f2.len(), 1, "pinned face must not be duplicated: {rc:?}");
@@ -521,36 +545,40 @@ fn clusters_tolerate_null_primary() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// §4.13/#35 — remove_persons: faces rejected + detached, person and its
-/// groups/refcrops deleted, other persons untouched, unowned faces are
-/// still addressable (assign moves them back into the fold).
+/// §4.13/#35/#165 — remove_persons: faces rejected AND re-homed onto the
+/// system person `Rejected` (no writer detaches a face anymore), person
+/// and its groups/refcrops deleted, other persons untouched; a later
+/// assignment claims the faces back.
 #[test]
-fn remove_persons_rejects_detaches_deletes() {
+fn remove_persons_rejects_and_rehomes() {
     let p = fixture_paths("remove");
     db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap(); // person 1
-    db::add_refcrop(&p, 1, 2).unwrap();                        // pin → must cascade
+    db::add_refcrop(&p, 1, 2).unwrap();                        // pin → must go with the person
     db::set_link_status(&p, &[4, 5], "confirmed").unwrap();    // person 3 keeps its own
     db::remove_persons(&p, &[1]).unwrap();
     let s = db::snapshot(&p).unwrap();
     assert!(s.persons.iter().all(|x| x.id != 1), "person 1 must be gone");
     assert!(s.persons.iter().any(|x| x.id == 3), "other persons untouched");
+    let rej = s.persons.iter().find(|x| x.name == "Rejected")
+        .expect("the system person exists");
     for f in s.faces.iter().filter(|f| [1, 2, 6].contains(&f.id)) {
         assert_eq!(f.link_status, "rejected", "face {} must be rejected", f.id);
-        assert_eq!(f.person_id, None, "face {} must be unowned", f.id);
+        assert_eq!(f.person_id, Some(rej.id), "face {} homes on Rejected (#165)", f.id);
     }
-    // refcrops cascaded with the person
+    // refcrops went with the person
     assert!(db::get_refcrops(&p, 1).unwrap().is_empty());
-    // a removed person's faces move with an assignment but keep their
-    // rejected status (sticky, §4.2); the explicit accept re-claims them
+    // claim: an assignment un-rejects and moves (§4.35)
     db::assign_person(&p, &[6], "Rescued", "").unwrap();
     let s = db::snapshot(&p).unwrap();
     let rescued = s.persons.iter().find(|x| x.name == "Rescued").unwrap().id;
     let f6 = s.faces.iter().find(|f| f.id == 6).unwrap();
     assert_eq!(f6.person_id, Some(rescued));
-    assert_eq!(f6.link_status, "rejected", "assignment must not un-reject");
-    db::set_link_status(&p, &[6], "confirmed").unwrap();
+    assert_eq!(f6.link_status, "confirmed", "assignment claims (#165)");
+    // …while plain accept can never un-reject
+    db::set_link_status(&p, &[1], "rejected").unwrap();
+    db::set_link_status(&p, &[1], "confirmed").unwrap();
     let s = db::snapshot(&p).unwrap();
-    assert_eq!(s.faces.iter().find(|f| f.id == 6).unwrap().link_status, "confirmed");
+    assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().link_status, "rejected");
     // removing an unknown id errors, batch of several works
     assert!(db::remove_persons(&p, &[]).is_err());
     db::remove_persons(&p, &[2, 3]).unwrap();
@@ -666,8 +694,9 @@ fn rename_updates_refcrop_filenames() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// #42 — group paths are normalised on the write side: segments trimmed,
-/// empties dropped, whitespace-only path ⇒ ungrouped.
+/// #42/#165 — group paths are normalised on the write side: segments
+/// trimmed, empties dropped, whitespace-only path ⇒ the person's status
+/// seat (§4.35), and the five reserved segments are refused.
 #[test]
 fn group_paths_normalised_on_write() {
     let p = fixture_paths("groups");
@@ -675,13 +704,19 @@ fn group_paths_normalised_on_write() {
     let s = db::snapshot(&p).unwrap();
     let u1 = s.persons.iter().find(|x| x.id == 1).unwrap();
     assert_eq!(u1.groups, vec!["family|test".to_string()]);
-    // empties collapse; a whitespace-only path means ungrouped
+    // empties collapse; a whitespace-only path seats the person (#165)
     db::set_person_group(&p, 1, "a || b |  ").unwrap();
     let s = db::snapshot(&p).unwrap();
     assert_eq!(s.persons.iter().find(|x| x.id == 1).unwrap().groups, vec!["a|b".to_string()]);
     db::set_person_group(&p, 1, "   |  ").unwrap();
     let s = db::snapshot(&p).unwrap();
-    assert!(s.persons.iter().find(|x| x.id == 1).unwrap().groups.is_empty());
+    // person 1 still holds its provisional seed faces ⇒ `New` (#165/§4.35)
+    assert_eq!(s.persons.iter().find(|x| x.id == 1).unwrap().groups, vec!["New".to_string()]);
+    // the five reserved segments are refused on every group-writing path
+    for bad in ["New", "Accepted", "Rejected", "Ungrouped", "Unknown"] {
+        assert!(db::set_person_group(&p, 1, bad).is_err(), "{bad} must be reserved");
+        assert!(db::set_person_group(&p, 1, &format!("x|{bad}")).is_err(), "{bad} must be reserved");
+    }
     // the same normalisation applies through assign_person (new person)
     db::assign_person(&p, &[3], "Gina", " x |  y | ").unwrap();
     let s = db::snapshot(&p).unwrap();
@@ -700,9 +735,9 @@ fn recompute_tolerates_null_preview() {
         let con = db::connect(&p).unwrap();
         con.execute("UPDATE faces SET preview = NULL WHERE id = 2", []).unwrap();
     }
-    // a mutation that triggers person 1's recompute must not error
-    db::set_link_status(&p, &[6], "rejected").unwrap();
-    db::set_link_status(&p, &[6], "confirmed").unwrap();
+    // a mutation that triggers person 1's recompute must not error —
+    // without moving a face (#165: reject re-homes it onto `Rejected`)
+    db::set_face_description(&p, 1, "hat").unwrap();
     let rc = db::get_refcrops(&p, 1).unwrap();
     assert!(rc.iter().all(|r| r.face_id != 2), "crop-less face must be skipped");
     let f6 = rc.iter().find(|r| r.face_id == 6).expect("face 6 still a refcrop");
@@ -711,42 +746,41 @@ fn recompute_tolerates_null_preview() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// #36 / design v1.12 §4.2 — `rejected` is sticky: a rename or merge moves
-/// a person's rejected faces along but never re-confirms them; only an
-/// explicit accept un-rejects.
+/// #36/#165 §4.2/§4.35 — an assignment CLAIMS rejected faces (un-rejects
+/// and moves them); plain accept never un-rejects.
 #[test]
-fn rename_merge_keeps_rejected_sticky() {
-    let p = fixture_paths("sticky");
-    // Unknown1: confirm 1+6, reject 2
+fn rename_merge_claims_rejected() {
+    let p = fixture_paths("claim");
+    // Unknown1: confirm 1+6, reject 2 (the reject re-homes face 2)
     db::set_link_status(&p, &[1, 6], "confirmed").unwrap();
     db::set_link_status(&p, &[2], "rejected").unwrap();
 
-    // 1) rename-in-place: the rejected face keeps its status
+    // 1) rename-in-place claims the rejected face from the selection
     db::assign_person(&p, &[1, 2, 6], "Alice", "").unwrap();
     let s = db::snapshot(&p).unwrap();
     let alice = s.persons.iter().find(|x| x.name == "Alice").unwrap();
     let f2 = s.faces.iter().find(|f| f.id == 2).unwrap();
-    assert_eq!(f2.person_id, Some(alice.id));
-    assert_eq!(f2.link_status, "rejected", "rename must not un-reject");
+    assert_eq!(f2.person_id, Some(alice.id), "claimed face follows the rename");
+    assert_eq!(f2.link_status, "confirmed", "assignment claims (#165)");
     assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().link_status, "confirmed");
     assert_eq!(s.faces.iter().find(|f| f.id == 6).unwrap().link_status, "confirmed");
-    assert_ne!(alice.primary_face_id, Some(2), "rejected face is not a primary candidate");
+    assert_eq!(alice.counts.rejected, 0);
 
-    // 2) merge into an existing person: the rejected face follows, still rejected
+    // 2) merge into an existing person: the claimed face follows
     db::assign_person(&p, &[3], "Carol", "").unwrap(); // Unknown2 → Carol (confirmed)
     db::assign_person(&p, &[1, 2, 6], "Carol", "").unwrap(); // Alice merged into Carol
     let s = db::snapshot(&p).unwrap();
     let carol = s.persons.iter().find(|x| x.name == "Carol").unwrap();
     assert!(s.persons.iter().all(|x| x.name != "Alice"), "emptied Alice shell deleted");
     let f2 = s.faces.iter().find(|f| f.id == 2).unwrap();
-    assert_eq!(f2.person_id, Some(carol.id), "rejected face follows the merge");
-    assert_eq!(f2.link_status, "rejected", "merge must not un-reject");
-    assert_eq!(carol.counts.rejected, 1);
+    assert_eq!(f2.person_id, Some(carol.id), "the face follows the merge");
+    assert_eq!(f2.link_status, "confirmed");
 
-    // 3) the explicit accept is the only exit
+    // 3) plain accept is never an exit from rejected (#165)
+    db::set_link_status(&p, &[2], "rejected").unwrap(); // → system person
     db::set_link_status(&p, &[2], "confirmed").unwrap();
     let s = db::snapshot(&p).unwrap();
-    assert_eq!(s.faces.iter().find(|f| f.id == 2).unwrap().link_status, "confirmed");
+    assert_eq!(s.faces.iter().find(|f| f.id == 2).unwrap().link_status, "rejected");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
@@ -793,8 +827,9 @@ fn stale_empty_persons_are_deleted() {
 
 /// design v1.16 §4.16 (#50) — group management: rename/move a branch
 /// (prefix rewrite incl. sub-branches), delete a branch (members fall to
-/// Ungrouped), move persons between groups; membership only, faces and
-/// statuses untouched.
+/// their status seats, §4.35), move persons between groups; membership
+/// only, faces and statuses untouched. Status branches are system
+/// furniture (#165): no rename/delete, reserved as paths.
 #[test]
 fn group_management() {
     let p = fixture_paths("groupmgmt");
@@ -823,32 +858,38 @@ fn group_management() {
     assert_eq!(groups_of("Alice"), vec!["work|test|deep".to_string()]);
     assert_eq!(groups_of("Bob"), vec!["friends".to_string()], "others untouched");
 
-    // 2) guards: inside itself, empty old, reserved name, unknown branch
+    // 2) guards: inside itself, empty old, reserved name, unknown branch,
+    //    status branches (#165/§4.35 — system furniture, refused by path)
     assert!(db::rename_group(&p, "work", "work|inner").is_err());
     assert!(db::rename_group(&p, "work", "work").is_err());
     assert!(db::rename_group(&p, "", "x").is_err());
     assert!(db::rename_group(&p, "work", "x|Ungrouped").is_err());
     assert!(db::rename_group(&p, "nope", "x").is_err(), "empty branch is an error");
+    assert!(db::rename_group(&p, "New", "x").is_err(), "status branches cannot be renamed (#165)");
+    assert!(db::delete_group(&p, "Accepted").is_err(), "status branches cannot be deleted (#165)");
 
     // 3) move the branch under another one (frontend computes target|leaf)
     db::rename_group(&p, "work|test", "friends|test").unwrap();
     assert_eq!(groups_of("Carol"), vec!["friends|test".to_string()]);
     assert_eq!(groups_of("Alice"), vec!["friends|test|deep".to_string()]);
 
-    // 4) move persons between groups (single + batch), incl. to Ungrouped
+    // 4) move persons between groups (single + batch), incl. to the seat
     // (fixture ids: Alice=1, Bob=2, Carol=3)
     db::move_persons_to_group(&p, &[2, 1], "acme").unwrap();
     assert_eq!(groups_of("Bob"), vec!["acme".to_string()]);
     assert_eq!(groups_of("Alice"), vec!["acme".to_string()], "batch move replaces the path");
     db::move_persons_to_group(&p, &[1], "").unwrap();
-    assert!(groups_of("Alice").is_empty(), "empty target = Ungrouped");
+    // person 1's faces are all confirmed ⇒ the derived seat is Accepted
+    assert_eq!(groups_of("Alice"), vec!["Accepted".to_string()], "empty target = status seat (#165)");
     assert!(db::move_persons_to_group(&p, &[2], "a|Ungrouped").is_err());
+    assert!(db::move_persons_to_group(&p, &[2], "New").is_err(), "reserved seat path (#165)");
     assert!(db::move_persons_to_group(&p, &[], "x").is_err());
     assert!(db::move_persons_to_group(&p, &[999], "x").is_err());
 
-    // 5) delete a branch — its persons (incl. sub-branches) fall to Ungrouped
+    // 5) delete a branch — its persons (incl. sub-branches) fall to their
+    //    status seats (#165/§4.35; Carol's faces are confirmed → Accepted)
     db::delete_group(&p, "friends").unwrap();
-    assert!(groups_of("Carol").is_empty());
+    assert_eq!(groups_of("Carol"), vec!["Accepted".to_string()]);
     assert!(db::delete_group(&p, "friends").is_err(), "already gone");
     assert!(db::delete_group(&p, "").is_err());
 
@@ -859,5 +900,54 @@ fn group_management() {
     assert_eq!(status_of(3), "confirmed");
     let s = db::snapshot(&p).unwrap();
     assert_eq!(s.persons.len(), 3);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #165 / §4.35 — reserved person name, the system person's guards, the
+/// claim rule and the seat derivation in one pass.
+#[test]
+fn status_seats_and_system_person_guards_165() {
+    let p = fixture_paths("guards165");
+    // reserved person names (target side of every name-writing path)
+    assert!(db::assign_person(&p, &[1, 2], "Rejected", "").is_err());
+    assert!(db::set_person_name(&p, 1, "Rejected").is_err());
+    assert!(db::set_person_name(&p, 1, "rejected").is_err(), "case-insensitive (#165)");
+
+    // reject re-homes onto the system person, created on demand
+    db::set_link_status(&p, &[1], "rejected").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let rej = s.persons.iter().find(|x| x.name == "Rejected").expect("system person");
+    assert_eq!(rej.groups, vec!["Rejected".to_string()], "the fixed seat");
+    assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().person_id, Some(rej.id));
+
+    // the system person is guarded everywhere
+    assert!(db::set_person_name(&p, rej.id, "Nope").is_err());
+    assert!(db::set_person_group(&p, rej.id, "x").is_err());
+    assert!(db::move_persons_to_group(&p, &[rej.id], "x").is_err());
+    assert!(db::remove_persons(&p, &[rej.id]).is_err());
+
+    // plain accept never un-rejects; the assignment claims
+    db::set_link_status(&p, &[1], "confirmed").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().link_status, "rejected");
+    db::assign_person(&p, &[1], "Clara", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let clara = s.persons.iter().find(|x| x.name == "Clara").unwrap();
+    let f1 = s.faces.iter().find(|f| f.id == 1).unwrap();
+    assert_eq!(f1.person_id, Some(clara.id));
+    assert_eq!(f1.link_status, "confirmed", "assignment claims (#165)");
+    assert_eq!(clara.groups, vec!["Accepted".to_string()], "empty input seats (#165)");
+    // emptied but never deleted: the system person is reused by the next reject
+    assert!(
+        s.persons.iter().any(|x| x.name == "Rejected"),
+        "the emptied system person survives (never swept, §4.35)"
+    );
+    db::set_link_status(&p, &[6], "rejected").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(
+        s.persons.iter().filter(|x| x.name == "Rejected").count(),
+        1,
+        "recreated, not duplicated"
+    );
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }

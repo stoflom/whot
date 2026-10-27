@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 5.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 6.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
 group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
 file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
@@ -21,7 +21,9 @@ harvested EXIF display rotation (H3 extended), §9.2 the rotation-aware
 box transform — RAW-space boxes map into the displayed space, and the
 angle lands on `faces.db` `images.rotation` (gui-design §4.31, #118);
 §9.4 faceless same-named persons are shells — the name is reused,
-no `X N` generation (#128).
+no `X N` generation (#128). v6.0: §9.4 groupless harvested persons are
+**seated** (the gui-design §4.35 status seats, #165), and
+`scripts/fix_status_groups.py` upgrades a v1.6 `faces.db` in place (#165).
 
 Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
 to v3.15) so each design document stays focused. **Section numbers §8/§9
@@ -43,6 +45,9 @@ Not covered here (see their own documents):
   `docs/gui-design.md` §4 (esp. §4.12), usage in `README.md`.
 - `scripts/annotation_snapshot.py` — annotation export/restore across a
   drop & recreate; usage in `README.md`.
+- `scripts/fix_status_groups.py` — one-off #165 data fix: upgrades a
+  v1.6 `faces.db` in place to the status-group layout (spec:
+  gui-design §4.35, gate: schema-design §5).
 - CLI console conventions shared by **all** scripts (startup header,
   status updates, `-q/--quiet`) — §10 below (issue #79).
 
@@ -107,7 +112,7 @@ The three source families (each enabled by canonical name):
 
 ### 8.2 Staging schema (`database/harvest_schema.sql`, v1.2)
 
-Deliberately modelled on `faces.db` v1.5 naming so the importer is a
+Deliberately modelled on `faces.db` naming so the importer is a
 translation, not a redesign — but without content: no `content_hash`, no
 BLOBs, no embeddings, no link statuses (review decisions happen in the GUI,
 after import).
@@ -138,7 +143,7 @@ after import).
   the source states them: `unit` ∈ `normalized|pixels` plus the source's
   image dimensions (`img_w/img_h`) when given. Normalised→pixel conversion
   is deferred to the importer, because only it will know the canonical
-  decode dimensions (schema v1.5 `images.width/height`, design #18).
+  decode dimensions (`faces.db` `images.width/height`, design #18).
   Lightroom's pixel rounding is banker's `round()` — contract, not choice,
   because the legacy keys were built on it. `UNIQUE(image_id, person_id,
   x, y, w, h, source_id)` dedupes digiKam's duplicate `Images` rows.
@@ -403,11 +408,13 @@ Per staging person with at least one accepted assignment:
   1. strip the leading `People`/`Person` root segment (case-insensitive),
      then
   2. drop the **trailing segment when it equals the staging person's
-     name** (the legacy leaf). An empty remainder means *ungrouped* —
-     no `person_groups` row is written.
+     name** (the legacy leaf). An empty remainder means *no user group* —
+     #165's group invariant applies: the person is **seated** instead
+     (gui-design §4.35: `provisional` faces ⇒ `New`, else `Accepted`),
+     never left without a `person_groups` row.
 
   `People|Family|Winnie Pelser` → `Family`; `People|Winnie Pelser` →
-  ungrouped. A trailing segment that does *not* equal the person's name
+  seated (§4.35). A trailing segment that does *not* equal the person's name
   is kept as-is (defensive: paths are capture, §8 H4 — never guessed).
   Before v2.1 the trailing name was kept (`Family|Winnie Pelser`), which
   rendered in the tree as a branch named after the person, containing

@@ -79,7 +79,7 @@ export default function FaceMergeDialog({
             </span>
           ))}
           {plan.unowned.length > 0 && (
-            <span className="ev-chip" title="unowned faces (removed person, §4.13)">
+            <span className="ev-chip" title="unowned faces (legacy rows — none since #165, §4.13)">
               unowned · {plan.unowned.length}f
             </span>
           )}

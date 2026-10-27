@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.65** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.66** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -41,7 +41,7 @@ user:
 All panes re-sync after every mutation.
 
 Non-goals: deleting faces (persons *can* be removed — §4.13; their
-faces become rejected, unowned records), editing embeddings, multi-group
+faces become rejected and join the system person `Rejected`, §4.35), editing embeddings, multi-group
 membership UI (one group path per person), i18n. (Moving faces between
 persons by drag & drop is a feature — rule 34, #135/#136.)
 
@@ -62,11 +62,14 @@ App root = repository root (`package.json`, `src/`, `src-tauri/`).
 DB path resolved like `import_roll.py`: parse `.env` (`FACES_DB`, default
 `data/faces.db`), relative to project root.
 
-The database carries a single-row `schema_version` table (currently `'1.5'`).
+The database carries a single-row `schema_version` table (currently `'1.7'`).
 The GUI (`db::connect`) and `import_roll.py` verify it on every connection
 and **refuse a missing or mismatched version** with recreate instructions —
 exact match, no migrations (AGENTS.md). `scripts/annotation_snapshot.py`
-preserves manual annotations across such a drop & recreate.
+preserves manual annotations across such a drop & recreate, and
+`scripts/fix_status_groups.py` (#165) upgrades a v1.6 database **in place**
+(backup first) to the status-group layout of §4.35, so the long-lived live
+DB never needs a re-import.
 
 GUI settings live in `config/whotrc.json` (created on first need; path from
 `CONFIG_FILE` in `.env`):
@@ -103,13 +106,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the user filed them under. Each distinct row is one placement; the
   person is stepped (‹ › / arrows) **once**, at the first placement
   reached, and branch bulk operations (§4.13 subtree remove) dedupe the
-  ids across placements. Virtual branches hold the rest: `Ungrouped`
-  (persons with no group row) and `Unknown` (**ungrouped** persons
-  named `UnknownN` — purely
-  name-driven). The importer writes **no group rows at all** for the
-  `UnknownN` persons it seeds: all new persons start Ungrouped (an
-  empty group field means Ungrouped — never a literal `Unknown`
-  segment; §4.18 keeps the `Ungrouped` path segment reserved).
+  ids across placements. **Status branches** (#165, §4.35) hold the
+  rest: `New`, `Accepted` and `Rejected` are ordinary group paths that
+  are system-written *status seats* — every person always has ≥ 1 group
+  row, so the virtual `Ungrouped`/`Unknown` branches and the `Unknown`
+  group value are gone. The importer seeds `New` for every `UnknownN`
+  it creates; accepting re-seats an unfiled person to `Accepted`; every
+  rejected face lives on the system person `Rejected` (seat `Rejected`).
+  The three status paths are reserved segments (§4.16) — no typed path,
+  dialog or drop can produce them — and their branches carry no menu and
+  are not drop targets; the persons inside them are ordinary rows.
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
   rejected). The tree's header — **roll up/down buttons on the left,
   filter box on the right, then the Review button** — is **pinned flush
@@ -158,9 +164,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     filename). A leaf image renders as the same thumbnail as before:
     clicking opens that image's faces and its preview **annotated with
     its detected face rectangles** (see below, #142); the context menu is
-    the image-tile menu (#32). **Show prunes the tree** (§4.10): under a
-    filter other than All an image is listed only if it holds at least
-    one face matching the filter, and a branch holding no listing image
+    the image-tile menu (#32). **Show prunes the tree** (§4.10): an
+    image is listed only if it holds at least one face passing the Show
+    filter — with `All` = everything *except* rejected (#165), an image
+    holding only rejected faces lists solely under `Show → Rejected`
+    (a `no-face` image still lists under `All`) — and a branch holding
+    no listing image
     is pruned entirely (set Show back to All to see everything again —
     the branch raw counts keep such branches discoverable). An empty DB
     shows `no images yet`.
@@ -267,35 +276,31 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   confirm dialog required) plus *rename/move group…* and *delete group*
   (§4.16/§4.18, #50 — **#164 removed *add group…* from the branch and
   root menus**, superseding #54: a group is added *to a person* now, and
-  the root's empty-space menu goes with its only item); the virtual
-  `Unknown`/`Ungrouped` branches offer **no** branch
-  menu — bulk actions target real branches only, and Unknown cleanup
-  moved to a dedicated top-bar button (below). **`Remove Unknowns`**
-  (#154) sits in the top bar beside the refresh button: **filter-independent**
-  (v3.54 — the original filter-relative rule offered the still-unfinished
-  review queue when Show = Accepted/Rejected); it removes every
-  `UnknownN` person whose faces are **all decided** — zero New
-  (`provisional`) and zero Accepted (`confirmed`) faces left, meaning
-  nothing remains to show or decide on. Unknowns that still hold a new or
-  accepted face are never touched (zero-attached-face UnknownN do not
-  appear anyway: §4.27's stale-shell sweep deletes them on every read).
-  The button is disabled when no such Unknown exists, opens the §4.13
-  confirm dialog (every face becomes rejected and unowned; no undo), and
-  its tooltip spells out the rule. The reference-set
+  the root's empty-space menu goes with its only item); the **status
+  branches** (`New`/`Accepted`/`Rejected`) offer **no** branch
+  menu — they are system furniture (§4.35), and bulk actions target
+  real branches only. Unknown cleanup needs **no button** (#165,
+  superseding #154): rejecting a face moves it off its `UnknownN` onto
+  the system person `Rejected`, so a fully-decided `UnknownN` is already
+  a zero-face shell that §4.27's stale-shell sweep deletes on every
+  read. The reference-set
   pane exposes **Remove person** as a button.
 - **Group management & drag-and-drop** (#50, §4.16): real group branches
-  (not the virtual `Unknown`/`Ungrouped` nodes) can be **renamed/moved**
+  (not the status branches) can be **renamed/moved**
   (a path dialog, prefilled; the whole subtree follows the prefix rewrite)
-  and **deleted** (persons — incl. sub-branches — fall to Ungrouped; faces
+  and **deleted** (persons — incl. sub-branches — fall to their status
+  seats, §4.35; faces
   untouched). Persons and multi-selections **move to a group** via the
   person context menu (path dialog) or by **dragging** rows onto a branch
-  node or onto Ungrouped; whole branches drag the same way (a drop onto
+  node (unfile = *Move to group…* with an empty input — §4.16); whole branches drag the same way (a drop onto
   the branch itself or into its own subtree is refused). Drops and dialog
   submits normalise the path like every other group write (#42).
 - **Add group…** (#164 supersedes #54, §4.18): the **person-row**
   context menu offers *add group…* (multi-select: *add group to N
   persons…*) — a path dialog whose submit adds the typed path as an
-  **additional** membership: every current group of the person(s) is kept
+  **additional** membership: every current **user** group of the person(s)
+  is kept — a status seat, if present, is dropped instead (filing
+  replaces the seat, §4.35)
   (`move_persons_to_group`-replace stays with *Move to group…*; the add
   runs `move_persons_between_groups` with `from = ''`, §4.16), so the
   group can never be empty — the person is in it — and the entry is
@@ -330,7 +335,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   selection/operations as Review.
 - **Right pane — person detail** (when a person is selected): name (editable
   for known persons), group path (editable, `|`-separated; empty ⇒
-  Ungrouped), note, primary-face picker, refcrops list.
+  the person's status seat, §4.35 — and read-only for the system person
+  `Rejected`), note, primary-face picker, refcrops list.
   **The avatar click opens the primary face's image** (#145): the large
   avatar *is* the primary face, and clicking it opens the **full-image
   focus mode** for that face's image (the same `confirmContext` →
@@ -381,14 +387,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 1. **Assign a person** (core operation — accept + name + group):
    - If all selected faces belong to *one* `UnknownN` and the user keeps/
      supplies a name for that person: **rename in place** — `persons.name`,
-     replace `person_groups` with the given path (empty ⇒ no group rows ⇒
-     Ungrouped), all selected faces `link_status='confirmed'` — **except
-     `rejected` faces, which keep their status** (sticky rule, §4.2). The
+     replace `person_groups` with the given path (empty ⇒ the person's
+     status seat, §4.35), all selected faces
+     `link_status='confirmed'` — **claim rule (§4.35): this includes any
+     `rejected` faces in the selection, which an assignment un-rejects**
+     (§4.2). The
      old `UnknownN` number is retired and never reused (importer numbering
      is max-based over remaining names — safe).
    - If selected faces span multiple persons or the name is new: move the
-     selected faces to that person (create if needed), `confirmed` (a
-     `rejected` face keeps its status — §4.2), `reassigned=1`. Faces **not**
+     selected faces to that person (create if needed), `confirmed` (claim
+     rule §4.35 — a `rejected` face in the selection is un-rejected by
+     the move), `reassigned=1`. Faces **not**
      selected stay with their original person
      (e.g. `UnknownN`) for later assignment or rejection.
    - Assigning to a name that matches an **existing person merges** the
@@ -404,23 +413,31 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      helper: the `set_person_name` collision error can never surface in
      the GUI; a *faceless* person renamed to an existing name merges by
      deletion, an empty input is a no-op, and a rename keeps the
-     person's current group path (#153 — #38's UnknownN force-to-empty
-     is obsolete since the importer no longer seeds an `Unknown` group
-     row: an ungrouped UnknownN stays ungrouped and holds its virtual
-     Unknown-branch seat until renamed, after which a real name simply
-     falls to Ungrouped).
+     person's current group path (#153 — a renamed `UnknownN` keeps its
+     status seat, §4.35, until it is filed into a real group; #38's
+     force-to-empty rule stays obsolete).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
      are per `(person, description)` — see §4.12.
-2. **Reject** ⇒ `link_status='rejected'`. Rejected faces: excluded from
-   similarity grouping, primary-face eligibility, refcrops and importer
-   corpora. Reversible: re-selecting + Accept sets `confirmed`. **Sticky
-   rule:** assignments (rename, merge, whole-group, section rule) never
-   change a face that is currently `rejected` — they may move it with its
-   person, but never un-reject it; an explicit accept (§4.3) is the only exit.
+2. **Reject** ⇒ `link_status='rejected'` **and the face moves onto the
+   system person `Rejected`** (group `Rejected`, created on demand —
+   §4.35): the assignment is deemed invalid, so the face leaves the person
+   it was on; `seq`/`name` re-derive against `Rejected` (§4.7) and the
+   origin person is recomputed (primary/refcrops/seat, §4.5/§4.6/§4.35).
+   Rejected faces: excluded from similarity grouping, primary-face
+   eligibility, refcrops and importer corpora, and **visible only under
+   `Show → Rejected`** (§4.10). **Exit is assignment alone — the claim
+   rule, which replaces the old sticky rule:** plain Accept never
+   un-rejects (§4.3); only an explicit assignment (assign, rename, merge,
+   move, section rule, the Edit dialog committed with a name) un-rejects
+   the faces it claims *and* moves them to the target. A rejected face can
+   only enter a selection while `Show = Rejected`, so claiming is always a
+   deliberate act.
 3. **Accept (without rename)** ⇒ selected faces `link_status='confirmed'`
-   (stay with their current person; used to confirm a `UnknownN` as-is or
-   to recover a previously rejected face).
+   (stay with their current person; used to confirm a `UnknownN` as-is).
+   `rejected` faces in the scope are **skipped** — accept never un-rejects
+   (§4.2); and when the person holds no user-given group, the accept
+   re-seats it `Accepted` (§4.35).
 4. **Description** ⇒ free text, spaces around `|` trimmed by the writer; the
    derived face label becomes `person.name-description-seq`. Editing a
    description **re-assigns the face's `seq`** to `MAX(others)+1` within its
@@ -484,36 +501,53 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    belongs to; commit, Undo and Cancel return the committed grouping.
    Sections
    are ordered by first appearance with the empty description last,
-   titled `(no description)` (Ungrouped convention), and make no
+   titled `(no description)`, and make no
    similarity claims in this mode. The choice persists as
    `cluster_group` in `whotrc.json` (`accuracy` default).
-10. **Status filter** (`face_filter`, #99 — generalises #23/#28) ⇒
+10. **Status filter** (`face_filter`, #99 — generalises #23/#28;
+    `All` semantics changed by #165) ⇒
     `Show [All | New | Accepted | Rejected]` in the top bar: one
     setting (whotrc `face_filter`: `all` (default) | `provisional` — UI
     label **New**, the face-card badge's word (#100) — | `confirmed` —
-    UI label **Accepted** — | `rejected`). A legacy `show_rejected` key
-    in the config file is ignored on read. The chosen status decides
-    **every view's**
+    UI label **Accepted** — | `rejected`). **`All` means every face
+    *except* `rejected`** (#165): rejected faces are visible **only**
+    under an explicit `Show → Rejected`, so the reject bin can never
+    surprise the user mid-review. A legacy `show_rejected` key in the
+    config file is ignored on read. The Show control's **tooltip spells
+    this out** (#165 — the user-facing contract): `All = everything
+    except rejected; rejected faces appear only under Show → Rejected
+    (#165, §4.10); switching it drops hidden faces from the selection`.
+    The chosen status decides **every view's**
     visibility: the person view's cluster sections and its Rejected
     section, image grids and full-image rectangles, the review grid, the
     **left-pane person presence** (#152) — a person holding no face that
     matches the filter leaves the tree (set Show back to All to list
-    everyone again, including the faceless shells) — the
+    everyone again, including the faceless shells; the system person
+    `Rejected` is listed **only** under `Show → Rejected`, never under
+    `All` — §4.35) — the
     **Rolls path tree** (#161) — an image holding no face that matches
     the filter is dropped from its branch and a branch left without a
     listing image is pruned entirely (raw branch counts stay, so the
-    pruned branch is discoverable) — and the
-    **right-pane overview totals**. The badges of the persons that stay
+    pruned branch is discoverable; under the new `All` this prunes
+    images holding *only* rejected faces, and counts as "no face
+    matches" — a `no-face` image still lists under `All`) — and the
+    **right-pane overview totals** (under `All` they therefore exclude
+    rejected faces; the rejected total reads under `Show → Rejected`).
+    The badges of the persons that stay
     listed carry their raw totals (#129): the filter changes who is
     listed, never any counters. A selection survives its person dropping
     out of the tree — the person view simply shows nothing for them under
     the filter. `link_status`
     never changes: the filter is pure display. Switching it **drops
     non-matching faces from the selection**: faces the filter hides can
-    never be bulk-acted on.
+    never be bulk-acted on — which is what makes the claim rule (§4.2,
+    §4.35) safe: rejected faces are unreachable except while
+    `Show = Rejected`.
     **Review special case**: `All`/`Provisional` show the pending set
     (provisional — the default review is unchanged), `Accepted` shows
-    confirmed faces, `Rejected` shows rejected faces.
+    confirmed faces, `Rejected` shows the reject bin — every rejected
+    face on the one system person `Rejected` (§4.35), so it renders as a
+    single section to **assign from**; Accept is inert there (§4.2).
 11. **Full-image annotation** ⇒ every full-size image draws one rectangle
     per visible face from `faces.x/y/w/h` against the canonical
     `images.width/height` coordinate space, percentage-scaled so it stays
@@ -534,17 +568,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     still cluster into new `UnknownN` persons (accepted status quo).
 13. **Removing a person** (#35) ⇒ `remove_persons(person_ids)`, one
     transaction per call: every face of each person becomes
-    `link_status='rejected'`, is detached (`person_id = NULL`) and the
-    person row is deleted — `person_groups` and `person_refcrops` cascade,
-    any *other* person's stale primary pointer at these faces is cleared
-    first. **No undo** (the faces themselves are never deleted; they stay
-    in the DB as rejected, unowned records and can be re-claimed by an
-    explicit accept (§4.3), optionally followed by an assignment; a section
-    rule can name them but cannot un-reject them (sticky rule, §4.2).
-    With `face_filter` set to anything but `all` (§4.10) the removed
-    persons — rejected now — vanish
-    immediately; the image-detail grid titles unowned faces
-    "unassigned". Available from the person-tile context menu (also for a
+    `link_status='rejected'` and **moves to the system person `Rejected`**
+    (§4.2/§4.35 — every path that rejects a face lands it there, so no
+    writer ever leaves a face unowned; `faces.person_id` stays nullable in
+    the DDL but is never written `NULL`), and the person row is deleted —
+    `person_groups` and `person_refcrops` cascade, any *other* person's
+    stale primary pointer at these faces is cleared first. **No undo**
+    (the faces themselves are never deleted; they sit in the reject bin
+    and can be re-claimed **only by an assignment** — §4.2/§4.35 — which
+    un-rejects and moves them). With `face_filter` set to anything but
+    `Rejected` (§4.10) the removed faces vanish
+    immediately (the image-detail grid's *unassigned* title retires with
+    the concept — #165, no unowned faces exist anymore). The system
+    person `Rejected` itself **cannot be removed** (§4.35). Available from
+    the person-tile context menu (also for a
     multi-selection), the reference-set pane and — batched — from tree
     branch menus (§3).
 14. **Selection-scoped face actions** (#49) ⇒ every face action has one
@@ -581,20 +618,34 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     untouched:
     - `rename_group(old, new)` — rewrites the path prefix for every person
       inside the branch (the branch itself or any sub-branch). `new`
-      empty ⇒ the whole subtree drops to Ungrouped. A branch cannot be
+      empty ⇒ every person in the subtree **falls to their status seat**
+      (§4.35 — group invariant: never zero rows). A branch cannot be
       moved inside itself (`new == old` or `new` prefixed by `old`).
     - `delete_group(path)` — deletes the `person_groups` rows of the whole
-      subtree; those persons become Ungrouped (structure below the branch
-      is not preserved — re-group by move/rename).
+      subtree, then seats those persons by state (§4.35; structure below
+      the branch is not preserved — re-group by move/rename).
     - `move_persons_to_group(person_ids, group)` — replaces each person's
-      group path with the target (empty ⇒ Ungrouped); works for any
-      selection, wherever the persons live (incl. Unknown/Ungrouped).
-    All three normalise the path (#42) and reject a literal `Ungrouped`
-    segment (reserved pseudo-group; `Unknown` stays a normal branch).
+      group path with the target (empty ⇒ the person **falls to their
+      status seat**, §4.35 — this is the *unfile* gesture that replaces
+      the old Ungrouped drop); works for any
+      selection, wherever the persons live (incl. the status branches).
+    All three normalise the path (#42) and reject the **reserved
+    segments** `Ungrouped`, `New`, `Accepted`, `Rejected` and the retired
+    `Unknown` (#165/§4.35: status seats are system-written — no typed
+    path, dialog or drop may produce them; `Ungrouped` no longer exists
+    as a state, since every person always has a group row).
+    **The status branches carry no branch menu and are not drop
+    targets** (like the old virtual nodes — they are system furniture);
+    the persons *inside* them are ordinary rows (select, drag out,
+    remove).
     GUI entry points: branch menu (*rename/move…*, *delete group* with
-    confirm dialog), person menu (*move to group…* for the selection), and
-    drag-and-drop of persons/selections/branches onto branch nodes or
-    Ungrouped (virtual nodes are not draggable/renameable themselves).
+    confirm dialog) — real branches only —, person menu (*move to group…*
+    for the selection), and
+    drag-and-drop of persons/selections/branches onto branch nodes
+    (status/virtual nodes are not draggable/renameable themselves; the
+    Ungrouped drop target is gone — #165: unfile via *Move to group…*
+    with an empty input, which seats the person instead of leaving them
+    groupless).
     **D&D move semantics** (#157, v3.59, owner ruling): a person drop
     re-homes **the dragged membership only** — the row's own group path
     (its placement) is removed from the person, the person is filed into
@@ -602,9 +653,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     dedupes when the target row already exists, e.g. dragging Christiaan
     Swart from `Friends` onto `Friends|Swartse` leaves exactly
     `Friends|Swartse`), and **all other memberships are kept** — a
-    multi-group person stays multi-group. Dragging onto the `Ungrouped`
-    virtual node removes only the dragged membership (the person renders
-    Ungrouped only when no row remains). Dropping onto a branch the row
+    multi-group person stays multi-group. Dropping onto a branch the row
     already belongs to is a **no-op** (the person already renders there).
     The §4.16 dialog entry points (person menu *move to group…*, review
     bulk group apply) keep the replace-all meaning — they do not carry a
@@ -615,8 +664,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     renders its own branch (the builder is case-sensitive; do not fold).
     Under the **All** face-status filter and an empty text filter, **every
     person in the snapshot is findable in the tree** — including faceless
-    named persons (#127/#128; their own branch, or the virtual
-    `Ungrouped` node when ungrouped). Under New/Accepted/Rejected the
+    named persons (#127/#128; their own branch, or their status seat when
+    unfiled, §4.35). Under New/Accepted/Rejected the
     tree lists only persons holding ≥ 1 face of that status (#152,
     §4.10) — a person with no matching face is not listed, so reach them
     by switching Show to All. The badges of the persons that stay listed
@@ -625,9 +674,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     exist or their counts. #156 (v3.56) supersedes the single-placement
     rule: a person renders under **every** listed path (see §3); further
     groups stay visible in the row tooltip.
-    The virtual `Unknown`/`Ungrouped` nodes are
-    never pruned while they hold (listed) persons — a virtual branch
-    whose persons are all filtered out disappears with them.
+    A branch whose listed persons are all filtered out disappears with
+    them — the same rule the old virtual `Unknown`/`Ungrouped` nodes
+    followed; the system person `Rejected` is listed only under
+    `Show → Rejected` (§4.35), so its branch is invisible under every
+    other setting.
 17. **Selection accelerators** (#53) ⇒ Ctrl/⌘-click on a face-card body
     toggles that card in the selection — the tree's idiom, mirrored
     on cards; plain click stays inert so double-click-to-open is
@@ -648,8 +699,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     root menus do not offer it** — with branches derived from person
     paths the branch entry could only move the selection (disabled
     without one) or, wrongly read, "create" something invisible; the
-    tree root's empty-space menu is gone with its only item. Virtual
-    `Unknown`/`Ungrouped` nodes still offer no group menu of their own.
+    tree root's empty-space menu is gone with its only item. The status
+    branches still offer no group menu of their own (§4.35).
 
     **Append mode retired** (#92, retired by #164): no menu pre-fills a
     `|`-terminated path anymore — the root/branch *Add group…* producer
@@ -709,7 +760,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       user already typed one).
     - **Every value field suggests** (#97 → #101 hosts): the name
       typeahead (existing persons, `UnknownN` excluded, pick = merge
-      target) and the group-path suggestions (+ an `ungrouped` entry)
+      target) and the group-path suggestions (no `ungrouped` quick-pick
+      anymore — an empty input seats, §4.35)
       live wherever a value is typed: **the §4.24 Edit dialog** (name
       and group; description stays free text), the detail-pane
       Name/Group, the tree inline rename, `GroupDialog` and the merge
@@ -788,11 +840,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - **Reject in the dialog** (#124): acts on the chosen scope (Card →
       that face; Group → the cluster; Selection → the selected set),
       **commits immediately** (a verdict, not a field edit — the same
-      path as the rule-bar Reject; sticky `rejected`, §4.2) and closes
+      path as the rule-bar Reject; §4.2) and closes
       the dialog. Pending ops touching rejected faces are dropped from
       the set (the commit would skip them anyway, F2). A fully-rejected
-      scope relabels the button **“Un-reject (accept)”** and routes to
-      the plain accept of the scope (the context-menu semantics). No
+      scope makes the dialog an **assignment** (§4.35): with a name typed
+      its Accept claims the scope (un-rejects + moves), without one the
+      Accept stays inert with the info toast “assign a person to bring
+      it back”. No
       dialog key for it — Enter/Esc keep their meaning.
     - **Scope**: every action targets the **selection**; bottom-bar
       buttons and plain keys never confirm (Q2/Q9), and the dialog's
@@ -853,11 +907,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       `assign_person` (group applied on create/UnknownN-rename, later
       explicit groups via `set_person_group`), a group-only change
       through `set_person_group`, a description change through its own
-      setter — an empty field counts as unchanged, unowned faces
-      surface a toast. **Rejected faces stay sticky** (§4.2): a stage
-      may display on them, the commit skips them (F2).
+      setter — an empty field counts as unchanged.
+      **Accept never un-rejects (§4.2):** a stage may display on a
+      rejected face, a plain accept-commit skips it (F2) — while
+      committing a **name** to it is the claim (§4.35: the assignment
+      un-rejects).
       **The F2 drop is owned by `doReject` and the filter change**
-      (#141): dropped pending ops ("rejected faces stay sticky", §4.2)
+      (#141): dropped pending ops (now-rejected faces, §4.2)
       are not special-cased per entry point — the drop lives inside
       `doReject`, so every reject path (bar ✗, `R` key, card ✗,
       context-menu Reject, Edit-dialog Reject) drops staged ops touching
@@ -899,20 +955,23 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       apply — change a field first”, “nothing to merge — the selected
       persons have no faces”, “no faces to rename — the selection has no
       faces”, “already merged — the drop target is the only selection”,
-      “type a name first — unowned faces have no person to group”, “N
-      unowned face(s) skipped — assign a name to group them”, “no more
-      persons to review” — are **info, not error**: a quiet toast, **no
+      “no more
+      persons to review”, “assign a person to bring it back” (rejected
+      scope, §4.35) — are **info, not error**: a quiet toast, **no
       Copy button, no ✕**, and it **auto-goes-away on the next user
       action** (any click or keystroke that acts). Real errors (failed
       operations, backend exceptions) keep the copyable red toast with ✕
       — the copyability rule above applies to them only.
 27. **Stale-shell sweep** (#84) ⇒ on every `get_snapshot()`, persons
     matching `name LIKE 'Unknown%'` with **zero faces** are deleted
-    (leftovers from pre-v1.9 runs or external writers — no code path
-    ever revisits them otherwise). Named persons are never swept: an
-    empty *named* person is a legitimate future assignment target.
-    The sweep is one statement inside the snapshot transaction, cheap
-    and idempotent.
+    (leftovers from pre-v1.9 runs, external writers — and now also
+    `UnknownN`s emptied when the reject-move of §4.2/§4.35 took their
+    last face; no code path ever revisits them otherwise). Named persons
+    are never swept: an empty *named* person is a legitimate future
+    assignment target — and the system person `Rejected` is **never
+    swept** either (created on demand, reused by the next reject;
+    §4.35). The sweep is one statement inside the snapshot transaction,
+    cheap and idempotent.
 28. **Merge Similar Persons** (#88) ⇒ a triage workflow for same-name
     duplicates (the importer's deliberate `X 2` generations, §9.4 of
     `docs/scripts-design.md`, plus case variants and misspellings):
@@ -943,8 +1002,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       selection…`, `Rename selection to…` on a (multi-)selection;
     - *drag-and-drop*: dragging a selected set **onto a person row**
       merges into that person — a **new drop-target type** beside the
-      existing #50 branch/Ungrouped drops. Drop-target highlighting must
-      distinguish person vs branch vs Ungrouped unambiguously.
+      existing #50 branch drops. Drop-target highlighting must
+      distinguish person vs branch unambiguously.
 
     **Confirmation is mandatory for every merge path** — menu, dialog
     and especially DnD (an accidental drop must not silently destroy):
@@ -960,7 +1019,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
     **Execution = existing §4 commands, zero new SQL paths**: merge is
     one `assign_person(face_ids_of_all_sources, target.name,
-    target.group)` (§4.1 semantics: sticky rejected, emptied shells
+    target.group)` (§4.1 semantics: claim on rejected, emptied shells
     deleted, derived state recomputed); bulk group is
     `move_persons_to_group` (§4.16); bulk rename is the rename-merge
     helper (§4.1) — identical resulting names merge. Self-merge is a
@@ -1154,7 +1213,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       from the single `useOverlayCount()`. One source of truth: adding a
       modal in the future means using the hook, not remembering state
       lists.
-    - Rejected faces stay sticky (F2); the Esc ordering of Q8 holds:
+    - Accept never touches rejected faces (F2/§4.2 — claiming is an
+      assignment, §4.35); the Esc ordering of Q8 holds:
       dropdown → menus and dialogs → preview-undo → cancel field edit →
       split close.
 31. **Render-performance contract** (#98) ⇒ Review mode must stay
@@ -1235,12 +1295,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       outside, Esc, cancel) clears it with every highlight.
     - **Drop on a person row — merge into the person** (#135): every
       person row is a valid target during a face drag (group branches and
-      the virtual `Unknown`/`Ungrouped` nodes are not); the row shows the
+      the status branches are not); the row shows the
       existing `merge-target` highlight. The drop is **confirmed like every
       merge path** (§4.28 — an accidental drop must not silently destroy):
       a face-level dialog spells `M face(s) → <target>`, lists the movers
-      by owner (`N from X`, `K unowned`) and notes that rejected faces keep
-      their status (sticky, §4.2) while source persons losing their last
+      by owner (`N from X`) and notes that the drop **claims** any
+      rejected movers (un-rejects + moves, §4.35) while source persons
+      losing their last
       face are deleted (§4.1). The target is the dropped person — fixed,
       the drop already chose it; dropping onto an `UnknownN` row is
       refused. Faces already on the target are excluded; if nothing
@@ -1285,6 +1346,86 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
          mirrors it. The `faceDragIds` prop remains for highlight/clear
          bookkeeping only.
 
+35. **Status groups & the system person `Rejected`** (#165) ⇒ groups stay
+    a plain organisational attribute — a dumb `person_groups.path` whose
+    sole job is shaping the tree (§4.16); #165 gives the review states
+    *meaningful default values* **without making group stateful**:
+    - **Status seats**: `New`, `Accepted`, `Rejected` are ordinary group
+      paths, but **system-written only** — no typed path, dialog, merge or
+      drop may produce them (§4.16 reserved segments: `Ungrouped`, the
+      three seats, and the retired `Unknown`). Their branches are system
+      furniture (no branch menu, no drops, no rename) while the persons
+      inside them are ordinary rows. The virtual `Ungrouped`/`Unknown`
+      branches are gone: every person is grouped, so the tree is real
+      branches plus the three seats — the renderer keeps the retired
+      bucket names only as a **lazily-created, fail-visible fallback**
+      (only an invariant breach could populate one, so a healthy tree
+      never shows them and no writer can produce one).
+    - **The group invariant**: every person has **≥ 1 group row** — the
+      “no group” state ceases to exist. Everything that used to leave a
+      person groupless now **seats** them instead: an empty assign or
+      *Move to group…* input, `delete_group`, a `rename_group` to `""`.
+      The empty input resolves to the person's status seat — `Accepted`
+      or `Rejected` as the case may be (§4.1) — derived from the faces
+      the operation leaves behind (seat derivation below). The invariant
+      is **writer-owned**: both writers always write a seat and never
+      delete a person's last row without replacing it (no stored trigger,
+      by schema-design's no-trigger rule); `scripts/fix_status_groups.py`
+      asserts it, the DDL documents it, and `schema_version` moved to
+      `1.7` so a pre-#165 database is refused at the gate until fixed.
+    - **Seat derivation** (re-evaluated for every seat-holder after each
+      mutation of their faces): ≥ 1 `provisional` face ⇒ `New`; else ⇒
+      `Accepted` (all faces confirmed — or none left). Transitions
+      **only ever rewrite seats** — a user-given group is never touched.
+      **Filing replaces the seat**: gaining any real group (assign with a
+      path, *Move to group…*, *Add group…*, D&D) drops the seat, and
+      losing the last real group re-derives it — a person renders under
+      exactly their real groups *or* their one seat, never both. A mixed
+      `UnknownN` (some confirmed, some provisional) therefore **stays
+      `New`** until its last provisional face is decided, then flips to
+      `Accepted`.
+    - **Import**: every `UnknownN` the importer creates is seeded with
+      `New` (retiring #153's no-group-rows rule), and existing
+      seat-holders that receive new provisional faces re-seat to `New`;
+      the harvest importer seats its groupless persons by the same rule.
+    - **Reject re-homes the face** (§4.2): every path that writes
+      `link_status='rejected'` — the Reject actions and
+      `remove_persons` — moves the face onto the **system person
+      `Rejected`** in the same transaction (`seq`/`name` re-derived per
+      §4.7, origin person recomputed), so **every rejected face in the
+      database lives on `Rejected`**, ordinary persons hold only
+      `provisional`/`confirmed` faces, and no writer ever produces an
+      unowned face (`faces.person_id` stays nullable in the DDL but is
+      never `NULL` — the historical `remove_persons` leftovers are moved
+      by the data fix).
+    - **The system person `Rejected`**: created on demand; its seat row
+      is always `Rejected` (the one derivation it never re-evaluates);
+      the name is reserved in `validate_person_name` (exact match, like
+      the `Unknown*` rule); it is **never renamed, moved, re-grouped,
+      merged (source or target), removed, or D&D-dropped-onto** (§4.13
+      guards its removal; §4.34 guards the drop); it has no primary and
+      no refcrops (every face it owns is rejected, so §4.5/§4.6
+      eligibility excludes them). It is listed in the tree **only under
+      `Show → Rejected`** and only while it holds faces (§4.10/#152) —
+      invisible under every other setting.
+    - **Claim is the only exit from `rejected`**: an assignment that
+      includes rejected faces un-rejects them (`link_status='confirmed'`)
+      and moves them to its target — the inverse of the old sticky rule:
+      plain **Accept never un-rejects** (§4.3). The *Un-reject (accept)*
+      affordances retire (context-menu relabel, card undo, dialog
+      relabel): on a rejected-only scope Accept is inert with the info
+      toast “assign a person to bring it back”, and the assignment paths
+      (rule bar *Assign…*, context menu, Edit dialog committed with a
+      name) are the way back — reachable only while `Show = Rejected`
+      (§4.10), so no bulk operation can claim by accident.
+    - **Data fix**: `scripts/fix_status_groups.py` upgrades a v1.6
+      database **in place** (backup first; verified; refuses anything
+      but `1.6`): creates `Rejected`, moves every rejected face — owned
+      and the 494 historical unowned ones — onto it, rewrites the 971
+      `Unknown` rows to derived seats, seats any groupless person,
+      recomputes the primaries/refcrops touched by the moves, asserts the
+      invariant, and bumps `schema_version` to `1.7`. A fresh database
+      built from `database/schema.sql` needs none of this.
 
 ## 5. Related documents
 

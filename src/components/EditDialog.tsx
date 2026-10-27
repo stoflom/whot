@@ -26,15 +26,15 @@ interface Props {
   defaultScope: StageScope;
   /** live face counts of each scope (0 = the choice is disabled) */
   counts: { card: number; group: number; selection: number };
-  /** #124: is the scope fully rejected? the Reject button then offers
-      “Un-reject (accept)” instead */
+  /** #124: is the scope fully rejected? the Reject button is then
+      disabled — an assignment is the only way back (#165, §4.35) */
   rejected: Record<StageScope, boolean>;
   prefills: Record<StageScope, Prefill>;
   persons: Person[];
   pathOptions: SuggestOption[];
   onDone: (r: EditResult) => void;
-  /** #124: commit the verdict on the scope now (unreject = accept) */
-  onReject: (scope: StageScope, unreject: boolean) => void;
+  /** #124: commit the verdict on the scope now */
+  onReject: (scope: StageScope) => void;
   onCancel: () => void;
 }
 
@@ -113,14 +113,15 @@ export default function EditDialog({
           </button>
           <button
             className="warn"
-            onClick={() => onReject(scope, rejected[scope])}
+            onClick={() => onReject(scope)}
+            disabled={rejected[scope]}
             title={
               rejected[scope]
-                ? "the scope is fully rejected — accept it back"
-                : "reject the scope now (sticky — it stays rejected, §4.2)"
+                ? "already rejected — an assignment is the way back (#165, §4.35)"
+                : "reject the scope now (moves the faces onto the Rejected system person, §4.2)"
             }
           >
-            {rejected[scope] ? "Un-reject (accept)" : "Reject"}
+            Reject
           </button>
           <button onClick={() => done("apply")}>Apply</button>
           <button className="ok" onClick={() => done("accept")}>

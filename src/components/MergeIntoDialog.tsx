@@ -72,7 +72,7 @@ export default function MergeIntoDialog({ sources, defaultTarget, persons, onCon
         </p>
         <div className="merge-chips">
           {moving.map((p) => (
-            <span className="ev-chip" key={p.id} title={`${p.groups.join(", ") || "Ungrouped"} — ${p.counts.total} face(s)`}>
+            <span className="ev-chip" key={p.id} title={`${p.groups.join(", ") || "(no group)"} — ${p.counts.total} face(s)`}>
               {p.name} · {p.counts.total}f
             </span>
           ))}

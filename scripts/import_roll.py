@@ -32,7 +32,7 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_TAG = "insightface:buffalo_l"
 # must match database/schema.sql's schema_version row and db.rs SCHEMA_VERSION
-SCHEMA_VERSION = "1.6"
+SCHEMA_VERSION = "1.7"
 
 
 # ---------------------------------------------------------------- insightface venv
@@ -137,11 +137,15 @@ def check_schema(con: sqlite3.Connection, db_path: Path) -> None:
             f"  scripts/import_roll.py --create-db"
         )
     if row[0] != SCHEMA_VERSION:
+        remedy = (
+            "Upgrade it in place (backup first): scripts/fix_status_groups.py"
+            if row[0] == "1.6"
+            else "Preserve annotations first if wanted: scripts/annotation_snapshot.py export,\n"
+                 f"  then recreate: scripts/import_roll.py --create-db "
+                 f"(or: sqlite3 {db_path} < database/schema.sql)")
         sys.exit(
             f"{db_path} schema v{row[0]} does not match this script (v{SCHEMA_VERSION}).\n"
-            f"Preserve annotations first if wanted: scripts/annotation_snapshot.py export,\n"
-            f"then recreate: scripts/import_roll.py --create-db "
-            f"(or: sqlite3 {db_path} < database/schema.sql)"
+            f"{remedy}"
         )
 
 
@@ -546,15 +550,17 @@ def blake3_hex(path: Path) -> str:
 def ensure_person(con: sqlite3.Connection, stub: PersonStub, unknowns: list[PersonStub]) -> int:
     """Return the matched person's id, or insert a brand-new UnknownN for a
     fresh cluster. #45: minting is collision-free, so a fresh cluster is NEVER
-    reused/linked by name — `persons.name` UNIQUE is the backstop. #153: no
-    group row is seeded — all new persons start Ungrouped (the virtual
-    `Unknown` tree branch is name-driven; putting an UnknownN into a real
-    group drops a row and is the *user's* act)."""
+    reused/linked by name — `persons.name` UNIQUE is the backstop. #165
+    (gui-design §4.35): a fresh cluster is seeded with the status seat
+    `New` — every person carries ≥1 group row from birth; filing it into a
+    real group is the *user's* act (and replaces the seat)."""
     if stub.person_id:
         return stub.person_id
     cur = con.execute("INSERT INTO persons(name, state, created_at) VALUES (?, 'created', datetime('now'))",
                       (stub.name,))
     stub.person_id = cur.lastrowid
+    con.execute("INSERT INTO person_groups(person_id, path) VALUES (?, 'New')",
+                (stub.person_id,))
     unknowns.append(stub)
     return stub.person_id
 
@@ -594,6 +600,17 @@ def store_image(con: sqlite3.Connection, plan: ImportPlan, pairs, unknowns, impo
                     "VALUES (?,?,?,?,?)",
                     (cur.lastrowid, MODEL_TAG, det.embedding.size,
                      det.embedding.astype("<f4").tobytes(), now))
+    # #165 / gui-design §4.35: provisional faces landed on these persons —
+    # a seated person (no user-given group) re-seats to `New`; a filed
+    # person's rows are never touched (the system person's seat can't be
+    # in play: `Rejected` is never an import target).
+    for pid in {ensure_person(con, stub, unknowns) for _, stub in pairs}:
+        con.execute(
+            "UPDATE person_groups SET path = 'New'"
+            "  WHERE person_id = ? AND path IN ('New', 'Accepted')"
+            "    AND EXISTS (SELECT 1 FROM faces WHERE person_id = ?"
+            "                AND link_status = 'provisional')",
+            (pid, pid))
 
 
 # ---------------------------------------------------------------- main

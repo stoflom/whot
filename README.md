@@ -21,6 +21,7 @@ sidecars is available today — see [Legacy recovery](#legacy-recovery-harvest--
 | Legacy harvest | `scripts/harvest_legacy.py` | read-only scan of sidecars/Lightroom/digiKam into a staging DB (`docs/scripts-design.md` §8) |
 | Harvest import | `scripts/import_harvested.py` | attaches harvested persons to existing faces in a **copy** of `faces.db` (`docs/scripts-design.md` §9) |
 | Annotation snapshot | `scripts/annotation_snapshot.py` | export/restore manual annotations across drop & recreate |
+| Status-group fix | `scripts/fix_status_groups.py` | one-off #165 data fix: upgrades a v1.6 `faces.db` in place to the v1.7 status-group layout (`docs/gui-design.md` §4.35) |
 | Staging schema | `database/harvest_schema.sql` | harvest staging DB, created by `harvest_legacy.py` |
 | GUI | repo root (Tauri 2 + React + TS, Rust backend in `src-tauri/`) | review/naming/annotation; serves images from DB BLOBs, no Python at runtime |
 | Config | `.env` (paths), `config/whotrc.json` (GUI settings, created at runtime) | |
@@ -78,9 +79,10 @@ never created implicitly — use `--create-db` (design `docs/gui-design.md`
 §4.29).
 
 Every cluster becomes an `UnknownN` person; all faces start `provisional`.
-New `UnknownN` persons start **Ungrouped** (#153): the importer writes no
-person group rows at all — the tree's `Unknown` branch is purely
-name-driven until you file an Unknown person into a group yourself.
+New `UnknownN` persons start in the **`New`** status branch (#165): the
+importer seeds their `New` group row, and they stay seated by state
+(`New` while any face is provisional, `Accepted` once all are decided)
+until you file them into a group yourself.
 
 ### Legacy recovery (harvest → import)
 
@@ -231,24 +233,31 @@ npm run tauri build    # release bundles
 
 - **Top bar** — tabs `Review` / `Rolls` / `Person` (centre-pane mode; the
   person tab opens the tree's current selection); on the right the `Show`
-  face-status filter `All | New | Accepted | Rejected`, the `Remove
-  Unknowns` button, the manual refresh `↻` and the settings ⚙ (the
+  face-status filter `All | New | Accepted | Rejected`, the manual
+  refresh `↻` and the settings ⚙ (the
   persons-mode cluster-group toggle sits in the Person view's centre
   toolbar — it is view-local). The `Show` filter
   decides which faces exist anywhere: switching to `New`/`Accepted`/
   `Rejected` **also prunes the left-pane person tree** (#152) — persons
-  without a face of that status are not listed; `All` lists everyone.
+  without a face of that status are not listed; `All` lists everyone
+  **except rejected faces** (rejected is visible only under `Show →
+  Rejected`, #165 — so the system person `Rejected` never shows under
+  `All`).
 - **Left pane — person tree**, hierarchical by `person_groups.path`.
-  Two virtual branches hold the ungrouped: `Ungrouped` (persons with no
-  group row) and `Unknown` (ungrouped `UnknownN` persons — purely
-  name-driven). A person with a group renders under that group even when
+  Three **status branches** carry the review states (#165): `New`
+  (unreviewed `UnknownN` clusters), `Accepted` (reviewed but unfiled) and
+  `Rejected` (the system person holding every rejected face — listed
+  only under `Show → Rejected`). Every person always has at least one
+  group: the old `Ungrouped`/`Unknown` virtual branches and the `Unknown`
+  group value are gone, and an empty group input re-seats the person
+  instead of leaving them groupless. A person with a group renders under
+  that group even when
   named `UnknownN` — filing an Unknown you remember by face but not by
   name into a group is normal (#153). A person with **several** group
   rows (the §9 harvest import can leave multiple) renders under every
   listed path, and is stepped once (#156). Dragging a person row onto a
   branch re-homes **that one membership** — the dragged-from row leaves
-  the person, the target group is filed, other memberships stay (#157);
-  the Ungrouped branch removes just the dragged membership.
+  the person, the target group is filed, other memberships stay (#157).
   Right-click: rows, branches and cards all carry menus.
 - **Centre pane** — the face grid, `Show`-filtered; Review groups the
   pending faces by the importer's `UnknownN` clusters, Rolls lists
@@ -259,17 +268,20 @@ npm run tauri build    # release bundles
   refcrops.
 - **Rule bar** — selection-wide actions (Apply/Accept/Assign/Reject…).
 
-**`Remove Unknowns`** (§3, #154): removes every Unknown person whose
-faces are **all decided** — zero New and zero Accepted faces left, so
-nothing remains to show or decide on. The button is unaffected by the
-`Show` filter, disabled when there is nothing to clean, sits behind a
-confirmation dialog, and there is no undo (the faces stay in the DB as
-rejected, unowned records).
+**Rejected faces** (#165): every rejected face lives on one system
+person `Rejected` (group `Rejected`), listed only under `Show →
+Rejected`; rejecting always moves the face there (including via *Remove
+person*), and the only way back is an **assignment** — which un-rejects
+and moves it. There is no `Remove Unknowns` button anymore: rejecting
+empties an `UnknownN` shell directly, and the stale-shell sweep deletes
+it on the next refresh.
 
 **Main flows**: review the pending faces — rename an `UnknownN` person
 (accepts & names it, moving it into a group path, e.g. `family|Smith`,
 `friends|college`), assign selected faces to an existing or new person,
-reject or re-accept faces, per-face description (`beard`, `sun_glasses`,
+reject faces (they move to the `Rejected` bin — see above; the way back
+is an assignment, since plain accept never un-rejects, #165), per-face
+description (`beard`, `sun_glasses`,
 … — the full derived label is `person-name-description-seq`), primary
 face and per-appearance reference faces.
 
@@ -316,10 +328,12 @@ rules are `docs/gui-design.md` §4, architecture is
 **Mutations** (each ends with refcrops recompute + primary backfill for all
 affected persons; all return an error string on constraint violation)
 
-- `assign_person(face_ids, name, group_path)` — §4.1 (empty group ⇒
-  Ungrouped; a rename keeps the person's current group path, #153)
-- `accept_faces(face_ids)` — §4.3
-- `reject_faces(face_ids)` — §4.2
+- `assign_person(face_ids, name, group_path)` — §4.1 (empty group ⇒ the
+  person's status seat, §4.35; a rename keeps the person's current group
+  path, #153; assignment **claims** rejected faces — §4.35)
+- `accept_faces(face_ids)` — §4.3 (never un-rejects; §4.35)
+- `reject_faces(face_ids)` — §4.2 (moves the face to the system person
+  `Rejected`; §4.35)
 - `rotate_image(image_id, delta)` / `rotate_face(face_id, delta)` —
   display rotation in 90° steps (§4.32, #122)
 - `set_face_description(face_id, description)` — §4.4
@@ -328,11 +342,13 @@ affected persons; all return an error string on constraint violation)
   `set_person_note(person_id, note)`
 - `add_refcrop(person_id, face_id)` (manual, pinned) /
   `remove_refcrop(person_id, face_id)`
-- `remove_persons(person_ids)` — §4.13 (reject + detach + delete, no undo)
+- `remove_persons(person_ids)` — §4.13 (reject + move to `Rejected` +
+  delete, no undo)
 - `rename_group(old_path, new_path)` / `delete_group(path)` /
   `move_persons_to_group(person_ids, group)` — §4.16 (#50) group
-  membership: prefix rewrite / subtree drop to Ungrouped / per-person
-  replace; normalised (#42), `Ungrouped` segment reserved
+  membership: prefix rewrite / subtree drop to status seats (§4.35) /
+  per-person replace; normalised (#42); the `Ungrouped`, `New`,
+  `Accepted`, `Rejected` and `Unknown` segments are reserved
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
 
 Section numbers (`§4.x`) refer to `docs/gui-design.md`.
@@ -372,7 +388,7 @@ whot/
     import_harvested.py            # scripts-design §9: attach harvested persons (copy-only)
     legacy/                        # archived importers, superseded by harvest_legacy.py
   database/
-    schema.sql                     # faces.db DDL (v1.6)
+    schema.sql                     # faces.db DDL (v1.7)
     harvest_schema.sql             # staging DDL for harvest_legacy.py (v1.2)
   test/
     test_*.py                      # Python unit tests (import + harvest helpers)

@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import PathTypeahead, { type SuggestOption } from "./PathTypeahead";
 import { useOwnsKeyboard } from "../overlays";
 
-// §4.16 (#50) — edit a group path: rename/move a branch or move persons
-// into a group. The path is `|`-separated; empty means Ungrouped (the
-// backend normalises and rejects a literal 'Ungrouped' segment).
+// §4.16 (#50/#165) — edit a group path: rename/move a branch or move
+// persons into a group. The path is `|`-separated; empty seats the
+// person by state (§4.35), and the backend rejects the five reserved
+// segments (Ungrouped/New/Accepted/Rejected/Unknown).
 
 interface Props {
   title: string;

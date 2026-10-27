@@ -6,41 +6,16 @@ import {
   groupByDescription,
   matchesStatusFilter,
   personTreeMembers,
-  removableUnknownShellIds,
 } from "./viewFilters";
 
-describe("removableUnknownShellIds (#154, v3.54)", () => {
+describe("personTreeMembers (#152, rewritten by #165)", () => {
   const persons = [
-    { id: 10, name: "Unknown1" }, // provisional remains
-    { id: 11, name: "Unknown2" }, // all decided
-    { id: 12, name: "Unknown3" }, // faceless (the §4.27 sweep keeps it out of the snapshot anyway)
-    { id: 13, name: "Mary" }, // named — never a target
-    { id: 14, name: "Unknown-hat" }, // Unknown-prefixed but not UnknownN — still a target (GLOB 'Unknown*' rule)
-  ];
-  const faces = [
-    { person_id: 10, link_status: "provisional" },
-    { person_id: 11, link_status: "rejected" },
-    { person_id: 12, link_status: "confirmed" }, // arms an Unknown, same rule as 'rejected'
-    { person_id: 13, link_status: "rejected" },
-  ];
-
-  it("removes only Unknowns with zero New and zero Accepted faces — no filter argument", () => {
-    expect(removableUnknownShellIds(persons, faces)).toEqual([11, 14]);
-    expect(removableUnknownShellIds(persons, [])).toEqual([10, 11, 12, 14]);
-  });
-
-  it("named persons are never targets", () => {
-    expect(removableUnknownShellIds(persons, faces)).not.toContain(13);
-  });
-});
-
-describe("personTreeMembers (#152)", () => {
-  const persons = [
-    { id: 1 }, // new only
-    { id: 2 }, // accepted only
-    { id: 3 }, // rejected only
-    { id: 4 }, // mixed
-    { id: 5 }, // faceless shell
+    { id: 1, name: "Unknown1" }, // new only
+    { id: 2, name: "Mary" }, // accepted only
+    { id: 3, name: "Unknown3" }, // rejected only
+    { id: 4, name: "Unknown4" }, // mixed
+    { id: 5, name: "Ghost" }, // faceless shell
+    { id: 6, name: "Rejected" }, // the system person (#165/§4.35)
   ];
   const faces = [
     { person_id: 1, link_status: "provisional" },
@@ -49,11 +24,12 @@ describe("personTreeMembers (#152)", () => {
     { person_id: 4, link_status: "provisional" },
     { person_id: 4, link_status: "confirmed" },
     { person_id: 4, link_status: "rejected" },
+    { person_id: 6, link_status: "rejected" },
     { person_id: null, link_status: "provisional" }, // unowned — no person to list
   ];
 
-  it("'all' lists every person, including faceless shells", () => {
-    expect(personTreeMembers(persons, faces, "all")).toEqual(persons);
+  it("'all' (everything except rejected) keeps non-rejected holders + faceless shells, drops all-rejected persons and the system person", () => {
+    expect(personTreeMembers(persons, faces, "all").map((p) => p.id)).toEqual([1, 2, 4, 5]);
   });
 
   it("'provisional' lists only persons with ≥ 1 provisional face", () => {
@@ -64,21 +40,22 @@ describe("personTreeMembers (#152)", () => {
     expect(personTreeMembers(persons, faces, "confirmed").map((p) => p.id)).toEqual([2, 4]);
   });
 
-  it("'rejected' lists only persons with ≥ 1 rejected face", () => {
-    expect(personTreeMembers(persons, faces, "rejected").map((p) => p.id)).toEqual([3, 4]);
+  it("'rejected' lists every holder of a rejected face — incl. the system person", () => {
+    expect(personTreeMembers(persons, faces, "rejected").map((p) => p.id)).toEqual([3, 4, 6]);
   });
 
-  it("an empty face set under a non-all filter lists nobody but persons survive under 'all'", () => {
+  it("an empty face set: 'all' still lists the faceless persons (never the system person); a status filter lists nobody", () => {
     expect(personTreeMembers(persons, [], "provisional")).toEqual([]);
-    expect(personTreeMembers(persons, [], "all")).toEqual(persons);
+    expect(personTreeMembers(persons, [], "rejected")).toEqual([]);
+    expect(personTreeMembers(persons, [], "all").map((p) => p.id)).toEqual([1, 2, 3, 4, 5]);
   });
 });
 
-describe("matchesStatusFilter", () => {
-  it("'all' matches every status; the others match link_status exactly", () => {
-    for (const s of ["provisional", "confirmed", "rejected"]) {
-      expect(matchesStatusFilter(s, "all")).toBe(true);
-    }
+describe("matchesStatusFilter (#165)", () => {
+  it("'all' means every status EXCEPT rejected; the others match link_status exactly", () => {
+    expect(matchesStatusFilter("provisional", "all")).toBe(true);
+    expect(matchesStatusFilter("confirmed", "all")).toBe(true);
+    expect(matchesStatusFilter("rejected", "all")).toBe(false);
     expect(matchesStatusFilter("provisional", "provisional")).toBe(true);
     expect(matchesStatusFilter("confirmed", "confirmed")).toBe(true);
     expect(matchesStatusFilter("rejected", "rejected")).toBe(true);

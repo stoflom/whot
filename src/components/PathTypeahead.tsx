@@ -6,7 +6,8 @@ export type { SuggestOption };
 
 // #97 (§4.21) — group-path inputs suggest the existing group paths, same
 // dropdown UX as the name typeahead. The `ungrouped` entry is display-only
-// (label) and inserts "" — a literal 'Ungrouped' segment is rejected by the
+// (label) and inserts "" — which the backend turns into the person's
+// status seat (§4.35); the five reserved segments are rejected by the
 // backend.
 
 /** distinct non-empty group paths over the persons (+ the ungrouped

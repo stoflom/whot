@@ -1,6 +1,6 @@
 # WhoT Database Schema Design
 
-**Version: 1.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 2.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -18,8 +18,8 @@ specified in `docs/scripts-design.md` §8.2 (not repeated here).
 
 | Database | DDL | Version row | Lifetime |
 | --- | --- | --- | --- |
-| `faces.db` | `database/schema.sql` | `'1.5'` | long-lived; **dropped & recreated** on schema change |
-| harvest staging | `database/harvest_schema.sql` | `'1.0'` | created fresh by every `harvest_legacy.py` run; consumed once by `import_harvested.py` |
+| `faces.db` | `database/schema.sql` | `'1.7'` | long-lived; **dropped & recreated** on structural schema change; semantic changes ship as a one-off data fix (§5) |
+| harvest staging | `database/harvest_schema.sql` | `'1.2'` | created fresh by every `harvest_legacy.py` run; consumed once by `import_harvested.py` |
 
 The harvester never touches `faces.db` (scripts-design §8 H2); the
 importer writes only a **vacuumed copy** of it (scripts-design §9 J1).
@@ -38,10 +38,18 @@ One line each; the DDL carries the columns.
 - `faces` — rectangle + lifecycle columns; `name`/`seq` are **derived**
   (§4); per-image rectangle is the face identity (§3).
 - `face_embeddings` — one vector per `(face_id, model)`; storage in §6.
-- `persons` — name is unique; `UnknownN` for importer clusters; optional
+- `persons` — name is unique and **reserved** at the edges: `UnknownN`
+  for importer clusters and the exact name `Rejected` for the system
+  person (gui-design §4.35); optional
   `primary_face_id` (nullable — see §5) with `primary_pinned`.
 - `person_groups` — `|`-paths, one row per membership; the person tree
-  is *derived* from these paths (gui-design §3), never stored.
+  is *derived* from these paths (gui-design §3), never stored. **At least
+  one row per person is invariant** (#165, gui-design §4.35): the three
+  status seats (`New`/`Accepted`/`Rejected`) are system-written
+  fallbacks for unfiled/rejected state, so *zero rows* is impossible —
+  `path` was already `NOT NULL`; what changed is that the "no group"
+  state itself was designed away (writer-owned, asserted by the fix
+  script, documented in the DDL).
 - `person_refcrops` — per-appearance reference images; `pinned` rows are
   manual and survive recompute (gui-design §4.6).
 - `schema_version` — single row; the gate (§5).
@@ -80,20 +88,33 @@ mutating path re-derives them (gui-design §4.4/§4.5/§4.6/§4.7):
 No stored triggers: derivation lives in one place per writer
 (`src-tauri/src/db.rs` for the GUI, `import_roll.py`/`import_harvested.py`
 for the scripts), so the rules in gui-design §4 stay single-sourced in
-code review.
+code review. The #165 group invariant (§2) is writer-owned the same way:
+a stored trigger enforcing "≥ 1 row per person" would abort the writers'
+replace-a-group sequences (delete-then-insert inside one transaction)
+mid-flight — both writers seat instead, and the fix script asserts.
 
 ## 5. Version gate & drop & recreate
 
 - `schema_version` holds **one row**; `version` is checked by **exact
   match** — there are **no migrations** (AGENTS.md). A mismatched or
-  missing marker is refused up-front with recreate instructions
+  missing marker is refused up-front: a stale `'1.6'` marker is pointed
+  at the data fix (`scripts/fix_status_groups.py`, gui-design §4.35),
+  anything else at recreate instructions
   (`sqlite3 data/faces.db < database/schema.sql`), never on the first
   query.
-- The expected value `'1.5'` is a constant in three places that must be
+- The expected value `'1.7'` is a constant in **five** places that must be
   kept equal: `schema.sql` (the `INSERT`), `src-tauri/src/db.rs`
-  (`SCHEMA_VERSION`), `scripts/import_roll.py` (`SCHEMA_VERSION`);
+  (`SCHEMA_VERSION`), `scripts/import_roll.py` (`SCHEMA_VERSION`),
+  `scripts/import_harvested.py` (`FACES_SCHEMA_VERSION`);
   `scripts/annotation_snapshot.py` checks it too (`SCHEMA_VERSION`) for
   restore targets.
+- **v1.6 → v1.7 (#165)** changed no column — the upgrade is semantic
+  (status seats, system person `Rejected`, writer-owned group
+  invariant), so it ships as `scripts/fix_status_groups.py`: a one-off,
+  backed-up, verified **in-place data fix** (the #122 live-upgrade
+  precedent), not a migration framework — the app itself never migrates
+  (AGENTS.md). The gate forces it: a v1.6 database is refused by a v1.7
+  build until fixed. Fresh databases come from the DDL as always.
 - Drop & recreate loses manual annotations by design — that is what
   `scripts/annotation_snapshot.py` (export before, restore after) is
   for; its matching keys are exactly the identities in §3.

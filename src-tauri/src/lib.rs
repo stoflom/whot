@@ -146,7 +146,8 @@ fn set_person_note(state: State<AppState>, person_id: i64, note: String) -> Resu
     db::set_person_note(state.paths()?, person_id, &note).map_err(|e| e.to_string())
 }
 
-/// §4.13 (#35) — remove persons: reject + detach their faces, delete the row.
+/// §4.13 (#35/#165) — remove persons: reject + re-home their faces onto
+/// the system person `Rejected`, delete the row.
 /// §4.16 (#50) — move persons to a group (membership only).
 #[tauri::command]
 fn move_persons_to_group(
