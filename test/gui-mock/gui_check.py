@@ -74,6 +74,10 @@ Checks (contract refs: docs/gui-design.md):
   C29 Show=All excludes rejected entirely: the system person `Rejected`
       and its branch list only under Show→Rejected, and the Show tooltip
       spells the contract out (#165, §4.10)
+  C30 with a live staged set, bar Accept commits the staged ops and
+      accepts the DISPLAYED selection — not just the staged face ids
+      (#166, §4.30/§4.24: stage on a few Description-mode faces, select
+      every section, Accept → all confirmed)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -553,6 +557,97 @@ def c29_show_rejected_bin_165(t):
                f"new: branch={prov_state['branch']} rows={prov_state['rows']}; "
                f"rejected: branch={rej_state['branch']} rows={rej_state['rows']}; "
                f"snap rejected faces={all_state['snapRejected']}")
+
+
+def c30_bar_accept_selection_over_stage(t):
+    """#166: with a live staged set, bar Accept commits the staged ops AND
+    accepts the CURRENT selection — not only the staged face ids. Repro
+    (§4.30/§4.24): stage a description on a few Description-mode section
+    faces (Apply), then select every section and bar-Accept → all selected
+    faces are confirmed and the staged ones carry the description."""
+    fresh(t)
+    pick = js(t, r"""
+      const vis = f => f.person_id != null && (f.state ?? '') !== 'discarded'
+                     && f.link_status !== 'rejected';
+      for (const p of window.__MOCK_SNAP.persons) {
+        const fs = window.__MOCK_SNAP.faces.filter(f => vis(f) && f.person_id === p.id);
+        if (fs.length >= 3)
+          return {pid: p.id, a: fs[0].id, b: fs[1].id, total: fs.length};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C30 bar Accept takes the selection over the staged set (#166)", True,
+               "no person with 3+ visible faces in the dump — vacuous")
+        return
+    set_show_filter(t, "all")  # the persisted whotrc filter must not tilt the baseline
+    js(t, "document.querySelectorAll('.topbar nav button')[2]?.click();")  # Person tab
+    time.sleep(0.8)
+    t.find_element(By.CSS_SELECTOR,
+                   f".tree-person[data-person-id='{pick['pid']}']").click()
+    time.sleep(0.8)
+    js(t, r"""
+      const s = document.querySelector('.center-toolbar .seg') ?? document.querySelector('.seg');
+      const d = [...(s?.querySelectorAll('button') ?? [])]
+        .find(b => b.textContent.trim() === 'Description');
+      if (d && !d.classList.contains('active')) d.click();
+    """)
+    time.sleep(0.8)
+
+    # two cards selected → dialog scope Selection → stage the description
+    t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['a']}']").click()
+    time.sleep(0.4)
+    AC(t.driver).key_down(Keys.CONTROL).click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['b']}']")
+    ).key_up(Keys.CONTROL).perform()
+    time.sleep(0.4)
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-card[data-face-id='{pick['a']}'] .card-edit").click()
+    time.sleep(0.6)
+    sel_btn = [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog .scope-seg button")
+               if b.text.strip().startswith("Selection")]
+    if not sel_btn:
+        record("C30 bar Accept takes the selection over the staged set (#166)", False,
+               "dialog has no 'Selection' scope button")
+        return
+    sel_btn[0].click()
+    time.sleep(0.3)
+    inp = t.find_element(By.CSS_SELECTOR, ".edit-dialog .input-desc")
+    inp.click()
+    inp.clear()
+    inp.send_keys("side")
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+     if b.text.strip() == "Apply"][0].click()
+    time.sleep(0.8)
+    sections = js(t, "return document.querySelectorAll('.face-section').length")
+    staged_ok = js(t, r"""
+      const fs = window.__MOCK_SNAP.faces.filter(f => f.person_id === Number(arguments[0]));
+      return fs.some(f => (f.description ?? '') === 'side');
+    """, pick["pid"])
+    if sections < 2 or not staged_ok:
+        record("C30 bar Accept takes the selection over the staged set (#166)", False,
+               f"stage/regroup failed: sections={sections}, staged={staged_ok}")
+        return
+
+    # select EVERY rendered card (both resulting sections) in one gesture
+    AC(t.driver).key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
+    time.sleep(0.5)
+    count = js(t, "const b = document.querySelector('.rulebar b'); "
+                  "return b ? Number(b.textContent) : -1")
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+     if b.text.strip() == "Accept"][0].click()
+    time.sleep(1.6)
+    after = js(t, r"""
+      const fs = window.__MOCK_SNAP.faces.filter(f => f.person_id === Number(arguments[0]));
+      return {total: fs.length,
+              confirmed: fs.filter(f => f.link_status === 'confirmed').length,
+              side: fs.filter(f => (f.description ?? '') === 'side').length};
+    """, pick["pid"])
+    ok = (count == pick["total"] and after["confirmed"] == pick["total"]
+          and after["side"] >= 2)
+    record("C30 bar Accept takes the selection over the staged set (#166)", ok,
+           f"selected={count}/{pick['total']}, sections={sections}, "
+           f"confirmed={after['confirmed']}/{after['total']}, side-desc={after['side']}")
 
 
 def c18_rolls_path_tree(t):
@@ -1799,6 +1894,7 @@ def main():
         c27_center_toolbar_view_matrix(t)
         c28_add_group_person_rows_only(t)
         c29_show_rejected_bin_165(t)
+        c30_bar_accept_selection_over_stage(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

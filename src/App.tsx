@@ -1245,12 +1245,14 @@ export default function App() {
     [facesById, personsById]
   );
 
-  /** #123 — commit the WHOLE pending set: the ops in order through the
-      #77 routing, then the shared accept-and-advance over their union
-      (the review advance anchors as before — last-selected, hovered,
-      first id) */
+  /** #123/#166 — commit the WHOLE pending set: the ops in order through
+      the #77 routing, then accept over the caller's DISPLAYED scope (bar/
+      keys: selection or cursor-as-target, dialog: its chosen scope) — the
+      staged set supplies the edits only; an empty scope falls back to the
+      staged ids. The review advance anchors as before — last-selected,
+      hovered, first id) */
   const commitPending = useCallback(
-    async (all: Stage[]) => {
+    async (all: Stage[], acceptIds?: number[]) => {
       if (all.length === 0) return;
       // #139: the whole set stays staged until the commit lands — the
       // old code wiped it before the first write, so a mid-commit
@@ -1273,7 +1275,10 @@ export default function App() {
       // a staged NAME assignment already claimed rejected faces (#165) —
       // the advance must not trip the rejected-only guard on stale state
       const claimed = all.some((o) => (o.name ?? "").trim().length > 0);
-      await acceptAndNext(union, claimed);
+      // #166: acceptance runs over the caller's displayed scope — the
+      // staged set only staged the edits (empty scope ⇒ the staged ids)
+      const ids = acceptIds && acceptIds.length > 0 ? acceptIds : union;
+      await acceptAndNext(ids, claimed);
       setPending([]);
     },
     [acceptAndNext, stageOps]
@@ -1441,13 +1446,16 @@ export default function App() {
           e.preventDefault();
           toggle(targetId);
         } else if (e.key === "a" || e.key === "A") {
-          // §4.30: Accept is stage-then-commit — with a live pending set
-          // the keys do exactly what the bottom-bar Accept does: commit
-          // the WHOLE set (#123), then accept its scope with the review
+          // §4.30/#166: Accept is stage-then-commit — with a live pending
+          // set the keys do what the bottom-bar Accept does: commit the
+          // staged ops, then accept the DISPLAYED scope (selection, else
+          // the hovered card — cursor-as-target §4.25) with the review
           // advance
           if (pendingRef.current.length > 0) {
             e.preventDefault();
-            void commitPending(pendingRef.current);
+            const ids =
+              sel.size > 0 ? [...sel] : hoverRef.current != null ? [hoverRef.current] : [];
+            void commitPending(pendingRef.current, ids);
             return;
           }
           // #75: cursor-as-target — the hovered card stands in for the
@@ -1461,11 +1469,13 @@ export default function App() {
         } else if (e.key === "Enter" && view === "review") {
           // #96 (§4.30): Enter with no field focused = Accept & next —
           // in-field Enter keeps its commit meaning (the guard above
-          // already keeps inputs out of this handler) — #123: a live
-          // pending set commits whole
+          // already keeps inputs out of this handler) — #166: a live
+          // pending set commits its ops, then accepts the displayed scope
           if (pendingRef.current.length > 0) {
             e.preventDefault();
-            void commitPending(pendingRef.current);
+            const ids =
+              sel.size > 0 ? [...sel] : hoverRef.current != null ? [hoverRef.current] : [];
+            void commitPending(pendingRef.current, ids);
             return;
           }
           const ids =
@@ -2039,7 +2049,7 @@ export default function App() {
         onApply={barApply}
         onAccept={() =>
           pending.length > 0
-            ? void commitPending(pending) // #123: commit the whole set
+            ? void commitPending(pending, [...selRef.current]) // #166: ops, then the selection
             : acceptAndNext([...selRef.current])
         }
         onUndo={() => setPending([])} // #123: Undo = Cancel — the whole set
@@ -2122,8 +2132,9 @@ export default function App() {
               setPending((p) => upsertStage(p, st)); // #123: extend the set
               return;
             }
-            // #123: Accept commits the whole set — this op included
-            void commitPending(upsertStage(pendingRef.current, st));
+            // #166: the staged ops commit first, then this dialog's
+            // chosen scope is accepted (the set edits, never the scope)
+            void commitPending(upsertStage(pendingRef.current, st), ids);
           }}
           onReject={(scope) => {
             // #124: a verdict, not a field edit — commits immediately.
