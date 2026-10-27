@@ -53,6 +53,9 @@ import pathmap      # legacy path-map file (scripts-design §8.6, #85)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STAGING_SCHEMA_VERSION = "1.2"     # §8.2, exact-match (J3)
 FACES_SCHEMA_VERSION = "1.7"       # database/schema.sql, exact-match
+# #165/§4.35: system status seats — not user filings, never matched as
+# group identity on either side of the §9.4 group-set equality
+STATUS_SEATS = {"new", "accepted", "rejected"}
 GROUP_ROOTS = {"people", "person"}  # stripped from harvested paths (§9.4)
 UNKNOWN_NAME_RE = re.compile(r"^Unknown\d+$")
 
@@ -494,6 +497,11 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
                     .append(r["id"])
     existing_groups_cf: dict[int, set[str]] = {}
     for r in dbcon.execute("SELECT person_id, path FROM person_groups"):
+        # #165/§4.35: a status seat is system state, not a filing — a
+        # seated person matches an unfiled staging person like an
+        # ungrouped one (group-set equality, §9.4 step 1)
+        if r["path"].casefold() in STATUS_SEATS:
+            continue
         existing_groups_cf.setdefault(r["person_id"], set()) \
             .add(r["path"].casefold())
     # #128: per-person face row counts — a same-named person with ZERO
@@ -506,12 +514,14 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
         face_counts[r["person_id"]] = r["n"]
 
     def translated_groups(spid: int) -> set[str]:
-        """§9.4 v2.1 translation: root stripped, name-leaf dropped."""
+        """§9.4 v2.1 translation: root stripped, name-leaf dropped.
+        Pure status-seat paths from legacy data translate to *unfiled*
+        (#165/§4.35 — the seat pass re-seats such persons itself)."""
         name = spersons[spid]
         out: set[str] = set()
         for pth in sgroups.get(spid, ()):
             stripped = strip_group_root(pth, name)
-            if stripped:
+            if stripped and stripped.casefold() not in STATUS_SEATS:
                 out.add(stripped)
         return out
 

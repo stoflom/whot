@@ -790,6 +790,14 @@ fn ensure_seat(con: &Connection, person_id: i64) -> Result<()> {
 /// status seats: filing replaces the seat (§4.18), and a user-given
 /// group is never touched. The system person's seat is never derived.
 fn reseat(con: &Connection, person_id: i64) -> Result<()> {
+    let exists: bool = con.query_row(
+        "SELECT EXISTS(SELECT 1 FROM persons WHERE id = ?)",
+        params![person_id],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        return Ok(()); // shells deleted by the same tx never get a seat
+    }
     if is_system_person(con, person_id)? {
         return Ok(()); // §4.35: `Rejected`'s seat is fixed
     }
