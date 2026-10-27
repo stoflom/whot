@@ -15,7 +15,7 @@ pub const MODEL_TAG: &str = "insightface:buffalo_l";
 /// Must match `schema_version.version` in database/schema.sql — exact
 /// match, no migrations by policy: mismatched DBs are refused up-front
 /// with recreate instructions instead of failing on the first query.
-pub const SCHEMA_VERSION: &str = "1.6";
+pub const SCHEMA_VERSION: &str = "1.7";
 const DEFAULT_THRESHOLD: f64 = 0.40;
 const DEFAULT_REFCROP_N: i64 = 5;
 
@@ -150,12 +150,21 @@ fn check_schema(con: &Connection, db: &Path) -> Result<()> {
             )
         })?;
     if v != SCHEMA_VERSION {
+        let remedy = if v == "1.6" {
+            format!(
+                "upgrade it in place (backup first):\n  python3 scripts/fix_status_groups.py {}",
+                db.display()
+            )
+        } else {
+            format!(
+                "no migrations by policy. Preserve annotations first if wanted:\n\
+                 scripts/annotation_snapshot.py export, then recreate with:\n\
+                 sqlite3 {} < database/schema.sql",
+                db.display()
+            )
+        };
         bail!(
-            "database schema v{v} does not match this build (v{SCHEMA_VERSION}) — \
-             no migrations by policy. Preserve annotations first if wanted:\n\
-             scripts/annotation_snapshot.py export, then recreate with:\n\
-             sqlite3 {} < database/schema.sql",
-            db.display()
+            "database schema v{v} does not match this build (v{SCHEMA_VERSION}) — {remedy}"
         );
     }
     Ok(())
@@ -348,8 +357,10 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
 
     // §4.27 (#84) — stale-shell sweep: zero-face UnknownN persons are
     // leftovers no other code path revisits (assign_person only deletes
-    // shells it empties itself). Named persons are never swept — an empty
-    // named person is a legitimate future assignment target.
+    // shells it empties itself; reject-moves now empty them too, #165).
+    // Named persons are never swept — an empty named person is a
+    // legitimate future assignment target — and the system person
+    // `Rejected` never matches this GLOB (§4.35: never swept).
     con.execute(
         "DELETE FROM persons WHERE name GLOB 'Unknown*'
            AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
@@ -689,7 +700,8 @@ fn affected_persons(
     }
     if !face_ids.is_empty() {
         let list = ids_list(face_ids);
-        // person_id IS NOT NULL: removed persons leave unowned faces (§4.13)
+        // person_id IS NOT NULL: defensive — since #165 no writer leaves
+        // a face unowned (the fix script migrated the historical ones)
         let mut st = con.prepare(&format!(
             "SELECT DISTINCT person_id FROM faces WHERE person_id IS NOT NULL AND id IN ({list})"
         ))?;
@@ -724,7 +736,201 @@ fn validate_person_name(name: &str) -> Result<()> {
     if name.to_ascii_lowercase().starts_with("unknown") {
         bail!("person names may not start with 'Unknown' (reserved for importer clusters)");
     }
+    if name.eq_ignore_ascii_case("Rejected") {
+        bail!("the name 'Rejected' is reserved (#165: system person for rejected faces)");
+    }
     Ok(())
+}
+
+// ------------------------------------------------------ status seats (#165)
+
+/// #165 / §4.35 — the three system-written status-seat paths. Reserved
+/// against user input (validate_group_path); written only by these
+/// helpers, the importer and scripts/fix_status_groups.py.
+const STATUS_SEATS: [&str; 3] = ["New", "Accepted", "Rejected"];
+
+fn is_status_seat(path: &str) -> bool {
+    STATUS_SEATS.contains(&path)
+}
+
+/// §4.35 seat derivation: any provisional face ⇒ `New`, else `Accepted`
+/// (all confirmed — or none left). `Rejected` is never derived: it is
+/// the system person's own fixed seat.
+fn derive_seat(con: &Connection, person_id: i64) -> Result<&'static str> {
+    let has_new: bool = con.query_row(
+        "SELECT EXISTS(SELECT 1 FROM faces
+                 WHERE person_id = ?1 AND link_status = 'provisional')",
+        params![person_id],
+        |r| r.get(0),
+    )?;
+    Ok(if has_new { "New" } else { "Accepted" })
+}
+
+/// §4.35 — writer-owned group invariant: a person left with no
+/// `person_groups` row is seated by state. Every writer that can remove
+/// a person's rows ends with this (no trigger by design —
+/// schema-design §4: the committed state is what the invariant governs).
+fn ensure_seat(con: &Connection, person_id: i64) -> Result<()> {
+    let n: i64 = con.query_row(
+        "SELECT COUNT(*) FROM person_groups WHERE person_id = ?",
+        params![person_id],
+        |r| r.get(0),
+    )?;
+    if n == 0 {
+        con.execute(
+            "INSERT INTO person_groups (person_id, path) VALUES (?1, ?2)",
+            params![person_id, derive_seat(con, person_id)?],
+        )?;
+    }
+    Ok(())
+}
+
+/// §4.35 — re-evaluate a seat holder's seat after its faces changed
+/// (accept/reject/import). No-op unless ALL of the person's rows are
+/// status seats: filing replaces the seat (§4.18), and a user-given
+/// group is never touched. The system person's seat is never derived.
+fn reseat(con: &Connection, person_id: i64) -> Result<()> {
+    if is_system_person(con, person_id)? {
+        return Ok(()); // §4.35: `Rejected`'s seat is fixed
+    }
+    let (seats, total): (i64, i64) = con.query_row(
+        "SELECT COALESCE(SUM(path IN ('New', 'Accepted', 'Rejected')), 0), COUNT(*)
+           FROM person_groups WHERE person_id = ?",
+        params![person_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if total == 0 {
+        return ensure_seat(con, person_id);
+    }
+    if seats != total {
+        return Ok(()); // filed: real groups win, never touched (§4.35)
+    }
+    let seat = derive_seat(con, person_id)?;
+    // insert-first: the fresh seat lands before the stale one drops
+    con.execute(
+        "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?1, ?2)",
+        params![person_id, seat],
+    )?;
+    con.execute(
+        "DELETE FROM person_groups
+          WHERE person_id = ?1 AND path != ?2 AND path IN ('New', 'Accepted', 'Rejected')",
+        params![person_id, seat],
+    )?;
+    Ok(())
+}
+
+/// §4.35 — the system person `Rejected` (exact reserved name): created
+/// on demand by the reject paths; its seat row is always `Rejected`.
+fn ensure_rejected_person(con: &Connection) -> Result<i64> {
+    if let Some(id) = con
+        .query_row("SELECT id FROM persons WHERE name = 'Rejected'", [], |r| r.get(0))
+        .optional()?
+    {
+        con.execute(
+            "INSERT OR IGNORE INTO person_groups (person_id, path) VALUES (?1, 'Rejected')",
+            params![id],
+        )?;
+        return Ok(id);
+    }
+    con.execute(
+        "INSERT INTO persons (name, state, created_at)
+         VALUES ('Rejected', 'created', datetime('now'))",
+        [],
+    )?;
+    let id = con.last_insert_rowid();
+    con.execute(
+        "INSERT INTO person_groups (person_id, path) VALUES (?1, 'Rejected')",
+        params![id],
+    )?;
+    Ok(id)
+}
+
+fn is_system_person(con: &Connection, person_id: i64) -> Result<bool> {
+    let name: Option<String> = con
+        .query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))
+        .optional()?;
+    Ok(name.as_deref() == Some("Rejected"))
+}
+
+/// §4.35 — the system person is never renamed, re-grouped or removed.
+fn guard_system_person(con: &Connection, person_id: i64) -> Result<()> {
+    if is_system_person(con, person_id)? {
+        bail!("'Rejected' is the system person for rejected faces (#165) and cannot be changed");
+    }
+    Ok(())
+}
+
+/// §4.2/§4.35 (#165) — the reject move: `link_status='rejected'` plus
+/// the re-home onto the system person `Rejected` (next free seq per
+/// (Rejected, description), name re-derived per §4.7), dropping stale
+/// pins at those faces (rejected faces are refcrop-ineligible, §4.6).
+/// Faces already home are skipped — re-rejecting is a no-op. Returns
+/// every person touched — the pre-move origins AND `Rejected` — sorted,
+/// so callers only recompute/reseat over that list.
+fn reject_and_rehome(tx: &Connection, face_ids: &[i64]) -> Result<Vec<i64>> {
+    let mut affected = affected_persons(tx, face_ids, None)?;
+    let mut ids: Vec<i64> = face_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let rej = ensure_rejected_person(tx)?;
+    if !affected.contains(&rej) {
+        affected.push(rej);
+    }
+    let list = ids_list(&ids);
+    let rows: Vec<(i64, Option<String>)> = {
+        let mut st = tx.prepare(&format!(
+            "SELECT id, description FROM faces WHERE id IN ({list})
+              AND NOT (link_status = 'rejected' AND person_id = {rej})"
+        ))?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    for (fid, desc) in rows {
+        let seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
+              WHERE person_id = ?1
+                AND COALESCE(description, '') = COALESCE(?2, '')",
+            params![rej, desc],
+            |r| r.get(0),
+        )?;
+        let name = face_name("Rejected", desc.as_deref(), seq);
+        tx.execute(
+            "UPDATE faces
+                SET link_status = 'rejected', person_id = ?1, seq = ?2, name = ?3
+              WHERE id = ?4",
+            params![rej, seq, name, fid],
+        )?;
+    }
+    tx.execute(&format!("DELETE FROM person_refcrops WHERE face_id IN ({list})"), [])?;
+    affected.sort();
+    Ok(affected)
+}
+
+/// §4.35 — insert the derived seat of every person whose group rows lie
+/// ENTIRELY inside `branch` (they would otherwise hit zero rows when the
+/// branch goes away). The seat lands BEFORE the caller drops the branch
+/// rows — writer-side invariant, no trigger (schema-design §4). Returns
+/// how many seats were written.
+fn seat_branch_doomed(tx: &Connection, branch: &str) -> Result<usize> {
+    let mut st = tx.prepare(&format!(
+        "SELECT DISTINCT person_id FROM person_groups pg
+          WHERE {BRANCH_OF}
+            AND NOT EXISTS (SELECT 1 FROM person_groups g2
+                             WHERE g2.person_id = pg.person_id
+                               AND NOT (g2.path = ?1
+                                   OR (substr(g2.path, 1, length(?1) + 1) = ?1 || '|')))"
+    ))?;
+    let pids: Vec<i64> = st
+        .query_map(params![branch], |r| r.get::<_, i64>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for pid in &pids {
+        let seat = derive_seat(tx, *pid)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO person_groups (person_id, path) VALUES (?1, ?2)",
+            params![pid, seat],
+        )?;
+    }
+    Ok(pids.len())
 }
 
 // ---------------------------------------------------------------- mutations
@@ -736,6 +942,7 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     validate_person_name(name)?;
     let name = name.trim().to_string();
     let group_path = normalize_group_path(group_path); // #42
+    validate_group_path(&group_path)?; // #165: status seats are system-only
     if face_ids.is_empty() {
         bail!("no faces selected");
     }
@@ -807,24 +1014,34 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
         }
     };
 
-    // group: one path per person; empty ⇒ Ungrouped (no rows)
+    // group: one path per person; empty ⇒ the status seat (§4.35 — the
+    // invariant forbids zero rows). Filing replaces the seat: the final
+    // path lands FIRST and the old rows drop after, so the person is
+    // never groupless, not even mid-transaction.
     if owns_group {
-        tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![target])?;
-        if !group_path.is_empty() {
-            tx.execute(
-                "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?, ?)",
-                params![target, group_path],
-            )?;
-        }
+        let final_path = if group_path.is_empty() {
+            derive_seat(&tx, target)?.to_string()
+        } else {
+            group_path.clone()
+        };
+        tx.execute(
+            "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?1, ?2)",
+            params![target, final_path],
+        )?;
+        tx.execute(
+            "DELETE FROM person_groups WHERE person_id = ?1 AND path != ?2",
+            params![target, final_path],
+        )?;
     }
 
-    for (face_id, person_id, status) in &selected {
+    // claim rule (#165 §4.35, replacing the old sticky rule): an
+    // assignment ALWAYS confirms what it touches — including previously
+    // rejected faces (reachable only under Show → Rejected, §4.10), which
+    // it un-rejects and moves. Plain accept never un-rejects (§4.3).
+    for (face_id, person_id, _status) in &selected {
         if *person_id == Some(target) {
-            // sticky rejected (design §4.2): a rename never un-rejects —
-            // confirm only faces that aren't already rejected
             tx.execute(
-                "UPDATE faces SET link_status = 'confirmed'
-                  WHERE id = ? AND link_status != 'rejected'",
+                "UPDATE faces SET link_status = 'confirmed' WHERE id = ?",
                 params![face_id],
             )?;
         } else {
@@ -838,20 +1055,10 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
                 params![target, face_id],
                 |r| r.get(0),
             )?;
-            if status == "rejected" {
-                // sticky rejected (design §4.2): the face moves with its
-                // person but keeps its status — only an explicit accept
-                // un-rejects it
-                tx.execute(
-                    "UPDATE faces SET person_id = ?, reassigned = 1, seq = ? WHERE id = ?",
-                    params![target, seq, face_id],
-                )?;
-            } else {
-                tx.execute(
-                    "UPDATE faces SET person_id = ?, link_status = 'confirmed', reassigned = 1, seq = ? WHERE id = ?",
-                    params![target, seq, face_id],
-                )?;
-            }
+            tx.execute(
+                "UPDATE faces SET person_id = ?, link_status = 'confirmed', reassigned = 1, seq = ? WHERE id = ?",
+                params![target, seq, face_id],
+            )?;
         }
     }
 
@@ -860,6 +1067,11 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     // a stale shell — delete it (groups/refcrops with it, #46) so merges and
     // whole-group moves don't leave the old person behind in the tree.
     for pid in &old_persons {
+        if is_system_person(&tx, *pid)? {
+            continue; // §4.35: the system person is never deleted — an
+            // emptied `Rejected` is an invisible shell (§4.10) the next
+            // reject reuses
+        }
         let n: i64 = tx.query_row(
             "SELECT COUNT(*) FROM faces WHERE person_id = ?",
             params![pid],
@@ -884,12 +1096,17 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     affected.sort();
     for pid in &affected {
         recompute_person(&tx, *pid, &settings)?;
+        reseat(&tx, *pid)?; // §4.35: seat-holders re-derive; filed/system no-op
     }
     tx.commit()?;
     Ok(())
 }
 
-/// §4.3 — accept (confirm) faces in place.
+/// §4.2/§4.3 (#165) — set the face verdict. `rejected` RE-HOMES every
+/// face onto the system person `Rejected` in the same transaction
+/// (seq/name re-derived per §4.7, §4.35); `confirmed` NEVER un-rejects —
+/// rejected faces are skipped: the claim rule (#165) makes an
+/// assignment the only exit from `rejected`.
 pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<()> {
     if !matches!(status, "confirmed" | "rejected") {
         bail!("bad status {status}");
@@ -900,14 +1117,26 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
-    let list = ids_list(face_ids);
-    tx.execute(
-        &format!("UPDATE faces SET link_status = ? WHERE id IN ({list})"),
-        params![status],
-    )?;
-    let affected = affected_persons(&tx, face_ids, None)?;
-    for pid in &affected {
-        recompute_person(&tx, *pid, &settings)?;
+    if status == "rejected" {
+        let affected = reject_and_rehome(&tx, face_ids)?;
+        for pid in &affected {
+            recompute_person(&tx, *pid, &settings)?;
+            reseat(&tx, *pid)?; // §4.35: e.g. `UnknownN` New → Accepted
+        }
+    } else {
+        // §4.3/§4.35: accept skips rejected faces — never un-rejects
+        tx.execute(
+            &format!(
+                "UPDATE faces SET link_status = 'confirmed'
+                  WHERE id IN ({}) AND link_status != 'rejected'",
+                ids_list(face_ids)
+            ),
+            [],
+        )?;
+        for pid in affected_persons(&tx, face_ids, None)? {
+            recompute_person(&tx, pid, &settings)?;
+            reseat(&tx, pid)?;
+        }
     }
     tx.commit()?;
     Ok(())
@@ -1026,17 +1255,15 @@ pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<()> 
     }
     let old_name: String =
         tx.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
-    tx.execute("UPDATE persons SET name = ? WHERE id = ?", params![name.trim(), person_id])?;
-    if old_name.starts_with("Unknown") {
-        // leaving the importer's Unknown cluster: drop the virtual-branch
-        // group path so the renamed person shows under Ungrouped or their own
-        // path (F7, mirrors assign_person's rename-in-place)
-        tx.execute(
-            "DELETE FROM person_groups WHERE person_id = ?
-              AND (path = 'Unknown' OR path LIKE 'Unknown|%')",
-            params![person_id],
-        )?;
+    if old_name == "Rejected" {
+        // §4.35: the system person is never renamed (validate_person_name
+        // reserves the target name as well — this guards the source)
+        bail!("'Rejected' is the system person for rejected faces (#165) and cannot be renamed");
     }
+    tx.execute("UPDATE persons SET name = ? WHERE id = ?", params![name.trim(), person_id])?;
+    // (#165): the retired `Unknown` group rows are gone since v1.7 — a
+    // rename keeps the person's rows exactly as they are (status seat or
+    // real path, #153)
     refresh_person_names(&tx, person_id)?;
     // #43: refcrop filenames embed the face name, so a rename must rebuild
     // them — symmetric with assign_person (no-op for a faceless person)
@@ -1058,27 +1285,39 @@ fn normalize_group_path(path: &str) -> String {
 }
 
 pub fn set_person_group(paths: &Paths, person_id: i64, path: &str) -> Result<()> {
+    let path = normalize_group_path(path);
+    validate_group_path(&path)?; // #165: status seats are system-only
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
-    let path = normalize_group_path(path);
-    tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![person_id])?;
-    if !path.is_empty() {
-        tx.execute(
-            "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?, ?)",
-            params![person_id, path],
-        )?;
-    }
+    guard_system_person(&tx, person_id)?; // §4.35
+    // §4.35: the final row (given path, or the derived seat for empty
+    // input) lands BEFORE the old rows drop — never zero rows.
+    let final_path = if path.is_empty() {
+        derive_seat(&tx, person_id)?.to_string()
+    } else {
+        path
+    };
+    tx.execute(
+        "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?1, ?2)",
+        params![person_id, final_path],
+    )?;
+    tx.execute(
+        "DELETE FROM person_groups WHERE person_id = ?1 AND path != ?2",
+        params![person_id, final_path],
+    )?;
     tx.commit()?;
     Ok(())
 }
 
-/// §4.16 (#50) — group paths are normalised (#42) and `Ungrouped` is
-/// reserved: it is the tree's pseudo-group for persons with no group row,
-/// so a literal segment of that name would render as (and merge into) the
-/// virtual branch. `Unknown` stays an ordinary branch name.
+/// §4.16 (#50/#165) — group paths are normalised (#42) and five segments
+/// are RESERVED: `Ungrouped` (the retired pseudo-group), `Unknown` (the
+/// retired group value) and the three status seats `New`, `Accepted`,
+/// `Rejected` (§4.35: system-written — no typed path, dialog or drop may
+/// produce them; their branches carry no menu and accept no drops).
 fn validate_group_path(path: &str) -> Result<()> {
-    if path.split('|').any(|s| s == "Ungrouped") {
-        bail!("'Ungrouped' is a reserved group name");
+    const RESERVED: [&str; 5] = ["Ungrouped", "New", "Accepted", "Rejected", "Unknown"];
+    if let Some(seg) = path.split('|').find(|s| RESERVED.contains(&s)) {
+        bail!("'{seg}' is a reserved group name (#165: status seats and retired segments)");
     }
     Ok(())
 }
@@ -1099,6 +1338,9 @@ pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()>
     if old.is_empty() {
         bail!("no group to rename");
     }
+    if is_status_seat(&old) {
+        bail!("status branches are system furniture (#165, §4.35) — rename is refused");
+    }
     validate_group_path(&new)?;
     if new == old || new.starts_with(&format!("{old}|")) {
         bail!("a branch cannot be moved inside itself");
@@ -1106,6 +1348,9 @@ pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()>
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
     let n = if new.is_empty() {
+        // §4.35: every person doomed by this rewrite gets its derived seat
+        // BEFORE the branch rows drop (never zero rows, no trigger)
+        seat_branch_doomed(&tx, &old)?;
         tx.execute(
             &format!("DELETE FROM person_groups WHERE {BRANCH_OF}"),
             params![old],
@@ -1126,17 +1371,23 @@ pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()>
     Ok(())
 }
 
-/// §4.16 (#50) — delete a group branch: the `person_groups` rows of the
-/// whole subtree go away, so every person inside (incl. sub-branches)
-/// becomes Ungrouped. Structure below the branch is not preserved —
-/// re-group via move/rename. Faces, names, statuses untouched.
+/// §4.16 (#50/#165) — delete a group branch: the `person_groups` rows of
+/// the whole subtree go away; persons left without any row fall to their
+/// status seat (§4.35 — seated before the rows drop). Structure below
+/// the branch is not preserved — re-group via move/rename. Faces, names,
+/// statuses untouched. Status branches are system furniture and cannot
+/// be deleted.
 pub fn delete_group(paths: &Paths, path: &str) -> Result<()> {
     let path = normalize_group_path(path);
     if path.is_empty() {
         bail!("no group to delete");
     }
+    if is_status_seat(&path) {
+        bail!("status branches are system furniture (#165, §4.35) — delete is refused");
+    }
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
+    seat_branch_doomed(&tx, &path)?; // §4.35
     let n = tx.execute(
         &format!("DELETE FROM person_groups WHERE {BRANCH_OF}"),
         params![path],
@@ -1148,10 +1399,11 @@ pub fn delete_group(paths: &Paths, path: &str) -> Result<()> {
     Ok(())
 }
 
-/// §4.16 (#50) — move persons to a (possibly new) group: each person's
-/// group path is replaced with the target; empty ⇒ Ungrouped. Works for
-/// any persons, wherever they live (incl. Unknown/Ungrouped). Faces,
-/// names, statuses, primaries untouched.
+/// §4.16 (#50/#165) — move persons to a (possibly new) group: each
+/// person's group path is replaced with the target; empty ⇒ the person
+/// falls to their status seat (§4.35). Works for any persons, wherever
+/// they live (rows in the status branches included — the system person
+/// itself is refused, §4.35). Faces, names, statuses, primaries untouched.
 pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> Result<()> {
     let ids: HashSet<i64> = person_ids.iter().copied().collect();
     if ids.is_empty() {
@@ -1168,13 +1420,22 @@ pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> 
         if exists == 0 {
             continue;
         }
-        tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
-        if !path.is_empty() {
-            tx.execute(
-                "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?, ?)",
-                params![pid, path],
-            )?;
-        }
+        guard_system_person(&tx, pid)?; // §4.35: Rejected never re-grouped
+        // insert-first: the final row (target, or the derived seat for
+        // empty input) lands before the old rows drop — §4.35
+        let final_path = if path.is_empty() {
+            derive_seat(&tx, pid)?.to_string()
+        } else {
+            path.clone()
+        };
+        tx.execute(
+            "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?1, ?2)",
+            params![pid, final_path],
+        )?;
+        tx.execute(
+            "DELETE FROM person_groups WHERE person_id = ?1 AND path != ?2",
+            params![pid, final_path],
+        )?;
         moved += 1;
     }
     if moved == 0 {
@@ -1184,17 +1445,19 @@ pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> 
     Ok(())
 }
 
-/// §4.16 (#157, v3.59) — tree D&D move for the §9 multi-row world: **one
-/// membership re-homes**. Dropping a person row from placement `from` onto
-/// branch `to` removes the `from` row (when the person has it — every
-/// placement is one stored row) and files the person into `to`; any other
-/// membership is kept, so a multi-group person stays multi-group
-/// (`INSERT OR IGNORE` dedupes the PK when `to` is already present). A
-/// person dragged from a branch they are not in (another member of the
-/// dragged selection) is simply filed into `to`. `to = ""` (the Ungrouped
-/// virtual branch) only removes the dragged membership — the person
-/// renders Ungrouped only when no row remains (§3). `from = to` is a
-/// no-op: the person is already rendered under the target.
+/// §4.16 (#157, v3.59/#165) — tree D&D move for the §9 multi-row world:
+/// **one membership re-homes**. Dropping a person row from placement
+/// `from` onto branch `to` removes the `from` row (when the person has
+/// it — every placement is one stored row) and files the person into
+/// `to`; any other membership is kept, so a multi-group person stays
+/// multi-group (`INSERT OR IGNORE` dedupes the PK when `to` is already
+/// present). **Filing drops the person's status seat** (§4.35/§4.18:
+/// filing replaces the seat). A person dragged from a branch they are
+/// not in (another member of the dragged selection) is simply filed into
+/// `to`. `to = ""` removes only the dragged membership — when it was the
+/// last, the person falls to their status seat (§4.35; the Ungrouped
+/// drop target is retired, #165). `from = to` is a no-op: the person is
+/// already rendered under the target.
 pub fn move_persons_between_groups(
     paths: &Paths,
     person_ids: &[i64],
@@ -1219,6 +1482,7 @@ pub fn move_persons_between_groups(
         if exists == 0 {
             continue;
         }
+        guard_system_person(&tx, pid)?; // §4.35: Rejected never re-grouped
         if from != to {
             tx.execute(
                 "DELETE FROM person_groups WHERE person_id = ? AND path = ?",
@@ -1230,6 +1494,15 @@ pub fn move_persons_between_groups(
                 "INSERT OR IGNORE INTO person_groups (person_id, path) VALUES (?, ?)",
                 params![pid, to],
             )?;
+            // §4.35/§4.18: filing replaces the seat — an add-group onto a
+            // seated person drops the seat (insert happened above first)
+            tx.execute(
+                "DELETE FROM person_groups
+                  WHERE person_id = ? AND path IN ('New', 'Accepted', 'Rejected')",
+                params![pid],
+            )?;
+        } else {
+            ensure_seat(&tx, pid)?; // §4.35: last membership removed ⇒ seat
         }
         moved += 1;
     }
@@ -1249,10 +1522,12 @@ pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<()> 
     Ok(())
 }
 
-/// §4.13 (#35) — remove unwanted persons: every face becomes `rejected`,
-/// is detached (`person_id = NULL`), stale foreign primary pointers are
-/// cleared, then the person row is deleted (groups/refcrops cascade).
-/// Faces are never deleted — they stay as rejected, unowned records.
+/// §4.13 (#35/#165) — remove unwanted persons: every face becomes
+/// `rejected` and JOINS the system person `Rejected` (§4.2/§4.35 — no
+/// writer ever detaches a face anymore), stale foreign primary pointers
+/// are cleared, then the person row is deleted (its groups/refcrops go
+/// with it — the group invariant governs living persons only). Faces are
+/// never deleted. The system person itself can never be removed.
 /// One transaction for the whole batch; no undo.
 pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
     let ids: HashSet<i64> = person_ids.iter().copied().collect();
@@ -1260,8 +1535,13 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
         bail!("no persons selected");
     }
     let mut con = connect(paths)?;
+    let settings = get_settings(paths)?;
     let tx = con.transaction()?;
+    for pid in &ids {
+        guard_system_person(&tx, *pid)?; // §4.35: Rejected never removed
+    }
     let mut removed = 0;
+    let mut touched: HashSet<i64> = HashSet::new();
     for pid in ids {
         // defensive: no OTHER person may keep pointing at these faces
         tx.execute(
@@ -1269,24 +1549,30 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
               WHERE primary_face_id IN (SELECT id FROM faces WHERE person_id = ?)",
             params![pid],
         )?;
-        // rejected = out of review (§4.2); detach so the FK allows the delete
-        tx.execute(
-            "UPDATE faces SET link_status = 'rejected' WHERE person_id = ?",
-            params![pid],
-        )?;
-        tx.execute(
-            "UPDATE faces SET person_id = NULL WHERE person_id = ?",
-            params![pid],
-        )?;
+        // §4.2/§4.35: rejection re-homes — the faces join `Rejected`
+        let fids: Vec<i64> = {
+            let mut st = tx.prepare("SELECT id FROM faces WHERE person_id = ?")?;
+            let rows = st.query_map(params![pid], |r| r.get::<_, i64>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        if !fids.is_empty() {
+            touched.extend(reject_and_rehome(&tx, &fids)?);
+        }
         // #46: delete dependents explicitly instead of trusting the FK
         // cascade — a connection opened without foreign_keys=ON would
-        // otherwise orphan these rows
+        // otherwise orphan these rows (the person dies, so no seat is
+        // written for it — §4.35 governs living persons)
         tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
         tx.execute("DELETE FROM person_refcrops WHERE person_id = ?", params![pid])?;
         removed += tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
+        touched.remove(&pid);
     }
     if removed == 0 {
         bail!("none of the selected persons exist any more");
+    }
+    for pid in &touched { // the system person, in practice
+        recompute_person(&tx, *pid, &settings)?;
+        reseat(&tx, *pid)?;
     }
     tx.commit()?;
     Ok(())

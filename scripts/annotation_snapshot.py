@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """annotation_snapshot.py — one-off export/restore of manual annotations.
 
-Supports the schema v1.6 drop & recreate (design v1.3; AGENTS.md: no
+Supports the schema v1.7 drop & recreate (#165, gui-design §4.35; AGENTS.md: no
 migrations). Export reads the OLD database (pre-marker or the current
 version) and writes the
 manual work — named persons, groups, notes, primary picks, per-face
@@ -19,7 +19,7 @@ summary on **stderr** (stdout is the JSON data channel); -q/--quiet prints
 only the header and the final summary.
 
 Export never writes to the database (read-only connection). Restore requires
-a schema v1.6 target (schema_version gate), runs in one transaction and
+a schema v1.7 target (schema_version gate), runs in one transaction and
 prints a summary; unmatched faces are reported, never silently dropped.
 
 Exit codes: 0 ok, 1 failure / incompatible schema. stdlib only.
@@ -37,7 +37,7 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # must match database/schema.sql and scripts/import_roll.py / db.rs
-SCHEMA_VERSION = "1.6"
+SCHEMA_VERSION = "1.7"
 FORMAT = 1
 
 
@@ -78,8 +78,8 @@ def detect_schema(con: sqlite3.Connection) -> str:
 
 
 def require_schema(con: sqlite3.Connection, db: Path) -> None:
-    """Compatibility gate for RESTORE: the target must be v1.5 (like
-    import_roll.check_schema)."""
+    """Compatibility gate for RESTORE: the target must be the current
+    version (like import_roll.check_schema)."""
     try:
         row = con.execute("SELECT version FROM schema_version").fetchone()
     except sqlite3.Error:
@@ -89,9 +89,13 @@ def require_schema(con: sqlite3.Connection, db: Path) -> None:
         )
     if row is None or row[0] != SCHEMA_VERSION:
         got = row[0] if row else "empty schema_version table"
+        remedy = (
+            "upgrade it in place (backup first): scripts/fix_status_groups.py"
+            if got == "1.6"
+            else f"Recreate with: sqlite3 {db} < database/schema.sql")
         sys.exit(
             f"{db} schema v{got} does not match restore target (v{SCHEMA_VERSION}).\n"
-            f"Recreate with: sqlite3 {db} < database/schema.sql"
+            f"{remedy}"
         )
 
 
@@ -305,6 +309,34 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
     def key_of(rec: dict) -> tuple:
         return (rec["hash"], rec["x"], rec["y"], rec["w"], rec["h"])
 
+    def ensure_rejected_person() -> int:
+        """#165/§4.35: the system person `Rejected` + its seat, on demand."""
+        row = con.execute("SELECT id FROM persons WHERE name = 'Rejected'").fetchone()
+        if row:
+            con.execute(
+                "INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, 'Rejected')",
+                (row[0],))
+            return row[0]
+        pid = con.execute(
+            "INSERT INTO persons(name, state, created_at)"
+            " VALUES ('Rejected', 'created', ?)", (now,)).lastrowid
+        con.execute("INSERT INTO person_groups(person_id, path) VALUES (?, 'Rejected')",
+                    (pid,))
+        return pid
+
+    def park_rejected(fid: int, desc: str | None) -> None:
+        """#165/§4.35: home a rejected face on the system person, seq/name
+        re-derived per §4.7 — the snapshot's recorded person is moot."""
+        rej = ensure_rejected_person()
+        seq = con.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces "
+            "WHERE person_id = ? AND COALESCE(description, '') = COALESCE(?, '')",
+            (rej, desc)).fetchone()[0]
+        con.execute(
+            "UPDATE faces SET person_id = ?, seq = ?, link_status = 'rejected', name = ? "
+            "WHERE id = ?",
+            (rej, seq, derive_name("Rejected", desc, seq), fid))
+
     stats = {"persons": 0, "faces": 0, "unmatched_faces": 0,
              "moved_faces": 0, "primary": 0, "pins": 0, "unmatched_pins": 0,
              "shells_deleted": 0, "refcrops": 0}
@@ -323,9 +355,13 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
             con.execute("DELETE FROM person_groups WHERE person_id = ?", (pid,))
             for g in p["groups"]:
                 g = normalize_group_path(g)  # #42: normalize on the write side
-                if g:
-                    con.execute("INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, ?)",
-                                (pid, g))
+                # #165/§4.35: retired/reserved segments from an old export
+                # never land — the final seat pass below re-seats the
+                # person (a valid status seat in the export travels on)
+                if not g or any(s in ("Ungrouped", "Unknown") for s in g.split("|")):
+                    continue
+                con.execute("INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, ?)",
+                            (pid, g))
             if p["note"] is not None:
                 con.execute("UPDATE persons SET note = ? WHERE id = ?", (p["note"], pid))
             restored[p["name"]] = pid
@@ -337,7 +373,13 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
                 stats["unmatched_faces"] += 1
                 continue
             pname = f.get("person")
-            if pname in restored:
+            if f.get("link_status") == "rejected":
+                # #165/§4.35: a restored rejected face homes on the system
+                # person `Rejected` (seq/name re-derived) — wherever the
+                # pre-#165 snapshot says it used to live
+                park_rejected(fid, f.get("description"))
+                stats["moved_faces"] += 1
+            elif pname in restored:
                 con.execute(
                     "UPDATE faces SET person_id = ?, seq = ?, link_status = ?, "
                     "description = ?, reassigned = 1, name = ? WHERE id = ?",
@@ -354,6 +396,29 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
                     "UPDATE faces SET link_status = ?, description = ?, name = ? WHERE id = ?",
                     (f["link_status"], f["description"], new_name, fid))
             stats["faces"] += 1
+
+        # #165/§4.35: group invariant + seat derivation for every person
+        # the restore touched — groupless gets its seat, a seat-only
+        # person re-derives from the faces it now holds; a real group (or
+        # the system person's `Rejected`) is never touched. Insert-first.
+        seats = ("New", "Accepted", "Rejected")
+        for pid in sorted(set(restored.values())):
+            rows = [r[0] for r in con.execute(
+                "SELECT path FROM person_groups WHERE person_id = ?", (pid,))]
+            if rows and "Rejected" in rows:
+                continue                   # the system person is never re-seated
+            has_new = con.execute(
+                "SELECT EXISTS(SELECT 1 FROM faces WHERE person_id = ?"
+                "               AND link_status = 'provisional')", (pid,)).fetchone()[0]
+            seat = "New" if has_new else "Accepted"
+            if not rows:
+                con.execute("INSERT INTO person_groups(person_id, path) VALUES (?, ?)",
+                            (pid, seat))
+            elif all(r in seats for r in rows) and seat not in rows:
+                con.execute("INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, ?)",
+                            (pid, seat))
+                con.execute("DELETE FROM person_groups WHERE person_id = ? AND path != ?",
+                            (pid, seat))
 
         for p in data["persons"]:
             if not p.get("primary"):

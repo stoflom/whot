@@ -192,6 +192,10 @@ def recompute_after_move(con: sqlite3.Connection, moved: list[int],
         cleared = con.execute(
             "UPDATE persons SET primary_face_id = NULL, primary_pinned = 0"
             f" WHERE primary_face_id IN ({ph})", moved).rowcount
+        # a pin must never outlive the face's stay (§4.6): rejected faces
+        # are refcrop-ineligible, wherever the stale rows came from
+        con.execute(
+            f"DELETE FROM person_refcrops WHERE face_id IN ({ph})", moved)
         for pid in sorted(origins):
             snap.backfill_primary(con, pid)
             snap.recompute_refcrops(con, pid, refcrop_n)

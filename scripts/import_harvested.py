@@ -52,7 +52,7 @@ import pathmap      # legacy path-map file (scripts-design §8.6, #85)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STAGING_SCHEMA_VERSION = "1.2"     # §8.2, exact-match (J3)
-FACES_SCHEMA_VERSION = "1.6"       # database/schema.sql, exact-match
+FACES_SCHEMA_VERSION = "1.7"       # database/schema.sql, exact-match
 GROUP_ROOTS = {"people", "person"}  # stripped from harvested paths (§9.4)
 UNKNOWN_NAME_RE = re.compile(r"^Unknown\d+$")
 
@@ -231,9 +231,13 @@ def check_version(con: sqlite3.Connection, want: str, what: str) -> None:
     row = con.execute("SELECT version FROM schema_version").fetchone()
     got = row[0] if row else None
     if got != want:
+        remedy = (
+            "upgrade it in place first (backup first): scripts/fix_status_groups.py"
+            if got == "1.6" and what == "faces.db"
+            else "refusing to continue (exact match, no migrations)")
         raise SystemExit(
             f"{what} schema version mismatch: want {want}, got {got!r} — "
-            f"refusing to continue (exact match, no migrations)")
+            f"{remedy}")
 
 
 def make_target_copy(faces_db: Path) -> Path:
@@ -764,6 +768,33 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
         "  SELECT 1 FROM faces f WHERE f.person_id = persons.id)")
     if cur.rowcount:
         rep.add("importer_shells_deleted", cur.rowcount)
+
+    # #165 / gui-design §4.35: the group invariant + seat derivation for
+    # every person this run touched — a groupless person gets its seat, a
+    # seated person's seat re-derives from the faces it has left; a real
+    # group (or the system person's `Rejected`) is never touched.
+    seats = ("New", "Accepted", "Rejected")
+    touched = set(person_id_of.values()) | set(plan.get("shell_groups", {}))
+    for pid in sorted(touched):
+        if not dbcon.execute("SELECT 1 FROM persons WHERE id=?", (pid,)).fetchone():
+            continue                       # deleted by the sweep above
+        rows = [r[0] for r in dbcon.execute(
+            "SELECT path FROM person_groups WHERE person_id=?", (pid,))]
+        if rows and "Rejected" in rows:
+            continue                       # the system person is never re-seated
+        has_new = dbcon.execute(
+            "SELECT EXISTS(SELECT 1 FROM faces WHERE person_id=?"
+            " AND link_status='provisional')", (pid,)).fetchone()[0]
+        seat = "New" if has_new else "Accepted"
+        if not rows:
+            dbcon.execute("INSERT INTO person_groups(person_id, path) VALUES(?,?)",
+                          (pid, seat))
+        elif all(r in seats for r in rows) and seat not in rows:
+            # insert-first: the fresh seat lands before the stale one drops
+            dbcon.execute("INSERT OR IGNORE INTO person_groups(person_id, path)"
+                          " VALUES(?,?)", (pid, seat))
+            dbcon.execute("DELETE FROM person_groups WHERE person_id=? AND path!=?",
+                          (pid, seat))
 
     # primary backfill (§9.5 v2.1, #80): the §4.5 machine rule — the same
     # statement as import_roll.assign_missing_primaries (duplicated,
