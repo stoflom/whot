@@ -1,8 +1,13 @@
--- who app — faces.db schema (v1.6; behaviour rules: docs/gui-design.md §4)
--- No migrations: drop and recreate. The schema_version table lets the app,
--- the importer and the annotation tools verify they are talking to the
--- matching schema (SCHEMA_VERSION in src-tauri/src/db.rs and
--- scripts/import_roll.py must equal the value inserted below).
+-- who app — faces.db schema (v1.7; behaviour rules: docs/gui-design.md §4,
+-- incl. §4.35: status seats New/Accepted/Rejected and the ≥1-group-row
+-- invariant). No migrations: drop and recreate. The schema_version table
+-- lets the app, the importer and the annotation tools verify they are
+-- talking to the matching schema (SCHEMA_VERSION in src-tauri/src/db.rs,
+-- scripts/import_roll.py, scripts/import_harvested.py and
+-- scripts/annotation_snapshot.py must equal the value inserted below).
+-- A v1.6 database is upgraded IN PLACE by scripts/fix_status_groups.py
+-- (backup first) instead of being recreated — its stored .schema stays
+-- byte-identical to a fresh build of this file (#165).
 --   sqlite3 data/faces.db < database/schema.sql
 
 PRAGMA journal_mode = WAL;
@@ -53,6 +58,11 @@ CREATE INDEX idx_image_paths_path ON image_paths(path);
 
 -- NOTE: faces is created before persons so persons.primary_face_id can carry a
 -- real FK; SQLite accepts FK references to tables that are created later.
+-- #165 (gui-design §4.35): `persons.name` also reserves the EXACT name
+-- `Rejected` for the system person that owns every rejected face (like
+-- the `Unknown*` prefix rule in validate_person_name); that person is
+-- created on demand, never renamed/removed, and is only listed under
+-- Show → Rejected.
 
 CREATE TABLE faces (
   id                    INTEGER PRIMARY KEY,
@@ -106,6 +116,15 @@ CREATE TABLE persons (
   created_at       TEXT NOT NULL
 );
 
+-- #165 / gui-design §4.35 — the GROUP INVARIANT, writer-owned (no
+-- trigger: the writers replace a group by inserting before deleting):
+-- EVERY person carries at least one row here; the "no group" state does
+-- not exist. `New`/`Accepted`/`Rejected` are system-written status
+-- seats (state-derived: any provisional face ⇒ New, else Accepted; the
+-- system person `Rejected` always holds `Rejected`), and `Ungrouped`,
+-- `New`, `Accepted`, `Rejected` plus the retired `Unknown` are reserved
+-- path segments no user input may produce (validate_group_path).
+-- A v1.6 database reaches this contract via scripts/fix_status_groups.py.
 CREATE TABLE person_groups (
   person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
   path       TEXT NOT NULL,                 -- free-form | -path, e.g. family|lombards
@@ -128,4 +147,4 @@ CREATE TABLE schema_version (
   version    TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-INSERT INTO schema_version(version, updated_at) VALUES ('1.6', datetime('now'));
+INSERT INTO schema_version(version, updated_at) VALUES ('1.7', datetime('now'));
