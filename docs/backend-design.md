@@ -1,7 +1,9 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.4** (#167: `importer` module — child-process runner for
-`scripts/import_roll.py` + `scan_import_dir`; `Paths.root` exposed)
+**Version: 1.5** (#167: `importer` module — child-process runner for
+`scripts/import_roll.py` + `scan_import_dir`; `Paths.root` exposed;
+#169: the scan walks recursively and early-exits on the first image,
+`IMAGE_SUFFIXES` back in exact parity with the script)
 (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
@@ -160,10 +162,14 @@ Behaviour rules: gui-design §4.36. Structure:
   path `<root>/scripts/import_roll.py`, cwd `<root>` — the script
   resolves `.env`/DB itself from the project root, exactly like a
   terminal run (scripts-design §8).
-- **`scan_import_dir(path)`** — one directory level (`IMAGE_SUFFIXES`
-  parity with the script's default non-recursive walk), returning the
-  image count; the GUI treats `> 0` + no snapshot match as
-  "not yet imported" (gui-design §4.36 trigger).
+- **`scan_import_dir(path)`** — a **recursive** walk (hidden directories
+  skipped, bounded depth 32 against symlink cycles) over the script's
+  exact `IMAGE_SUFFIXES`, **early-exit on the first image**: the GUI
+  contract is a boolean `≥ 1 image anywhere beneath it` (the full count
+  is never displayed, so a huge tree costs one hit), and the GUI treats
+  `true` + no snapshot match as "not yet imported" (gui-design §4.36
+  trigger; #169 — rolls live in sub-folders, a one-level probe misread
+  them as empty).
 - **`get_import_status(since)`** returns
   `{ running, killed, exit_code, next_since, lines }` — lines are the
   buffer slice `[since..]` (the GUI polls and appends; no event
@@ -176,7 +182,8 @@ Behaviour rules: gui-design §4.36. Structure:
   exercise the `db::` functions end-to-end: assign/reject/primary/
   refcrop/group flows and their derived-state consequences.
 - `src-tauri/tests/importer.rs` (#167) — arg building (flag order, the
-  `--create-db`+`--dry-run` refusal), `scan_import_dir` over a temp tree,
+  `--create-db`+`--dry-run` refusal), `scan_import_dir` over a temp tree
+  (a level-2 image IS found — #169),
   and a real child-process lifecycle against a stub script (start →
   `get_import_status` drain → exit code; kill → `killed`).
 - Run with `(cd src-tauri && cargo test)`; the Tauri context embeds

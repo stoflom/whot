@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.68** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.69** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1440,9 +1440,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    - **Trigger**: committing a path (typed + Enter, or the native folder
      picker) that matches no snapshot image **and** that
      `scan_import_dir(path)` confirms to be a real directory holding
-     ≥ 1 image file (`IMAGE_SUFFIXES` of `import_roll.py`, scanned
-     non-recursively; no fs walk happens for a path that already matches
-     snapshot images). A path that is not such a directory keeps the old
+     ≥ 1 image file **at any depth** (`IMAGE_SUFFIXES` of
+     `import_roll.py`, walked **recursively** — #169: real rolls are
+     organised in sub-folders, so a one-level probe misread them as
+     empty; no fs walk happens for a path that already matches snapshot
+     images). A path that is not such a directory keeps the old
      dim refusal hint (`no images under …`) and the current root — the
      #162 hint path is unchanged.
    - **The import pane** replaces the **right pane** (DetailPane's slot)
@@ -1453,7 +1455,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      be open at a time.
    - **Options**: toggles for the `import_roll.py` CLI flags that make
      sense per roll — `--dry-run`, `--all`, `--gpu` (CPU is the default,
-     §4.29/#91), `--recursive`, `--threshold <f>` (default `0.40`, the
+     §4.29/#91), `--recursive` (**on by default** — #169: the probe that
+     opened the pane already found images below the top level, so a
+     default-off import would silently skip the very sub-folders that
+     triggered it), `--threshold <f>` (default `0.40`, the
      script's `THRESHOLD_DEFAULT`), and `--create-db`; the **roll
      directory** and the resolved **database path** are shown read-only
      (the pane is opened with the directory pre-filled; re-picking goes
