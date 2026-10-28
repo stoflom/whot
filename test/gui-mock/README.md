@@ -23,7 +23,7 @@ without running the Rust backend or touching the real database.
 npm run build            # dist/ must be current
 python3 test/gui-mock/dump_snap.py
 python3 test/gui-mock/server.py &     # default http://127.0.0.1:8123/
-python3 test/gui-mock/gui_check.py    # exit 0 iff the contract checks (C1–C29, R1–R2) pass
+python3 test/gui-mock/gui_check.py    # exit 0 iff the contract checks (C1–C31, R1–R2) pass
 ```
 
 Manual poking: open http://127.0.0.1:8123/ in any browser.
@@ -39,6 +39,11 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
   shell deletion, name re-derivation); reject re-homes onto the system
   person `Rejected`, accept never un-rejects, and every person keeps
   their group row or status seat (§4.35).
+- `scan_import_dir` consults the seeded `window.__MOCK_ROLL_DIRS__`
+  (`{path: imageCount}`, default 0 — "not a directory");
+  `start_import`/`stop_import`/`get_import_status` (#167) simulate the
+  child with a scripted line stream over timers (exit 0) —
+  `window.__MOCK_IMPORT__` exposes the live slot to checks.
 - Mock state is in-memory and per page-load: every navigation reloads
   `snap.json`, so checks are independent and the real DB is never written.
 

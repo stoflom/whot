@@ -24,6 +24,20 @@
 (() => {
   let SNAP = null;
   let nextPersonId = 1;
+  // #167: the import slot (mirrors importer.rs: one child at a time,
+  // append-only line buffer, killed/exit markers)
+  const imp = { running: false, killed: false, exit: null, lines: [], started: 0, opts: null, timers: [] };
+  const imp_status = (since) => {
+    const s = Math.min(since, imp.lines.length);
+    return {
+      running: imp.running,
+      killed: imp.killed,
+      exitCode: imp.exit,
+      elapsed: imp.started ? Math.floor((Date.now() - imp.started) / 1000) : null,
+      nextSince: imp.lines.length,
+      lines: imp.lines.slice(s),
+    };
+  };
   // every invoke waits for the seed load — the app's first getSnapshot
   // races the fetch otherwise (intermittent permanent "loading…")
   let ready = Promise.resolve();
@@ -323,6 +337,52 @@
     get_face_preview: ({ faceId }) => svg((faceId * 47) % 360, String(faceId)),
     get_image_thumb: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
     get_image_preview: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
+    // #167: the import runner — scan_import_dir consults the seeded
+    // window.__MOCK_ROLL_DIRS__ ({path: imageCount}); start_import
+    // simulates the child: a scripted line stream over timers, then an
+    // exit; stop_import "kills" it. window.__MOCK_IMPORT__ exposes the
+    // live slot to test scripts.
+    scan_import_dir: ({ path }) =>
+      (window.__MOCK_ROLL_DIRS__ ?? {})[path] ?? 0,
+    get_import_info: () => "/mock/data/faces.db",
+    start_import: ({ options }) => {
+      if (imp.running) throw new Error("an import is already running");
+      if (options.createDb && options.dryRun)
+        throw new Error("--create-db cannot be combined with --dry-run (creation is a write)");
+      const lines = [
+        `WhoT import_roll — ${options.dryRun ? "DRY RUN — no writes" : "import"}`,
+        `roll dir  : ${options.rollDir}`,
+        `recursive : ${options.recursive ? "yes" : "no"}`,
+        `threshold : ${options.threshold}  (model insightface:buffalo_l)`,
+        `provider  : ${options.gpu ? "gpu (MIGraphX, --gpu)" : "cpu (default, --gpu to opt in)"}`,
+        `database  : /mock/data/faces.db`,
+        `scanned 3 image(s)`,
+        "done — imported 3 image(s), 3 face(s)",
+      ];
+      imp.running = true; imp.killed = false; imp.exit = null;
+      imp.lines = []; imp.since = 0; imp.started = Date.now();
+      imp.opts = options;
+      lines.forEach((l, i) => {
+        imp.timers.push(setTimeout(() => {
+          if (!imp.running) return;
+          imp.lines.push(l);
+          if (i === lines.length - 1) {
+            imp.running = false; imp.exit = 0;
+            window.__MOCK_IMPORT__ = imp;
+          }
+        }, 120 * (i + 1)));
+      });
+      window.__MOCK_IMPORT__ = imp;
+      return imp_status(0);
+    },
+    stop_import: () => {
+      if (!imp.running) return false;
+      imp.timers.forEach(clearTimeout); imp.timers = [];
+      imp.running = false; imp.killed = true; imp.exit = null;
+      window.__MOCK_IMPORT__ = imp;
+      return true;
+    },
+    get_import_status: ({ since }) => imp_status(since ?? 0),
     // #162: the native folder picker (tauri-plugin-dialog) — tests seed
     // window.__MOCK_DIALOG_PICK__ with the path to "select" (null = cancel)
     "plugin:dialog|open": () => Promise.resolve(window.__MOCK_DIALOG_PICK__ ?? null),
