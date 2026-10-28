@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.69** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.70** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -214,7 +214,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   detail and the card double-click split — always draws one **active,
   name-labelled rectangle** per visible face of that image, colour-coded by
   `link_status`; hover highlights the rectangle and its card (bidirectional),
-  click toggles the face's selection.
+  click toggles the face's selection **and moves the right pane to that
+  face's person (#171, §4.37)** — and on opening a full image the right
+  pane follows the opening face's person.
 - **Card double-click — full-image focus** (#55, §4.19): double-clicking a
   face card opens the center pane's **focus mode**: the annotated full
   image spans the pane's full width (height-fitted, §4.11 overlay
@@ -555,7 +557,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     per visible face from `faces.x/y/w/h` against the canonical
     `images.width/height` coordinate space, percentage-scaled so it stays
     correct at any rendered size. Rectangles are active: hover highlights
-    rectangle + card (shared hover state), click toggles selection; colours
+    rectangle + card (shared hover state), click toggles selection **and
+    re-anchors the right pane on the face's person (#171, §4.37)**; colours
     follow `link_status` (warn/ok/bad). `no-face` images and hidden faces
     (§4.10) draw no rectangles.
 12. **Import-time appearance inheritance** (#27 option A) ⇒ the importer's
@@ -714,7 +717,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 19. **Full-image focus mode** (#55) ⇒ opening a full image (card
     double-click or *Open full image*) turns the center pane into a
     focused workspace: the annotated image spans the pane's full width
-    (height-fitted, §4.11 unchanged) with a **film roll** below — one
+    (height-fitted, §4.11 unchanged) — **on entry the right pane follows
+    the opening face's person (#171, §4.37)** — with a **film roll** below — one
     horizontal, scrollable strip of that image's face cards (all card
     operations keep working; no other faces are shown). The image and its
     header row are **pinned at the top** of the pane while the film roll
@@ -1487,6 +1491,36 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      Closing the pane does not kill a running import (it is an
      independent process); Start/Stop stay reachable by reopening the
      pane on the same directory.
+
+37. **The right pane follows the full image** (#171) ⇒ while a full-size
+   image is on screen the right pane must answer "who is this?" without
+   the user hunting in the tree:
+   - **On entry**: opening the **focus split** (card double-click or
+     *Open full image* on a face) re-anchors the right pane on **the
+     person owning that face**; an image-context entry without a face
+     (the rolls tile's *Open image* / *Open full image (focused)*) —
+     like the rolls-tile/branch detail open — **keeps the current
+     person**. Opening the **Rolls image detail**
+     re-anchors on the opening face's person when the entry carries a
+     face context, and **keeps the current person** when it does not
+     (rolls tile / branch click — there
+     is no person to follow; the pane shows whatever it showed, incl. its
+     empty state when none is anchored).
+   - **On rectangle click**: clicking a rect in either full-image surface
+     switches the right pane to **the clicked face's person**, *in
+     addition to* the §4.11 selection toggle. The view never changes:
+     the split/rolls detail stays open, no tab switch, no person-view
+     navigation (a plain `setPersonId` — deliberately NOT the §4.15/#62
+     tree-row select, which yanks the centre pane), and the selection is
+     untouched beyond the toggle itself.
+   - **Guards**: `face.person_id` may be `NULL` (legacy rows only, #165) —
+     then the anchor is left as it was (never cleared, never `setPersonId(null)`).
+     The **import pane (§4.36) keeps precedence**: while it occupies the
+     right pane, neither entry nor rect-click anchoring steals the slot
+     (the anchor may update underneath — the pane swaps back to the
+     DetailPane on the import pane's close). The followed person's
+     DetailPane edits (rename/group/note/refcrops) keep working — it is
+     still `displayPerson`.
 
 ## 5. Related documents
 
