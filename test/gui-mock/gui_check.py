@@ -5,14 +5,17 @@ Requires:
     1. npm run build                  (dist/ current)
     2. python3 dump_snap.py           (snap.json current)
     3. python3 server.py &            (mock server up, default :8123)
+    4. a display                      (WebKitGTK default; headless boxes
+                                       need Xvfb — Firefox runs without)
 
 Then:
-    python3 gui_check.py [PORT]
+    python3 gui_check.py [PORT]              # WebKitGTK (default, #170)
+    WHOT_GUI_DRIVER=firefox python3 gui_check.py   # Firefox (skill needed)
 
 Each check starts from a fresh page load, which reloads /snap.json, so the
 in-memory mock state is clean per check. Interaction uses trusted input
-(Marionette actions); synthetic events are unreliable for the app's window
-key listeners.
+(W3C WebDriver actions); synthetic events are unreliable for the app's
+window key listeners.
 
 Checks (contract refs: docs/gui-design.md):
   C1  Enter with a live stage stages-then-commits (§4.30, #101)
@@ -92,15 +95,31 @@ Checks (contract refs: docs/gui-design.md):
 Exit code 0 iff all C-checks and the R1 layout rule pass.
 """
 import json
+import os
 import sys
 import time
 
-try:
-    sys.path.insert(0, "/home/stoflom/.pi/agent/skills/firefox-testing")
-    from firefox_tester import FirefoxTester
-except ImportError as e:
-    sys.exit(f"firefox-testing skill not importable: {e}\n"
-             f"(expected at /home/stoflom/.pi/agent/skills/firefox-testing)")
+# #170: driver choice — WebKitGTK (the engine Tauri ships, #168) is the
+# default; Firefox stays available via WHOT_GUI_DRIVER=firefox. The
+# WebKit tester lives in this directory (test infra belongs to the repo);
+# the Firefox tester is the personal firefox-testing skill.
+DRIVER = os.environ.get("WHOT_GUI_DRIVER", "webkit").strip().lower()
+
+if DRIVER == "firefox":
+    try:
+        sys.path.insert(0, "/home/stoflom/.pi/agent/skills/firefox-testing")
+        from firefox_tester import FirefoxTester as Tester
+    except ImportError as e:
+        sys.exit(f"firefox-testing skill not importable: {e}\n"
+                 f"(expected at /home/stoflom/.pi/agent/skills/firefox-testing)")
+elif DRIVER == "webkit":
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from webkit_tester import WebKitTester as Tester
+    except ImportError as e:
+        sys.exit(f"webkit_tester not importable: {e}")
+else:
+    sys.exit(f"unknown WHOT_GUI_DRIVER: {DRIVER!r} (use 'webkit' or 'firefox')")
 
 from selenium.webdriver.common.action_chains import ActionChains as AC
 from selenium.webdriver.common.by import By
@@ -1012,8 +1031,9 @@ def c11_merge_focuses_target(t):
 
 def drag_face(t, src_sel, dst_sel):
     """Simulate an HTML5 drag of a face card (src_sel) onto a drop target
-       (dst_sel). Marionette's trusted mouse events do not raise HTML5 DnD
-       in headless Firefox, so the drag events are dispatched with a
+       (dst_sel). Trusted WebDriver mouse events do not raise HTML5 DnD
+       reliably (headless Firefox never did; #170 keeps the suite
+       engine-neutral), so the drag events are dispatched with a
        shimmed dataTransfer — React's root listeners pick them up.
        Returns 'dropped' (the target highlighted on dragover), 'refused'
        (no highlight — a browser would not deliver a drop), or an error.
@@ -1942,7 +1962,10 @@ def c31_rolls_import_pane(t):
       const log = p.querySelector('.import-log');
       return {
         text: log?.textContent ?? '',
-        selectable: log ? getComputedStyle(log).userSelect : null,
+        // WebKit exposes only the prefixed -webkit-user-select (value
+        // 'text' — the CSS applied); Firefox has the unprefixed one
+        selectable: log ? (getComputedStyle(log).userSelect ??
+                           getComputedStyle(log).webkitUserSelect ?? null) : null,
         state: [...p.querySelectorAll('.import-actions span')][0]?.textContent ?? null,
       };
     """)
@@ -1989,7 +2012,7 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
     URL = URL.format(port=port)
-    with FirefoxTester(headless=True) as t:
+    with Tester(headless=True) as t:
         t.set_window_size(1600, 1000)
         r1_layout(t)
         r2_toggle_perf(t)
