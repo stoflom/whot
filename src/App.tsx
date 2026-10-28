@@ -44,6 +44,7 @@ import FaceGrid, { type Section } from "./components/FaceGrid";
 import FaceOverlay from "./components/FaceOverlay";
 import PersonTree, { orderedVisiblePersonIds } from "./components/PersonTree";
 import RollsPane from "./components/RollsPane";
+import ImportPane from "./components/ImportPane";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
 
@@ -58,6 +59,9 @@ export default function App() {
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
   const [rollRoot, setRollRoot] = useState("/");
+  // #167 (§4.36): the import pane's directory — session state in the
+  // DetailPane's right-pane slot (survives tab switches); null = closed
+  const [importDir, setImportDir] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [selPersons, setSelPersons] = useState<Set<number>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
@@ -1966,6 +1970,9 @@ export default function App() {
                 })
               }
               onContextMenuImage={imageMenu}
+              // #167 (§4.36): a not-yet-imported directory opens the
+              // import pane in the right pane
+              onImportDir={(p) => setImportDir(p)}
             />
           ) : view === "rolls" && imageId != null && imgRow ? (
             <div className="image-detail">
@@ -2019,6 +2026,16 @@ export default function App() {
           title="drag to resize, double-click to reset"
         />
         <aside className="right" style={{ width: paneSizes.right }}>
+          {importDir != null ? (
+            // #167 (§4.36): the import pane takes the right pane while
+            // open; a successful run refreshes the snapshot (the new
+            // faces show up in the rolls tree)
+            <ImportPane
+              dir={importDir}
+              onClose={() => setImportDir(null)}
+              onImported={() => void refresh().catch(() => {})}
+            />
+          ) : (
           <DetailPane
             person={displayPerson}
             refcrops={refcrops}
@@ -2039,6 +2056,7 @@ export default function App() {
               personId != null && mutate(() => api.removeRefcrop(personId, fid))
             }
           />
+          )}
         </aside>
       </div>
 

@@ -154,6 +154,44 @@ export const personFaceClusters = (personId: number, threshold: number) =>
 export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) => invoke("set_settings", { settings });
 
+// ------------------------------------------------------- import runner (#167)
+
+/** per-roll CLI options, mapped 1:1 onto import_roll.py's flags (§4.36) */
+export interface ImportOptions {
+  rollDir: string;
+  dryRun: boolean;
+  all: boolean;
+  gpu: boolean;
+  threshold: number;
+  recursive: boolean;
+  createDb: boolean;
+}
+export interface ImportStatus {
+  running: boolean;
+  killed: boolean;
+  exitCode: number | null;
+  /** seconds since the current/last run started */
+  elapsed: number | null;
+  /** cursor for the next poll */
+  nextSince: number;
+  lines: string[];
+}
+/** fs probe: image files in one directory level (> 0 + no snapshot
+    match = "not yet imported", §4.36) */
+export const scanImportDir = (path: string) =>
+  invoke<number>("scan_import_dir", { path });
+/** spawn scripts/import_roll.py as an independent child process;
+    refused while one is already running */
+export const startImport = (options: ImportOptions) =>
+  invoke<ImportStatus>("start_import", { options });
+/** kill the running import child (if any) → whether one was killed */
+export const stopImport = () => invoke<boolean>("stop_import");
+/** the pane's stdout poll: lines [since..] + process state + elapsed */
+export const getImportStatus = (since: number) =>
+  invoke<ImportStatus>("get_import_status", { since });
+/** the resolved DB path for the pane's read-only header */
+export const getImportInfo = () => invoke<string>("get_import_info");
+
 // ---------------------------------------------------------------- image cache
 //
 // BLOBs never change once written, so a promise cache keyed by id is safe
