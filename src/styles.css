@@ -378,7 +378,15 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .import-opts legend { font-size: 0.75rem; padding: 0 0.3rem; }
 .import-opts label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
-.import-opts input[type="number"] { width: 5ch; margin-left: auto; }
+/* #168: the native spinner arrows render INSIDE the box — reserve their
+   track (padding-right) so they never sit on top of the typed value;
+   border-box keeps the field from growing past the options row */
+.import-opts input[type="number"] {
+  width: 9ch;
+  padding-right: 1.4rem;
+  box-sizing: border-box;
+  margin-left: auto;
+}
 .import-actions { display: flex; align-items: center; gap: 0.5rem; }
 .import-error { color: var(--bad); font-size: 0.8rem; user-select: text; }
 .import-log {
