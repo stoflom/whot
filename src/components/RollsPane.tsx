@@ -241,9 +241,10 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
       return;
     }
     // #167: the one fs probe of the filter — a real directory holding
-    // images nothing has imported yet opens the import pane
+    // images anywhere beneath it (#169, recursive) nothing has imported
+    // yet opens the import pane
     try {
-      if (path !== "/" && (await scanImportDir(path)) > 0) {
+      if (path !== "/" && (await scanImportDir(path))) {
         setHint(null);
         onImportDir(path);
         return;

@@ -55,20 +55,33 @@ fn build_args_create_db_dry_run_refused() {
     assert_eq!(a[0], "--create-db");
 }
 
+/// #169: the probe walks RECURSIVELY — a level-2 image opens the pane —
+/// hidden directories are skipped, non-image files don't count, and
+/// file/missing paths are false
 #[test]
-fn scan_import_dir_counts_one_level_images() {
+fn scan_import_dir_finds_images_at_any_depth() {
     let dir = std::env::temp_dir().join(format!("whot-scan-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("sub")).unwrap();
-    std::fs::write(dir.join("a.JPG"), b"x").unwrap();
-    std::fs::write(dir.join("b.png"), b"x").unwrap();
+    std::fs::create_dir_all(dir.join("sub/deeper")).unwrap();
+    std::fs::create_dir_all(dir.join(".hidden")).unwrap();
     std::fs::write(dir.join("c.txt"), b"x").unwrap();
-    std::fs::write(dir.join("sub/hidden.jpg"), b"x").unwrap(); // level 2 — not counted
-    assert_eq!(scan_import_dir(&dir), 2);
-    // a file / missing path is not a directory → 0
-    assert_eq!(scan_import_dir(&dir.join("a.JPG")), 0);
-    assert_eq!(scan_import_dir(&dir.join("missing")), 0);
+    // the ONLY image is two levels down — reachable only via the
+    // recursive walk (#169: the old one-level assertion flipped)
+    std::fs::write(dir.join("sub/deeper/shot.cr3"), b"x").unwrap();
+    assert!(scan_import_dir(&dir));
+    // a tree whose only image hides in a dot-directory (skipped) and
+    // non-image files are NOT "has an image"
+    let flat = std::env::temp_dir().join(format!("whot-scan-flat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&flat);
+    std::fs::create_dir_all(flat.join(".hidden")).unwrap();
+    std::fs::write(flat.join(".hidden/x.jpg"), b"x").unwrap();
+    std::fs::write(flat.join("c.txt"), b"x").unwrap();
+    assert!(!scan_import_dir(&flat));
+    // a file / missing path is not a directory → false
+    assert!(!scan_import_dir(&flat.join("c.txt")));
+    assert!(!scan_import_dir(&flat.join("missing")));
     let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&flat);
 }
 
 /// the full lifecycle: start → refused second start → drain both pipes →

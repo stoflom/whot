@@ -81,9 +81,10 @@ Checks (contract refs: docs/gui-design.md):
   C31 the Rolls import pane (#167, §4.36): committing a real,
       not-yet-imported directory (typed or via browse…) opens the pane in
       the RIGHT pane (DetailPane gone, rolls tree still interactive) with
-      the per-roll toggles + threshold, the create-db+dry-run refusal,
-      start → stdout viewport fills from the polled status, exit 0 shown;
-      a non-directory path keeps the plain #162 hint (no pane)
+      the per-roll toggles + threshold (--recursive PRE-CHECKED, #169),
+      the create-db+dry-run refusal, start → stdout viewport fills from
+      the polled status, exit 0 shown; a non-directory path keeps the
+      plain #162 hint (no pane)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -1893,14 +1894,20 @@ def c31_rolls_import_pane(t):
     pane = js(t, r"""
       const p = document.querySelector('.import-pane');
       if (!p) return {open: false};
-      const toggles = [...p.querySelectorAll('.import-opts label')]
-        .map(l => l.textContent.trim().split(/\s+/)[0]);
+      const labels = [...p.querySelectorAll('.import-opts label')];
+      const toggles = labels.map(l => l.textContent.trim().split(/\s+/)[0]);
       return {
         open: true,
         detailGone: !document.querySelector('.dp-person'),
         dir: p.querySelector('.import-path')?.textContent ?? null,
         db: [...p.querySelectorAll('.import-path')][1]?.textContent ?? null,
         toggles,
+        // #169: --recursive starts CHECKED — the probe that opened the
+        // pane found its images below the top level
+        recursiveDefault: (() => {
+          const l = labels.find(x => x.textContent.includes('--recursive'));
+          return l ? l.querySelector('input[type=checkbox]').checked : null;
+        })(),
         threshold: !!p.querySelector('.import-opts input[type=number]'),
         start: !![...p.querySelectorAll('button')].find(b => b.textContent.trim() === 'start'),
         stop: !![...p.querySelectorAll('button')].find(b => b.textContent.trim() === 'stop'),
@@ -1961,6 +1968,7 @@ def c31_rolls_import_pane(t):
         and pane.get("db") == "/mock/data/faces.db"
         and pane.get("toggles") == exp_toggles
         and pane.get("threshold") and pane.get("start") and pane.get("stop")
+        and pane.get("recursiveDefault") is True
         and pane.get("state")
         and combo.get("err") and combo.get("startDisabled")
         and "WhoT import_roll" in log.get("text", "")
@@ -1970,7 +1978,7 @@ def c31_rolls_import_pane(t):
         and after.get("hint") is not None and "no images under" in after.get("hint", "")
         and after.get("paneGone")
     )
-    record("C31 Rolls import pane: dir → pane in right pane, toggles, combo refusal, stdout viewport, exit 0 (#167)",
+    record("C31 Rolls import pane: dir → pane in right pane, toggles, recursive default on, combo refusal, stdout viewport, exit 0 (#167/#169)",
            ok,
            f"pane={pane}; combo={combo}; log state={log.get('state')!r} "
            f"selectable={log.get('selectable')!r} chars={len(log.get('text', ''))}; "

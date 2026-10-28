@@ -10,9 +10,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// the script's IMAGE_SUFFIXES (import_roll.py) — scan parity
-const IMAGE_SUFFIXES: [&str; 8] = [
-    ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".heic", ".avif",
+/// the script's IMAGE_SUFFIXES (import_roll.py) — exact parity (#169),
+/// incl. the RAW formats the importer decodes
+const IMAGE_SUFFIXES: [&str; 14] = [
+    ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".pef", ".dng", ".cr2", ".cr3", ".nef",
+    ".arw", ".rw2", ".orf", // ".heic"/".avif" are NOT the script's — never probe them
 ];
 /// the script's THRESHOLD_DEFAULT (import_roll.py) — the GUI's default too
 pub const THRESHOLD_DEFAULT: f64 = 0.40;
@@ -64,29 +66,48 @@ pub fn build_args(opts: &ImportOptions) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
-/// count the image files in ONE directory level — parity with the
-/// script's default non-recursive `glob("*")` walk (gui-design §4.36:
-/// `> 0` + no snapshot match = "not yet imported"). 0 for a path that
-/// is not a directory.
-pub fn scan_import_dir(path: &Path) -> u64 {
-    let Ok(mut dir) = std::fs::read_dir(path) else {
-        return 0;
+/// Does this path hold ≥ 1 image file **at any depth**? — the one
+/// boolean the GUI's "not yet imported" probe needs (#169: rolls are
+/// organised in sub-folders, a one-level scan misread them as empty).
+/// Recursive with hidden directories skipped and a bounded depth
+/// (symlink cycles), **early-exit on the first hit**: the full count is
+/// never displayed, so a huge tree costs one match. `IMAGE_SUFFIXES` is
+/// the script's exact set. Not-a-directory / unreadable ⇒ false.
+pub fn scan_import_dir(path: &Path) -> bool {
+    has_image(path, 0)
+}
+
+const MAX_SCAN_DEPTH: usize = 32;
+
+fn has_image(dir: &Path, depth: usize) -> bool {
+    if depth > MAX_SCAN_DEPTH {
+        return false;
+    }
+    let Ok(mut entries) = std::fs::read_dir(dir) else {
+        return false;
     };
-    let mut n = 0u64;
-    while let Some(Ok(entry)) = dir.next() {
-        let p = entry.path();
-        if !p.is_file() {
-            continue;
-        }
-        let suffix = p
-            .extension()
-            .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
-            .unwrap_or_default();
-        if IMAGE_SUFFIXES.contains(&suffix.as_str()) {
-            n += 1;
+    while let Some(Ok(entry)) = entries.next() {
+        let Ok(kind) = entry.file_type() else { continue };
+        if kind.is_dir() {
+            // hidden directories are never part of a roll walk
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if has_image(&entry.path(), depth + 1) {
+                return true;
+            }
+        } else if kind.is_file() {
+            let suffix = entry
+                .path()
+                .extension()
+                .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+                .unwrap_or_default();
+            if IMAGE_SUFFIXES.contains(&suffix.as_str()) {
+                return true;
+            }
         }
     }
-    n
+    false
 }
 
 /// the observable state of the one import slot (gui-design §4.36: the

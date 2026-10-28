@@ -338,12 +338,13 @@
     get_image_thumb: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
     get_image_preview: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
     // #167: the import runner — scan_import_dir consults the seeded
-    // window.__MOCK_ROLL_DIRS__ ({path: imageCount}); start_import
+    // window.__MOCK_ROLL_DIRS__ ({path: imageCount}) and answers the
+    // #169 recursive boolean (≥ 1 anywhere ⇒ true); start_import
     // simulates the child: a scripted line stream over timers, then an
     // exit; stop_import "kills" it. window.__MOCK_IMPORT__ exposes the
     // live slot to test scripts.
     scan_import_dir: ({ path }) =>
-      (window.__MOCK_ROLL_DIRS__ ?? {})[path] ?? 0,
+      ((window.__MOCK_ROLL_DIRS__ ?? {})[path] ?? 0) > 0,
     get_import_info: () => "/mock/data/faces.db",
     start_import: ({ options }) => {
       if (imp.running) throw new Error("an import is already running");

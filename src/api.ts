@@ -176,10 +176,11 @@ export interface ImportStatus {
   nextSince: number;
   lines: string[];
 }
-/** fs probe: image files in one directory level (> 0 + no snapshot
-    match = "not yet imported", §4.36) */
+/** fs probe: does the path hold ≥ 1 image at ANY depth (#169,
+    recursive + early-exit)? `true` + no snapshot match =
+    "not yet imported" (§4.36) */
 export const scanImportDir = (path: string) =>
-  invoke<number>("scan_import_dir", { path });
+  invoke<boolean>("scan_import_dir", { path });
 /** spawn scripts/import_roll.py as an independent child process;
     refused while one is already running */
 export const startImport = (options: ImportOptions) =>

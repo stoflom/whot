@@ -21,13 +21,16 @@ interface Props {
   onImported: () => void;
 }
 
-/** the pane's default options — the script's own defaults */
+/** the pane's default options — the script's own defaults, except
+    #169: --recursive starts ON — the probe that opened the pane found
+    its images below the top level, a default-off import would skip the
+    very sub-folders that triggered it */
 const DEFAULTS: Omit<ImportOptions, "rollDir"> = {
   dryRun: false,
   all: false,
   gpu: false,
   threshold: 0.4,
-  recursive: false,
+  recursive: true,
   createDb: false,
 };
 

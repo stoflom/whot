@@ -213,11 +213,12 @@ fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), String
     db::set_settings(state.paths()?, settings).map_err(|e| e.to_string())
 }
 
-/// #167 (§4.36) — fs probe for the Rolls path filter: image files in ONE
-/// directory level (parity with import_roll.py's non-recursive walk);
-/// `> 0` + no snapshot match = "not yet imported" ⇒ the import pane opens
+/// #167 (§4.36) — fs probe for the Rolls path filter: does the path hold
+/// ≥ 1 image at ANY depth (#169, recursive + early-exit, exact
+/// IMAGE_SUFFIXES parity); `true` + no snapshot match = "not yet
+/// imported" ⇒ the import pane opens
 #[tauri::command]
-fn scan_import_dir(state: State<AppState>, path: String) -> Result<u64, String> {
+fn scan_import_dir(state: State<AppState>, path: String) -> Result<bool, String> {
     // join semantics: an absolute path (the native picker) replaces the
     // root, a relative one is resolved against it
     Ok(importer::scan_import_dir(&state.paths()?.root.join(path)))
