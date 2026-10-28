@@ -97,7 +97,8 @@ fn runner_lifecycle_start_status_stop() {
         .unwrap_err()
         .to_string()
         .contains("already running"));
-    // drain until both lines arrive
+    // drain until both lines arrive — order across the TWO pipes is not
+    // guaranteed (separate reader threads), so assert presence, not order
     let mut since = 0;
     let mut got: Vec<String> = Vec::new();
     for _ in 0..100 {
@@ -109,6 +110,7 @@ fn runner_lifecycle_start_status_stop() {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    got.sort();
     assert_eq!(got, vec!["line-one", "line-two"]);
     // kill it
     assert!(runner.stop().unwrap());
