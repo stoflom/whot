@@ -324,6 +324,16 @@ rules are `docs/gui-design.md` §4, architecture is
 - `person_face_clusters(person_id, threshold) →
   [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
   similarity clusters inside each (§4.9)
+- `scan_import_dir(path) → bool` (#167/#169, §4.36) — does the path hold
+  ≥ 1 image file at ANY depth (recursive, hidden dirs skipped, exact
+  `IMAGE_SUFFIXES` parity with `import_roll.py`, early-exit on the first
+  hit); `true` + no snapshot match = "not yet imported" ⇒ the Rolls
+  filter opens the import pane
+- `get_import_status(since) → { running, killed, exitCode, elapsed,
+  nextSince, lines }` (#167) — the import pane's stdout poll: lines
+  `[since..]` of the combined stdout/stderr buffer + process state
+- `get_import_info() → String` (#167) — the resolved `FACES_DB` path for
+  the pane's read-only header
 
 **Mutations** (each ends with refcrops recompute + primary backfill for all
 affected persons; all return an error string on constraint violation)
@@ -350,6 +360,16 @@ affected persons; all return an error string on constraint violation)
   per-person replace; normalised (#42); the `Ungrouped`, `New`,
   `Accepted`, `Rejected` and `Unknown` segments are reserved
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
+
+**Import runner** (#167/#169, §4.36 — spawns, never blocks the GUI)
+
+- `start_import(options) → { running, killed, exitCode, elapsed,
+  nextSince, lines }` — spawn `scripts/import_roll.py` as an independent
+  child process (`{rollDir, dryRun, all, gpu, threshold, recursive,
+  createDb}` → the CLI flags; cwd = project root; `WHOT_IMPORT_PYTHON`
+  overrides the interpreter; one run at a time; refused:
+  `--create-db` + `--dry-run`)
+- `stop_import() → bool` — kill the running import child (if any)
 
 Section numbers (`§4.x`) refer to `docs/gui-design.md`.
 
@@ -410,11 +430,14 @@ npm run build                     # dist/ first — cargo test and gui-mock need
 (cd src-tauri && cargo test)      # Rust integration tests (fixture DB built from database/schema.sql)
 python3 -m unittest discover -s test   # Python: harvest + import + annotation helpers (needs numpy + blake3)
 
-# GUI contract checks against the mocked backend (headless Firefox;
-# needs selenium + a firefox binary, snap.json, and the mock server):
+# GUI contract checks against the mocked backend (#170: WebKitGTK by
+# default — the engine Tauri ships; needs selenium, the system
+# WebKitWebDriver binary + a display (Xvfb on CI), snap.json, and the
+# mock server; Firefox stays available via WHOT_GUI_DRIVER=firefox):
 python3 test/gui-mock/dump_snap.py
 python3 test/gui-mock/server.py &
-python3 test/gui-mock/gui_check.py
+python3 test/gui-mock/gui_check.py                      # WebKitGTK (default)
+WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox
 ```
 
 ## Docs

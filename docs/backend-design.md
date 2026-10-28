@@ -1,8 +1,13 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.3** (#99: whotrc keys `face_filter` + `cluster_group`
-replace `show_rejected`; #165: status-seat writers, system person
-`Rejected`, gate `'1.7'`) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 1.6** (#167: `importer` module — child-process runner for
+`scripts/import_roll.py` + `scan_import_dir`; `Paths.root` exposed;
+#169: the scan walks recursively and early-exits on the first image,
+`IMAGE_SUFFIXES` back in exact parity with the script;
+#170: the gui-mock contract suite runs in **WebKitGTK by default** —
+the engine Tauri ships (#168's bug was WebKit-only) — with Firefox
+retained behind `WHOT_GUI_DRIVER=firefox`)
+(major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -23,8 +28,10 @@ src-tauri/src/
   main.rs   # binary entry: tauri::Builder → lib::run()
   lib.rs    # #[tauri::command] surface + AppState; thin by design
   db.rs     # ALL SQL, embeddings math, derived-state maintenance
+  importer.rs # #167: spawn/monitor/kill import_roll.py, scan_import_dir
 src-tauri/tests/
   workflow.rs  # integration tests against a fixture DB built from schema.sql
+  importer.rs  # #167: arg building, scan, real child-process lifecycle
 ```
 
 - **`lib.rs`** holds one `#[tauri::command]` fn per operation; each is a
@@ -37,7 +44,8 @@ src-tauri/tests/
   nothing may embed SQL elsewhere (`main.rs` included).
 - **`AppState`** carries `paths: Result<Paths, String>` — resolution
   happens once at startup; until it succeeds every command fails with
-  the resolution error instead of panicking.
+  the resolution error instead of panicking. It additionally carries the
+  `import: Mutex<ImportState>` slot (#167, §7 below).
 
 ## 2. Paths & configuration
 
@@ -52,7 +60,9 @@ src-tauri/tests/
    `.env` keys first, then the process environment, 4 passes — same
    algorithm as the Python `load_env`s), then read `FACES_DB` (default
    `data/faces.db`) and `CONFIG_FILE` (default `config/whotrc.json`),
-   joined onto the root.
+   joined onto the root. `Paths` keeps the resolved `root` itself (#167:
+   the importer locates `scripts/import_roll.py` and sets the child
+   process's cwd there).
 
 GUI settings are **not** in the database: `get_settings`/`set_settings`
 read and write `config/whotrc.json`
@@ -134,15 +144,66 @@ person) — see `docs/schema-design.md` §5 and issue #80.
 - Matching runs in bulk per call; ~10k faces × 512 dims is trivially
   fast in f32 — no index, no precomputation, by design (gui-design §2).
 
-## 7. Testing
+## 7. Import runner (#167)
+
+Behaviour rules: gui-design §4.36. Structure:
+
+- **`importer.rs`** owns everything process-related; no SQL, no Tauri
+  types beyond what the commands need.
+- **`ImportOptions { roll_dir, dry_run, all, gpu, threshold, recursive,
+  create_db }`** (serde, camelCase over IPC) maps 1:1 onto the
+  `import_roll.py` CLI; `build_args()` renders the flag vector
+  (deterministic order: mode flags, `--threshold`, the directory) and
+  refuses `create_db && dry_run` before anything spawns.
+- **`ImportState`** — the single `Mutex`-guarded slot in `AppState`:
+  `idle`, or the child `pid`, start `Instant`, append-only line buffer
+  (combined stdout+stderr, capped at `MAX_LINES = 5000`, oldest dropped)
+  and the eventual `Option<i32>` exit code / `killed` marker. Two reader
+  threads (stdout, stderr) push lines; `start_import` refuses while a
+  live child exists (`an import is already running`).
+- **Interpreter**: `WHOT_IMPORT_PYTHON` env var, else `python3`; script
+  path `<root>/scripts/import_roll.py`, cwd `<root>` — the script
+  resolves `.env`/DB itself from the project root, exactly like a
+  terminal run (scripts-design §8).
+- **`scan_import_dir(path)`** — a **recursive** walk (hidden directories
+  skipped, bounded depth 32 against symlink cycles) over the script's
+  exact `IMAGE_SUFFIXES`, **early-exit on the first image**: the GUI
+  contract is a boolean `≥ 1 image anywhere beneath it` (the full count
+  is never displayed, so a huge tree costs one hit), and the GUI treats
+  `true` + no snapshot match as "not yet imported" (gui-design §4.36
+  trigger; #169 — rolls live in sub-folders, a one-level probe misread
+  them as empty).
+- **`get_import_status(since)`** returns
+  `{ running, killed, exit_code, next_since, lines }` — lines are the
+  buffer slice `[since..]` (the GUI polls and appends; no event
+  plumbing, the poll interval is 300 ms).
+
+## 8. Testing
 
 - `src-tauri/tests/workflow.rs` — integration tests build a fixture DB
   **from `database/schema.sql`** (never a committed binary DB), then
   exercise the `db::` functions end-to-end: assign/reject/primary/
   refcrop/group flows and their derived-state consequences.
+- `src-tauri/tests/importer.rs` (#167) — arg building (flag order, the
+  `--create-db`+`--dry-run` refusal), `scan_import_dir` over a temp tree
+  (a level-2 image IS found — #169),
+  and a real child-process lifecycle against a stub script (start →
+  `get_import_status` drain → exit code; kill → `killed`).
 - Run with `(cd src-tauri && cargo test)`; the Tauri context embeds
   `dist/`, so `npm run build` once on a fresh clone first (README
   § Tests).
 - Python-side behaviour shared with the scripts (corpus/numbering
   rules) is covered by the `test/` suite; each side must pass before a
   commit (AGENTS.md).
+- **GUI contract suite** (#170, `test/gui-mock/`): `gui_check.py` runs
+  against the mocked backend in **WebKitGTK** by default — the engine
+  the Tauri app actually ships, so engine-specific rendering bugs
+  (#168) are caught by the suite instead of a human — via
+  `webkit_tester.py` (Selenium `Remote` → the system `WebKitWebDriver`
+  binary, a `WebElement` subclass fixing WebKit's broken `getElementText`
+  and its pre-dispatch occlusion check, one driver process per run — no
+  leaked sessions). Firefox remains a supported choice:
+  `WHOT_GUI_DRIVER=firefox` uses the personal firefox-testing skill
+  (true headless). WebKit has no headless mode — it needs a display
+  (a desktop `DISPLAY`, or Xvfb on CI); both drivers must pass before a
+  commit.

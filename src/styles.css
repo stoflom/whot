@@ -361,6 +361,53 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .refcrop-desc { flex: 1; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .refcrop-x { flex: none; }
 
+/* ---------------------------------------------------------------- import pane (#167) */
+
+.import-pane { display: flex; flex-direction: column; gap: 0.6rem; height: 100%; }
+.import-head { display: flex; align-items: center; justify-content: space-between; }
+.import-head h3 { margin: 0; }
+.import-meta { display: flex; flex-direction: column; gap: 3px; font-size: 0.8rem; }
+.import-path { user-select: text; word-break: break-all; color: var(--text); }
+.import-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.6rem;
+}
+.import-opts legend { font-size: 0.75rem; padding: 0 0.3rem; }
+.import-opts label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+/* #168: WebKit anchors the native spinner to the right edge of the
+   input's CONTENT box (-webkit-textfield-decoration-container holds the
+   value div AND -webkit-inner-spin-button) — padding-right therefore
+   drags the container inboard and leaves dead space to the spinner's
+   right. Keep the field padding-free: the width is the reservation,
+   wide enough that value (≤ '0.40') + spinner fit side by side; the
+   spinner then sits flush at the field's right edge */
+.import-opts input[type="number"] {
+  width: 11ch;
+  box-sizing: border-box;
+  margin-left: auto;
+}
+.import-actions { display: flex; align-items: center; gap: 0.5rem; }
+.import-error { color: var(--bad); font-size: 0.8rem; user-select: text; }
+.import-log {
+  flex: 1;
+  min-height: 8rem;
+  margin: 0;
+  padding: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  /* the stdout viewport keeps the error-text rule (#81): selectable */
+  user-select: text;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ---------------------------------------------------------------- rolls */
 
 .rolls { display: flex; flex-direction: column; gap: 0.6rem; }

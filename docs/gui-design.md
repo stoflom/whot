@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.67** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.69** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -185,7 +185,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       image in full-image mode** (the same view-context change as the
       tile click, #142 incl. the staged-set confirm);
     - anything else is refused with a dim hint (`no images under …`) and
-      the current root stays.
+      the current root stays — **unless the path is a real, not-yet-imported
+      directory**: it is then checked against the filesystem
+      (`scan_import_dir`, §4.36/#167) and a directory holding ≥ 1 image
+      file opens the **import pane in the right pane** instead of the hint.
     The root lives for the session (it survives tab switches; not
     persisted to whotrc) and the Show filter keeps pruning under it
     (§4.10). The native picker is stubbed in the GUI-mock harness.
@@ -1430,6 +1433,60 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       recomputes the primaries/refcrops touched by the moves, asserts the
       invariant, and bumps `schema_version` to `1.7`. A fresh database
       built from `database/schema.sql` needs none of this.
+
+36. **Rolls import pane** (#167) ⇒ importing a fresh roll must not
+   require the terminal: the Rolls path filter (§3, #162) doubles as the
+   import entry point.
+   - **Trigger**: committing a path (typed + Enter, or the native folder
+     picker) that matches no snapshot image **and** that
+     `scan_import_dir(path)` confirms to be a real directory holding
+     ≥ 1 image file **at any depth** (`IMAGE_SUFFIXES` of
+     `import_roll.py`, walked **recursively** — #169: real rolls are
+     organised in sub-folders, so a one-level probe misread them as
+     empty; no fs walk happens for a path that already matches snapshot
+     images). A path that is not such a directory keeps the old
+     dim refusal hint (`no images under …`) and the current root — the
+     #162 hint path is unchanged.
+   - **The import pane** replaces the **right pane** (DetailPane's slot)
+     while open; it is rolls-scoped UI state (session-only, like the #162
+     root), closed by its own ✕ button (DetailPane returns), and survives
+     tab switches. It is a **pane, not a modal** — the tree, the rolls
+     browser and the rule bar stay interactive; only one import pane can
+     be open at a time.
+   - **Options**: toggles for the `import_roll.py` CLI flags that make
+     sense per roll — `--dry-run`, `--all`, `--gpu` (CPU is the default,
+     §4.29/#91), `--recursive` (**on by default** — #169: the probe that
+     opened the pane already found images below the top level, so a
+     default-off import would silently skip the very sub-folders that
+     triggered it), `--threshold <f>` (default `0.40`, the
+     script's `THRESHOLD_DEFAULT`), and `--create-db`; the **roll
+     directory** and the resolved **database path** are shown read-only
+     (the pane is opened with the directory pre-filled; re-picking goes
+     through the path filter again). `--create-db` + `--dry-run` is
+     refused up front (the script's `validate_args` — creation is a
+     write).
+   - **Independent process**: *Start* asks the backend to spawn
+     `python3 scripts/import_roll.py <roll_dir> [flags]` as a **separate
+     child process** (`start_import`; the interpreter is overridable via
+     `WHOT_IMPORT_PYTHON`) with the project root as cwd — the GUI process
+     never blocks and never imports in-process (model load, GPU hangs
+     §4.29 — a wedged import cannot wedge the GUI). One import at a time:
+     *Start* is refused with an error line while one is running.
+     *Stop* kills the child (`stop_import`).
+   - **stdout monitoring viewport**: the pane polls
+     `get_import_status(since)` and appends the child's combined
+     stdout/stderr lines to a scrollable, selectable (`user-select:
+     text`, §4.26 error rule) viewport that **auto-follows the tail**
+     unless the user scrolled up (scroll-lock on manual scroll-up,
+     re-engaged at the bottom). The pane shows the process state
+     (`running` / `exit n` / `killed`) and the elapsed time while running.
+   - **After the run**: a successful exit (code 0) triggers a snapshot
+     refresh — the new faces appear in the rolls tree by the normal
+     external-change rule; a non-zero exit or a kill leaves the captured
+     output on screen for diagnosis (the error text rule §4.26 applies).
+     Closing the pane does not kill a running import (it is an
+     independent process); Start/Stop stay reachable by reopening the
+     pane on the same directory.
 
 ## 5. Related documents
 

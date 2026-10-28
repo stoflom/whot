@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
-import type { Face, ImageRow } from "../api";
+import { scanImportDir, type Face, type ImageRow } from "../api";
 import { useImageThumbImg } from "../hooks";
 import { rotStyle } from "../rotation";
 import { matchesStatusFilter, type FaceFilter } from "../viewFilters";
@@ -25,6 +25,8 @@ interface Props {
   onOpenImage: (id: number) => void;
   /** right-click menu on image tiles (#32) */
   onContextMenuImage: (image: ImageRow, e: ReactMouseEvent) => void;
+  /** #167 (§4.36): a not-yet-imported directory opens the import pane */
+  onImportDir: (path: string) => void;
 }
 
 /** a directory node — images sit in their own directory, sub-directories branch below */
@@ -174,7 +176,7 @@ function BranchView({ node, path, openSet, onToggle, listed, faceTotals, onOpenI
   );
 }
 
-export default function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, onContextMenuImage }: Props) {
+export default function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, onContextMenuImage, onImportDir }: Props) {
   const tree = useMemo(() => buildTree(images, root), [images, root]);
 
   // per-image raw face counters + the Show-filter presence set: an image
@@ -210,16 +212,18 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
     });
 
   // #162: the pinned path-filter row — committed on Enter or by the
-  // folder picker, validated against the snapshot (no fs IPC): a path
-  // containing ≥ 1 image becomes the root the hierarchy branches from,
-  // a path equal to an image's primary_path opens that image in
-  // full-image mode (#142 view-context change), anything else is
-  // refused with a dim hint and the current root stays
+  // folder picker, validated against the snapshot (no fs IPC for a
+  // snapshot match): a path containing ≥ 1 image becomes the root the
+  // hierarchy branches from, a path equal to an image's primary_path
+  // opens that image in full-image mode (#142 view-context change).
+  // #167 (§4.36): anything else is probed on the filesystem once
+  // (scan_import_dir) — a real, not-yet-imported directory opens the
+  // import pane in the right pane; anything else keeps the dim hint.
   const [text, setText] = useState(root);
   const [hint, setHint] = useState<string | null>(null);
   useEffect(() => setText(root), [root]);
 
-  const commitPath = (raw: string) => {
+  const commitPath = async (raw: string) => {
     const trimmed = raw.trim();
     const noSlash = trimmed.replace(/\/+$/, "");
     const path = noSlash === "" ? "/" : noSlash;
@@ -236,13 +240,25 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
       setText(path);
       return;
     }
+    // #167: the one fs probe of the filter — a real directory holding
+    // images anywhere beneath it (#169, recursive) nothing has imported
+    // yet opens the import pane
+    try {
+      if (path !== "/" && (await scanImportDir(path))) {
+        setHint(null);
+        onImportDir(path);
+        return;
+      }
+    } catch {
+      // probe unavailable — fall through to the #162 hint
+    }
     setHint(`no images under ${trimmed}`);
   };
 
   const browse = async () => {
     try {
       const picked = await openFolderDialog({ directory: true, multiple: false });
-      if (typeof picked === "string") commitPath(picked);
+      if (typeof picked === "string") void commitPath(picked);
     } catch (e) {
       setHint(String(e));
     }
@@ -259,7 +275,7 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
     <div className="rolls-pane">
       <div className="roll-filter">
         <label
-          title="Root the path tree at this path (#162) — Enter commits: a folder with images under it becomes the root, an image file opens full-image, anything else is refused"
+          title="Root the path tree at this path (#162) — Enter commits: a folder with images under it becomes the root, an image file opens full-image, a not-yet-imported directory opens the import pane (#167), anything else is refused"
         >
           path
         </label>
@@ -271,9 +287,9 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
             setHint(null);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") commitPath(text);
+            if (e.key === "Enter") void commitPath(text);
           }}
-          title="Enter: root the tree at this folder, or open this image file; empty = the whole tree"
+          title="Enter: root the tree at this folder, or open this image file; a fresh directory opens the import pane; empty = the whole tree"
         />
         <button className="secondary" onClick={browse} title="pick a root folder from the filesystem">
           browse…

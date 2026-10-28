@@ -5,14 +5,17 @@ Requires:
     1. npm run build                  (dist/ current)
     2. python3 dump_snap.py           (snap.json current)
     3. python3 server.py &            (mock server up, default :8123)
+    4. a display                      (WebKitGTK default; headless boxes
+                                       need Xvfb — Firefox runs without)
 
 Then:
-    python3 gui_check.py [PORT]
+    python3 gui_check.py [PORT]              # WebKitGTK (default, #170)
+    WHOT_GUI_DRIVER=firefox python3 gui_check.py   # Firefox (skill needed)
 
 Each check starts from a fresh page load, which reloads /snap.json, so the
 in-memory mock state is clean per check. Interaction uses trusted input
-(Marionette actions); synthetic events are unreliable for the app's window
-key listeners.
+(W3C WebDriver actions); synthetic events are unreliable for the app's
+window key listeners.
 
 Checks (contract refs: docs/gui-design.md):
   C1  Enter with a live stage stages-then-commits (§4.30, #101)
@@ -78,6 +81,13 @@ Checks (contract refs: docs/gui-design.md):
       accepts the DISPLAYED selection — not just the staged face ids
       (#166, §4.30/§4.24: stage on a few Description-mode faces, select
       every section, Accept → all confirmed)
+  C31 the Rolls import pane (#167, §4.36): committing a real,
+      not-yet-imported directory (typed or via browse…) opens the pane in
+      the RIGHT pane (DetailPane gone, rolls tree still interactive) with
+      the per-roll toggles + threshold (--recursive PRE-CHECKED, #169),
+      the create-db+dry-run refusal, start → stdout viewport fills from
+      the polled status, exit 0 shown; a non-directory path keeps the
+      plain #162 hint (no pane)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -85,15 +95,31 @@ Checks (contract refs: docs/gui-design.md):
 Exit code 0 iff all C-checks and the R1 layout rule pass.
 """
 import json
+import os
 import sys
 import time
 
-try:
-    sys.path.insert(0, "/home/stoflom/.pi/agent/skills/firefox-testing")
-    from firefox_tester import FirefoxTester
-except ImportError as e:
-    sys.exit(f"firefox-testing skill not importable: {e}\n"
-             f"(expected at /home/stoflom/.pi/agent/skills/firefox-testing)")
+# #170: driver choice — WebKitGTK (the engine Tauri ships, #168) is the
+# default; Firefox stays available via WHOT_GUI_DRIVER=firefox. The
+# WebKit tester lives in this directory (test infra belongs to the repo);
+# the Firefox tester is the personal firefox-testing skill.
+DRIVER = os.environ.get("WHOT_GUI_DRIVER", "webkit").strip().lower()
+
+if DRIVER == "firefox":
+    try:
+        sys.path.insert(0, "/home/stoflom/.pi/agent/skills/firefox-testing")
+        from firefox_tester import FirefoxTester as Tester
+    except ImportError as e:
+        sys.exit(f"firefox-testing skill not importable: {e}\n"
+                 f"(expected at /home/stoflom/.pi/agent/skills/firefox-testing)")
+elif DRIVER == "webkit":
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from webkit_tester import WebKitTester as Tester
+    except ImportError as e:
+        sys.exit(f"webkit_tester not importable: {e}")
+else:
+    sys.exit(f"unknown WHOT_GUI_DRIVER: {DRIVER!r} (use 'webkit' or 'firefox')")
 
 from selenium.webdriver.common.action_chains import ActionChains as AC
 from selenium.webdriver.common.by import By
@@ -1005,8 +1031,9 @@ def c11_merge_focuses_target(t):
 
 def drag_face(t, src_sel, dst_sel):
     """Simulate an HTML5 drag of a face card (src_sel) onto a drop target
-       (dst_sel). Marionette's trusted mouse events do not raise HTML5 DnD
-       in headless Firefox, so the drag events are dispatched with a
+       (dst_sel). Trusted WebDriver mouse events do not raise HTML5 DnD
+       reliably (headless Firefox never did; #170 keeps the suite
+       engine-neutral), so the drag events are dispatched with a
        shimmed dataTransfer — React's root listeners pick them up.
        Returns 'dropped' (the target highlighted on dragover), 'refused'
        (no highlight — a browser would not deliver a drop), or an error.
@@ -1858,11 +1885,134 @@ def c28_add_group_person_rows_only(t):
            f"(want {len(after.get('groups') or [])}): {rows_ok}")
 
 
+def c31_rolls_import_pane(t):
+    """#167 (§4.36): a real, not-yet-imported directory committed in the
+    Rolls path filter (typed AND via browse…) opens the import pane in
+    the right pane — DetailPane gone, the rolls tree still interactive —
+    with the per-roll toggles, the create-db+dry-run refusal, start
+    filling the stdout viewport from the polled mock status, and exit 0
+    shown; a non-directory path keeps the plain #162 hint."""
+    fresh(t)
+    set_show_filter(t, "all")
+    # seed one "real" directory holding 3 not-yet-imported images
+    js(t, "window.__MOCK_ROLL_DIRS__ = {'/mnt/rolls/new-roll': 3};")
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
+    time.sleep(1.2)
+
+    def set_path(v):
+        js(t, r"""
+          const el = document.querySelector('.roll-filter input');
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+          el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+        """, v)
+        time.sleep(0.6)
+
+    # 1) a real directory → the import pane opens in the right pane
+    set_path("/mnt/rolls/new-roll")
+    pane = js(t, r"""
+      const p = document.querySelector('.import-pane');
+      if (!p) return {open: false};
+      const labels = [...p.querySelectorAll('.import-opts label')];
+      const toggles = labels.map(l => l.textContent.trim().split(/\s+/)[0]);
+      return {
+        open: true,
+        detailGone: !document.querySelector('.dp-person'),
+        dir: p.querySelector('.import-path')?.textContent ?? null,
+        db: [...p.querySelectorAll('.import-path')][1]?.textContent ?? null,
+        toggles,
+        // #169: --recursive starts CHECKED — the probe that opened the
+        // pane found its images below the top level
+        recursiveDefault: (() => {
+          const l = labels.find(x => x.textContent.includes('--recursive'));
+          return l ? l.querySelector('input[type=checkbox]').checked : null;
+        })(),
+        threshold: !!p.querySelector('.import-opts input[type=number]'),
+        start: !![...p.querySelectorAll('button')].find(b => b.textContent.trim() === 'start'),
+        stop: !![...p.querySelectorAll('button')].find(b => b.textContent.trim() === 'stop'),
+        state: p.textContent.includes('idle'),
+      };
+    """)
+
+    # 2) the create-db + dry-run combination is refused up front
+    js(t, r"""
+      const labels = [...document.querySelectorAll('.import-opts label')];
+      const find = (frag) => labels.find(l => l.textContent.includes(frag)).querySelector('input[type=checkbox]');
+      find('--dry-run').click(); find('--create-db').click();
+    """)
+    time.sleep(0.3)
+    combo = js(t, r"""
+      const p = document.querySelector('.import-pane');
+      const start = [...p.querySelectorAll('button')].find(b => b.textContent.trim() === 'start');
+      return {err: !!p.querySelector('.import-error'), startDisabled: start.disabled};
+    """)
+    js(t, r"""
+      const labels = [...document.querySelectorAll('.import-opts label')];
+      const find = (frag) => labels.find(l => l.textContent.includes(frag)).querySelector('input[type=checkbox]');
+      find('--create-db').click();   // back to a valid combo (--dry-run stays on)
+    """)
+    time.sleep(0.3)
+
+    # 3) start → the stdout viewport fills from the polled status
+    js(t, "[...document.querySelectorAll('.import-actions button')].find(b => b.textContent.trim() === 'start').click();")
+    time.sleep(2.0)  # the mock streams 8 lines over ~1 s; the pane polls at 300 ms
+    log = js(t, r"""
+      const p = document.querySelector('.import-pane');
+      const log = p.querySelector('.import-log');
+      return {
+        text: log?.textContent ?? '',
+        // WebKit exposes only the prefixed -webkit-user-select (value
+        // 'text' — the CSS applied); Firefox has the unprefixed one
+        selectable: log ? (getComputedStyle(log).userSelect ??
+                           getComputedStyle(log).webkitUserSelect ?? null) : null,
+        state: [...p.querySelectorAll('.import-actions span')][0]?.textContent ?? null,
+      };
+    """)
+
+    # 4) a non-directory path keeps the plain #162 hint (no pane opens);
+    #    close the pane first (§4.36: only ✕ closes it)
+    js(t, "[...document.querySelectorAll('.import-head button')].find(b => b.textContent.includes('✕'))?.click();")
+    time.sleep(0.3)
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # re-render rolls
+    time.sleep(0.8)
+    set_path("/no/such/dir")
+    after = js(t, r"""
+      return {
+        hint: document.querySelector('.roll-filter-hint')?.textContent ?? null,
+        paneGone: !document.querySelector('.import-pane'),
+      };
+    """)
+
+    exp_toggles = ["--dry-run", "--all", "--gpu", "--recursive", "--create-db", "--threshold"]
+    ok = (
+        pane.get("open") and pane.get("detailGone")
+        and pane.get("dir") == "/mnt/rolls/new-roll"
+        and pane.get("db") == "/mock/data/faces.db"
+        and pane.get("toggles") == exp_toggles
+        and pane.get("threshold") and pane.get("start") and pane.get("stop")
+        and pane.get("recursiveDefault") is True
+        and pane.get("state")
+        and combo.get("err") and combo.get("startDisabled")
+        and "WhoT import_roll" in log.get("text", "")
+        and "done — imported 3 image(s)" in log.get("text", "")
+        and log.get("selectable") == "text"
+        and log.get("state") == "exit 0"
+        and after.get("hint") is not None and "no images under" in after.get("hint", "")
+        and after.get("paneGone")
+    )
+    record("C31 Rolls import pane: dir → pane in right pane, toggles, recursive default on, combo refusal, stdout viewport, exit 0 (#167/#169)",
+           ok,
+           f"pane={pane}; combo={combo}; log state={log.get('state')!r} "
+           f"selectable={log.get('selectable')!r} chars={len(log.get('text', ''))}; "
+           f"non-dir hint={after.get('hint')!r} paneGone={after.get('paneGone')}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
     URL = URL.format(port=port)
-    with FirefoxTester(headless=True) as t:
+    with Tester(headless=True) as t:
         t.set_window_size(1600, 1000)
         r1_layout(t)
         r2_toggle_perf(t)
@@ -1895,6 +2045,7 @@ def main():
         c28_add_group_person_rows_only(t)
         c29_show_rejected_bin_165(t)
         c30_bar_accept_selection_over_stage(t)
+        c31_rolls_import_pane(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
