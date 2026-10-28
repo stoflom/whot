@@ -378,12 +378,15 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .import-opts legend { font-size: 0.75rem; padding: 0 0.3rem; }
 .import-opts label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
-/* #168: the native spinner arrows render INSIDE the box — reserve their
-   track (padding-right) so they never sit on top of the typed value;
-   border-box keeps the field from growing past the options row */
+/* #168: WebKit anchors the native spinner to the right edge of the
+   input's CONTENT box (-webkit-textfield-decoration-container holds the
+   value div AND -webkit-inner-spin-button) — padding-right therefore
+   drags the container inboard and leaves dead space to the spinner's
+   right. Keep the field padding-free: the width is the reservation,
+   wide enough that value (≤ '0.40') + spinner fit side by side; the
+   spinner then sits flush at the field's right edge */
 .import-opts input[type="number"] {
-  width: 9ch;
-  padding-right: 1.4rem;
+  width: 11ch;
   box-sizing: border-box;
   margin-left: auto;
 }
