@@ -22,6 +22,9 @@ const DEFAULT_REFCROP_N: i64 = 5;
 // ---------------------------------------------------------------- paths
 
 pub struct Paths {
+    /// the resolved project root (#167: the importer locates its script
+    /// and sets the child process's cwd there)
+    pub root: PathBuf,
     pub db: PathBuf,
     pub config: PathBuf,
 }
@@ -56,7 +59,7 @@ impl Paths {
                 .map(|s| s.as_str())
                 .unwrap_or("config/whotrc.json"),
         );
-        Ok(Paths { db, config })
+        Ok(Paths { root, db, config })
     }
 }
 

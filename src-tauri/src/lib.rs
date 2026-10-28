@@ -2,13 +2,17 @@
 //! architecture: docs/backend-design.md, behaviour rules: docs/gui-design.md §4).
 
 pub mod db;
+pub mod importer;
 
 use db::{Paths, Settings};
+use importer::ImportRunner;
 
 use tauri::State;
 
 struct AppState {
     paths: Result<Paths, String>,
+    /// #167: the single import slot (one child process at a time)
+    runner: ImportRunner,
 }
 
 impl AppState {
@@ -209,6 +213,46 @@ fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), String
     db::set_settings(state.paths()?, settings).map_err(|e| e.to_string())
 }
 
+/// #167 (§4.36) — fs probe for the Rolls path filter: image files in ONE
+/// directory level (parity with import_roll.py's non-recursive walk);
+/// `> 0` + no snapshot match = "not yet imported" ⇒ the import pane opens
+#[tauri::command]
+fn scan_import_dir(state: State<AppState>, path: String) -> Result<u64, String> {
+    // join semantics: an absolute path (the native picker) replaces the
+    // root, a relative one is resolved against it
+    Ok(importer::scan_import_dir(&state.paths()?.root.join(path)))
+}
+
+/// #167 (§4.36) — spawn scripts/import_roll.py as an independent child
+/// process; refused (error) while one is already running
+#[tauri::command]
+fn start_import(
+    state: State<AppState>,
+    options: importer::ImportOptions,
+) -> Result<importer::ImportStatus, String> {
+    state.runner.start(&state.paths()?.root, &options)
+}
+
+/// #167 (§4.36) — kill the running import child (if any)
+#[tauri::command]
+fn stop_import(state: State<AppState>) -> Result<bool, String> {
+    state.runner.stop()
+}
+
+/// #167 (§4.36) — the pane's stdout poll: lines `[since..]` + process
+/// state + elapsed; returns `{ dbPath }`-side info via get_import_info
+#[tauri::command]
+fn get_import_status(state: State<AppState>, since: usize) -> importer::ImportStatus {
+    state.runner.status(since)
+}
+
+/// #167 (§4.36) — the pane's read-only header info: the resolved DB path
+/// (same resolution as the script) for the run summary line
+#[tauri::command]
+fn get_import_info(state: State<AppState>) -> Result<String, String> {
+    Ok(state.paths()?.db.display().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -217,6 +261,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             paths: Paths::resolve().map_err(|e| e.to_string()),
+            runner: ImportRunner::new(),
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
@@ -244,7 +289,12 @@ pub fn run() {
             add_refcrop,
             remove_refcrop,
             get_settings,
-            set_settings
+            set_settings,
+            scan_import_dir,
+            start_import,
+            stop_import,
+            get_import_status,
+            get_import_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhoT Face Manager");
