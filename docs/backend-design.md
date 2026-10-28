@@ -1,9 +1,12 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.5** (#167: `importer` module — child-process runner for
+**Version: 1.6** (#167: `importer` module — child-process runner for
 `scripts/import_roll.py` + `scan_import_dir`; `Paths.root` exposed;
 #169: the scan walks recursively and early-exits on the first image,
-`IMAGE_SUFFIXES` back in exact parity with the script)
+`IMAGE_SUFFIXES` back in exact parity with the script;
+#170: the gui-mock contract suite runs in **WebKitGTK by default** —
+the engine Tauri ships (#168's bug was WebKit-only) — with Firefox
+retained behind `WHOT_GUI_DRIVER=firefox`)
 (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
@@ -192,3 +195,15 @@ Behaviour rules: gui-design §4.36. Structure:
 - Python-side behaviour shared with the scripts (corpus/numbering
   rules) is covered by the `test/` suite; each side must pass before a
   commit (AGENTS.md).
+- **GUI contract suite** (#170, `test/gui-mock/`): `gui_check.py` runs
+  against the mocked backend in **WebKitGTK** by default — the engine
+  the Tauri app actually ships, so engine-specific rendering bugs
+  (#168) are caught by the suite instead of a human — via
+  `webkit_tester.py` (Selenium `Remote` → the system `WebKitWebDriver`
+  binary, a `WebElement` subclass fixing WebKit's broken `getElementText`
+  and its pre-dispatch occlusion check, one driver process per run — no
+  leaked sessions). Firefox remains a supported choice:
+  `WHOT_GUI_DRIVER=firefox` uses the personal firefox-testing skill
+  (true headless). WebKit has no headless mode — it needs a display
+  (a desktop `DISPLAY`, or Xvfb on CI); both drivers must pass before a
+  commit.

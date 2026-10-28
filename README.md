@@ -430,11 +430,14 @@ npm run build                     # dist/ first — cargo test and gui-mock need
 (cd src-tauri && cargo test)      # Rust integration tests (fixture DB built from database/schema.sql)
 python3 -m unittest discover -s test   # Python: harvest + import + annotation helpers (needs numpy + blake3)
 
-# GUI contract checks against the mocked backend (headless Firefox;
-# needs selenium + a firefox binary, snap.json, and the mock server):
+# GUI contract checks against the mocked backend (#170: WebKitGTK by
+# default — the engine Tauri ships; needs selenium, the system
+# WebKitWebDriver binary + a display (Xvfb on CI), snap.json, and the
+# mock server; Firefox stays available via WHOT_GUI_DRIVER=firefox):
 python3 test/gui-mock/dump_snap.py
 python3 test/gui-mock/server.py &
-python3 test/gui-mock/gui_check.py
+python3 test/gui-mock/gui_check.py                      # WebKitGTK (default)
+WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox
 ```
 
 ## Docs
