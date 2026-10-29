@@ -156,8 +156,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     between the review and person views (#120).
   - **Rolls**: the images sorted into a **hierarchy mirroring their actual
     filesystem path** (#161) — each image's `primary_path` split into its
-    path segments: every segment is an expandable branch and the images
-    sit in their file's directory branch, so there is a close connection
+    path segments: every **directory** segment is an expandable branch
+    and the images sit in their file's directory branch — the FILENAME
+    is never a branch of its own (#174: the old file-twig whose inline
+    thumbnail landed in the right pane), so there is a close connection
     between the filesystem and the pictures and the user can drill in to
     a smaller set. The view **no longer shows the import rolls**: the
     roll sections, their dates, and the `first_import_id`-keyed counting
@@ -168,7 +170,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     `{n} img · {n} new · {n} ✓ · {n} ✗` — counted over **every** image
     under the branch, filter-independent like the person tree's raw
     badges (#129): the Show filter changes who is listed, never any
-    counters. Clicking a header expands/collapses the branch; branches
+    counters. Clicking a header expands/collapses **and selects** the
+    branch (#174 — its direct images land in the right pane); branches
     start collapsed, listed alphabetically by segment (images by
     filename). **The centre renders no thumbnails** (#174, §4.39): the
     inline per-branch image grids are gone — clicking a branch header
