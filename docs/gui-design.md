@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.75** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.76** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1728,6 +1728,27 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      the face-card status badges and the count chips
      (`c-prov`/`c-conf`/`c-rej`). The face-rectangle overlay palette
      (§4.11) is a separate mechanism and stays unchanged.
+
+42. **Accept/reject icon shortcuts** (#177) ⇒ one visual language for
+   verdicts everywhere:
+   - **Card tick**: the face card's action row gains **✓** beside ✗ —
+     accept the card **as is**, with the bar's Accept semantics (live
+     stages commit first, #166, then accept; the §4.30 advance in
+     Review) under the §4.14 effective-action-scope rule (the selection
+     when the card is part of it, else the card). It renders for every
+     face the accept can address: **provisional** accepts; **rejected**
+     yields the existing *assign a person to bring it back* guidance
+     (§4.2/§4.35 — plain accept never un-rejects); a **confirmed** card
+     shows no tick (its status badge already reads ✓) and keeps ✗ for
+     re-reject.
+   - **Cluster header**: every section header carries **✓ and ✗**
+     beside *Edit…* — the verdict over the **whole group** (all its
+     faceIds — select-all parity; stages commit first on accept,
+     §4.14 scope = the group).
+   - **Bottom bar**: the selection shortcuts gain the icons —
+     **✓ Accept** and **✗ Reject** (semantics unchanged, §4.30).
+   - No other behaviour moves: the A/R shortcuts, the dialogs and the
+     §4.30 flow stay as they are.
 
 ## 5. Related documents
 
