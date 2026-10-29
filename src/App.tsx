@@ -58,6 +58,10 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("review");
+  // #175 (§4.40): the Review lock — session-only; engaged pins Show to
+  // New (the select is disabled) and widens the exhaust advance to any
+  // view; releasing lands in Person mode with Show → All
+  const [reviewLock, setReviewLock] = useState(false);
   const [personId, setPersonId] = useState<number | null>(null);
   const [imageId, setImageId] = useState<number | null>(null);
   // #162: the Rolls path-filter root — session state so it survives tab
@@ -483,11 +487,13 @@ export default function App() {
   const exhaustAtRef = useRef(-1);
   const exhaustPidRef = useRef<number | null>(null);
   const markExhaust = useCallback(() => {
-    if (mode === "review" && personId != null) {
+    // #175/§4.40: under the lock EVERY view's verdicts mark — the
+    // workflow drills into a person and their full image before deciding
+    if ((mode === "review" || reviewLock) && personId != null) {
       exhaustAtRef.current = stepIdx;
       exhaustPidRef.current = personId;
     }
-  }, [mode, personId, stepIdx]);
+  }, [mode, personId, stepIdx, reviewLock]);
   const doAccept = useCallback(
     (ids: number[]) => {
       // #165/§4.35: plain accept never un-rejects — a rejected-only scope
@@ -662,6 +668,37 @@ export default function App() {
     // counting faces that no longer display anywhere — drop them
     setPending((p) => dropStagesForFaces(p, [...selRef.current].filter((id) => !visible.has(id))));
     mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
+  };
+  // #175 (§4.40) — engage the Review lock: pin Show → New through the
+  // ordinary filter path, then guard the position — an anchored person
+  // without a new face advances to the next person in the step list
+  // that has one (forward, else the first; none ⇒ stay + toast)
+  const engageLock = () => {
+    if (reviewLock) return;
+    setReviewLock(true);
+    changeFaceFilter("provisional");
+    if (personId != null && snap) {
+      const has = (id: number) =>
+        snap.faces.some((f) => f.person_id === id && f.link_status === "provisional");
+      if (!has(personId)) {
+        const nextId = exhaustAdvanceTarget(stepIds, personId, stepIdx, has);
+        if (nextId != null) setPersonId(nextId);
+        else setInfo("no more persons to review");
+      }
+    }
+  };
+  // release: Person mode + Show → All, the full image closes, the
+  // person anchor stays (the pane shows where the user left off) — a
+  // mode switch behind the #123 staged-set confirm (§4.40)
+  const releaseLock = () => {
+    if (!reviewLock) return;
+    setReviewLock(false);
+    confirmContext(() => {
+      setMode("person");
+      setImageId(null);
+      if (splitImageId != null) setSplitImageId(null);
+      changeFaceFilter("all");
+    });
   };
   // #99 (§4.9): persons-view cluster grouping — accuracy (default) or one
   // section per description; display-only, the selection is untouched
@@ -1300,7 +1337,9 @@ export default function App() {
         setInfo("assign a person to bring it back");
         return;
       }
-      if (mode !== "review" || splitImageId != null) {
+      // #175/§4.40: under the Review lock EVERY view takes the marking
+      // path — the workflow decides in Person view and full images too
+      if ((mode !== "review" || splitImageId != null) && !reviewLock) {
         await mutate(() => api.acceptFaces(ids), true);
         return;
       }
@@ -1332,7 +1371,7 @@ export default function App() {
         );
       }
     },
-    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById]
+    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, reviewLock]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
@@ -1379,7 +1418,10 @@ export default function App() {
     setPersonId(nextId);
     setMode("person");
     setImageId(null);
-  }, [snap, mode, personId, faceFilter, stepIds]);
+    // §4.15/#175: the advance ends an open full image/focus — the
+    // person on screen is no longer the one shown (stepping closes it too)
+    if (splitImageId != null) setSplitImageId(null);
+  }, [snap, mode, personId, faceFilter, stepIds, splitImageId]);
 
   // #101 (§4.24) — stage/commit engine: Apply stages (no DB — the labels
   // preview), Accept commits the stage ops through the shared
@@ -1900,11 +1942,16 @@ export default function App() {
               a global control applied across all panes (#99, §4.10) and not
               something the Person view (or any single pane) owns. */}
           <label
-            title="All = everything except rejected; rejected faces appear only under Show → Rejected (#165, §4.10); switching it drops hidden faces from the selection"
+            title={
+              reviewLock
+                ? "Locked to New by the Review lock (#175, §4.40) — release the padlock to change it"
+                : "All = everything except rejected; rejected faces appear only under Show → Rejected (#165, §4.10); switching it drops hidden faces from the selection"
+            }
           >
             show
             <select
               value={faceFilter}
+              disabled={reviewLock}
               onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
             >
               <option value="all">All</option>
@@ -1913,6 +1960,21 @@ export default function App() {
               <option value="rejected">Rejected</option>
             </select>
           </label>
+          {/* #175 (§4.40): the Review lock — beside Show; engaged pins
+              Show to New and auto-advances past drained persons from any
+              view; releasing lands in Person mode with Show → All */}
+          <button
+            className={`lock-btn${reviewLock ? " locked" : ""}`}
+            aria-pressed={reviewLock}
+            onClick={reviewLock ? releaseLock : engageLock}
+            title={
+              reviewLock
+                ? "Release the Review lock — Person mode, Show → All (#175, §4.40)"
+                : "Engage the Review lock — Show pinned to New; verdicts auto-advance to the next person with new faces (#175, §4.40)"
+            }
+          >
+            {reviewLock ? "🔒" : "🔓"}
+          </button>
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}
