@@ -176,6 +176,17 @@
         p.groups = group ? [group] : [seatFor(p.id)];
         recount(); fixPrimaries(); return;
       }
+      // #178 — backend parity (db::assign_person's single_unknown): the
+      // whole scope on ONE UnknownN with a name that is NOT taken
+      // renames IN PLACE — same id (the pane/tree anchor survives);
+      // claim first, then the real group lands or the seat derives by
+      // state (⇒ Accepted once claimed)
+      if (!target && p && /^unknown/i.test(p.name)) {
+        for (const f of faces) f.link_status = "confirmed";
+        p.name = name2;
+        p.groups = group ? [group] : [seatFor(p.id)];
+        rederiveNames(); recount(); fixPrimaries(); return;
+      }
     }
     const dest = target ?? makePerson(name2, group); // F2: an existing target's group is never touched
     for (const f of faces) {

@@ -15,7 +15,7 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
-import type { GroupOp } from "./groupList";
+import { isSeat, type GroupOp } from "./groupList";
 import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
@@ -58,10 +58,6 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("review");
-  // #175 (§4.40): the Review lock — session-only; engaged pins Show to
-  // New (the select is disabled) and widens the exhaust advance to any
-  // view; releasing lands in Person mode with Show → All
-  const [reviewLock, setReviewLock] = useState(false);
   // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
   // pointer (modeless — the tree under it stays clickable) and the
   // sticky-person guard (once per person+filter pair)
@@ -213,6 +209,14 @@ export default function App() {
       return value) instead of being stored — which silently disabled the
       context-change dialog (#123, found via gui-mock C5) */
   const [contextConfirm, setContextConfirm] = useState<{ fn: () => void } | null>(null);
+  // #187: the Q4 dialog's open is set SYNCHRONOUSLY with the click that
+  // queues it — unlike the #138 registry count (a passive-effect chain
+  // measured at >1 s under load), so BOTH keyboard guards read this
+  // render-time ref (the pendingRef pattern) and never act behind the
+  // dialog: dropping the set there unmounts it mid-dispatch and its own
+  // Esc listener never runs the stored context switch (#123)
+  const contextConfirmRef = useRef<{ fn: () => void } | null>(null);
+  contextConfirmRef.current = contextConfirm;
 
   const [error, setError] = useState<string | null>(null);
   // #132 (§4.26): guidance/info — expected no-ops, quiet toast, no Copy,
@@ -356,6 +360,10 @@ export default function App() {
           tgt.tagName === "TEXTAREA" ||
           tgt.tagName === "SELECT" ||
           tgt.isContentEditable);
+      // #187: a queued/open Q4 dialog owns Esc even before the
+      // overlayCount chain catches up — preview-undo here would drop the
+      // set behind it and unmount the dialog mid-dispatch
+      if (contextConfirmRef.current != null && pendingRef.current.length > 0) return;
       if (pendingRef.current.length > 0) {
         if (!typing) {
           setPending([]); // #123: Undo = Cancel — the whole set drops
@@ -420,6 +428,14 @@ export default function App() {
     if (pendingRef.current.length > 0) setContextConfirm({ fn: action });
     else action();
   }, []);
+  // #187: the set can empty through a path that bypasses the dialog's
+  // own handlers (an Enter-commit behind it inside the stale-count
+  // window, a filter drop) — the dialog unmounts on
+  // `pending.length === 0`, so drop the guard signal with it or the
+  // keyboard stays owned by a dialog that is no longer there
+  useEffect(() => {
+    if (contextConfirm != null && pending.length === 0) setContextConfirm(null);
+  }, [contextConfirm, pending]);
 
   // ------------------------------------------------------------ selection
 
@@ -499,13 +515,36 @@ export default function App() {
   const exhaustAtRef = useRef(-1);
   const exhaustPidRef = useRef<number | null>(null);
   const markExhaust = useCallback(() => {
-    // #175/§4.40: under the lock EVERY view's verdicts mark — the
-    // workflow drills into a person and their full image before deciding
-    if ((mode === "review" || reviewLock) && personId != null) {
+    // #188/§4.40: the lock IS the mode — only verdicts made in Review
+    // mark (the #175 any-view widening died with the session lock)
+    if (mode === "review" && personId != null) {
       exhaustAtRef.current = stepIdx;
       exhaustPidRef.current = personId;
     }
-  }, [mode, personId, stepIdx, reviewLock]);
+  }, [mode, personId, stepIdx]);
+  // #189/§4.41 — focus follows the verdict: anchor the ACTED-ON person
+  // (cursor-as-target §4.25: last selected, else hovered, else the first
+  // acted face that has an owner). Called only after the mutation
+  // succeeds — and after markExhaust captured its pre-mutation mark —
+  // so #148's mark comparison and the §4.30 hand-over are untouched;
+  // reject reads the PRE-reject owner on purpose (the person the user
+  // acted on, never the system person)
+  const focusActed = useCallback(
+    (ids: number[]) => {
+      const first = [lastSelRef.current, hoverRef.current].find(
+        (v) => v != null && ids.includes(v)
+      );
+      const cands = first != null ? [first, ...ids] : ids;
+      for (const id of cands) {
+        const pid = facesById.get(id)?.person_id;
+        if (pid != null) {
+          setPersonId(pid);
+          return;
+        }
+      }
+    },
+    [facesById]
+  );
   const doAccept = useCallback(
     (ids: number[]) => {
       // #165/§4.35: plain accept never un-rejects — a rejected-only scope
@@ -519,9 +558,12 @@ export default function App() {
         return;
       }
       markExhaust();
-      return mutate(() => api.acceptFaces(ids), true);
+      return mutate(() => api.acceptFaces(ids), true).then((ok) => {
+        if (ok) focusActed(ids); // #189/§4.41: focus follows the verdict
+        return ok;
+      });
     },
-    [mutate, markExhaust, facesById]
+    [mutate, markExhaust, facesById, focusActed]
   );
   const doReject = useCallback(
     (ids: number[]) => {
@@ -532,9 +574,12 @@ export default function App() {
       // ✗, Edit dialog — the dialog previously handled this itself and
       // the other paths never did)
       setPending((p) => dropStagesForFaces(p, ids));
-      return mutate(() => api.rejectFaces(ids), true);
+      return mutate(() => api.rejectFaces(ids), true).then((ok) => {
+        if (ok) focusActed(ids); // #189/§4.41
+        return ok;
+      });
     },
-    [mutate, markExhaust]
+    [mutate, markExhaust, focusActed]
   );
   // #58 (§4.14): per-card inputs honour the same scope — editing the
   // description of a card inside a multi-selection updates the whole
@@ -599,9 +644,17 @@ export default function App() {
   // keeps their group through a rename, an ungrouped one stays Ungrouped
   // (pure — stable ref)
   const renameGroup = useCallback(
-    // #165/§4.35: the system person's seat never prefills a group field
-    (p: Person | undefined) =>
-      p && p.name !== "Rejected" ? p.groups[0] ?? "" : "",
+    // #165/§4.35: the system person's seat never prefills a group field;
+    // #178 (§4.1 — #153 revised): a STATUS SEAT is never passed either —
+    // assign_person validates the path up front (#165), so a seated
+    // person's `New` tripped 'reserved group name' before the branch
+    // that would have ignored it. "" derives the seat by state instead
+    // (the claim confirms the faces ⇒ Accepted), while a REAL group
+    // path keeps flowing (#153 — a filed person keeps their path)
+    (p: Person | undefined) => {
+      const g = p && p.name !== "Rejected" ? p.groups[0] ?? "" : "";
+      return isSeat(g) ? "" : g;
+    },
     []
   );
 
@@ -681,37 +734,36 @@ export default function App() {
     setPending((p) => dropStagesForFaces(p, [...selRef.current].filter((id) => !visible.has(id))));
     mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
   };
-  // #175 (§4.40) — engage the Review lock: pin Show → New through the
-  // ordinary filter path, then guard the position — an anchored person
-  // without a new face advances to the next person in the step list
-  // that has one (forward, else the first; none ⇒ stay + toast)
-  const engageLock = () => {
-    if (reviewLock) return;
-    setReviewLock(true);
-    changeFaceFilter("provisional");
-    if (personId != null && snap) {
-      const has = (id: number) =>
-        snap.faces.some((f) => f.person_id === id && f.link_status === "provisional");
-      if (!has(personId)) {
-        const nextId = exhaustAdvanceTarget(stepIds, personId, stepIdx, has);
-        if (nextId != null) setPersonId(nextId);
-        else setInfo("no more persons to review");
-      }
+  // #188 (§4.40) — the lock IS the mode: entering Review (any route,
+  // incl. the initial load) pins Show → New through the ordinary filter
+  // path; once per entry (pinnedRef) so later changes stick — the user
+  // is locked out by the disabled select, while a test harness may
+  // still dispatch changes
+  const pinnedRef = useRef(false);
+  useEffect(() => {
+    if (mode !== "review") {
+      pinnedRef.current = false;
+      return;
     }
-  };
-  // release: Person mode + Show → All, the full image closes, the
-  // person anchor stays (the pane shows where the user left off) — a
-  // mode switch behind the #123 staged-set confirm (§4.40)
-  const releaseLock = () => {
-    if (!reviewLock) return;
-    setReviewLock(false);
-    confirmContext(() => {
-      setMode("person");
-      setImageId(null);
-      if (splitImageId != null) setSplitImageId(null);
-      changeFaceFilter("all");
-    });
-  };
+    if (pinnedRef.current || !snap) return;
+    pinnedRef.current = true;
+    changeFaceFilter("provisional");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, snap]);
+  // #188/§4.40 — the position guard, on ENTRY only (a mode transition;
+  // the mount has no anchor): an anchored person without a new face
+  // advances to the next person in the step list that has one (forward,
+  // else the first; none ⇒ stay + toast)
+  useEffect(() => {
+    if (mode !== "review" || personId == null || !snap) return;
+    const has = (id: number) =>
+      snap.faces.some((f) => f.person_id === id && f.link_status === "provisional");
+    if (has(personId)) return;
+    const nextId = exhaustAdvanceTarget(stepIds, personId, stepIdx, has);
+    if (nextId != null) setPersonId(nextId);
+    else setInfo("no more persons to review");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
   // #99 (§4.9): persons-view cluster grouping — accuracy (default) or one
   // section per description; display-only, the selection is untouched
   const setClusterGroup = (next: ClusterGroup) => {
@@ -1357,10 +1409,11 @@ export default function App() {
         setInfo("assign a person to bring it back");
         return;
       }
-      // #175/§4.40: under the Review lock EVERY view takes the marking
-      // path — the workflow decides in Person view and full images too
-      if ((mode !== "review" || splitImageId != null) && !reviewLock) {
-        await mutate(() => api.acceptFaces(ids), true);
+      // #188/§4.40: the lock is the mode — no any-view widening; with a
+      // split open the plain path keeps its pre-#175 reach
+      if (mode !== "review" || splitImageId != null) {
+        const ok = await mutate(() => api.acceptFaces(ids), true);
+        if (ok) focusActed(ids); // #189/§4.41: focus follows the verdict
         return;
       }
       markExhaust(); // #125: accepting may empty the current person
@@ -1378,6 +1431,7 @@ export default function App() {
       // each op its own mutate so a mid-set failure can be re-staged.)
       const ok = await mutate(() => api.acceptFaces(ids), false);
       if (!ok) return;
+      focusActed(ids); // #189/§4.41: post-success, after the pre-mutation mark
       setSel(new Set(plan?.faceIds ?? []));
       const first = plan?.faceIds[0];
       if (first != null) {
@@ -1391,7 +1445,7 @@ export default function App() {
         );
       }
     },
-    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, reviewLock]
+    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, focusActed]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
@@ -1693,6 +1747,9 @@ export default function App() {
       // dialog, tree menus/group dialog and the settings popover slip
       // through)
       if (overlayCount > 0) return;
+      // #187: same stale-count window as the Esc stack — never act
+      // (select-all, Accept, reject, step …) behind a queued/open Q4 dialog
+      if (contextConfirmRef.current != null && pendingRef.current.length > 0) return;
       // #53 (§4.17): Ctrl-G toggles the whole section — the one under
       // the mouse cursor first (#74), else the hovered card's, else the
       // most recently selected card's; preventDefault so webkit cannot
@@ -1799,6 +1856,19 @@ export default function App() {
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
+  // #179 (§4.41): the top bar's DB-wide status totals — an overview of
+  // the whole database, independent of mode/filter/selection; one pass
+  // per refreshed snapshot so every verdict lands (#98: memoised)
+  const statusTotals = useMemo(() => {
+    const t = { provisional: 0, confirmed: 0, rejected: 0 };
+    for (const f of snap?.faces ?? []) {
+      if (f.link_status === "provisional") t.provisional++;
+      else if (f.link_status === "confirmed") t.confirmed++;
+      else if (f.link_status === "rejected") t.rejected++;
+    }
+    return t;
+  }, [snap]);
+
   // ------------------------------------------------- #88 Merge Similar Persons
 
   const saveMergeSettings = useCallback(
@@ -1852,8 +1922,12 @@ export default function App() {
         return;
       }
       // one assign_person call = one transaction, §4.1 merge semantics
-      // (claim on rejected, emptied shells deleted, derived state recomputed)
-      const ok = await mutate(() => api.assignPerson(faceIds, target.name, target.groups[0] ?? ""));
+      // (claim on rejected, emptied shells deleted, derived state recomputed).
+      // #178/§4.1: the group is never applied to an existing target (F2)
+      // — pass "" so a STATUS SEAT can never reach assign_person's
+      // up-front path validation (#165: an unfiled target's groups[0]
+      // IS their seat)
+      const ok = await mutate(() => api.assignPerson(faceIds, target.name, ""));
       if (ok) {
         // #133 (§4.28): the centre pane opens the merged target — all the
         // combined faces (a failed merge leaves the selection unchanged)
@@ -1904,9 +1978,10 @@ export default function App() {
     if (!target) return;
     // one assign_person call = one transaction, §4.1 merge semantics
     // (claim on rejected, emptied shells deleted, derived state recomputed)
-    const ok = await mutate(() =>
-      api.assignPerson(faceIds, target.name, target.groups[0] ?? ""),
-    );
+    // #178/§4.1: "" — never the target's group (F2 ignores it anyway,
+    // and for an unfiled target groups[0] IS their status seat, which
+    // #165's up-front validation refuses)
+    const ok = await mutate(() => api.assignPerson(faceIds, target.name, ""));
     if (ok) {
       // #133 (rule 34): the centre pane opens the merged target
       setPersonId(target.id);
@@ -2016,15 +2091,15 @@ export default function App() {
               something the Person view (or any single pane) owns. */}
           <label
             title={
-              reviewLock
-                ? "Locked to New by the Review lock (#175, §4.40) — release the padlock to change it"
+              mode === "review"
+                ? "Locked to New while Review is active (#175/§4.40) — leave Review via the Rolls or Person tab"
                 : "All = everything except rejected; rejected faces appear only under Show → Rejected (#165, §4.10); switching it drops hidden faces from the selection"
             }
           >
             show
             <select
               value={faceFilter}
-              disabled={reviewLock}
+              disabled={mode === "review"}
               // #176 (§4.41): the closed value speaks the status colour
               className={`st-${faceFilter}`}
               onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
@@ -2035,30 +2110,27 @@ export default function App() {
               <option value="rejected">Rejected</option>
             </select>
           </label>
-          {/* #175 (§4.40): the Review lock — beside Show; engaged pins
-              Show to New and auto-advances past drained persons from any
-              view; releasing lands in Person mode with Show → All */}
-          <button
-            className={`lock-btn${reviewLock ? " locked" : ""}`}
-            aria-pressed={reviewLock}
-            onClick={reviewLock ? releaseLock : engageLock}
+          {/* #188 (§4.40): the padlock is a pure INDICATOR — 🔒 exactly
+              while Review mode is active (Show pinned New + disabled);
+              never clickable, no engage/release */}
+          <span
+            className={`lock-btn${mode === "review" ? " locked" : ""}`}
             title={
-              reviewLock
-                ? "Release the Review lock — Person mode, Show → All (#175, §4.40)"
-                : "Engage the Review lock — Show pinned to New; verdicts auto-advance to the next person with new faces (#175, §4.40)"
+              mode === "review"
+                ? "Show is locked to New while Review is active (#175/§4.40) — leave via the Rolls or Person tab"
+                : "Show is unlocked outside Review (#175/§4.40)"
             }
           >
-            {reviewLock ? "🔒" : "🔓"}
-          </button>
-          {/* #176 (§4.41): the anchored person's live counts — any
-              mode: ? new (red), ✓ accepted (green), ✗ rejected (gray) */}
-          {selectedPerson && (
-            <span className="person-counts" title={`faces of ${selectedPerson.name}`}>
-              <span className="c-prov" title="new faces">? {selectedPerson.counts.provisional}</span>
-              <span className="c-conf" title="accepted faces">✓ {selectedPerson.counts.confirmed}</span>
-              <span className="c-rej" title="rejected faces">✗ {selectedPerson.counts.rejected}</span>
-            </span>
-          )}
+            {mode === "review" ? "🔒" : "🔓"}
+          </span>
+          {/* #179 (§4.41): the DB-wide status totals — always visible,
+              an overview of the database; never scoped to the anchor,
+              the mode or the filter */}
+          <span className="status-counts" title="totals in the database">
+            <span className="c-prov" title="new faces">? {statusTotals.provisional}</span>
+            <span className="c-conf" title="accepted faces">✓ {statusTotals.confirmed}</span>
+            <span className="c-rej" title="rejected faces">✗ {statusTotals.rejected}</span>
+          </span>
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}

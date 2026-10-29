@@ -951,3 +951,34 @@ fn status_seats_and_system_person_guards_165() {
     );
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+#[test]
+fn rename_keeps_id_and_never_seats_the_caller_178() {
+    let p = fixture_paths("rename178");
+    let s = db::snapshot(&p).unwrap();
+    let u1 = s.persons.iter().find(|x| x.name == "Unknown1").unwrap();
+    assert_eq!(u1.groups, vec!["New".to_string()]);
+    let same_id = u1.id;
+    // #178: the rename sends "" — a seat is NEVER passed (#165's
+    // up-front validation would reject 'New' before the in-place branch)
+    db::assign_person(&p, &[1, 2, 6], "Dave", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let dave = s.persons.iter().find(|x| x.name == "Dave").unwrap();
+    assert_eq!(dave.id, same_id, "rename in place keeps the id");
+    assert_eq!(dave.groups, vec!["Accepted".to_string()], "seat derives after the claim");
+    assert_eq!(dave.counts.provisional, 0, "all claimed");
+    // the caller contract, backend side: a seat still errors, so every
+    // caller must send ""; a merge with "" never applies the group (F2)
+    let err = db::assign_person(&p, &[3], "Dave", "Accepted").unwrap_err();
+    assert!(err.to_string().contains("reserved group name"), "{err}");
+    db::assign_person(&p, &[3], "Dave", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let dave = s.persons.iter().find(|x| x.name == "Dave").unwrap();
+    assert_eq!(dave.counts.total, 4, "face 3 merged onto Dave");
+    assert_eq!(dave.groups, vec!["Accepted".to_string()], "F2: the target's group untouched");
+    assert!(
+        !s.persons.iter().any(|x| x.name == "Unknown2"),
+        "the emptied source shell is deleted"
+    );
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}

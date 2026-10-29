@@ -33,6 +33,10 @@ export default tseslint.config(
         fetch: "readonly",
         alert: "readonly",
         URL: "readonly",
+        // #167: the in-page import runner schedules its scripted child
+        // over timers (mock.js's window-sandbox emulation)
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
       },
     },
   },
