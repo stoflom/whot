@@ -21,6 +21,7 @@ import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
   groupByDescription,
+  listedImages,
   matchesStatusFilter,
   personTreeMembers,
   type ClusterGroup,
@@ -45,21 +46,40 @@ import FaceGrid, { type Section } from "./components/FaceGrid";
 import FaceOverlay from "./components/FaceOverlay";
 import PersonTree, { orderedVisiblePersonIds } from "./components/PersonTree";
 import RollsPane from "./components/RollsPane";
+import RollsThumbs from "./components/RollsThumbs";
 import ImportPane from "./components/ImportPane";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
+import { byFilename, clickImage, emptyImageSel, imageScope, type ImageSel } from "./imageSelect";
 
-type View = "review" | "rolls" | "person";
+type Mode = "review" | "rolls" | "person";
 
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [view, setView] = useState<View>("review");
+  const [mode, setMode] = useState<Mode>("review");
   const [personId, setPersonId] = useState<number | null>(null);
   const [imageId, setImageId] = useState<number | null>(null);
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
   const [rollRoot, setRollRoot] = useState("/");
+  // #174 (§4.39): the selected branch of the Rolls path hierarchy —
+  // session state like the root (survives mode switches): absolute
+  // path, defaults to the root itself, re-validated when the root
+  // changes (a selection outside the new root falls back to it)
+  const [rollBranch, setRollBranch] = useState("/");
+  // #174 (§4.39): the right-pane thumbnail selection — the §4.23
+  // anchor pattern over images; clears when the branch selection
+  // changes (a different thumb set)
+  const [imgSel, setImgSel] = useState<ImageSel>(emptyImageSel());
+  useEffect(() => setImgSel(emptyImageSel()), [rollBranch]);
+  const changeRollRoot = (p: string) => {
+    setRollRoot(p);
+    setRollBranch((prev) =>
+      p === "/" || prev === p || prev.startsWith(`${p}/`) ? prev : p
+    );
+    setImgSel(emptyImageSel());
+  };
   // #167 (§4.36): the import pane's directory — session state in the
   // DetailPane's right-pane slot (survives tab switches); null = closed
   const [importDir, setImportDir] = useState<string | null>(null);
@@ -245,7 +265,7 @@ export default function App() {
   // Description mode needs no IPC at all, #99)
   useEffect(() => {
     if (
-      view === "person" &&
+      mode === "person" &&
       personId != null &&
       snap &&
       snap.settings.cluster_group === "accuracy"
@@ -257,7 +277,7 @@ export default function App() {
     } else {
       setClusters(null);
     }
-  }, [view, personId, snap]);
+  }, [mode, personId, snap]);
 
   // refcrops for the detail pane
   useEffect(() => {
@@ -330,6 +350,12 @@ export default function App() {
     (imageId: number, delta: number) => mutate(() => api.rotateImage(imageId, delta)),
     [mutate]
   );
+  // #174 (§4.39): rotate a whole thumbnail scope — one command per
+  // image in order, batched into ONE refresh
+  const rotateImages = (ids: number[], delta: number) =>
+    mutate(async () => {
+      for (const id of ids) await api.rotateImage(id, delta);
+    });
   const rotateFace = useCallback(
     (faceId: number, delta: number) => mutate(() => api.rotateFace(faceId, delta)),
     [mutate]
@@ -427,11 +453,11 @@ export default function App() {
   const exhaustAtRef = useRef(-1);
   const exhaustPidRef = useRef<number | null>(null);
   const markExhaust = useCallback(() => {
-    if (view === "review" && personId != null) {
+    if (mode === "review" && personId != null) {
       exhaustAtRef.current = stepIdx;
       exhaustPidRef.current = personId;
     }
-  }, [view, personId, stepIdx]);
+  }, [mode, personId, stepIdx]);
   const doAccept = useCallback(
     (ids: number[]) => {
       // #165/§4.35: plain accept never un-rejects — a rejected-only scope
@@ -510,7 +536,7 @@ export default function App() {
       } else {
         setSelPersons(new Set([id]));
         setPersonId(id);
-        setView("person");
+        setMode("person");
         setImageId(null);
       }
     });
@@ -788,6 +814,42 @@ export default function App() {
      doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel,
      confirmContext, rotateFace]);
 
+  // #174 (§4.39): the selected branch's images for the right pane —
+  // DIRECT children only (the directory of primary_path equals the
+  // branch — never the recursion), Show-listed (§4.10, shared helper),
+  // filename order; `deeper` drives the drill hint
+  const branchThumbs = useMemo(() => {
+    const dirOf = (p: string) => {
+      const i = p.lastIndexOf("/");
+      return i <= 0 ? "/" : p.slice(0, i);
+    };
+    if (!snap) return { images: [] as ImageRow[], deeper: false };
+    const listed = listedImages(snap.images, snap.faces, faceFilter);
+    const under = rollBranch === "/" ? "/" : `${rollBranch}/`;
+    const direct = snap.images.filter((x) => dirOf(x.primary_path) === rollBranch);
+    const deeper = snap.images.some(
+      (x) =>
+        listed.has(x.id) &&
+        dirOf(x.primary_path) !== rollBranch &&
+        x.primary_path.startsWith(under)
+    );
+    return {
+      images: direct.filter((x) => listed.has(x.id)).sort((a, b) => byFilename(a, b)),
+      deeper,
+    };
+  }, [snap, rollBranch, faceFilter]);
+  // thumb clicks — §4.23's anchor pattern over the branch's display
+  // order (face selection untouched); the pane drops stale ids itself
+  const thumbClick = (id: number, mods: { ctrl: boolean; shift: boolean }) =>
+    setImgSel((s) => clickImage(s, branchThumbs.images.map((x) => x.id), id, mods));
+  // the thumbnail double-click / path-filter file entry: the #142 view-
+  // context change behind the #123 drop-or-accept dialog
+  const openThumb = (id: number) =>
+    confirmContext(() => {
+      setMode("rolls");
+      setImageId(id);
+    });
+
   const imageAreaMenu = (e: ReactMouseEvent, imageId: number) => {
     if (!snap) return;
     const faces = snap.faces.filter(
@@ -821,6 +883,12 @@ export default function App() {
 
   const imageMenu = (image: ImageRow, e: ReactMouseEvent) => {
     if (!snap) return;
+    // #174 (§4.39): the right-pane thumbnails own this menu — scope is
+    // the selection when the invoked thumb is part of it, else just
+    // that thumb (§4.14); stale ids (outside the branch) are dropped
+    const inBranch = new Set(branchThumbs.images.map((x) => x.id));
+    const scope = imageScope(imgSel, inBranch, image.id);
+    const many = scope.length > 1;
     const faces = snap.faces.filter(
       (f) => f.image_id === image.id && faceVisible(f)
     );
@@ -836,7 +904,7 @@ export default function App() {
             label: "Open image",
             onClick: () =>
               confirmContext(() => {
-                setView("rolls");
+                setMode("rolls");
                 setImageId(image.id);
               }),
           },
@@ -845,14 +913,24 @@ export default function App() {
             label: "Open full image (focused)",
             onClick: () => confirmContext(() => setSplitImageId(image.id)),
           },
-          // #122: stored display rotation (EXIF key, #118)
+          // #122: stored display rotation (EXIF key, #118) — over the
+          // whole scope (#174/§4.39), one command each in order
           {
-            label: "Rotate 90° CW",
-            onClick: () => rotateImg(image.id, 90),
+            label: many ? `Rotate 90° CW (${scope.length})` : "Rotate 90° CW",
+            onClick: () => rotateImages(scope, 90),
           },
           {
-            label: "Rotate 90° CCW",
-            onClick: () => rotateImg(image.id, -90),
+            label: many ? `Rotate 90° CCW (${scope.length})` : "Rotate 90° CCW",
+            onClick: () => rotateImages(scope, -90),
+          },
+          {
+            // #144: rejections (no preview blob, viewer not found) reach
+            // the error toast; one temp file per image of the scope
+            label: many ? `Open in system viewer (${scope.length})` : "Open in system viewer",
+            onClick: () => {
+              for (const id of scope)
+                api.openImage(id).catch((err) => setError(String(err)));
+            },
           },
         ],
       },
@@ -1050,7 +1128,7 @@ export default function App() {
     if (imageId != null) {
       return sectionsForImage(imageId);
     }
-    if (view === "person" && personId != null) {
+    if (mode === "person" && personId != null) {
       const out: Section[] = [];
       const pname = selectedPerson?.name ?? "";
       const rg = renameGroup(selectedPerson ?? undefined);
@@ -1168,7 +1246,7 @@ export default function App() {
         // #153: the rename keeps the person's current group path
         ruleDefaultGroup: renameGroup(p),
       }));
-  }, [snap, view, imageId, personId, selectedPerson, clusters,
+  }, [snap, mode, imageId, personId, selectedPerson, clusters,
       sectionsForImage, renameGroup, facesById, faceFilter, clusterGroup,
       pending]); // #155: staged (§4.24) descriptions drive the regroup
   sectionsRef.current = sections;
@@ -1192,7 +1270,7 @@ export default function App() {
         setInfo("assign a person to bring it back");
         return;
       }
-      if (view !== "review" || splitImageId != null) {
+      if (mode !== "review" || splitImageId != null) {
         await mutate(() => api.acceptFaces(ids), true);
         return;
       }
@@ -1224,7 +1302,7 @@ export default function App() {
         );
       }
     },
-    [snap, view, splitImageId, sections, mutate, markExhaust, facesById]
+    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
@@ -1269,9 +1347,9 @@ export default function App() {
       return;
     }
     setPersonId(nextId);
-    setView("person");
+    setMode("person");
     setImageId(null);
-  }, [snap, view, personId, faceFilter, stepIds]);
+  }, [snap, mode, personId, faceFilter, stepIds]);
 
   // #101 (§4.24) — stage/commit engine: Apply stages (no DB — the labels
   // preview), Accept commits the stage ops through the shared
@@ -1408,7 +1486,7 @@ export default function App() {
       confirmContext(() => {
         if (splitImageId != null) setSplitImageId(null);
         setPersonId(id);
-        setView("person");
+        setMode("person");
         setImageId(null);
       });
     },
@@ -1536,7 +1614,7 @@ export default function App() {
             e.preventDefault();
             acceptAndNext(ids);          // #96: advances in review mode
           }
-        } else if (e.key === "Enter" && view === "review") {
+        } else if (e.key === "Enter" && mode === "review") {
           // #96 (§4.30): Enter with no field focused = Accept & next —
           // in-field Enter keeps its commit meaning (the guard above
           // already keeps inputs out of this handler) — #166: a live
@@ -1561,7 +1639,7 @@ export default function App() {
             e.preventDefault();
             doReject(ids);
           }
-        } else if (e.key === "ArrowLeft" && view !== "rolls") {
+        } else if (e.key === "ArrowLeft" && mode !== "rolls") {
           // #95: plain arrows step persons (§4.22/#31) — they were dead
           // because this block returned before the arrow checks;
           // #163 (v3.64): inert in Rolls — stepping always lands in the
@@ -1569,7 +1647,7 @@ export default function App() {
           // the arrows keep their native scroll behaviour)
           e.preventDefault();
           stepPerson(-1);
-        } else if (e.key === "ArrowRight" && view !== "rolls") {
+        } else if (e.key === "ArrowRight" && mode !== "rolls") {
           e.preventDefault();
           stepPerson(1);
         }
@@ -1582,7 +1660,7 @@ export default function App() {
     // recreated per render, the handler re-captures them whenever any
     // listed dep changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, acceptAndNext, commitPending, overlayCount, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, view, mergeOpen, mergeInto, contextConfirm]);
+  }, [stepPerson, acceptAndNext, commitPending, overlayCount, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, mode, mergeOpen, mergeInto, contextConfirm]);
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
@@ -1646,7 +1724,7 @@ export default function App() {
         // combined faces (a failed merge leaves the selection unchanged)
         setPersonId(target.id);
         setImageId(null);
-        setView("person");
+        setMode("person");
       }
     },
     [snap, mergeInto, mutate],
@@ -1698,7 +1776,7 @@ export default function App() {
       // #133 (rule 34): the centre pane opens the merged target
       setPersonId(target.id);
       setImageId(null);
-      setView("person");
+      setMode("person");
     }
   }, [snap, faceMerge, personsById, mutate]);
 
@@ -1742,11 +1820,11 @@ export default function App() {
         <h1>WhoT <span className="dim">Face Manager</span></h1>
         <nav>
           <button
-            className={view === "review" ? "active" : ""}
+            className={mode === "review" ? "active" : ""}
             onClick={() =>
               // #123: a tab switch is a view-context change
               confirmContext(() => {
-                setView("review");
+                setMode("review");
                 setImageId(null);
                 setSplitImageId(null); // #55 (§4.19): explicit navigation ends focus mode
               })
@@ -1755,10 +1833,10 @@ export default function App() {
             Review <span className="pill">{pendingCount}</span>
           </button>
           <button
-            className={view === "rolls" ? "active" : ""}
+            className={mode === "rolls" ? "active" : ""}
             onClick={() =>
               confirmContext(() => {
-                setView("rolls");
+                setMode("rolls");
                 setSplitImageId(null); // #55 (§4.19)
               })
             }
@@ -1766,11 +1844,11 @@ export default function App() {
             Rolls
           </button>
           <button
-            className={view === "person" ? "active" : ""}
+            className={mode === "person" ? "active" : ""}
             disabled={personId == null}
             onClick={() =>
               confirmContext(() => {
-                setView("person");
+                setMode("person");
                 setImageId(null);
                 setSplitImageId(null); // #55 (§4.19)
               })
@@ -1829,7 +1907,7 @@ export default function App() {
             onFilter={setFilter}
             onReview={() =>
               confirmContext(() => {
-                setView("review");
+                setMode("review");
                 setImageId(null);
                 setSplitImageId(null); // #55 (§4.19)
               })
@@ -1891,7 +1969,7 @@ export default function App() {
               nav cluster (person stepping always lands in Person — it
               used to yank a rolls browser away), no seg (§4.9); the
               grid gets the pane's full height */}
-          {view !== "rolls" && (
+          {mode !== "rolls" && (
           <div className="center-toolbar">
             <span className="toolbar-left">
               <button
@@ -1923,7 +2001,7 @@ export default function App() {
                 in the top bar (#158, v3.57); #163: person view ONLY —
                 cluster_group shapes that view's sections alone, so Review
                 and Rolls must not show it */}
-            {view === "person" && (
+            {mode === "person" && (
             <span className="toolbar-right">
             <span
               className="seg"
@@ -2016,7 +2094,7 @@ export default function App() {
               </div>
             ) : (
               <>
-          {view === "rolls" && imageId == null ? (
+          {mode === "rolls" && imageId == null ? (
             <RollsPane
               images={snap.images}
               faces={snap.faces}
@@ -2025,22 +2103,21 @@ export default function App() {
               // stay raw; see RollsPane)
               faceFilter={faceFilter}
               root={rollRoot}
-              onRootChange={setRollRoot}
-              // #142: opening an image from the rolls grid is a full
+              onRootChange={changeRollRoot}
+              // #174 (§4.39): the selected branch — a header click
+              // toggles AND selects; its direct images land in the
+              // right-pane thumbnails
+              selected={rollBranch}
+              onSelect={setRollBranch}
+              // #142: opening an image from the path filter is a full
               // view-context change and must honour the #123 drop-or-
               // accept dialog when a staged set is live
-              onOpenImage={(id) =>
-                confirmContext(() => {
-                  setView("rolls");
-                  setImageId(id);
-                })
-              }
-              onContextMenuImage={imageMenu}
+              onOpenImage={openThumb}
               // #167 (§4.36): a not-yet-imported directory opens the
               // import pane in the right pane
               onImportDir={(p) => setImportDir(p)}
             />
-          ) : view === "rolls" && imageId != null && imgRow ? (
+          ) : mode === "rolls" && imageId != null && imgRow ? (
             <div className="image-detail">
               <div className="image-detail-top">
                 <button className="secondary" onClick={() => setImageId(null)}>
@@ -2076,7 +2153,7 @@ export default function App() {
               stage={pending}
               faceDropTarget={faceDropTarget}
               {...gridHandlers}
-              primaryFaceId={view === "person" ? selectedPerson?.primary_face_id ?? null : null}
+              primaryFaceId={mode === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />
           )}
               </>
@@ -2100,6 +2177,20 @@ export default function App() {
               dir={importDir}
               onClose={() => setImportDir(null)}
               onImported={() => void refresh().catch(() => {})}
+            />
+          ) : mode === "rolls" && imageId == null ? (
+            // #174 (§4.39): browsing the hierarchy → the selected
+            // branch's direct images (the import pane keeps precedence
+            // above; an OPEN image falls through to DetailPane — §4.37
+            // person editing while the face work is on screen)
+            <RollsThumbs
+              branch={rollBranch}
+              images={branchThumbs.images}
+              hasSubBranches={branchThumbs.deeper}
+              sel={imgSel.sel}
+              onClickImage={thumbClick}
+              onOpenImage={openThumb}
+              onContextMenuImage={imageMenu}
             />
           ) : (
           <DetailPane
@@ -2312,7 +2403,7 @@ export default function App() {
             });
             if (personId != null && ids.includes(personId)) {
               setPersonId(null);
-              setView("review");
+              setMode("review");
             }
             mutate(() => api.removePersons(ids), true);
           }}
