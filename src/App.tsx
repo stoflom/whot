@@ -385,6 +385,21 @@ export default function App() {
     },
     [changeSel]
   );
+  // #171 (§4.37) — a rect click in a full-image view toggles the
+  // selection as before AND moves the right pane to that face's person:
+  // a plain anchor (no context change, no view switch — deliberately
+  // not handleTreeSelect's §4.15 yank); a NULL person_id (legacy rows)
+  // leaves the anchor untouched. FaceOverlay renders only in the focus
+  // split and the rolls detail, so this is scoped to the full-image
+  // surfaces by construction.
+  const rectToggle = useCallback(
+    (id: number) => {
+      toggle(id);
+      const f = facesById.get(id);
+      if (f && f.person_id != null) setPersonId(f.person_id);
+    },
+    [toggle, facesById]
+  );
 
   // #49 (§4.14) — effective action scope: the active selection when the
   // invoked card is part of it, otherwise just that card. Reads selRef so
@@ -717,9 +732,14 @@ export default function App() {
           ...(f.image_id === splitImageId
             ? []
             : [{
-                // #123: opening focus mode is a view-context change
+                // #123: opening focus mode is a view-context change;
+                // #171/§4.37: the right pane follows the opening face's person
                 label: "Open full image",
-                onClick: () => confirmContext(() => setSplitImageId(f.image_id)),
+                onClick: () =>
+                  confirmContext(() => {
+                    setSplitImageId(f.image_id);
+                    if (f.person_id != null) setPersonId(f.person_id);
+                  }),
               }]),
         ],
       },
@@ -875,8 +895,14 @@ export default function App() {
     onRangeSelect: rangeSelect,
     onOpen: (id: number) => {
       const f = facesById.get(id);
-      // #123: opening focus mode is a view-context change
-      if (f) confirmContext(() => setSplitImageId(f.image_id));
+      // #123: opening focus mode is a view-context change; #171/§4.37:
+      // the right pane follows the opening face's person (NULL keeps
+      // the previous anchor)
+      if (f)
+        confirmContext(() => {
+          setSplitImageId(f.image_id);
+          if (f.person_id != null) setPersonId(f.person_id);
+        });
     },
     onToggleMany: toggleMany,
     onPrimary: doPrimary,
@@ -1931,7 +1957,7 @@ export default function App() {
                     height={splitRow.height}
                     faces={snap.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f))}
                     sel={sel}
-                    onToggle={toggle}
+                    onToggle={rectToggle}
                     onFaceContextMenu={faceMenu}
                     onImageContextMenu={(e) => imageAreaMenu(e, splitRow.id)}
                     rotation={splitRow.rotation} // #122
@@ -1995,7 +2021,7 @@ export default function App() {
                   height={imgRow.height}
                   faces={snap.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f))}
                   sel={sel}
-                  onToggle={toggle}
+                  onToggle={rectToggle}
                   onFaceContextMenu={faceMenu}
                   onImageContextMenu={(e) => imageAreaMenu(e, imgRow.id)}
                   rotation={imgRow.rotation} // #122
