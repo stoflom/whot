@@ -4104,6 +4104,172 @@ def c45_face_menu_add_group(t):
            f"after={after} (kept+added={added_ok}); single={single_ok}")
 
 
+def c46_edit_dialog_group_list(t):
+    """#181 (§4.38): a KNOWN name fronts the person's group list in the
+    Edit dialog — the shared rows (× removal, add row); the edits stage
+    locally and Accept commits them AFTER the name (a list-only Accept
+    runs the chain too), landing on the SURVIVING person (the merge
+    target when the name merges); a NEW name keeps the single Group
+    field."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def pick_filed(exclude=()):
+        return js(t, r"""
+          const snap = window.__MOCK_SNAP;
+          const SEATS = ['New', 'Accepted', 'Rejected'];
+          const ex = arguments[0];
+          const byId = new Map(snap.persons.map(p => [p.id, p]));
+          for (const f of snap.faces) {
+            if (f.link_status !== 'provisional' || f.person_id == null) continue;
+            if (ex.includes(f.person_id)) continue;
+            const p = byId.get(f.person_id);
+            if (!p || /^unknown/i.test(p.name) || p.name === 'Rejected') continue;
+            const real = p.groups.filter(g => !SEATS.includes(g));
+            if (real.length >= 1)
+              return {fid: f.id, pid: p.id, name: p.name, groups: p.groups.slice(), real};
+          }
+          return null;
+        """, list(exclude))
+
+    def open_dialog(fid):
+        """the card's Edit… button"""
+        return js(t, r"""
+          const c = document.querySelector(`.face-card[data-face-id='${arguments[0]}']`);
+          if (!c) return false;
+          const b = [...c.querySelectorAll('button')].find(x => x.textContent.trim() === 'Edit…');
+          if (!b) return false;
+          b.scrollIntoView({block: 'center'});
+          b.click();
+          return true;
+        """, fid)
+
+    def rows():
+        return js(t, r"""
+          return {
+            list: !!document.querySelector('.edit-dialog .ed-groups'),
+            paths: [...document.querySelectorAll('.edit-dialog .ed-groups .dp-group-path')]
+              .map(x => x.textContent.trim()),
+            single: [...document.querySelectorAll('.edit-dialog .typeahead input')]
+              .some(i => (i.placeholder ?? '').includes('ungrouped')),
+          };
+        """)
+
+    def set_name(v):
+        js(t, r"""
+          const el = document.querySelector('.edit-dialog .typeahead input');
+          if (!el) return;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+        """, v)
+        time.sleep(0.4)
+
+    def click_btn(sel, text):
+        return js(t, r"""
+          const b = [...document.querySelectorAll(arguments[0])]
+            .find(x => x.textContent.trim() === arguments[1]);
+          if (!b) return false;
+          b.click();
+          return true;
+        """, sel, text)
+
+    def set_add(v):
+        js(t, r"""
+          const el = document.querySelector('.edit-dialog .dp-add-group .typeahead input');
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+        """, v)
+        time.sleep(0.3)
+
+    def groups_of(pid):
+        return js(t, r"""
+          return (window.__MOCK_SNAP.persons.find(p => p.id === arguments[0])?.groups ?? []).slice();
+        """, pid)
+
+    # ── phase A: known (prefilled) name → the list; a list-only Accept
+    #    commits × the row + the added path ────────────────────────────
+    a = pick_filed()
+    if not a:
+        record("C46 Edit dialog group list (#181/§4.38)", True,
+               "need a provisional face of a filed person — vacuous")
+        return
+    js(t, "arguments[0].scrollIntoView({block:'center'})",
+       t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{a['fid']}']"))
+    time.sleep(0.3)
+    opened = open_dialog(a["fid"])
+    time.sleep(0.6)
+    pa = rows()
+    pa_ok = (opened and pa["list"] and pa["paths"] == a["groups"] and not pa["single"])
+    x = t.find_element(By.CSS_SELECTOR, ".edit-dialog .ed-groups .dp-group-x")
+    x.click()
+    time.sleep(0.4)
+    set_add("Ck46|G2")
+    click_btn(".edit-dialog .dp-add-btn", "Add group")
+    time.sleep(0.4)
+    untouched = groups_of(a["pid"]) == a["groups"]    # staged only
+    click_btn(".edit-dialog .dialog-actions button", "Accept")
+    time.sleep(1.5)
+    a_after = groups_of(a["pid"])
+    dialog_gone = not js(t, "return !!document.querySelector('.edit-dialog')")
+    a_commit_ok = (untouched and a_after == ["Ck46|G2"] and dialog_gone)
+
+    # ── phase B: a NEW name keeps the single Group field ──────────────
+    b = pick_filed(exclude=[a["pid"]])
+    b_ok = None
+    pb = None
+    if b:
+        js(t, "arguments[0].scrollIntoView({block:'center'})",
+           t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{b['fid']}']"))
+        time.sleep(0.3)
+        open_dialog(b["fid"])
+        time.sleep(0.6)
+        set_name("Ck46NewPerson")
+        pb = rows()
+        b_ok = (not pb["list"] and pb["single"])
+        click_btn(".edit-dialog .dialog-actions button", "cancel")
+        time.sleep(0.4)
+
+    # ── phase C: a name MERGE — the ops land on the target ───────────
+    c = pick_filed(exclude=[a["pid"], b["pid"] if b else -1])
+    c_ok = None
+    c_state = {}
+    if c and b:
+        js(t, "arguments[0].scrollIntoView({block:'center'})",
+           t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{c['fid']}']"))
+        time.sleep(0.3)
+        open_dialog(c["fid"])
+        time.sleep(0.6)
+        set_name(a["name"])              # a KNOWN name — the list appears
+        pc = rows()
+        # stage on the TARGET'S list: × their row, add another
+        x = t.find_element(By.CSS_SELECTOR, ".edit-dialog .ed-groups .dp-group-x")
+        x.click()
+        time.sleep(0.4)
+        set_add("Ck46|G3")
+        click_btn(".edit-dialog .dp-add-btn", "Add group")
+        time.sleep(0.4)
+        c_before = groups_of(a["pid"])   # still ['Ck46|G2'] — staged only
+        click_btn(".edit-dialog .dialog-actions button", "Accept")
+        time.sleep(1.8)
+        c_after = groups_of(a["pid"])
+        merged_face = js(t, r"""
+          const f = window.__MOCK_SNAP.faces.find(x => x.id === arguments[0]);
+          return f ? f.person_id : null;
+        """, c["fid"])
+        c_state = {"list": pc["list"], "before": c_before, "after": c_after, "owner": merged_face}
+        c_ok = (pc["list"] and c_before == ["Ck46|G2"]
+                and c_after == ["Ck46|G3"]
+                and merged_face == a["pid"])   # the face landed on the TARGET
+
+    ok = pa_ok and a_commit_ok and (b_ok is not False) and (c_ok is not False)
+    record("C46 Edit dialog group list (#181/§4.38): known name fronts the list, staged ops commit on Accept (list-only too), merge ops hit the target, new name keeps the single field",
+           ok,
+           f"A: pick={a} rows={pa} staged-only={untouched} after={a_after} closed={dialog_gone}; "
+           f"B: pick={b} → {pb} (ok={b_ok}); C: pick={c} {c_state} (ok={c_ok})")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -4156,6 +4322,7 @@ def main():
         c43_single_only_menu_items(t)
         c44_rotate_image_cascades(t)
         c45_face_menu_add_group(t)
+        c46_edit_dialog_group_list(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
