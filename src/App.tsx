@@ -102,20 +102,50 @@ export default function App() {
   // #34 — pane sizes (session state); defaults match the stylesheet
   // (#55: the image-split size is gone — the focus mode takes the pane)
   const [paneSizes, setPaneSizes] = useState({ left: 250, right: 290 });
+  // #174 follow-up (§4.39): Rolls mode's CENTRE width while browsing —
+  // null = follow the left pane's width (the default: most of the
+  // window goes to the right pane's thumbnails, which flex to fill);
+  // an explicit px persists for the session. While it applies, the
+  // centre|right divider drags the CENTRE instead of the right pane.
+  const [rollCenter, setRollCenter] = useState<number | null>(null);
+  // the centre shows the HIERARCHY (no image open, no focus split) —
+  // the detail views need the full width again (§4.39)
+  const rollsBrowse = mode === "rolls" && imageId == null && splitImageId == null;
+  // clamp 10%..70% of the window, never past `window − left − 200px`
+  // (the right pane keeps a usable floor)
+  const clampRollCenter = (px: number) => {
+    const w = window.innerWidth;
+    const lo = Math.round(w * 0.1);
+    const hi = Math.max(Math.min(Math.round(w * 0.7), w - paneSizes.left - 200), lo);
+    return Math.min(Math.max(px, lo), hi);
+  };
+  const rollCenterPx = clampRollCenter(rollCenter ?? paneSizes.left);
   const dragRef = useRef<{ edge: "left" | "right"; startX: number; start: number } | null>(
     null
   );
   const startDrag = (edge: "left" | "right") => (e: ReactMouseEvent) => {
     e.preventDefault();
-    dragRef.current = { edge, startX: e.clientX, start: paneSizes[edge] };
+    // read once at drag start — the layout class must not flip mid-drag
+    const browse = rollsBrowse;
+    dragRef.current = {
+      edge,
+      startX: e.clientX,
+      start: edge === "right" && browse ? rollCenterPx : paneSizes[edge],
+    };
     const move = (ev: MouseEvent) => {
       const d = dragRef.current;
       if (!d) return;
       const dx = ev.clientX - d.startX;
-      setPaneSizes((s) => {
-        if (d.edge === "left") return { ...s, left: Math.min(Math.max(d.start + dx, 160), 480) };
-        return { ...s, right: Math.min(Math.max(d.start - dx, 200), 560) };
-      });
+      if (d.edge === "left") {
+        setPaneSizes((s) => ({ ...s, left: Math.min(Math.max(d.start + dx, 160), 480) }));
+        return;
+      }
+      if (browse) {
+        // #174/§4.39: divider right = centre wider (right pane flexes)
+        setRollCenter(clampRollCenter(d.start + dx));
+        return;
+      }
+      setPaneSizes((s) => ({ ...s, right: Math.min(Math.max(d.start - dx, 200), 560) }));
     };
     const up = () => {
       dragRef.current = null;
@@ -1964,7 +1994,12 @@ export default function App() {
           title="drag to resize, double-click to reset"
         />
 
-        <main className={splitRow ? "center focus" : "center"}>
+        <main
+          className={splitRow ? "center focus" : "center"}
+          // #174/§4.39: browsing Rolls — the centre holds its explicit
+          // width (default = the left pane's); the right pane flexes
+          style={rollsBrowse ? { width: rollCenterPx, flex: "none" } : undefined}
+        >
           {/* #163 (v3.64): Rolls renders no centre toolbar at all — no
               nav cluster (person stepping always lands in Person — it
               used to yank a rolls browser away), no seg (§4.9); the
@@ -2165,10 +2200,23 @@ export default function App() {
         <div
           className="v-divider"
           onMouseDown={startDrag("right")}
-          onDoubleClick={() => setPaneSizes((s) => ({ ...s, right: 290 }))}
-          title="drag to resize, double-click to reset"
+          onDoubleClick={() => {
+            // #174/§4.39: while browsing Rolls the divider owns the
+            // CENTRE — double-click returns to the left-following default
+            if (rollsBrowse) setRollCenter(null);
+            else setPaneSizes((s) => ({ ...s, right: 290 }));
+          }}
+          title={
+            rollsBrowse
+              ? "drag to resize the centre (10–70% of the window), double-click to reset"
+              : "drag to resize, double-click to reset"
+          }
         />
-        <aside className="right" style={{ width: paneSizes.right }}>
+        <aside
+          className="right"
+          // #174/§4.39: browsing Rolls — the right pane takes the rest
+          style={rollsBrowse ? { flex: "1" } : { width: paneSizes.right }}
+        >
           {importDir != null ? (
             // #167 (§4.36): the import pane takes the right pane while
             // open; a successful run refreshes the snapshot (the new
