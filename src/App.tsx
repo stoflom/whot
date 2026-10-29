@@ -15,6 +15,7 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
+import type { GroupOp } from "./groupList";
 import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
@@ -533,22 +534,61 @@ export default function App() {
   // rename-merge (v1.9/v1.11): EVERY GUI rename (tree, context menu,
   // detail pane) routes through assign over all the person's faces — a
   // colliding name merges; the 'person already exists' error is
-  // unreachable from the GUI
+  // unreachable from the GUI. Returns the SURVIVING person's id — the
+  // merge target when the name was taken — or null on failure, so the
+  // pane can re-anchor on who the faces now belong to (#172/§4.38)
+  const renameMerge = useCallback(
+    async (id: number, n: string): Promise<number | null> => {
+      if (!snap) return null;
+      const name = n.trim();
+      const p = personsById.get(id);
+      if (!name || name === p?.name) return id; // empty / no-op: never an error
+      const taken = snap.persons.find((x) => x.id !== id && x.name === name);
+      const ids = snap.faces.filter((f) => f.person_id === id).map((f) => f.id);
+      if (ids.length === 0) {
+        // faceless person: rename, or merge-by-deletion when the name is taken
+        const ok = taken
+          ? await mutate(() => api.removePersons([id]), false)
+          : await mutate(() => api.setPersonName(id, name), false);
+        return ok ? (taken?.id ?? id) : null;
+      }
+      const ok = await doAssign(ids, name, renameGroup(p));
+      return ok ? (taken?.id ?? id) : null;
+    },
+    [snap, personsById, mutate, doAssign, renameGroup]
+  );
   const renameOrMerge = (id: number, n: string) => {
-    if (!snap) return;
-    const name = n.trim();
-    const p = personsById.get(id);
-    if (!name || name === p?.name) return; // empty / no-op: never an error
-    const ids = snap.faces.filter((f) => f.person_id === id).map((f) => f.id);
-    if (ids.length === 0) {
-      // faceless person: rename, or merge-by-deletion when the name is taken
-      const taken = snap.persons.some((x) => x.id !== id && x.name === name);
-      if (taken) mutate(() => api.removePersons([id]), false);
-      else mutate(() => api.setPersonName(id, name));
-      return;
-    }
-    doAssign(ids, name, renameGroup(p));
+    // §4.38/#172: a rename-merge re-anchors the pane on the surviving
+    // person (the merge target) — the origin shell is deleted
+    void renameMerge(id, n).then((t) => t != null && setPersonId(t));
   };
+
+  // #172/#173 (§4.38) — the person pane's Update person commit: the
+  // pending name FIRST (the rename-merge helper, which may re-anchor),
+  // then the pending note, then the staged group ops IN ORDER against
+  // the surviving person; a failed name/note commit aborts the ops so
+  // they can never land on a person the merge just deleted
+  const updatePerson = useCallback(
+    (id: number, name: string, note: string, ops: GroupOp[]): Promise<boolean> =>
+      (async () => {
+        const target = await renameMerge(id, name);
+        if (target == null) return false;
+        if (note.trim() !== (personsById.get(id)?.note ?? "").trim()) {
+          const ok = await mutate(() => api.setPersonNote(id, note));
+          if (!ok) return false;
+        }
+        if (ops.length > 0) {
+          const ok = await mutate(async () => {
+            for (const op of ops)
+              await api.movePersonsBetweenGroups([target], op.from, op.to);
+          });
+          if (!ok) return false;
+        }
+        setPersonId(target);
+        return true;
+      })(),
+    [renameMerge, personsById, mutate]
+  );
 
   // #23/#99 — change the status filter; faces the new filter hides leave
   // the selection so they can never be bulk-acted on invisibly (§4.10)
@@ -2068,8 +2108,10 @@ export default function App() {
             snapshot={snap}
             faceFilter={faceFilter}
             onName={renameOrMerge}
-            onGroup={(id, g) => mutate(() => api.setPersonGroup(id, g))}
             onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}
+            // #172/#173 (§4.38): the pane's ordered commit — pending
+            // name (rename-merge + re-anchor), note, staged group ops
+            onUpdate={updatePerson}
             onRemovePerson={(id) => doRemovePersons([id])}
             // #145: the detail-pane avatar opens the primary face's full
             // image in focus mode — the same confirmContext path as the
