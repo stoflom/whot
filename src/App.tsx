@@ -15,7 +15,7 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
-import type { GroupOp } from "./groupList";
+import { isSeat, type GroupOp } from "./groupList";
 import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
@@ -599,9 +599,17 @@ export default function App() {
   // keeps their group through a rename, an ungrouped one stays Ungrouped
   // (pure — stable ref)
   const renameGroup = useCallback(
-    // #165/§4.35: the system person's seat never prefills a group field
-    (p: Person | undefined) =>
-      p && p.name !== "Rejected" ? p.groups[0] ?? "" : "",
+    // #165/§4.35: the system person's seat never prefills a group field;
+    // #178 (§4.1 — #153 revised): a STATUS SEAT is never passed either —
+    // assign_person validates the path up front (#165), so a seated
+    // person's `New` tripped 'reserved group name' before the branch
+    // that would have ignored it. "" derives the seat by state instead
+    // (the claim confirms the faces ⇒ Accepted), while a REAL group
+    // path keeps flowing (#153 — a filed person keeps their path)
+    (p: Person | undefined) => {
+      const g = p && p.name !== "Rejected" ? p.groups[0] ?? "" : "";
+      return isSeat(g) ? "" : g;
+    },
     []
   );
 
@@ -1852,8 +1860,12 @@ export default function App() {
         return;
       }
       // one assign_person call = one transaction, §4.1 merge semantics
-      // (claim on rejected, emptied shells deleted, derived state recomputed)
-      const ok = await mutate(() => api.assignPerson(faceIds, target.name, target.groups[0] ?? ""));
+      // (claim on rejected, emptied shells deleted, derived state recomputed).
+      // #178/§4.1: the group is never applied to an existing target (F2)
+      // — pass "" so a STATUS SEAT can never reach assign_person's
+      // up-front path validation (#165: an unfiled target's groups[0]
+      // IS their seat)
+      const ok = await mutate(() => api.assignPerson(faceIds, target.name, ""));
       if (ok) {
         // #133 (§4.28): the centre pane opens the merged target — all the
         // combined faces (a failed merge leaves the selection unchanged)
@@ -1904,9 +1916,10 @@ export default function App() {
     if (!target) return;
     // one assign_person call = one transaction, §4.1 merge semantics
     // (claim on rejected, emptied shells deleted, derived state recomputed)
-    const ok = await mutate(() =>
-      api.assignPerson(faceIds, target.name, target.groups[0] ?? ""),
-    );
+    // #178/§4.1: "" — never the target's group (F2 ignores it anyway,
+    // and for an unfiled target groups[0] IS their status seat, which
+    // #165's up-front validation refuses)
+    const ok = await mutate(() => api.assignPerson(faceIds, target.name, ""));
     if (ok) {
       // #133 (rule 34): the centre pane opens the merged target
       setPersonId(target.id);
