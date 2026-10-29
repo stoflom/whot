@@ -3994,6 +3994,116 @@ def c44_rotate_image_cascades(t):
            f"crop menu item={bool(items)} → {after_crop} (crop={crop_ok})")
 
 
+def c45_face_menu_add_group(t):
+    """#184 (§4.18): the face menu's 'Add group…' — a scope over N
+    DISTINCT persons reads 'Add group to N persons…' and the
+    GroupDialog adds the typed path as ANOTHER membership to all N (the
+    #164 add semantics — every real group kept); a single-person scope
+    reads plain 'Add group…'. Both pick persons are FILED (real group)
+    so the kept-membership assertion is exact."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const SEATS = ['New', 'Accepted', 'Rejected'];
+      const byId = new Map(snap.persons.map(p => [p.id, p]));
+      const filed = id => {
+        const p = byId.get(id);
+        return !!p && p.groups.some(g => !SEATS.includes(g));
+      };
+      const prov = snap.faces.filter(f =>
+        f.link_status === 'provisional' && f.person_id != null && filed(f.person_id));
+      for (const a of prov) {
+        for (const b of prov)
+          if (a.id !== b.id && a.person_id !== b.person_id)
+            return {a: a.id, b: b.id, pa: a.person_id, pb: b.person_id};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C45 face menu 'Add group…' over N persons (#184/§4.18)", True,
+               "need two provisional faces of DIFFERENT filed persons — vacuous")
+        return
+
+    def groups():
+        return js(t, r"""
+          const g = id => (window.__MOCK_SNAP.persons.find(p => p.id === id)?.groups ?? []).slice();
+          return {pa: g(arguments[0]), pb: g(arguments[1])};
+        """, pick["pa"], pick["pb"])
+
+    def card(fid):
+        return t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")
+
+    before = groups()
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card(pick["a"]))
+    time.sleep(0.3)
+    card(pick["a"]).click()
+    time.sleep(0.4)
+    # the two cards can sit far apart — AC clicks need b in the viewport
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card(pick["b"]))
+    time.sleep(0.3)
+    AC(t.driver).key_down(Keys.CONTROL).click(card(pick["b"])).key_up(Keys.CONTROL).perform()
+    time.sleep(0.4)
+    AC(t.driver).context_click(card(pick["b"])).perform()
+    time.sleep(0.6)
+    labels = js(t, r"""
+      return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim());
+    """)
+    two_ok = "Add group to 2 persons…" in labels
+    clicked = js(t, r"""
+      const it = [...document.querySelectorAll('.ctx-item')]
+        .find(x => x.textContent.trim() === 'Add group to 2 persons…');
+      if (!it) return false;
+      it.click();
+      return true;
+    """)
+    time.sleep(0.5)
+    title = js(t, "return document.querySelector('.dialog h3')?.textContent.trim() ?? null;")
+    typed = js(t, r"""
+      const el = document.querySelector('.dialog input');
+      if (!el) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, arguments[0]);
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      return true;
+    """, "Ck45|Grp")
+    submitted = js(t, r"""
+      const b = [...document.querySelectorAll('.dialog-actions button')]
+        .find(x => x.textContent.trim() === 'add group');
+      if (!b) return false;
+      b.click();
+      return true;
+    """)
+    time.sleep(1.2)
+    after = groups()
+
+    def expect(old):
+        real = [g for g in old if g not in ("New", "Accepted", "Rejected")]
+        return sorted(set(real + ["Ck45|Grp"]))     # kept + added
+    added_ok = (sorted(after["pa"]) == expect(before["pa"])
+                and sorted(after["pb"]) == expect(before["pb"]))
+
+    # single-person scope reads plain 'Add group…'
+    card(pick["a"]).click()          # plain click replaces the selection
+    time.sleep(0.4)
+    AC(t.driver).context_click(card(pick["a"])).perform()
+    time.sleep(0.6)
+    labels1 = js(t, r"""
+      return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim());
+    """)
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.4)
+    single_ok = ("Add group…" in labels1
+                 and "Add group to 2 persons…" not in labels1)
+
+    ok = (two_ok and clicked and title == "Add a group to 2 persons"
+          and typed and submitted and added_ok and single_ok)
+    record("C45 face menu 'Add group…' over N persons (#184/§4.18): 2-person label + adds to both with groups kept, single scope plain",
+           ok,
+           f"pick={pick} before={before} two-label={two_ok} title={title!r} "
+           f"after={after} (kept+added={added_ok}); single={single_ok}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -4045,6 +4155,7 @@ def main():
         c42_edit_label_everywhere(t)
         c43_single_only_menu_items(t)
         c44_rotate_image_cascades(t)
+        c45_face_menu_add_group(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
