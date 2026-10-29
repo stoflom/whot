@@ -62,7 +62,19 @@ export default function App() {
   // New (the select is disabled) and widens the exhaust advance to any
   // view; releasing lands in Person mode with Show → All
   const [reviewLock, setReviewLock] = useState(false);
+  // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
+  // pointer (modeless — the tree under it stays clickable) and the
+  // sticky-person guard (once per person+filter pair)
+  const [pickPersonDialog, setPickPersonDialog] = useState(false);
+  const [noFacesDialog, setNoFacesDialog] = useState(false);
+  const noFacesKeyRef = useRef("");
   const [personId, setPersonId] = useState<number | null>(null);
+  // the pointer dialog follows its purpose: it closes as soon as a
+  // person is anchored or the user leaves Person mode
+  useEffect(() => {
+    if (pickPersonDialog && (personId != null || mode !== "person"))
+      setPickPersonDialog(false);
+  }, [pickPersonDialog, personId, mode]);
   const [imageId, setImageId] = useState<number | null>(null);
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
@@ -1423,6 +1435,42 @@ export default function App() {
     if (splitImageId != null) setSplitImageId(null);
   }, [snap, mode, personId, faceFilter, stepIds, splitImageId]);
 
+  // #176 (§4.41) — the sticky person: a Show change (or a verdict) that
+  // hides EVERY face of the anchored person opens the guard dialog once
+  // per person+filter pair (Close dismisses until either changes);
+  // faceless shells (total 0) are their own state and never trigger it
+  useEffect(() => {
+    if (mode !== "person" || personId == null || !snap) return;
+    const p = personsById.get(personId);
+    if (!p || p.counts.total === 0) return;
+    const visible = snap.faces.some(
+      (f) => f.person_id === personId && matchesStatusFilter(f.link_status, faceFilter)
+    );
+    if (visible) return;
+    const key = `${personId}|${faceFilter}`;
+    if (noFacesKeyRef.current === key) return;
+    noFacesKeyRef.current = key;
+    setNoFacesDialog(true);
+  }, [mode, personId, snap, personsById, faceFilter]);
+  // …and the guard closes as soon as the pair becomes workable again
+  // (Show All, a filter change, another anchor, another mode)
+  useEffect(() => {
+    if (!noFacesDialog) return;
+    if (mode !== "person" || personId == null || !snap) {
+      setNoFacesDialog(false);
+      return;
+    }
+    const p = personsById.get(personId);
+    if (
+      !p ||
+      p.counts.total === 0 ||
+      snap.faces.some(
+        (f) => f.person_id === personId && matchesStatusFilter(f.link_status, faceFilter)
+      )
+    )
+      setNoFacesDialog(false);
+  }, [noFacesDialog, mode, personId, snap, personsById, faceFilter]);
+
   // #101 (§4.24) — stage/commit engine: Apply stages (no DB — the labels
   // preview), Accept commits the stage ops through the shared
   // accept-and-advance path; Esc/Undo revert (F1) and a selection change
@@ -1917,15 +1965,25 @@ export default function App() {
           </button>
           <button
             className={mode === "person" ? "active" : ""}
-            disabled={personId == null}
             onClick={() =>
               confirmContext(() => {
                 setMode("person");
                 setImageId(null);
                 setSplitImageId(null); // #55 (§4.19)
+                // #176 (§4.41): no anchor yet — land in Person mode with
+                // Show → All (the status branches are listed) and point
+                // at the tree
+                if (personId == null) {
+                  changeFaceFilter("all");
+                  setPickPersonDialog(true);
+                }
               })
             }
-            title={personId == null ? "select a person in the tree" : ""}
+            title={
+              personId == null
+                ? "no person anchored yet — pick one in the tree (#176)"
+                : undefined
+            }
           >
             Person
           </button>
@@ -1952,6 +2010,8 @@ export default function App() {
             <select
               value={faceFilter}
               disabled={reviewLock}
+              // #176 (§4.41): the closed value speaks the status colour
+              className={`st-${faceFilter}`}
               onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
             >
               <option value="all">All</option>
@@ -1975,6 +2035,15 @@ export default function App() {
           >
             {reviewLock ? "🔒" : "🔓"}
           </button>
+          {/* #176 (§4.41): the anchored person's live counts — any
+              mode: ? new (red), ✓ accepted (green), ✗ rejected (gray) */}
+          {selectedPerson && (
+            <span className="person-counts" title={`faces of ${selectedPerson.name}`}>
+              <span className="c-prov" title="new faces">? {selectedPerson.counts.provisional}</span>
+              <span className="c-conf" title="accepted faces">✓ {selectedPerson.counts.confirmed}</span>
+              <span className="c-rej" title="rejected faces">✗ {selectedPerson.counts.rejected}</span>
+            </span>
+          )}
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}
@@ -2484,6 +2553,43 @@ export default function App() {
             setContextConfirm(null);
             void commitPending(all).then(act);
           }}
+        />
+      )}
+      {/* #176 (§4.41): the Person-mode guard dialogs — the no-anchor
+          pointer (single Close) and the sticky-person guard */}
+      {pickPersonDialog && (
+        <ConfirmDialog
+          title="Please select a person in the tree on the left"
+          body={
+            "Person mode works on the person anchored in the tree — under Show → All " +
+            "the status branches New and Accepted are listed (Rejected under Show → Rejected)."
+          }
+          confirmLabel="Close"
+          onlyConfirm
+          modeless
+          onConfirm={() => setPickPersonDialog(false)}
+          onCancel={() => setPickPersonDialog(false)}
+        />
+      )}
+      {noFacesDialog && (
+        <ConfirmDialog
+          title={
+            faceFilter === "all"
+              ? "No faces to show"
+              : `No ${faceFilter === "provisional" ? "new" : faceFilter === "confirmed" ? "accepted" : "rejected"} faces`
+          }
+          body={
+            `This person holds no face under Show → ${faceFilter === "all" ? "All" : faceFilter === "provisional" ? "New" : faceFilter === "confirmed" ? "Accepted" : "Rejected"}. ` +
+            "Show All brings every non-rejected face back."
+          }
+          cancelLabel="Close"
+          confirmLabel="Show All"
+          modeless
+          onConfirm={() => {
+            setNoFacesDialog(false);
+            changeFaceFilter("all");
+          }}
+          onCancel={() => setNoFacesDialog(false)}
         />
       )}
       {confirmRemove && (
