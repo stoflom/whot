@@ -924,7 +924,8 @@ export default function App() {
             onClick: () => rotateFace(id, -90),
             disabled: multi,
           },
-          { label: label("Assign to person…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
+          // #180/§4.24: ONE label — 'Edit…' — for every dialog opener
+          { label: label("Edit…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
           // #51: pointless while this very image is already open in the split
           ...(f.image_id === splitImageId
             ? []

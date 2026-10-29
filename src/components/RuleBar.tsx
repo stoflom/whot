@@ -88,9 +88,9 @@ export default function RuleBar({
       <button
         disabled={none}
         onClick={onAssign}
-        title="Assign a person — the Edit dialog, scope Selection (#101, §4.24)"
+        title="Open the Edit dialog over the selection — assign a person, set name/group/description (#101, §4.24)"
       >
-        Assign name…
+        Edit…
       </button>
       <button
         className="bad"

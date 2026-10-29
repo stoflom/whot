@@ -11,7 +11,9 @@ export function isAutoName(v: string): boolean {
 
 /** onFocus/onClick handler for inputs: select the whole value when
     auto-generated — bound to both, so a click inside the already-focused
-    field re-selects too (the 'Assign to person…' dialog complaint, #67) */
+    field re-selects too (the Edit-dialog complaint, #67 — the dialog
+    was labelled 'Assign to person…' then; #180 unified every opener
+    on 'Edit…') */
 export function selectAllIfAuto(e: { currentTarget: HTMLInputElement }): void {
   const el = e.currentTarget;
   // rAF: let focus/caret placement settle first, then override the selection
