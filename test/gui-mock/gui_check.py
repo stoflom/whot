@@ -123,6 +123,30 @@ Checks (contract refs: docs/gui-design.md):
       the window (never past window − left − 200px), double-click
       restores the left-following default, and opening an image restores
       the normal layout (right pane back to its fixed width)
+  C36 the Review lock (#175, §4.40): engaging the padlock beside Show
+      pins Show → New (select disabled, button latched) and an anchored
+      person WITHOUT a new face advances to the next one that has one;
+      a verdict in PERSON view with focus open (the locked any-view
+      mark) exhausts the person → auto-advance to the next person with
+      new faces AND the focus split closes (§4.15); releasing lands in
+      Person mode with Show → All re-enabled
+  C37 Person mode stickiness + status colours (#176, §4.41): the
+      Person tab is clickable without an anchor → the single-Close
+      'Please select a person in the tree on the left' dialog +
+      Show → All; anchoring a person without new faces and switching
+      Show → New opens 'No new faces' with Show All + Close; the top
+      bar carries the anchored person's live counts (? new, ✓
+      accepted, ✗ rejected); and the status scheme is one colour
+      everywhere — the Show select (closed value), the top-bar count
+      chips and the tree status branches resolve to the same rgb
+      (New = red, Accepted = green, Rejected = gray; All = the normal
+      text colour)
+  C38 verdict icon shortcuts (#177, §4.42): the card tick accepts ONE
+      card as-is (mock: only that face flips to confirmed — the §4.14
+      card scope); the cluster header's ✓ flips the WHOLE group's faces
+      to confirmed and ✗ rejects them all; the bottom bar's selection
+      shortcuts carry the icons (button.ok reads '✓ Accept', button.bad
+      '✗ Reject')
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -311,7 +335,7 @@ def c3_bar_accept_commits(t):
     edit_and_apply(t, "GuiCheck Accept")  # stages; dialog closed by Apply
     # bottom-bar Accept with a live stage = stage-then-commit (§4.30)
     [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
-     if b.text.strip() == "Accept"][0].click()
+     if "Accept" in b.text][0].click()
     time.sleep(1.5)
     strip = strip_text(t)
     f = face_by_id(t, fid)
@@ -696,7 +720,7 @@ def c30_bar_accept_selection_over_stage(t):
     count = js(t, "const b = document.querySelector('.rulebar b'); "
                   "return b ? Number(b.textContent) : -1")
     [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
-     if b.text.strip() == "Accept"][0].click()
+     if "Accept" in b.text][0].click()
     time.sleep(1.6)
     after = js(t, r"""
       const fs = window.__MOCK_SNAP.faces.filter(f => f.person_id === Number(arguments[0]));
@@ -884,7 +908,7 @@ def c19_staged_desc_regroups(t):
      if b.text.strip() == "Apply"][0].click()
     time.sleep(0.5)
     [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
-     if b.text.strip() == "Accept"][0].click()
+     if "Accept" in b.text][0].click()
     time.sleep(1.5)
     committed_a = header_for(pick["a"])
     mock_desc = js(t, """
@@ -1457,7 +1481,7 @@ def c22_review_exhaust_skips_reviewed(t):
     """, pick["aname"])
     time.sleep(0.6)
     acc = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
-           if b.text.strip() == "Accept"]
+           if "Accept" in b.text]
     acc[0].click()
     time.sleep(2.5)
     landed = js(t, r"""
@@ -2714,6 +2738,354 @@ def c35_rolls_layout(t):
            f"(right≈290, centre≈{opened['w'] - opened['left'] - 290 - 2}): {restored_ok}")
 
 
+def c36_review_lock(t):
+    """#175 (§4.40): the Review lock — the padlock beside Show pins the
+    filter to New (select disabled, button latched) and guards the
+    position (an anchored person without a new face advances to the
+    next one that has any); a verdict made in PERSON view while focus
+    mode is open exhausts the person → the locked any-view mark fires,
+    auto-advancing to the next person with new faces and closing the
+    full image (§4.15); releasing lands in Person mode with Show → All
+    re-enabled (session-only lock — the select works again)."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def lock_state():
+        return js(t, r"""
+          const b = document.querySelector('.lock-btn');
+          const s = document.querySelector('.topbar-right select');
+          return {btn: !!b, latched: !!b && b.classList.contains('locked'),
+                  pressed: b?.getAttribute('aria-pressed') ?? null,
+                  disabled: s?.disabled ?? null, value: s?.value ?? null,
+                  selected: document.querySelector('.tree-person.selected')
+                    ? Number(document.querySelector('.tree-person.selected').dataset.personId)
+                    : null,
+                  focus: !!document.querySelector('.focus-pane'),
+                  tab: (document.querySelector('.topbar nav button.active')?.textContent ?? '')
+                    .trim().split(/\s+/)[0] ?? ''};
+        """)
+
+    # ── pick: a person WITHOUT new faces (guard target), then a person
+    #    with EXACTLY one new face (the verdict target) ────────────────
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const done = snap.persons.find(p => p.name !== 'Rejected' &&
+        !/^unknown/i.test(p.name) && p.counts.total > 0 && p.counts.provisional === 0
+        && p.counts.confirmed > 0);
+      const one = snap.persons.find(p => p.name !== 'Rejected' &&
+        !/^unknown/i.test(p.name) && p.counts.provisional === 1 && p.counts.total >= 1);
+      // the ONE new face — the focus film roll shows every face of its
+      // image (the Show filter does not apply there), so the verdict
+      // must target this exact card
+      const fid = one ? snap.faces.find(f =>
+        f.person_id === one.id && f.link_status === 'provisional')?.id ?? null : null;
+      return done && one && fid != null
+        ? {doneId: done.id, oneId: one.id, oneFid: fid} : null;
+    """)
+    if pick is None:
+        record("C36 the Review lock (#175/§4.40)", True,
+               "need a fully-reviewed person + a person with exactly one new face — vacuous")
+        return
+
+    # anchor on the reviewed person (Show = All, row visible)
+    t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['doneId']}']").click()
+    time.sleep(0.8)
+
+    # ── engage: Show pins New, disabled, latched; position guard fires ─
+    t.find_element(By.CSS_SELECTOR, ".lock-btn").click()
+    time.sleep(1.2)
+    engaged = lock_state()
+
+    # ── the verdict target: exactly one new face, focus open ───────────
+    has_one = js(t, "return !!document.querySelector('.tree-person[data-person-id=\"' + arguments[0] + '\"]');", pick["oneId"])
+    if not has_one:
+        record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
+               False, "the one-new-face person is not in the locked tree — unexpected")
+        return
+    t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['oneId']}']").click()
+    time.sleep(0.8)
+    card = t.find_element(By.CSS_SELECTOR, ".face-card")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()          # pre-click: absorb the selection re-render (WebKit dblclick window)
+    time.sleep(0.5)
+    card = t.find_element(By.CSS_SELECTOR, ".face-card")
+    AC(t.driver).double_click(card).perform()   # focus mode — the locked workflow's full image
+    time.sleep(1.0)
+    before_verdict = lock_state()
+
+    # ── the verdict inside focus: select THE provisional face's card,
+    #    bar Accept (the roll lists every face of the image) ───────────
+    fcard = t.find_element(
+        By.CSS_SELECTOR, f".focus-pane .face-card[data-face-id='{pick['oneFid']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", fcard)
+    time.sleep(0.3)
+    fcard.click()
+    time.sleep(0.5)
+    accept = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+              if "Accept" in b.text and b.is_enabled()]
+    if not accept:
+        record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
+               False, "rulebar Accept not enabled after selecting the card in focus")
+        return
+    accept[0].click()
+    time.sleep(1.5)
+    after_verdict = lock_state()
+    advanced = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const sel = document.querySelector('.tree-person.selected');
+      const id = sel ? Number(sel.dataset.personId) : null;
+      const p = id == null ? null : snap.persons.find(x => x.id === id);
+      return {id, hasNew: p ? p.counts.provisional > 0 : false,
+              oldGone: !snap.persons.some(x => x.id === arguments[0]),
+              oldNew: (snap.persons.find(x => x.id === arguments[0])?.counts.provisional) ?? 0};
+    """, pick["oneId"])
+
+    # ── release: Person mode, Show → All, select usable again ──────────
+    t.find_element(By.CSS_SELECTOR, ".lock-btn").click()
+    time.sleep(1.2)
+    released = lock_state()
+    guard_new = js(t,
+                   "return window.__MOCK_SNAP.persons.find(x => x.id === arguments[0])?.counts.provisional ?? -1;",
+                   engaged["selected"])
+
+    ok = (
+        engaged["latched"] and engaged["pressed"] == "true"
+        and engaged["disabled"] and engaged["value"] == "provisional"      # Show pinned New
+        and engaged["selected"] not in (None, pick["doneId"])               # position guard
+        and guard_new > 0                                                    # …landed on a person with new faces
+        and before_verdict["focus"]                                          # focus opened (person view)
+        and advanced["oldNew"] == 0                                     # the person drained of new faces
+        and advanced["id"] != pick["oneId"] and advanced["hasNew"]          # …and the context advanced
+        and not after_verdict["focus"]                                       # the full image closed (§4.15)
+        and after_verdict["tab"].startswith("Person")                        # lands in Person mode
+        and not released["latched"] and released["pressed"] == "false"
+        and not released["disabled"] and released["value"] == "all"         # Show → All, usable
+        and released["tab"].startswith("Person")                             # Person mode
+    )
+    record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
+           ok,
+           f"engage: latched={engaged['latched']} disabled={engaged['disabled']} value={engaged['value']} "
+           f"guard {pick['doneId']}→{engaged['selected']} (new={guard_new}); "
+           f"verdict: focus {before_verdict['focus']}→closed={not after_verdict['focus']}, "
+           f"old new={advanced['oldNew']} gone={advanced['oldGone']}, "
+           f"advanced {pick['oneId']}→{advanced['id']} hasNew={advanced['hasNew']} tab={after_verdict['tab']!r}; "
+           f"release: latched={released['latched']} disabled={released['disabled']} "
+           f"value={released['value']!r} tab={released['tab']!r}")
+
+
+def c37_person_sticky_colors(t):
+    """#176 (§4.41): the Person tab is clickable without an anchor (the
+    single-Close pointer dialog + Show → All); a Show change that hides
+    every face of the anchored person opens 'No new faces' (Show All /
+    Close); the top bar shows the anchored person's live counts; and
+    the status colour scheme is ONE colour everywhere — select closed
+    value, count chips and tree status branches resolve to the same rgb
+    per status (New red, Accepted green, Rejected gray; All = normal)."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def dialog():
+        return js(t, r"""
+          const d = document.querySelector('.overlay .dialog');
+          if (!d) return null;
+          return {title: d.querySelector('h3')?.textContent.trim() ?? '',
+                  buttons: [...d.querySelectorAll('button')].map(b => b.textContent.trim())};
+        """)
+
+    def show_select():
+        return js(t, "return document.querySelector('.topbar-right select')?.value ?? null;")
+
+    def set_show(value):
+        js(t, r"""
+          const el = document.querySelector('.topbar-right select');
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('change', {bubbles: true}));
+        """, value)
+        time.sleep(1.0)
+
+    def tab_active():
+        return js(t, r"return (document.querySelector('.topbar nav button.active')?.textContent ?? '').trim().split(/\s+/)[0] ?? '';")
+
+    # ── phase 1: the Person tab without an anchor ────────────────────
+    person_btn = [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+                  if "Person" in b.text][0]
+    not_disabled = js(t, """
+      const b = [...document.querySelectorAll('.topbar nav button')]
+        .find(x => x.textContent.includes('Person'));
+      return b ? !b.disabled : false;
+    """)
+    person_btn.click()
+    time.sleep(1.0)
+    d1 = dialog()
+    p1 = {"show": show_select(), "tab": tab_active()}
+    close1 = [b for b in t.find_elements(By.CSS_SELECTOR, ".overlay .dialog button")
+              if b.text.strip() == "Close"]
+    if close1:
+        close1[0].click()
+        time.sleep(0.6)
+    d1_gone = dialog() is None
+
+    # ── phase 2: anchor a person WITHOUT new faces; Show → New ────────
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const p = snap.persons.find(x => x.name !== 'Rejected' &&
+        !/^unknown/i.test(x.name) && x.counts.total > 0 && x.counts.provisional === 0
+        && x.counts.confirmed > 0);
+      return p ? {id: p.id, counts: {...p.counts}} : null;
+    """)
+    if pick is None:
+        record("C37 Person stickiness + status colours (#176/§4.41)", True,
+               "need a fully-reviewed person — vacuous")
+        return
+    t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['id']}']").click()
+    time.sleep(0.8)
+    set_show("provisional")
+    d2 = dialog()
+    show_all = [b for b in t.find_elements(By.CSS_SELECTOR, ".overlay .dialog button")
+                if b.text.strip() == "Show All"]
+    if show_all:
+        show_all[0].click()
+        time.sleep(1.0)
+    d2_gone = dialog() is None
+
+    # ── phase 3: the top-bar counts of the anchored person ────────────
+    counts = js(t, r"""
+      const c = document.querySelector('.person-counts');
+      return c ? {n: c.querySelector('.c-prov')?.textContent.trim() ?? '',
+                  a: c.querySelector('.c-conf')?.textContent.trim() ?? '',
+                  r: c.querySelector('.c-rej')?.textContent.trim() ?? ''} : null;
+    """)
+    counts_ok = (counts is not None
+                 and counts["n"] == f"? {pick['counts']['provisional']}"
+                 and counts["a"] == f"✓ {pick['counts']['confirmed']}"
+                 and counts["r"] == f"✗ {pick['counts']['rejected']}")
+
+    # ── phase 4: one colour scheme everywhere ────────────────────────
+    def rgb(sel):
+        return js(t, r"""
+          const el = document.querySelector(arguments[0]);
+          return el ? getComputedStyle(el).color : null;
+        """, sel)
+
+    set_show("provisional")  # dismissed in phase 2 for this pair — no dialog
+    new_rgb = {"select": rgb(".topbar-right select"),
+               "chip": rgb(".person-counts .c-prov"),
+               "branch": rgb(".tree-node.status-new .tree-node-name")}
+    set_show("confirmed")
+    ok_rgb = {"select": rgb(".topbar-right select"),
+              "chip": rgb(".person-counts .c-conf"),
+              "branch": rgb(".tree-node.status-accepted .tree-node-name")}
+    set_show("rejected")
+    # the anchored person may hold no rejected face — the guard dialog
+    # can pop here; it does not affect computed styles behind the overlay
+    rej_rgb = {"select": rgb(".topbar-right select"),
+               "chip": rgb(".person-counts .c-rej"),
+               "branch": rgb(".tree-node.status-rejected .tree-node-name")}
+    set_show("all")
+    all_rgb = rgb(".topbar-right select")
+    normal_rgb = rgb("body")  # All = the default text colour (--text)
+
+    def same(d):
+        vals = [v for v in d.values() if v]
+        return len(vals) == 3 and len(set(vals)) == 1
+
+    colors_ok = (same(new_rgb) and same(ok_rgb) and same(rej_rgb)
+                 and len({new_rgb["chip"], ok_rgb["chip"], rej_rgb["chip"]}) == 3  # distinct
+                 and all_rgb == normal_rgb)                                        # All = normal text
+
+    ok = (not_disabled
+          and d1 is not None and "Please select a person" in d1["title"]
+          and d1["buttons"] == ["Close"]                       # single Close button
+          and p1["show"] == "all" and p1["tab"].startswith("Person")
+          and d1_gone
+          and d2 is not None and d2["title"] == "No new faces"
+          and sorted(d2["buttons"]) == ["Close", "Show All"]
+          and show_all and d2_gone and show_select() == "all"
+          and counts_ok and colors_ok)
+    record("C37 Person stickiness + status colours (#176/§4.41): no-anchor dialog + Show All, 'No new faces' guard, top-bar counts, one colour scheme",
+           ok,
+           f"tab enabled={not_disabled}; dialog1={d1} show={p1['show']} tab={p1['tab']!r} closed={d1_gone}; "
+           f"dialog2={d2} closed={d2_gone} show={show_select()!r}; counts={counts} (want ? {pick['counts']['provisional']} ✓ {pick['counts']['confirmed']} ✗ {pick['counts']['rejected']}); "
+           f"rgb new={new_rgb} ok={ok_rgb} rej={rej_rgb} all={all_rgb} vs normal={normal_rgb}")
+
+
+def c38_verdict_icons(t):
+    """#177 (§4.42): the verdict icon shortcuts — the card's ✓ accepts
+    ONE card as-is (the §4.14 card scope: only that face flips in the
+    mock), the cluster header's ✓/✗ verdict the WHOLE group (every face
+    of the section confirms / rejects), and the bottom bar's selection
+    shortcuts carry the icons (✓ Accept / ✗ Reject, semantics
+    unchanged — C30 covers the bar behaviour)."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def sections():
+        return js(t, r"""
+          return [...document.querySelectorAll('.face-section')].map(s => ({
+            key: s.dataset.sectionKey ?? '',
+            prov: [...s.querySelectorAll('.face-card.status-provisional')]
+              .map(c => Number(c.dataset.faceId)),
+            all: [...s.querySelectorAll('.face-card')].map(c => Number(c.dataset.faceId)),
+          }));
+        """)
+
+    def statuses(ids):
+        return js(t, r"""
+          const want = new Set(arguments[0]);
+          return window.__MOCK_SNAP.faces
+            .filter(f => want.has(f.id))
+            .map(f => `${f.id}:${f.link_status}`);
+        """, ids)
+
+    secs = sections()
+    a = next((s for s in secs if len(s["prov"]) >= 2), None)
+    b = next((s for s in secs if s is not a and len(s["prov"]) >= 1), None)
+    if a is None or b is None:
+        record("C38 verdict icon shortcuts (#177/§4.42)", True,
+               "need two sections holding provisional faces — vacuous")
+        return
+
+    # ── the card tick: ONE card, as-is (§4.14 card scope) ────────────
+    one = a["prov"][0]
+    t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{one}'] .card-accept").click()
+    time.sleep(1.2)
+    one_ok = statuses([one]) == [f"{one}:confirmed"]
+    rest_still = all(s.endswith(":provisional")
+                     for s in statuses([i for i in a["prov"][1:]]))
+
+    # ── the cluster header ✓: the whole group ───────────────────────
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-section[data-section-key='{a['key']}'] .sec-accept").click()
+    time.sleep(1.5)
+    group_ok = all(s.endswith(":confirmed") for s in statuses(a["prov"]))
+
+    # ── and ✗: the whole other group ─────────────────────────────────
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-section[data-section-key='{b['key']}'] .sec-reject").click()
+    time.sleep(1.5)
+    reject_ok = all(s.endswith(":rejected") for s in statuses(b["prov"]))
+
+    # ── the bar carries the icons ────────────────────────────────────
+    js(t, "arguments[0].scrollIntoView({block:'center'})",
+       t.find_element(By.CSS_SELECTOR, ".face-card"))
+    t.find_element(By.CSS_SELECTOR, ".face-card").click()
+    time.sleep(0.5)
+    bar = js(t, r"""
+      const btn = (cls) => [...document.querySelectorAll(`.rulebar button.${cls}`)]
+        .map(b => b.textContent.trim());
+      return {ok: btn('ok'), bad: btn('bad')};
+    """)
+    bar_ok = bar["ok"] == ["✓ Accept"] and bar["bad"] == ["✗ Reject"]
+
+    ok = one_ok and rest_still and group_ok and reject_ok and bar_ok
+    record("C38 verdict icon shortcuts (#177/§4.42): card tick = one card as-is, cluster ✓/✗ = the whole group, bar icons",
+           ok,
+           f"card {one} → {statuses([one])} (others still provisional: {rest_still}); "
+           f"group {a['key']} ✓ → confirmed={group_ok}; group {b['key']} ✗ → rejected={reject_ok}; bar={bar}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -2756,6 +3128,9 @@ def main():
         c33_person_group_list_update(t)
         c34_rolls_branch_thumbnails(t)
         c35_rolls_layout(t)
+        c36_review_lock(t)
+        c37_person_sticky_colors(t)
+        c38_verdict_icons(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

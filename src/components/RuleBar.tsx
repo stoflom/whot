@@ -68,7 +68,7 @@ export default function RuleBar({
             : `Accept the ${count} selected face(s) — advances in Review (shortcut: A) (#101, §4.30)`
         }
       >
-        Accept
+        ✓ Accept
       </button>
       {stageText && (
         <span
@@ -98,7 +98,7 @@ export default function RuleBar({
         onClick={onReject}
         title={`Reject the ${count} selected face(s) — hidden unless the filter shows them (shortcut: R)`}
       >
-        Reject
+        ✗ Reject
       </button>
       <button className="secondary" disabled={none} onClick={onClear} title="Clear the selection">
         clear

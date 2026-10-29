@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.73** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.76** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -213,7 +213,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   [All | New | Accepted | Rejected]` — the face-status filter applied by
   every view (default All; **New** is the `provisional` status, spelled
   the way the face-card badge spells it) — lives in the **top bar**
-  (#158, v3.57). The center pane's toolbar right side carries the
+  (#158, v3.57). Beside it sits the **Review lock** (#175, §4.40): a
+  padlock toggle that pins Show to **New** (the select renders disabled
+  while locked) for the focused new-faces workflow; releasing it lands
+  in Person mode with Show → All. The center pane's toolbar right side carries the
   persons-mode cluster-group toggle `[Description | Accuracy]`, and
   **only in the person view** (#163): `cluster_group` shapes only how
   the person view forms its sections (§4.9), so the seg is hidden in
@@ -1219,7 +1222,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       failed accept surfaces its error toast and leaves the selection —
       nothing about the selection, the staged set or the advance plan
       changes on failure.
-    - **Person-exhausted fall-through** (#125): in Review, when
+    - **Person-exhausted fall-through** (#125): when
       **Accept, Reject or Delete Person** leaves the current person with
       **no faces left** (no sections for it in the refreshed snapshot,
       under the current face filter), the context advances to the
@@ -1245,8 +1248,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       mark (`exhaustAtRef`) remembers **which person** it was set for,
       is consumed unconditionally (so it can never linger across view
       switches, even if the snapshot refresh lands elsewhere), and acts
-      only when the consumer is still the marked person in Review —
-      anything else silently drops it.
+      only when the consumer is still the marked person — in Review, or
+      in **any view while the Review lock is engaged** (#175/§4.40) —
+      anything else silently drops it. The advance **ends an open full
+      image / focus split** (§4.15: the person on screen is no longer
+      the one shown — stepping closes it too).
     - **An open modal owns the keyboard**: while any layer above
       preview-undo in Q8's stack is open (dialog, menu, settings), every
       other shortcut is suppressed (#107, #110).
@@ -1665,6 +1671,84 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    - **Precedence**: the import pane (§4.36) keeps the right pane while
      open (the branch selection may update underneath); the person
      detail keeps its Review/Person-mode home (§4.38).
+
+40. **The Review lock** (#175) ⇒ a focused, new-faces-only workflow:
+   - **Control**: a **padlock toggle in the top bar, beside the `Show`
+     select** — available in every mode (Show is a global control, so
+     the lock pins the focus globally). Session state — never written
+     to `whotrc`.
+   - **Engaged**: `Show` pins to **New** (`provisional`) through the
+     ordinary filter path (§4.10/#141: faces the new filter hides leave
+     the selection and their staged ops drop) and the select renders
+     **disabled** while locked. If the anchored person holds no new
+     face, the context first advances to the next person in the step
+     list that does (forward, else the first such person; with none,
+     stay and report `no more persons to review`).
+   - **Auto-advance everywhere**: while locked, the §4.30/#125
+     person-exhausted fall-through fires for verdicts in **any view** —
+     Review grid, Person view, focus/full-image, the rolls image detail
+     — because the workflow drills into a person and their full image
+     before deciding (`markExhaust` is no longer review-mode-gated
+     under the lock). The advance ends an open full image (§4.30) and
+     lands in Person mode exactly like stepping (§4.31).
+   - **Released**: the lock switches to **Person mode with `Show →
+     All`**, closes any open full image, keeps the person anchor (the
+     pane shows where the user left off) and re-enables the select —
+     all behind the #123 staged-set confirm, like every mode switch.
+   - **Actions are unchanged**: the lock pins the filter, guards the
+     position and widens the advance's reach — no verdict or
+     assignment rule moves.
+
+41. **Person mode: sticky person, guard dialogs, counts, status
+   colours** (#176) ⇒ Person mode's behaviour is otherwise unchanged:
+   - **The Person tab is always clickable** (#176): without an anchored
+     person a click switches to Person mode, sets **Show → All** (the
+     status branches `New`/`Accepted` are then listed — `Rejected` only
+     under Show → Rejected, §4.35 unchanged) and opens the dialog
+     *Please select a person in the tree on the left* (a single
+     **Close** button). With an anchor the click is the plain mode
+     switch — the anchor survives mode switches (§3), so the person
+     last worked on (incl. out of the Review-lock workflow, §4.40) is
+     still the one shown.
+   - **Sticky person**: once selected the user stays on that person. If
+     a Show change — or a verdict — leaves the anchored person with
+     **zero faces under the current filter** (while holding faces at
+     all; faceless shells are their own state and never trigger it),
+     Person mode opens *No new faces* — the title follows the filter
+     (accepted/rejected; under All *No faces to show*) — with
+     **Show All** (sets Show → All) and **Close** (dismissed for that
+     person+filter pair until either changes).
+   - **Top-bar person counts**: while a person is anchored — **any
+     mode** — the top bar shows their live face counts: `? N` (New),
+     `✓ N` (Accepted), `✗ N` (Rejected).
+   - **One status colour scheme** (#176): **New = red, Accepted =
+     green, Rejected = gray, All/default = normal text** — everywhere
+     status TEXT appears: the tree's status branches and group branch
+     labels, the Show select (its options **and** its closed value),
+     the face-card status badges and the count chips
+     (`c-prov`/`c-conf`/`c-rej`). The face-rectangle overlay palette
+     (§4.11) is a separate mechanism and stays unchanged.
+
+42. **Accept/reject icon shortcuts** (#177) ⇒ one visual language for
+   verdicts everywhere:
+   - **Card tick**: the face card's action row gains **✓** beside ✗ —
+     accept the card **as is**, with the bar's Accept semantics (live
+     stages commit first, #166, then accept; the §4.30 advance in
+     Review) under the §4.14 effective-action-scope rule (the selection
+     when the card is part of it, else the card). It renders for every
+     face the accept can address: **provisional** accepts; **rejected**
+     yields the existing *assign a person to bring it back* guidance
+     (§4.2/§4.35 — plain accept never un-rejects); a **confirmed** card
+     shows no tick (its status badge already reads ✓) and keeps ✗ for
+     re-reject.
+   - **Cluster header**: every section header carries **✓ and ✗**
+     beside *Edit…* — the verdict over the **whole group** (all its
+     faceIds — select-all parity; stages commit first on accept,
+     §4.14 scope = the group).
+   - **Bottom bar**: the selection shortcuts gain the icons —
+     **✓ Accept** and **✗ Reject** (semantics unchanged, §4.30).
+   - No other behaviour moves: the A/R shortcuts, the dialogs and the
+     §4.30 flow stay as they are.
 
 ## 5. Related documents
 

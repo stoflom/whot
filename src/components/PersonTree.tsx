@@ -539,7 +539,10 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     return (
       <div key={path}>
         <div
-          className={`tree-node${dropPath === dropTarget ? " drop-target" : ""}`}
+          // #176 (§4.41): the status branches speak the status colours
+          className={`tree-node${dropPath === dropTarget ? " drop-target" : ""}${
+            system ? ` status-${node.name.toLowerCase()}` : ""
+          }`}
           style={{ paddingLeft: 8 + depth * 14 }}
           onClick={() => (collapsible ? toggle(path) : undefined)}
           onContextMenu={(e) => {

@@ -36,6 +36,11 @@ interface GridShared {
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
   onReject: (id: number) => void;
+  /** #177 (§4.42): ✓ — accept a card as-is (bar semantics, §4.14 scope) */
+  onAccept: (id: number) => void;
+  /** #177 (§4.42): ✓/✗ on the cluster header — the whole group */
+  onAcceptGroup: (ids: number[]) => void;
+  onRejectGroup: (ids: number[]) => void;
   /** #101 (§4.24): the grid's only editable surface — the Edit dialog */
   onEditCard: (id: number) => void;
   onEditGroup: (ids: number[]) => void;
@@ -82,6 +87,9 @@ const SectionView = memo(
     onPrimary,
     onRefcrop,
     onReject,
+    onAccept,
+    onAcceptGroup,
+    onRejectGroup,
     onEditCard,
     onEditGroup,
     onFaceDragStart,
@@ -171,6 +179,20 @@ const SectionView = memo(
               {descVal || "description"}
             </span>
             <button
+              className="sec-accept"
+              onClick={() => onAcceptGroup(section.faceIds)}
+              title={`Accept all ${section.faceIds.length} face(s) of this group as-is — stages commit first (#177, §4.42)`}
+            >
+              ✓
+            </button>
+            <button
+              className="sec-reject"
+              onClick={() => onRejectGroup(section.faceIds)}
+              title={`Reject all ${section.faceIds.length} face(s) of this group (#177, §4.42)`}
+            >
+              ✗
+            </button>
+            <button
               className="ghost"
               onClick={() => onEditGroup(section.faceIds)}
               title="Edit name/group/description — dialog, scope Group (#101, §4.24)"
@@ -212,6 +234,7 @@ const SectionView = memo(
                 onPrimary={onPrimary}
                 onRefcrop={onRefcrop}
                 onReject={onReject}
+                onAccept={onAccept}
                 onFaceDragStart={onFaceDragStart}
                 onFaceDragEnd={onFaceDragEnd}
                 onFaceDragOver={onFaceDragOver}
@@ -247,6 +270,9 @@ const SectionView = memo(
     a.onPrimary === b.onPrimary &&
     a.onRefcrop === b.onRefcrop &&
     a.onReject === b.onReject &&
+    a.onAccept === b.onAccept &&
+    a.onAcceptGroup === b.onAcceptGroup &&
+    a.onRejectGroup === b.onRejectGroup &&
     a.onEditCard === b.onEditCard &&
     a.onEditGroup === b.onEditGroup &&
     a.onFaceDragStart === b.onFaceDragStart &&

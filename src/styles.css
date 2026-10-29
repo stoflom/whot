@@ -109,6 +109,26 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 /* #99: cluster-group toggle + status filter in the top bar */
 .topbar-right .seg { display: inline-flex; gap: 2px; }
 .topbar-right label { display: inline-flex; align-items: center; gap: 0.35rem; }
+/* #175 (§4.40): the Review lock beside the Show select */
+.topbar-right select:disabled { opacity: 0.55; cursor: not-allowed; }
+.lock-btn { font-size: 0.95rem; padding: 0.1rem 0.45rem; }
+.lock-btn.locked {
+  background: color-mix(in srgb, var(--accent) 25%, var(--panel2));
+  border-color: var(--accent);
+}
+/* #176 (§4.41): the Show select speaks the status colours (its options
+   and its closed value), the tree's status branches too */
+.topbar-right select.st-provisional { color: var(--bad); }
+.topbar-right select.st-confirmed { color: var(--ok); }
+.topbar-right select.st-rejected { color: var(--dim); }
+.topbar-right select option[value="provisional"] { color: var(--bad); }
+.topbar-right select option[value="confirmed"] { color: var(--ok); }
+.topbar-right select option[value="rejected"] { color: var(--dim); }
+.tree-node.status-new .tree-node-name { color: var(--bad); }
+.tree-node.status-accepted .tree-node-name { color: var(--ok); }
+.tree-node.status-rejected .tree-node-name { color: var(--dim); }
+/* #176 (§4.41): the anchored person's live counts in the top bar */
+.person-counts { display: inline-flex; gap: 0.6rem; font-size: 0.85rem; }
 /* #100: busy roller — animated ring beside 'working…' while a mutation
    is in flight; the spin stops for users who asked for less motion */
 .busy-roller {
@@ -306,9 +326,9 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .face-badge.primary { left: 6px; color: var(--warn); }
 .face-badge.status { right: 6px; }
-.face-badge.status.status-provisional { color: var(--warn); }
+.face-badge.status.status-provisional { color: var(--bad); }
 .face-badge.status.status-confirmed { color: var(--ok); }
-.face-badge.status.status-rejected { color: var(--bad); }
+.face-badge.status.status-rejected { color: var(--dim); }
 
 .face-conf { color: var(--dim); flex: none; }
 
@@ -342,9 +362,12 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 
 .dp-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.8rem; color: var(--dim); }
 .dp-counts { display: flex; gap: 0.8rem; font-size: 0.85rem; }
-.c-prov { color: var(--warn); }
+/* #176 (§4.41): one status colour scheme — New = red, Accepted =
+   green, Rejected = gray, All/default = normal text (status TEXT
+   everywhere; the §4.11 overlay palette is a separate mechanism) */
+.c-prov { color: var(--bad); }
 .c-conf { color: var(--ok); }
-.c-rej { color: var(--bad); }
+.c-rej { color: var(--dim); }
 
 .dp-refcrops { display: flex; flex-direction: column; gap: 0.4rem; }
 .refcrop {
@@ -524,6 +547,11 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   padding-top: 12vh;
   z-index: 50;
 }
+/* #176 (§4.41): the guard dialogs FLOAT — clicks pass through the
+   backdrop to the UI they point at (the tree), the dialog box itself
+   stays interactive; no dimming either, it must not read as modal */
+.overlay.modeless { pointer-events: none; background: transparent; }
+.overlay.modeless .dialog { pointer-events: auto; }
 .settings-overlay { padding-top: 10vh; }
 .dialog {
   background: var(--panel);
@@ -925,6 +953,11 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .dp-remove { margin: 0.5rem 0 0; }
+
+/* #177 (§4.42): verdict icons — the card tick, the cluster-header ✓/✗ */
+.card-accept { color: var(--ok); }
+.sec-accept { color: var(--ok); }
+.sec-reject { color: var(--bad); }
 
 /* #172/#173 (§4.38) — the person pane's staged group list + Update person */
 .dp-update { margin: 0.5rem 0 0; }

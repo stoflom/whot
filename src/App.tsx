@@ -58,7 +58,23 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("review");
+  // #175 (§4.40): the Review lock — session-only; engaged pins Show to
+  // New (the select is disabled) and widens the exhaust advance to any
+  // view; releasing lands in Person mode with Show → All
+  const [reviewLock, setReviewLock] = useState(false);
+  // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
+  // pointer (modeless — the tree under it stays clickable) and the
+  // sticky-person guard (once per person+filter pair)
+  const [pickPersonDialog, setPickPersonDialog] = useState(false);
+  const [noFacesDialog, setNoFacesDialog] = useState(false);
+  const noFacesKeyRef = useRef("");
   const [personId, setPersonId] = useState<number | null>(null);
+  // the pointer dialog follows its purpose: it closes as soon as a
+  // person is anchored or the user leaves Person mode
+  useEffect(() => {
+    if (pickPersonDialog && (personId != null || mode !== "person"))
+      setPickPersonDialog(false);
+  }, [pickPersonDialog, personId, mode]);
   const [imageId, setImageId] = useState<number | null>(null);
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
@@ -483,11 +499,13 @@ export default function App() {
   const exhaustAtRef = useRef(-1);
   const exhaustPidRef = useRef<number | null>(null);
   const markExhaust = useCallback(() => {
-    if (mode === "review" && personId != null) {
+    // #175/§4.40: under the lock EVERY view's verdicts mark — the
+    // workflow drills into a person and their full image before deciding
+    if ((mode === "review" || reviewLock) && personId != null) {
       exhaustAtRef.current = stepIdx;
       exhaustPidRef.current = personId;
     }
-  }, [mode, personId, stepIdx]);
+  }, [mode, personId, stepIdx, reviewLock]);
   const doAccept = useCallback(
     (ids: number[]) => {
       // #165/§4.35: plain accept never un-rejects — a rejected-only scope
@@ -662,6 +680,37 @@ export default function App() {
     // counting faces that no longer display anywhere — drop them
     setPending((p) => dropStagesForFaces(p, [...selRef.current].filter((id) => !visible.has(id))));
     mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
+  };
+  // #175 (§4.40) — engage the Review lock: pin Show → New through the
+  // ordinary filter path, then guard the position — an anchored person
+  // without a new face advances to the next person in the step list
+  // that has one (forward, else the first; none ⇒ stay + toast)
+  const engageLock = () => {
+    if (reviewLock) return;
+    setReviewLock(true);
+    changeFaceFilter("provisional");
+    if (personId != null && snap) {
+      const has = (id: number) =>
+        snap.faces.some((f) => f.person_id === id && f.link_status === "provisional");
+      if (!has(personId)) {
+        const nextId = exhaustAdvanceTarget(stepIds, personId, stepIdx, has);
+        if (nextId != null) setPersonId(nextId);
+        else setInfo("no more persons to review");
+      }
+    }
+  };
+  // release: Person mode + Show → All, the full image closes, the
+  // person anchor stays (the pane shows where the user left off) — a
+  // mode switch behind the #123 staged-set confirm (§4.40)
+  const releaseLock = () => {
+    if (!reviewLock) return;
+    setReviewLock(false);
+    confirmContext(() => {
+      setMode("person");
+      setImageId(null);
+      if (splitImageId != null) setSplitImageId(null);
+      changeFaceFilter("all");
+    });
   };
   // #99 (§4.9): persons-view cluster grouping — accuracy (default) or one
   // section per description; display-only, the selection is untouched
@@ -1030,6 +1079,9 @@ export default function App() {
   const personOptions = useMemo(() => snap?.persons ?? [], [snap]);
   const pathOptions = useMemo(() => groupPathOptions(personOptions), [personOptions]);
 
+  // #177 (§4.42): the accept path behind the ✓ — bound through a ref
+  // so this early memo (#98 identity rule) keeps a stable callback
+  const acceptFlowRef = useRef<(ids: number[]) => void>(() => {});
   // #98 (§4.31): the card handlers are ONE memo — identity changes only
   // when their inputs do (never per hover, never per selection change:
   // sel/hover/sections are read through refs), which is what lets
@@ -1059,6 +1111,11 @@ export default function App() {
     // selection when the card is part of it (member-preserving), else
     // just the card; bottom-bar/keys never confirm (Q2/Q9)
     onReject: (id: number) => doReject(actionScope(id)),
+    // #177 (§4.42): ✓ on the card (bar semantics under the §4.14
+    // scope) and ✓/✗ on the cluster header (the whole group)
+    onAccept: (id: number) => acceptFlowRef.current(actionScope(id)),
+    onAcceptGroup: (ids: number[]) => acceptFlowRef.current(ids),
+    onRejectGroup: (ids: number[]) => doReject(ids),
     // #101: the grid's only editable surface — one dialog
     onEditCard: (id: number) => openEdit("card", { card: id }),
     onEditGroup: (ids: number[]) => openEdit("group", { group: ids }),
@@ -1300,7 +1357,9 @@ export default function App() {
         setInfo("assign a person to bring it back");
         return;
       }
-      if (mode !== "review" || splitImageId != null) {
+      // #175/§4.40: under the Review lock EVERY view takes the marking
+      // path — the workflow decides in Person view and full images too
+      if ((mode !== "review" || splitImageId != null) && !reviewLock) {
         await mutate(() => api.acceptFaces(ids), true);
         return;
       }
@@ -1332,7 +1391,7 @@ export default function App() {
         );
       }
     },
-    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById]
+    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, reviewLock]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
@@ -1379,7 +1438,46 @@ export default function App() {
     setPersonId(nextId);
     setMode("person");
     setImageId(null);
-  }, [snap, mode, personId, faceFilter, stepIds]);
+    // §4.15/#175: the advance ends an open full image/focus — the
+    // person on screen is no longer the one shown (stepping closes it too)
+    if (splitImageId != null) setSplitImageId(null);
+  }, [snap, mode, personId, faceFilter, stepIds, splitImageId]);
+
+  // #176 (§4.41) — the sticky person: a Show change (or a verdict) that
+  // hides EVERY face of the anchored person opens the guard dialog once
+  // per person+filter pair (Close dismisses until either changes);
+  // faceless shells (total 0) are their own state and never trigger it
+  useEffect(() => {
+    if (mode !== "person" || personId == null || !snap) return;
+    const p = personsById.get(personId);
+    if (!p || p.counts.total === 0) return;
+    const visible = snap.faces.some(
+      (f) => f.person_id === personId && matchesStatusFilter(f.link_status, faceFilter)
+    );
+    if (visible) return;
+    const key = `${personId}|${faceFilter}`;
+    if (noFacesKeyRef.current === key) return;
+    noFacesKeyRef.current = key;
+    setNoFacesDialog(true);
+  }, [mode, personId, snap, personsById, faceFilter]);
+  // …and the guard closes as soon as the pair becomes workable again
+  // (Show All, a filter change, another anchor, another mode)
+  useEffect(() => {
+    if (!noFacesDialog) return;
+    if (mode !== "person" || personId == null || !snap) {
+      setNoFacesDialog(false);
+      return;
+    }
+    const p = personsById.get(personId);
+    if (
+      !p ||
+      p.counts.total === 0 ||
+      snap.faces.some(
+        (f) => f.person_id === personId && matchesStatusFilter(f.link_status, faceFilter)
+      )
+    )
+      setNoFacesDialog(false);
+  }, [noFacesDialog, mode, personId, snap, personsById, faceFilter]);
 
   // #101 (§4.24) — stage/commit engine: Apply stages (no DB — the labels
   // preview), Accept commits the stage ops through the shared
@@ -1461,6 +1559,13 @@ export default function App() {
     },
     [acceptAndNext, stageOps]
   );
+
+  // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the
+  // selection: live stages commit first (#166), then the accept (+
+  // the §4.30 advance in Review). Re-bound every render so the callers
+  // through acceptFlowRef always see the current pending set.
+  acceptFlowRef.current = (ids: number[]) =>
+    pending.length > 0 ? void commitPending(pending, ids) : acceptAndNext(ids);
 
   /** bottom-bar Apply (Q2/Q9, #123): opens the dialog on the selection —
       the Apply loop extends the set; it never re-scopes or commits.
@@ -1875,15 +1980,25 @@ export default function App() {
           </button>
           <button
             className={mode === "person" ? "active" : ""}
-            disabled={personId == null}
             onClick={() =>
               confirmContext(() => {
                 setMode("person");
                 setImageId(null);
                 setSplitImageId(null); // #55 (§4.19)
+                // #176 (§4.41): no anchor yet — land in Person mode with
+                // Show → All (the status branches are listed) and point
+                // at the tree
+                if (personId == null) {
+                  changeFaceFilter("all");
+                  setPickPersonDialog(true);
+                }
               })
             }
-            title={personId == null ? "select a person in the tree" : ""}
+            title={
+              personId == null
+                ? "no person anchored yet — pick one in the tree (#176)"
+                : undefined
+            }
           >
             Person
           </button>
@@ -1900,11 +2015,18 @@ export default function App() {
               a global control applied across all panes (#99, §4.10) and not
               something the Person view (or any single pane) owns. */}
           <label
-            title="All = everything except rejected; rejected faces appear only under Show → Rejected (#165, §4.10); switching it drops hidden faces from the selection"
+            title={
+              reviewLock
+                ? "Locked to New by the Review lock (#175, §4.40) — release the padlock to change it"
+                : "All = everything except rejected; rejected faces appear only under Show → Rejected (#165, §4.10); switching it drops hidden faces from the selection"
+            }
           >
             show
             <select
               value={faceFilter}
+              disabled={reviewLock}
+              // #176 (§4.41): the closed value speaks the status colour
+              className={`st-${faceFilter}`}
               onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
             >
               <option value="all">All</option>
@@ -1913,6 +2035,30 @@ export default function App() {
               <option value="rejected">Rejected</option>
             </select>
           </label>
+          {/* #175 (§4.40): the Review lock — beside Show; engaged pins
+              Show to New and auto-advances past drained persons from any
+              view; releasing lands in Person mode with Show → All */}
+          <button
+            className={`lock-btn${reviewLock ? " locked" : ""}`}
+            aria-pressed={reviewLock}
+            onClick={reviewLock ? releaseLock : engageLock}
+            title={
+              reviewLock
+                ? "Release the Review lock — Person mode, Show → All (#175, §4.40)"
+                : "Engage the Review lock — Show pinned to New; verdicts auto-advance to the next person with new faces (#175, §4.40)"
+            }
+          >
+            {reviewLock ? "🔒" : "🔓"}
+          </button>
+          {/* #176 (§4.41): the anchored person's live counts — any
+              mode: ? new (red), ✓ accepted (green), ✗ rejected (gray) */}
+          {selectedPerson && (
+            <span className="person-counts" title={`faces of ${selectedPerson.name}`}>
+              <span className="c-prov" title="new faces">? {selectedPerson.counts.provisional}</span>
+              <span className="c-conf" title="accepted faces">✓ {selectedPerson.counts.confirmed}</span>
+              <span className="c-rej" title="rejected faces">✗ {selectedPerson.counts.rejected}</span>
+            </span>
+          )}
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}
@@ -2422,6 +2568,43 @@ export default function App() {
             setContextConfirm(null);
             void commitPending(all).then(act);
           }}
+        />
+      )}
+      {/* #176 (§4.41): the Person-mode guard dialogs — the no-anchor
+          pointer (single Close) and the sticky-person guard */}
+      {pickPersonDialog && (
+        <ConfirmDialog
+          title="Please select a person in the tree on the left"
+          body={
+            "Person mode works on the person anchored in the tree — under Show → All " +
+            "the status branches New and Accepted are listed (Rejected under Show → Rejected)."
+          }
+          confirmLabel="Close"
+          onlyConfirm
+          modeless
+          onConfirm={() => setPickPersonDialog(false)}
+          onCancel={() => setPickPersonDialog(false)}
+        />
+      )}
+      {noFacesDialog && (
+        <ConfirmDialog
+          title={
+            faceFilter === "all"
+              ? "No faces to show"
+              : `No ${faceFilter === "provisional" ? "new" : faceFilter === "confirmed" ? "accepted" : "rejected"} faces`
+          }
+          body={
+            `This person holds no face under Show → ${faceFilter === "all" ? "All" : faceFilter === "provisional" ? "New" : faceFilter === "confirmed" ? "Accepted" : "Rejected"}. ` +
+            "Show All brings every non-rejected face back."
+          }
+          cancelLabel="Close"
+          confirmLabel="Show All"
+          modeless
+          onConfirm={() => {
+            setNoFacesDialog(false);
+            changeFaceFilter("all");
+          }}
+          onCancel={() => setNoFacesDialog(false)}
         />
       )}
       {confirmRemove && (
