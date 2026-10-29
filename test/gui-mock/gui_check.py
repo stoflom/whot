@@ -3629,6 +3629,95 @@ def c41_verdict_focuses_person(t):
            f"C: pick={pick2} {c}")
 
 
+def c42_edit_label_everywhere(t):
+    """#180 (§4.24): ONE label — 'Edit…' — for every opener of the shared
+    Edit dialog: the rule-bar button, the face-card button and the
+    cluster-header button read 'Edit…', the face context menu item reads
+    'Edit…' ('Edit… (N selected)' for a multi-scope), the dialog title
+    is 'Edit', and no opener says 'Assign' any more."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def menu_texts():
+        return js(t, r"""
+          return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim());
+        """)
+
+    def close_menu():
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.4)
+
+    # ── the card buttons, the header buttons and the rule bar ─────────
+    ids = js(t, r"""
+      return [...document.querySelectorAll('.face-card')].slice(0, 2)
+        .map(c => Number(c.dataset.faceId));
+    """)
+    if len(ids) < 2:
+        record("C42 'Edit…' everywhere (#180/§4.24): one label for every dialog opener", True,
+               "need at least two face cards — vacuous")
+        return
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[0]}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()          # select it — the rule bar shows
+    time.sleep(0.5)
+    state = js(t, r"""
+      const bar = [...document.querySelectorAll('.rulebar button')].map(b => b.textContent.trim());
+      const cardBtns = [...document.querySelectorAll('.face-card button')].map(b => b.textContent.trim());
+      const headBtns = [...document.querySelectorAll('.face-section button')].map(b => b.textContent.trim());
+      const all = [...bar, ...cardBtns, ...headBtns];
+      return {bar, cardBtns, headBtns,
+              editBar: bar.filter(x => x.startsWith('Edit')),
+              editCard: cardBtns.filter(x => x === 'Edit…').length,
+              editHead: headBtns.filter(x => x === 'Edit…').length,
+              assign: all.filter(x => x.includes('Assign'))};
+    """)
+    btn_ok = (state["editBar"] == ["Edit…"] and state["editCard"] >= 1
+              and state["editHead"] >= 1 and not state["assign"])
+
+    # the rule bar's Edit… opens the dialog titled 'Edit' (Cancel closes)
+    edit_btn = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+                if b.text.strip().startswith("Edit")][0]
+    edit_btn.click()
+    time.sleep(0.8)
+    opened = js(t, r"""
+      const d = document.querySelector('.overlay .dialog');
+      return d ? (d.querySelector('h3')?.textContent.trim() ?? '') : null;
+    """)
+    cancel = t.find_elements(By.CSS_SELECTOR, ".overlay .dialog button.secondary")
+    if cancel:
+        cancel[0].click()
+        time.sleep(0.5)
+    dialog_ok = opened == "Edit" and not js(t, "return !!document.querySelector('.overlay .dialog')")
+
+    # ── the face context menu: single scope, then a 2-face multi ──────
+    AC(t.driver).context_click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[0]}']")).perform()
+    time.sleep(0.6)
+    single = menu_texts()
+    close_menu()
+    # the single-phase click left {ids[0]} selected — ctrl-click adds the
+    # second card (a plain click would TOGGLE it off)
+    AC(t.driver).key_down(Keys.CONTROL).click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[1]}']")).key_up(Keys.CONTROL).perform()
+    time.sleep(0.4)
+    AC(t.driver).context_click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[1]}']")).perform()
+    time.sleep(0.6)
+    multi = menu_texts()
+    close_menu()
+
+    single_ok = "Edit…" in single and not any("Assign" in x for x in single)
+    multi_ok = "Edit… (2 selected)" in multi and not any("Assign" in x for x in multi)
+
+    ok = btn_ok and dialog_ok and single_ok and multi_ok
+    record("C42 'Edit…' everywhere (#180/§4.24): one label for every dialog opener, no 'Assign' left",
+           ok,
+           f"bar edit={state['editBar']} card×{state['editCard']} head×{state['editHead']} "
+           f"assign-left={state['assign']}; dialog={opened!r} closed={dialog_ok}; "
+           f"menu single={single_ok} multi={multi_ok} (multi items: {[x for x in multi if 'Edit' in x]})")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -3677,6 +3766,7 @@ def main():
         c39_rename_seated_person(t)
         c40_db_status_totals(t)
         c41_verdict_focuses_person(t)
+        c42_edit_label_everywhere(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
