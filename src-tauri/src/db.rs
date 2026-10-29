@@ -123,6 +123,19 @@ fn expand_process_env(val: &str) -> String {
     out
 }
 
+/// #185 — does a USABLE database exist? The schema must be present — a
+/// missing file AND the empty file a failed first load can leave behind
+/// (`connect`'s `Connection::open` creates it) both mean "no database".
+pub fn has_schema(paths: &Paths) -> bool {
+    let Ok(con) = Connection::open(&paths.db) else { return false; };
+    con.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'faces'",
+        [],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
 pub fn connect(paths: &Paths) -> Result<Connection> {
     if let Some(parent) = paths.db.parent() {
         std::fs::create_dir_all(parent)

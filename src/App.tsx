@@ -8,6 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -58,6 +59,11 @@ type Mode = "review" | "rolls" | "person";
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // #185 (§4.36): no USABLE database ⇒ the first-run screen (the dialog
+  // offers the import pane with --create-db) instead of the raw error;
+  // firstRunDir null = the dialog, a string = the standalone pane
+  const [noDb, setNoDb] = useState(false);
+  const [firstRunDir, setFirstRunDir] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("review");
   // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
   // pointer (modeless — the tree under it stays clickable) and the
@@ -250,7 +256,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refresh().catch((e) => setLoadError(String(e)));
+    refresh().catch(async (e) => {
+      // #185 (§4.36): a failed load with NO usable database is the
+      // first-run case — offer the create+import flow, not the raw error
+      const usable = await api
+        .getImportInfo()
+        .then((i) => i.dbExists)
+        .catch(() => true); // probe failed — keep the error screen
+      if (usable) setLoadError(String(e));
+      else setNoDb(true);
+    });
   }, [refresh]);
 
   // F12: pick up imports/mutations done while the window is in the background
@@ -2072,6 +2087,66 @@ export default function App() {
     void mutate(() => api.movePersonsToGroup(ids, group));
   }, [mutate]);
 
+  if (noDb) {
+    // #185 (§4.36): no usable database — build it and import the first
+    // roll in ONE flow instead of dead-ending on the raw error
+    return (
+      <div className="first-run">
+        {firstRunDir == null ? (
+          <div className="overlay">
+            <div className="dialog">
+              <h3>No database yet</h3>
+              <p className="dim">
+                No usable database exists at the configured path — build it from{" "}
+                <b>database/schema.sql</b> and import your first roll.
+              </p>
+              <div className="dialog-actions">
+                <button
+                  onClick={() =>
+                    refresh()
+                      .then(() => setNoDb(false))
+                      .catch((e) => {
+                        setNoDb(false);
+                        setLoadError(String(e)); // exists-but-broken: the raw screen
+                      })
+                  }
+                >
+                  Retry
+                </button>
+                <button
+                  className="ok"
+                  title="pick a roll folder — the import pane opens with --create-db pre-checked (#185)"
+                  onClick={() =>
+                    void openFolderDialog({ directory: true }).then((d) => {
+                      if (typeof d === "string" && d) setFirstRunDir(d);
+                    })
+                  }
+                >
+                  Open import pane
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <ImportPane
+            dir={firstRunDir}
+            // #185: one flow — creation is on, so dry-run is refused by
+            // the pane's existing combo rule
+            initial={{ createDb: true }}
+            onClose={() => setFirstRunDir(null)} // ✕ back to the dialog
+            onImported={() =>
+              refresh()
+                .then(() => {
+                  setNoDb(false);
+                  setFirstRunDir(null); // exit 0 — the app appears
+                })
+                .catch((e) => setError(String(e)))
+            }
+          />
+        )}
+      </div>
+    );
+  }
   if (loadError) {
     return <FatalError title="Could not load database" message={loadError} />;
   }

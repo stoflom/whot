@@ -1007,6 +1007,16 @@ button.dp-group-path:hover:not(:disabled) { border-color: var(--border); }
   color: var(--dim);
 }
 .ed-groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+/* #185 (§4.36): the first-run screen (no usable database) — the dialog
+   sits over it, the standalone import pane replaces it */
+.first-run {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+.first-run .import-pane { width: min(760px, 92vw); }
 
 /* #67: name typeahead — suggestion dropdown over the existing persons */
 .typeahead { position: relative; display: block; }

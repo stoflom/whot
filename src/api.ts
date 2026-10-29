@@ -191,7 +191,8 @@ export const stopImport = () => invoke<boolean>("stop_import");
 export const getImportStatus = (since: number) =>
   invoke<ImportStatus>("get_import_status", { since });
 /** the resolved DB path for the pane's read-only header */
-export const getImportInfo = () => invoke<string>("get_import_info");
+export const getImportInfo = () =>
+  invoke<{ dbPath: string; dbExists: boolean }>("get_import_info");
 
 // ---------------------------------------------------------------- image cache
 //

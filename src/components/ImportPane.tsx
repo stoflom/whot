@@ -19,6 +19,8 @@ interface Props {
   onClose: () => void;
   /** exit 0 ⇒ the caller refreshes the snapshot (new faces appear) */
   onImported: () => void;
+  /** #185 (§4.36): the first-run flow pre-checks --create-db */
+  initial?: Partial<Omit<ImportOptions, "rollDir">>;
 }
 
 /** the pane's default options — the script's own defaults, except
@@ -34,9 +36,15 @@ const DEFAULTS: Omit<ImportOptions, "rollDir"> = {
   createDb: false,
 };
 
-export default function ImportPane({ dir, onClose, onImported }: Props) {
-  const [opts, setOpts] = useState<Omit<ImportOptions, "rollDir">>(DEFAULTS);
+export default function ImportPane({ dir, onClose, onImported, initial }: Props) {
+  const [opts, setOpts] = useState<Omit<ImportOptions, "rollDir">>({
+    ...DEFAULTS,
+    ...initial,
+  });
   const [dbPath, setDbPath] = useState<string | null>(null);
+  // #186 (§4.36): --create-db only exists where it can succeed — the
+  // probe answers "usable schema present", not "a file exists"
+  const [dbExists, setDbExists] = useState(true);
   const [status, setStatus] = useState<ImportStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,7 +58,12 @@ export default function ImportPane({ dir, onClose, onImported }: Props) {
   const runningRef = useRef(false);
 
   useEffect(() => {
-    getImportInfo().then(setDbPath).catch((e) => setError(String(e)));
+    getImportInfo()
+      .then((i) => {
+        setDbPath(i.dbPath);
+        setDbExists(i.dbExists);
+      })
+      .catch((e) => setError(String(e)));
   }, []);
 
   // poll while the pane is open — cheap (300 ms) and keeps the viewport
@@ -162,9 +175,14 @@ export default function ImportPane({ dir, onClose, onImported }: Props) {
         <label title="walk sub-directories too">
           <input type="checkbox" checked={opts.recursive} onChange={() => toggle("recursive")} /> --recursive
         </label>
-        <label title="create the database from database/schema.sql — refuses an existing non-empty one">
-          <input type="checkbox" checked={opts.createDb} onChange={() => toggle("createDb")} /> --create-db
-        </label>
+        {!dbExists && (
+          // #186: hidden while a usable database exists — the script
+          // refuses an existing non-empty one, so the checkbox could
+          // only fail; offered (pre-checked, #185) in the first-run flow
+          <label title="create the database from database/schema.sql — only offered while no usable database exists (#186)">
+            <input type="checkbox" checked={opts.createDb} onChange={() => toggle("createDb")} /> --create-db
+          </label>
+        )}
         <label title="same-person similarity threshold (the script's default 0.40)">
           --threshold
           <input
