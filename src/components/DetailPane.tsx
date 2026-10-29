@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
 import { rotStyle } from "../rotation";
+import { applyGroupOps, isSeat, stageAdd, stageRemove, stageRehome, type GroupOp } from "../groupList";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
 import type { SuggestOption } from "./SuggestInput";
@@ -15,13 +16,17 @@ interface Props {
   /** #99: face-status filter in the overview totals (#28 generalised) */
   faceFilter: FaceFilter;
   onName: (id: number, name: string) => void;
-  onGroup: (id: number, group: string) => void;
   onNote: (id: number, note: string) => void;
   // #145: the avatar opens the primary face's full image in focus mode
   onOpenPrimary: (faceId: number) => void;
   onRemoveRefcrop: (faceId: number) => void;
   /** remove this person (§4.13, #35) */
   onRemovePerson?: (id: number) => void;
+  /** #172/#173 (§4.38): the pane's Update person commit — the pending
+      name (rename-merge), the pending note, then the staged group ops,
+      in that order, against the surviving person; resolves true when
+      everything committed (the pane then clears its staging) */
+  onUpdate?: (id: number, name: string, note: string, ops: GroupOp[]) => Promise<boolean>;
 }
 
 function Editable({
@@ -35,6 +40,7 @@ function Editable({
   pathOptions,
   title,
   selectAllOnFocus,
+  onDraft,
 }: {
   label: string;
   value: string;
@@ -44,6 +50,8 @@ function Editable({
       descriptions; Name/Note keep the default look */
   variant?: "group" | "desc";
   onCommit: (v: string) => void;
+  /** #172 (§4.38): live draft mirror for the parent (Update person) */
+  onDraft?: (v: string) => void;
   /** #67: existing persons → name suggestions (Name field only) */
   persons?: Person[];
   /** #97: existing group paths → path suggestions (Group field only) */
@@ -62,9 +70,9 @@ function Editable({
     <label className="dp-field">
       <span>{label}</span>
       {multiline ? (
-        <textarea rows={2} className={cls} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} placeholder={placeholder} title={title} />
+        <textarea rows={2} className={cls} value={v} onChange={(e) => { setV(e.target.value); onDraft?.(e.target.value); }} onBlur={commit} placeholder={placeholder} title={title} />
       ) : persons ? (
-        <NameTypeahead value={v} onChange={setV} persons={persons} onSubmit={commit}
+        <NameTypeahead value={v} onChange={(nv) => { setV(nv); onDraft?.(nv); }} persons={persons} onSubmit={commit}
           // #97: click-away commits — a typed-but-unsubmitted name used to
           // be discarded silently when focus moved elsewhere
           onLeave={commit} title={title} />
@@ -75,7 +83,7 @@ function Editable({
         <input
           className={cls}
           value={v}
-          onChange={(e) => setV(e.target.value)}
+          onChange={(e) => { setV(e.target.value); onDraft?.(e.target.value); }}
           onBlur={commit}
           onKeyDown={(e) => {
             e.stopPropagation();
@@ -107,14 +115,69 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
   return [...m.entries()];
 }
 
-function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson }: PersonViewProps) {
+function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson, onUpdate }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
   const system = person.name === "Rejected"; // #165/§4.35
+  // #172/#173 (§4.38) — pane-local staging for the group list plus the
+  // name/note drafts Update person commits; the staging resets whenever
+  // the pane RE-ANCHORS (the person changes — tree select, any §4.37
+  // path, a rename-merge onto the target) and the drafts resync on a
+  // committed rename/note of the same person
+  const [ops, setOps] = useState<GroupOp[]>([]);
+  const [addPath, setAddPath] = useState("");
+  const [editing, setEditing] = useState<{ path: string; value: string } | null>(null);
+  const [nameDraft, setNameDraft] = useState(person.name);
+  const [noteDraft, setNoteDraft] = useState(person.note ?? "");
+  const pidRef = useRef(person.id);
+  useEffect(() => {
+    if (pidRef.current !== person.id) {
+      pidRef.current = person.id;
+      setOps([]);
+      setAddPath("");
+      setEditing(null);
+      setNameDraft(person.name);
+      setNoteDraft(person.note ?? "");
+    }
+    // the id guard makes the wider dep list a no-op for same-person
+    // name/note changes (the sync effects below own those)
+  }, [person.id, person.name, person.note]);
+  useEffect(() => setNameDraft(person.name), [person.name]);
+  useEffect(() => setNoteDraft(person.note ?? ""), [person.note]);
   // #122: crop rotations are per-face — the primary face and every
   // refcrop spin with their own stored angle
   const rotOf = (faceId: number) =>
     snapshot?.faces.find((f) => f.id === faceId)?.rotation ?? 0;
   const pathOptions = useGroupPathOptions(snapshot?.persons ?? []);   // #97
+  // the staged result — the committed memberships with the ops applied
+  const display = applyGroupOps(person.groups, ops);
+  const commit = (next: GroupOp[]) => {
+    // a successful commit clears the staging — the ops must never
+    // replay over the already-committed result
+    void (onUpdate?.(person.id, nameDraft, noteDraft, next) ?? Promise.resolve(false)).then(
+      (ok) => {
+        if (ok) {
+          setOps([]);
+          setAddPath("");
+          setEditing(null);
+        }
+      }
+    );
+  };
+  const stageAddPath = (thenCommit: boolean) => {
+    const next = stageAdd(ops, display, addPath);
+    if (!next) return; // reserved/empty/duplicate: informed no-op
+    setOps(next);
+    setAddPath("");
+    // Enter stages the typed path AND commits the whole staged set
+    // (§4.38) — against the ops INCLUDING it; the button only stages
+    if (thenCommit) commit(next);
+  };
+  const commitEdit = () => {
+    if (!editing) return;
+    const next = stageRehome(ops, display, editing.path, editing.value);
+    if (next) setOps(next);
+    setEditing(null);
+  };
   return (
     <div className="dp-person" key={person.id}>
       {/* #145: this avatar IS the primary face — clicking it opens the
@@ -143,31 +206,107 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onOpe
           value={person.name}
           persons={snapshot?.persons}
           title="Name — an existing person merges into (Enter commits)"
+          onDraft={setNameDraft}
           onCommit={(v) => onName(person.id, v)}
         />
       )}
       {system ? (
         <div className="dp-field">
-          <span>Group</span>
+          <span>Groups</span>
           <span className="dim">Rejected — the system seat (#165), not editable</span>
         </div>
       ) : (
-        <Editable
-          label="Group"
-          value={person.groups[0] ?? ""}
-          placeholder="e.g. family|lombards (empty = status seat, §4.35)"
-          variant="group"
-          pathOptions={pathOptions}
-          title="Group path — '|' separated, e.g. family|lombards (empty = the person's status seat, §4.35)"
-          selectAllOnFocus
-          onCommit={(v) => onGroup(person.id, v)}
-        />
+        // #172 (§4.38) — the group LIST replaces the single field: every
+        // membership with an × that stages its removal (a status-seat row
+        // is dimmed with an inert × — system furniture, §4.35); rows are
+        // editable inline (re-home that one membership); Add group stages
+        // a new membership; the staged set commits via Enter-in-add or
+        // the Update person button (#173) — never per-gesture
+        <div className="dp-field">
+          <span>Groups ({display.length})</span>
+          <ul className="dp-groups">
+            {display.map((g) => {
+              const seat = isSeat(g);
+              const staged = ops.some((o) => o.to === g);
+              return (
+                <li key={g} className={`dp-group-row${staged ? " staged" : ""}`}>
+                  {editing?.path === g ? (
+                    <PathTypeahead
+                      className="input-group dp-group-edit"
+                      value={editing.value}
+                      onChange={(v) => setEditing({ path: g, value: v })}
+                      options={pathOptions}
+                      autoFocus
+                      onSubmit={commitEdit}
+                      onEscape={() => setEditing(null)}
+                      onLeave={commitEdit}
+                      title="Re-home this membership (Enter commits, Esc cancels)"
+                    />
+                  ) : seat ? (
+                    <span
+                      className="dp-group-path seat"
+                      title="status seat (§4.35) — system-written, never removed"
+                    >
+                      {g}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="dp-group-path"
+                      title="click to edit — re-homes just this membership (§4.16)"
+                      onClick={() => setEditing({ path: g, value: g })}
+                    >
+                      {g}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="dp-group-x"
+                    disabled={seat}
+                    title={
+                      seat
+                        ? "status seat (§4.35) — never removed"
+                        : "remove this membership (staged — commit with Update person)"
+                    }
+                    onClick={() => {
+                      const next = stageRemove(ops, display, g);
+                      if (next) setOps(next);
+                    }}
+                  >
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="dp-add-group">
+            <PathTypeahead
+              className="input-group"
+              value={addPath}
+              onChange={setAddPath}
+              options={pathOptions}
+              placeholder="e.g. family|lombards"
+              title="Add a group membership — staged, Enter commits the staged set (§4.38)"
+              onSubmit={() => stageAddPath(true)}
+            />
+            <button
+              type="button"
+              className="dp-add-btn"
+              disabled={!addPath.trim()}
+              title="stage this membership — commit with Enter or Update person"
+              onClick={() => stageAddPath(false)}
+            >
+              Add group
+            </button>
+          </div>
+        </div>
       )}
       <Editable
         label="Note"
         value={person.note ?? ""}
         multiline
         title="Note — free text about this person"
+        onDraft={setNoteDraft}
         onCommit={(v) => onNote(person.id, v)}
       />
       <div className="dp-counts">
@@ -176,6 +315,27 @@ function PersonView({ person, refcrops, snapshot, onName, onGroup, onNote, onOpe
         <span className="c-conf">{person.counts.confirmed} ✓</span>
         <span className="c-rej">{person.counts.rejected} ✗</span>
       </div>
+      {/* #173 (§4.38) — Update person, directly above Remove person and
+          styled like it: commits the pending name (rename-merge), the
+          pending note and the staged group ops, in that order — the same
+          action as Enter. mousedown must NOT blur the focused field: a
+          blur-commit would race the ordered commit below (a late rename
+          could clobber freshly applied group ops) */}
+      {!system && (
+        <button
+          type="button"
+          className="dp-update"
+          onMouseDown={(e) => e.preventDefault()}
+          title={
+            ops.length > 0
+              ? "Commit the pending name/note and the staged group changes — same as Enter (§4.38)"
+              : "Commit any pending name/note change — same as Enter (§4.38)"
+          }
+          onClick={() => commit(ops)}
+        >
+          Update person
+        </button>
+      )}
       <button
         className="bad dp-remove"
         title={

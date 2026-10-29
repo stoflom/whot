@@ -912,6 +912,34 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .dp-remove { margin: 0.5rem 0 0; }
 
+/* #172/#173 (§4.38) — the person pane's staged group list + Update person */
+.dp-update { margin: 0.5rem 0 0; }
+.dp-groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.dp-group-row { display: flex; align-items: center; gap: 4px; }
+.dp-group-row.staged .dp-group-path { color: var(--accent); }
+.dp-group-row .dp-group-edit { flex: 1; min-width: 0; }
+.dp-group-path {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 2px 4px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--text);
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+button.dp-group-path:hover:not(:disabled) { border-color: var(--border); }
+.dp-group-path.seat { color: var(--dim); cursor: default; }
+.dp-group-x { flex: none; padding: 0 6px; font-size: 0.85rem; line-height: 1.4; }
+.dp-add-group { display: flex; gap: 4px; align-items: stretch; }
+.dp-add-group .typeahead { flex: 1; min-width: 0; }
+.dp-add-btn { flex: none; }
+
 /* #67: name typeahead — suggestion dropdown over the existing persons */
 .typeahead { position: relative; display: block; }
 .typeahead-list {

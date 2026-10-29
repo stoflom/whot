@@ -88,6 +88,22 @@ Checks (contract refs: docs/gui-design.md):
       the create-db+dry-run refusal, start → stdout viewport fills from
       the polled status, exit 0 shown; a non-directory path keeps the
       plain #162 hint (no pane)
+  C32 the right pane follows the full image (#171, §4.37): card
+      double-click → focus mode + the card's person in the right pane;
+      rect click switches the pane to the rect's person while focus mode
+      AND the Review tab stay put (selection toggles); the import pane
+      (§4.36) keeps the right-pane slot through open + rect click, and
+      closing it reveals the person anchored underneath; a NULL
+      person_id (injected) leaves the anchor untouched
+  C33 the person pane's group list + Update person (#172/#173, §4.38):
+      the pane lists every membership with an × per row; × stages a
+      removal and Add group stages a membership (the mock is NOT
+      touched until commit); Update person sits directly above Remove
+      person and commits the staged set via move_persons_between_groups;
+      a status-seat row renders dimmed with an inert ×; renaming the
+      pane person to a KNOWN person re-anchors the pane on the merge
+      target and lists ITS groups; the system person Rejected sees the
+      list read-only with no Update button
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -2008,6 +2024,365 @@ def c31_rolls_import_pane(t):
            f"non-dir hint={after.get('hint')!r} paneGone={after.get('paneGone')}")
 
 
+def c32_full_image_follows_person(t):
+    """#171 (§4.37): the right pane follows the full image —
+    card double-click opens focus mode AND shows that card's person in
+    the right pane (Overview → person); a rect click switches the pane
+    to the rect's person while focus mode AND the Review tab stay put
+    (selection toggles); the import pane (§4.36) keeps the right-pane
+    slot through entry + rect click (anchor updates underneath — closing
+    the pane reveals the rect's person); a NULL person_id (injected via
+    a mock-snapshot mutation + focus-refresh) leaves the anchor as-is."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    # pick a review card whose image also holds a non-rejected face of
+    # ANOTHER person — one card drives all four phases
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const byId = new Map(snap.faces.map(f => [f.id, f]));
+      const pname = (pid) => snap.persons.find(p => p.id === pid)?.name ?? null;
+      const cards = [...document.querySelectorAll('.face-card')]
+        .map(c => Number(c.dataset.faceId));
+      for (const cid of cards) {
+        const f = byId.get(cid);
+        if (!f || f.person_id == null) continue;
+        const other = snap.faces.find(x =>
+          x.image_id === f.image_id && x.id !== f.id &&
+          x.person_id != null && x.person_id !== f.person_id &&
+          x.link_status !== 'rejected');
+        if (other) return {cardId: cid, cardPid: f.person_id, cardName: pname(f.person_id),
+                           otherFace: other.id, otherPid: other.person_id,
+                           otherName: pname(other.person_id)};
+      }
+      return null;
+    """)
+    if pick is None:
+        record("C32 right pane follows the full image (#171/§4.37)", True,
+               "need a card whose image holds two persons' faces — vacuous")
+        return
+
+    def right_name():
+        return js(t, r"""
+          const dp = document.querySelector('.dp-person');
+          return dp ? (dp.querySelector('input')?.value ?? null) : null;
+        """)
+
+    def view_state():
+        return js(t, r"""
+          const active = document.querySelector('.topbar nav button.active');
+          return {focus: !!document.querySelector('.focus-pane'),
+                  importPane: !!document.querySelector('.import-pane'),
+                  personPane: !!document.querySelector('.dp-person'),
+                  overview: !!document.querySelector('.dp-summary'),
+                  tab: (active?.textContent ?? '').trim().split(/\s+/)[0] ?? ''};
+        """)
+
+    # ── phase A: entry anchor + rect switch, both surfaces stay put ────
+    before = view_state()
+    # PRE-CLICK, then double-click: the first click on an UNSELECTED card
+    # triggers the selection re-render, which at low compositing rates
+    # stretches that click's down→up past ~900ms — WebKit then measures
+    # down1→down2 beyond its ~500ms double-click window and never
+    # synthesises dblclick (no focus mode). The pre-click absorbs the
+    # re-render; both double-click clicks then land render-free.
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['cardId']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()
+    time.sleep(0.6)
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['cardId']}']")
+    AC(t.driver).double_click(card).perform()
+    time.sleep(0.8)
+    entry = view_state()
+    entry_name = right_name()
+
+    rect = t.find_element(By.CSS_SELECTOR, f"[data-overlay-face='{pick['otherFace']}']")
+    rect.click()
+    time.sleep(0.6)
+    after_rect = view_state()
+    rect_name = right_name()
+    rect_selected = js(t, r"""
+      return document.querySelector(arguments[0])?.classList.contains('selected') ?? false;
+    """, f"[data-overlay-face='{pick['otherFace']}']")
+
+    # ── phase B: the import pane keeps the slot; anchor updates under it ─
+    js(t, "window.__MOCK_ROLL_DIRS__ = {'/mnt/rolls/new-roll': 3};")
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls (closes focus)
+    time.sleep(0.8)
+    js(t, r"""
+      const el = document.querySelector('.roll-filter input');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, '/mnt/rolls/new-roll');
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+    """)
+    time.sleep(0.8)
+    import_open = view_state()
+
+    js(t, "document.querySelectorAll('.topbar nav button')[0]?.click();")  # Review
+    time.sleep(0.8)
+    card2 = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['cardId']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card2)
+    time.sleep(0.3)
+    card2.click()  # pre-click — same WebKit double-click-window fix as phase A
+    time.sleep(0.6)
+    card2 = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['cardId']}']")
+    AC(t.driver).double_click(card2).perform()  # entry anchor updates UNDER the import pane
+    time.sleep(0.8)
+    under_entry = view_state()
+    rect2 = t.find_element(By.CSS_SELECTOR, f"[data-overlay-face='{pick['otherFace']}']")
+    rect2.click()  # rect anchor updates UNDER the import pane
+    time.sleep(0.6)
+    under_rect = view_state()
+    # close the import pane → the anchor revealed underneath must be the RECT's person
+    js(t, r"""
+      [...document.querySelectorAll('.import-head button')]
+        .find(b => b.textContent.includes('✕'))?.click();
+    """)
+    time.sleep(0.6)
+    revealed = view_state()
+    revealed_name = right_name()
+
+    # ── phase C: NULL person_id leaves the anchor untouched ─────────────
+    # f5 = the entry card's face (its person ≠ the current anchor),
+    # person_id nulled + name stamped so the focus-refresh is observable
+    js(t, r"""
+      const f = window.__MOCK_SNAP.faces.find(x => x.id === arguments[0]);
+      f.person_id = null;
+      f.name = 'NULLGUARD';
+      window.dispatchEvent(new Event('focus'));   // F12-style snapshot reload
+    """, pick["cardId"])
+    refreshed = False
+    for _ in range(20):
+        time.sleep(0.3)
+        if js(t, r"""
+          return [...document.querySelectorAll('.face-rect-label')]
+            .some(x => x.textContent.trim() === 'NULLGUARD');
+        """):
+            refreshed = True
+            break
+    anchor_before_null = right_name()
+    null_rect = t.find_element(By.CSS_SELECTOR, f"[data-overlay-face='{pick['cardId']}']")
+    null_rect.click()
+    time.sleep(0.6)
+    after_null = view_state()
+    after_null_name = right_name()
+
+    ok = (
+        before.get("overview") and not before.get("personPane")   # fresh = Overview
+        and entry.get("focus") and entry.get("tab", "").startswith("Review")
+        and entry_name == pick["cardName"]                          # entry anchor
+        and after_rect.get("focus")                                 # view never left
+        and after_rect.get("tab", "").startswith("Review")
+        and rect_name == pick["otherName"]                          # rect switch
+        and rect_selected                                            # toggle still works
+        and import_open.get("importPane") and not import_open.get("personPane")
+        and under_entry.get("focus") and under_entry.get("importPane")
+        and under_rect.get("importPane") and not under_rect.get("personPane")
+        and revealed.get("personPane") and not revealed.get("importPane")
+        and revealed_name == pick["otherName"]                       # anchor under the pane
+        and refreshed                                                 # mutation observable
+        and after_null.get("personPane") and after_null_name == anchor_before_null
+        and anchor_before_null == pick["otherName"]
+    )
+    record("C32 right pane follows the full image (#171/§4.37): entry, rect switch, import-pane slot, NULL guard",
+           ok,
+           f"entry: {before.get('overview')}→focus={entry.get('focus')} name={entry_name!r} "
+           f"(want {pick['cardName']!r}); rect: name={rect_name!r} (want {pick['otherName']!r}) "
+           f"focus={after_rect.get('focus')} tab={after_rect.get('tab')!r} selected={rect_selected}; "
+           f"import slot: open={import_open.get('importPane')} under-entry={under_entry.get('importPane')} "
+           f"under-rect={under_rect.get('importPane')} revealed={revealed_name!r}; "
+           f"null guard: refreshed={refreshed} anchor {anchor_before_null!r}→{after_null_name!r}")
+
+
+def c33_person_group_list_update(t):
+    """#172/#173 (§4.38): the person pane's group list + Update person —
+    the pane lists every membership; × stages a removal (the row leaves
+    the staged display, the mock untouched) and Add group stages a new
+    membership; the staged set commits via the Update person button
+    (directly above Remove person) through move_persons_between_groups;
+    a status-seat row is inert (× disabled); renaming the pane person to
+    a KNOWN person re-anchors the pane on the merge target and lists ITS
+    groups; the system person Rejected sees the list read-only with no
+    Update button."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def rows():
+        return js(t, r"""
+          return [...document.querySelectorAll('.dp-groups .dp-group-row')].map(li => ({
+            path: li.querySelector('.dp-group-path')?.textContent.trim() ?? '',
+            seat: !!li.querySelector('.dp-group-path.seat'),
+            xDisabled: li.querySelector('.dp-group-x')?.disabled ?? null,
+            staged: li.classList.contains('staged'),
+          }));
+        """)
+
+    def pane_name():
+        return js(t, r"""
+          return document.querySelector('.dp-person .typeahead input')?.value ?? null;
+        """)
+
+    def set_input(sel, value, enter=True):
+        js(t, r"""
+          const el = document.querySelector(arguments[0]);
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[1]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+        """, sel, value)
+        if enter:
+            js(t, r"""
+              document.querySelector(arguments[0])
+                ?.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+            """, sel)
+
+    def wait_for(pred, tries=25):
+        for _ in range(tries):
+            time.sleep(0.3)
+            if pred():
+                return True
+        return False
+
+    def select_person(pid):
+        row = t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pid}']")
+        js(t, "arguments[0].scrollIntoView({block:'center'})", row)
+        time.sleep(0.3)
+        row.click()
+        time.sleep(0.8)
+
+    # ── phase A: a multi-group person lists every membership ───────────
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const m = snap.persons.find(p =>
+        p.groups.length > 1 && !/^unknown/i.test(p.name) && p.name !== 'Rejected');
+      return m ? {id: m.id, name: m.name, groups: [...m.groups]} : null;
+    """)
+    if pick is None:
+        record("C33 group list + Update person (#172/#173, §4.38)", True,
+               "need a multi-group person in the seed — vacuous")
+        return
+    select_person(pick["id"])
+    phase_a = js(t, r"""
+      const up = document.querySelector('.dp-update');
+      const rm = document.querySelector('.dp-remove');
+      return {pane: !!document.querySelector('.dp-person'),
+              update: !!up, aboveRemove: up ? up.nextElementSibling === rm : null,
+              remove: !!rm};
+    """)
+    listed = rows()
+
+    # ── phase B: stage × + add, mock untouched until Update person ─────
+    g0, g1 = pick["groups"][0], pick["groups"][1]
+    x0 = t.find_element(By.CSS_SELECTOR, ".dp-groups .dp-group-row .dp-group-x")
+    x0.click()
+    time.sleep(0.5)
+    after_x = rows()
+    mock_after_x = js(t, r"""
+      return window.__MOCK_SNAP.persons.find(p => p.id === arguments[0])?.groups ?? null;
+    """, pick["id"])
+    set_input(".dp-add-group .typeahead input", "Ck33|Sub", enter=False)
+    time.sleep(0.3)
+    add_btn = t.find_element(By.CSS_SELECTOR, ".dp-add-group .dp-add-btn")
+    add_btn.click()
+    time.sleep(0.5)
+    after_add = rows()
+    mock_after_add = js(t, r"""
+      return window.__MOCK_SNAP.persons.find(p => p.id === arguments[0])?.groups ?? null;
+    """, pick["id"])
+    t.find_element(By.CSS_SELECTOR, ".dp-update").click()
+    committed = wait_for(lambda: js(t, r"""
+      const p = window.__MOCK_SNAP.persons.find(x => x.id === arguments[0]);
+      return !!p && p.groups.includes('Ck33|Sub') && !p.groups.includes(arguments[1]);
+    """, pick["id"], g0))
+    mock_after = js(t, r"""
+      return window.__MOCK_SNAP.persons.find(p => p.id === arguments[0])?.groups ?? null;
+    """, pick["id"])
+    staged_clear = wait_for(lambda: not any(r["staged"] for r in rows()))
+
+    # ── phase C: a status-seat row is inert ────────────────────────────
+    seat_pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const p = snap.persons.find(x => /^unknown/i.test(x.name));
+      return p ? {id: p.id, groups: [...p.groups]} : null;
+    """)
+    if seat_pick:
+        select_person(seat_pick["id"])
+        seat_rows = rows()
+    else:
+        seat_rows = None
+
+    # ── phase D: rename to a KNOWN person re-anchors on the target ─────
+    mpick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const named = snap.persons.filter(p => p.name !== 'Rejected' &&
+        !/^unknown/i.test(p.name) && p.counts.total > 0);
+      if (named.length < 2) return null;
+      const [a, b] = named;
+      return {srcId: a.id, srcName: a.name, srcTotal: a.counts.total,
+              dstId: b.id, dstName: b.name, dstTotal: b.counts.total,
+              dstGroups: [...b.groups]};
+    """)
+    merge_ok = None
+    if mpick:
+        select_person(mpick["srcId"])
+        set_input(".dp-person .typeahead input", mpick["dstName"], enter=True)
+        merge_ok = wait_for(lambda: js(t, r"""
+          const snap = window.__MOCK_SNAP;
+          return !snap.persons.some(p => p.id === arguments[0]) &&
+                 (snap.persons.find(p => p.id === arguments[1])?.counts.total ?? 0)
+                   === arguments[2] + arguments[3];
+        """, mpick["srcId"], mpick["dstId"], mpick["srcTotal"], mpick["dstTotal"]))
+        anchor = js(t, r"""
+          return {name: document.querySelector('.dp-person .typeahead input')?.value ?? null,
+                  groups: [...document.querySelectorAll('.dp-groups .dp-group-path')]
+                    .map(x => x.textContent.trim())};
+        """)
+    else:
+        anchor = None
+
+    # ── phase E: the system person sees the list read-only ─────────────
+    set_show_filter(t, "rejected")
+    rej_id = js(t, r"""
+      return window.__MOCK_SNAP.persons.find(p => p.name === 'Rejected')?.id ?? null;
+    """)
+    sys_ok = None
+    if rej_id is not None and js(t, f"return !!document.querySelector(\".tree-person[data-person-id='{rej_id}']\")"):
+        select_person(rej_id)
+        sys_ok = js(t, r"""
+          return !document.querySelector('.dp-update') &&
+                 !document.querySelector('.dp-groups') &&
+                 !!document.querySelector('.dp-person .dim');
+        """)
+
+    want_after = sorted([g for g in pick["groups"] if g != g0] + ["Ck33|Sub"])
+    ok = (
+        phase_a["pane"] and phase_a["update"] and phase_a["aboveRemove"] and phase_a["remove"]
+        and [r["path"] for r in listed] == pick["groups"]           # every membership listed
+        and all(not r["xDisabled"] for r in listed)                  # real rows removable
+        and [r["path"] for r in after_x] == pick["groups"][1:]      # × stages: row leaves
+        and mock_after_x == pick["groups"]                           # …mock untouched
+        and [r["path"] for r in after_add] == pick["groups"][1:] + ["Ck33|Sub"]
+        and after_add[-1]["staged"]                                 # add staged, styled
+        and mock_after_add == pick["groups"]                         # …mock untouched
+        and committed and sorted(mock_after or []) == want_after     # Update commits the set
+        and staged_clear                                             # staging cleared after commit
+        and seat_rows is not None and seat_rows
+        and all(r["seat"] and r["xDisabled"] for r in seat_rows)     # seat rows inert
+        and (merge_ok is not False and anchor is not None)
+        and (mpick is None or (anchor["name"] == mpick["dstName"]
+                               and anchor["groups"] == mpick["dstGroups"]))  # re-anchored
+        and sys_ok is not False                                       # system person read-only
+    )
+    record("C33 group list + Update person (#172/#173, §4.38): stage ×/add, commit, seat inert, merge re-anchor, system read-only",
+           ok,
+           f"listed={[r['path'] for r in listed]} (want {pick['groups']}); "
+           f"after×={[r['path'] for r in after_x]} mockUntouched={mock_after_x == pick['groups']}; "
+           f"afterAdd={[r['path'] for r in after_add]} staged={after_add[-1]['staged'] if after_add else None}; "
+           f"committed={committed} mock={mock_after} stagedClear={staged_clear}; "
+           f"seat={seat_rows}; merge={merge_ok} anchor={anchor}; system={sys_ok}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -2046,6 +2421,8 @@ def main():
         c29_show_rejected_bin_165(t)
         c30_bar_accept_selection_over_stage(t)
         c31_rolls_import_pane(t)
+        c32_full_image_follows_person(t)
+        c33_person_group_list_update(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
