@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.76** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.77** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -453,9 +453,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      helper: the `set_person_name` collision error can never surface in
      the GUI; a *faceless* person renamed to an existing name merges by
      deletion, an empty input is a no-op, and a rename keeps the
-     person's current group path (#153 — a renamed `UnknownN` keeps its
-     status seat, §4.35, until it is filed into a real group; #38's
-     force-to-empty rule stays obsolete). A **detail-pane rename-merge**
+     person's current **real** group path — #153 revised by #178: a
+     **status seat is never passed** into the assignment
+     (`assign_person` validates the path up front, #165 — a seated
+     person's `New` used to trip *reserved group name* before the branch
+     that would have ignored it). Instead the seat derives by state:
+     the claim confirms the person's faces, so an unfiled `UnknownN`
+     renamed in place lands on **Accepted** automatically (the old
+     "keeps its status seat" wording was unimplementable — a caller can
+     never write `New`, and an empty path derives by state; #38's
+     force-to-empty rule stays obsolete). In the **merge** case the
+     group is never applied (F2 above), so a rename-to-known simply
+     re-anchors the pane on the target (§4.38) — no group error is
+     possible. A **detail-pane rename-merge**
      re-anchors the right pane on the surviving person — the merge
      target when the name was taken (§4.38/#172: the pane must keep
      showing the person the faces now belong to).
