@@ -2874,11 +2874,42 @@ def c36_review_lock(t):
            f"value={released['value']!r} tab={released['tab']!r}")
 
 
+def status_totals(t):
+    """ground truth: DB-wide status totals over the whole mock snapshot
+       (#179 — what the top bar's chips must read)"""
+    return js(t, r"""
+      const out = {provisional: 0, confirmed: 0, rejected: 0};
+      for (const f of window.__MOCK_SNAP.faces) {
+        if (f.link_status in out) out[f.link_status]++;
+      }
+      return out;
+    """)
+
+
+def topbar_totals(t):
+    """the rendered top-bar status chips (#179) — null when absent"""
+    return js(t, r"""
+      const c = document.querySelector('.status-counts');
+      return c ? {title: c.getAttribute('title') ?? '',
+                  n: c.querySelector('.c-prov')?.textContent.trim() ?? '',
+                  a: c.querySelector('.c-conf')?.textContent.trim() ?? '',
+                  r: c.querySelector('.c-rej')?.textContent.trim() ?? ''} : null;
+    """)
+
+
+def chip_texts(total):
+    """the chip strings a set of status totals must render as"""
+    return (f"? {total['provisional']}",
+            f"✓ {total['confirmed']}",
+            f"✗ {total['rejected']}")
+
+
 def c37_person_sticky_colors(t):
     """#176 (§4.41): the Person tab is clickable without an anchor (the
     single-Close pointer dialog + Show → All); a Show change that hides
     every face of the anchored person opens 'No new faces' (Show All /
-    Close); the top bar shows the anchored person's live counts; and
+    Close); the top bar shows the DB-WIDE status totals (#179 — anchored
+    or not they read the whole database, never just the person); and
     the status colour scheme is ONE colour everywhere — select closed
     value, count chips and tree status branches resolve to the same rgb
     per status (New red, Accepted green, Rejected gray; All = normal)."""
@@ -2950,17 +2981,13 @@ def c37_person_sticky_colors(t):
         time.sleep(1.0)
     d2_gone = dialog() is None
 
-    # ── phase 3: the top-bar counts of the anchored person ────────────
-    counts = js(t, r"""
-      const c = document.querySelector('.person-counts');
-      return c ? {n: c.querySelector('.c-prov')?.textContent.trim() ?? '',
-                  a: c.querySelector('.c-conf')?.textContent.trim() ?? '',
-                  r: c.querySelector('.c-rej')?.textContent.trim() ?? ''} : null;
-    """)
+    # ── phase 3: the top-bar totals are DB-wide (#179) even while a
+    #    person is anchored — they must ignore the anchor ─────────────
+    counts = topbar_totals(t)
+    want = status_totals(t)
     counts_ok = (counts is not None
-                 and counts["n"] == f"? {pick['counts']['provisional']}"
-                 and counts["a"] == f"✓ {pick['counts']['confirmed']}"
-                 and counts["r"] == f"✗ {pick['counts']['rejected']}")
+                 and (counts['n'], counts['a'], counts['r']) == chip_texts(want)
+                 and counts['title'] == "totals in the database")
 
     # ── phase 4: one colour scheme everywhere ────────────────────────
     def rgb(sel):
@@ -2971,17 +2998,17 @@ def c37_person_sticky_colors(t):
 
     set_show("provisional")  # dismissed in phase 2 for this pair — no dialog
     new_rgb = {"select": rgb(".topbar-right select"),
-               "chip": rgb(".person-counts .c-prov"),
+               "chip": rgb(".status-counts .c-prov"),
                "branch": rgb(".tree-node.status-new .tree-node-name")}
     set_show("confirmed")
     ok_rgb = {"select": rgb(".topbar-right select"),
-              "chip": rgb(".person-counts .c-conf"),
+              "chip": rgb(".status-counts .c-conf"),
               "branch": rgb(".tree-node.status-accepted .tree-node-name")}
     set_show("rejected")
     # the anchored person may hold no rejected face — the guard dialog
     # can pop here; it does not affect computed styles behind the overlay
     rej_rgb = {"select": rgb(".topbar-right select"),
-               "chip": rgb(".person-counts .c-rej"),
+               "chip": rgb(".status-counts .c-rej"),
                "branch": rgb(".tree-node.status-rejected .tree-node-name")}
     set_show("all")
     all_rgb = rgb(".topbar-right select")
@@ -3004,10 +3031,10 @@ def c37_person_sticky_colors(t):
           and sorted(d2["buttons"]) == ["Close", "Show All"]
           and show_all and d2_gone and show_select() == "all"
           and counts_ok and colors_ok)
-    record("C37 Person stickiness + status colours (#176/§4.41): no-anchor dialog + Show All, 'No new faces' guard, top-bar counts, one colour scheme",
+    record("C37 Person stickiness + status colours (#176/§4.41): no-anchor dialog + Show All, 'No new faces' guard, top-bar DB totals (#179), one colour scheme",
            ok,
            f"tab enabled={not_disabled}; dialog1={d1} show={p1['show']} tab={p1['tab']!r} closed={d1_gone}; "
-           f"dialog2={d2} closed={d2_gone} show={show_select()!r}; counts={counts} (want ? {pick['counts']['provisional']} ✓ {pick['counts']['confirmed']} ✗ {pick['counts']['rejected']}); "
+           f"dialog2={d2} closed={d2_gone} show={show_select()!r}; counts={counts} (want ? {want['provisional']} ✓ {want['confirmed']} ✗ {want['rejected']}); "
            f"rgb new={new_rgb} ok={ok_rgb} rej={rej_rgb} all={all_rgb} vs normal={normal_rgb}")
 
 
@@ -3260,6 +3287,87 @@ def c39_rename_seated_person(t):
            f"C: pick={cpick} merged={merge_c} groups={c_groups} err={c_err}")
 
 
+def c40_db_status_totals(t):
+    """#179 (§4.41): the top bar's status totals are DB-wide and live —
+    present with NO anchor and equal to the whole snapshot, unchanged by
+    the Show filter and by the mode (Rolls), and updated by verdicts
+    (one card accept: ? −1 / ✓ +1; one card reject: ? −1 / ✗ +1)."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    # ── phase A: visible with no anchor, reading the whole database ──
+    base = status_totals(t)
+    c0 = topbar_totals(t)
+    anchor0 = js(t, "return !!document.querySelector('.tree-person.selected')")
+    a_ok = (not anchor0 and c0 is not None
+            and c0["title"] == "totals in the database"
+            and (c0["n"], c0["a"], c0["r"]) == chip_texts(base))
+
+    # ── phase B: the Show filter and the mode never tilt the totals ──
+    set_show_filter(t, "provisional")
+    c_filter = topbar_totals(t)
+    set_show_filter(t, "all")
+    rolls = [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+             if "Rolls" in b.text][0]
+    rolls.click()
+    time.sleep(1.0)
+    c_rolls = topbar_totals(t)
+    rev = [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+           if "Review" in b.text][0]
+    rev.click()
+    time.sleep(1.0)
+    def texts(c):
+        return None if c is None else (c["n"], c["a"], c["r"])
+    b_ok = (texts(c_filter) == chip_texts(base)
+            and texts(c_rolls) == chip_texts(base))
+
+    # ── phase C: verdicts move the totals (live) ─────────────────────
+    prov = js(t, r"""
+      return [...document.querySelectorAll('.face-card.status-provisional')]
+        .map(x => Number(x.dataset.faceId)).slice(0, 2);
+    """)
+    if len(prov) < 2:
+        record("C40 top-bar DB status totals (#179/§4.41): no-anchor + DB-wide, filter/mode-independent, live verdicts",
+               a_ok and b_ok,
+               f"only {len(prov)} visible provisional cards — verdict phases vacuous; "
+               f"A: anchor0={anchor0} chips={c0} want={chip_texts(base)}; "
+               f"B: filter={texts(c_filter)} rolls={texts(c_rolls)}")
+        return
+
+    acc = t.find_element(By.CSS_SELECTOR,
+                         f".face-card[data-face-id='{prov[0]}'] .card-accept")
+    acc.click()
+    time.sleep(1.5)
+    after_acc = status_totals(t)
+    c1 = topbar_totals(t)
+    acc_ok = (texts(c1) == chip_texts(after_acc)
+              and after_acc["provisional"] == base["provisional"] - 1
+              and after_acc["confirmed"] == base["confirmed"] + 1)
+
+    rej = t.find_element(By.CSS_SELECTOR,
+                         f".face-card[data-face-id='{prov[1]}'] button[title^='Reject face']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", rej)
+    time.sleep(0.3)
+    rej = t.find_element(By.CSS_SELECTOR,
+                         f".face-card[data-face-id='{prov[1]}'] button[title^='Reject face']")
+    rej.click()
+    time.sleep(1.5)
+    after_rej = status_totals(t)
+    c2 = topbar_totals(t)
+    rej_ok = (texts(c2) == chip_texts(after_rej)
+              and after_rej["provisional"] == after_acc["provisional"] - 1
+              and after_rej["rejected"] == after_acc["rejected"] + 1
+              and after_rej["confirmed"] == after_acc["confirmed"])
+
+    ok = a_ok and b_ok and acc_ok and rej_ok
+    record("C40 top-bar DB status totals (#179/§4.41): no-anchor + DB-wide, filter/mode-independent, live on accept + reject",
+           ok,
+           f"A: anchor0={anchor0} chips={c0} want={chip_texts(base)}; "
+           f"B: filter={texts(c_filter)} rolls={texts(c_rolls)}; "
+           f"C: accept {prov[0]} → chips={texts(c1)} snap={after_acc}; "
+           f"reject {prov[1]} → chips={texts(c2)} snap={after_rej}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -3306,6 +3414,7 @@ def main():
         c37_person_sticky_colors(t)
         c38_verdict_icons(t)
         c39_rename_seated_person(t)
+        c40_db_status_totals(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
