@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.79** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.80** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -213,10 +213,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   [All | New | Accepted | Rejected]` — the face-status filter applied by
   every view (default All; **New** is the `provisional` status, spelled
   the way the face-card badge spells it) — lives in the **top bar**
-  (#158, v3.57). Beside it sits the **Review lock** (#175, §4.40): a
-  padlock toggle that pins Show to **New** (the select renders disabled
-  while locked) for the focused new-faces workflow; releasing it lands
-  in Person mode with Show → All. The center pane's toolbar right side carries the
+  (#158, v3.57). Beside it sits the **Review lock** (#175, §4.40,
+  rewritten by #188): a padlock **indicator** — 🔒 exactly while Review
+  mode is active, never a control. In Review the Show select pins to
+  **New** and renders **disabled**; the way out is the ordinary
+  *Rolls*/*Person* tab switch (the select re-enables, its value stays). The center pane's toolbar right side carries the
   persons-mode cluster-group toggle `[Description | Accuracy]`, and
   **only in the person view** (#163): `cluster_group` shapes only how
   the person view forms its sections (§4.9), so the seg is hidden in
@@ -1262,9 +1263,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       mark (`exhaustAtRef`) remembers **which person** it was set for,
       is consumed unconditionally (so it can never linger across view
       switches, even if the snapshot refresh lands elsewhere), and acts
-      only when the consumer is still the marked person — in Review, or
-      in **any view while the Review lock is engaged** (#175/§4.40) —
-      anything else silently drops it. The advance **ends an open full
+      only when the consumer is still the marked person **and the view
+      is Review** (§4.40/#188: the lock is the mode) — anything else
+      silently drops it. The advance **ends an open full
       image / focus split** (§4.15: the person on screen is no longer
       the one shown — stepping closes it too).
     - **An open modal owns the keyboard**: while any layer above
@@ -1686,32 +1687,37 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      open (the branch selection may update underneath); the person
      detail keeps its Review/Person-mode home (§4.38).
 
-40. **The Review lock** (#175) ⇒ a focused, new-faces-only workflow:
-   - **Control**: a **padlock toggle in the top bar, beside the `Show`
-     select** — available in every mode (Show is a global control, so
-     the lock pins the focus globally). Session state — never written
-     to `whotrc`.
-   - **Engaged**: `Show` pins to **New** (`provisional`) through the
-     ordinary filter path (§4.10/#141: faces the new filter hides leave
-     the selection and their staged ops drop) and the select renders
-     **disabled** while locked. If the anchored person holds no new
-     face, the context first advances to the next person in the step
-     list that does (forward, else the first such person; with none,
-     stay and report `no more persons to review`).
-   - **Auto-advance everywhere**: while locked, the §4.30/#125
-     person-exhausted fall-through fires for verdicts in **any view** —
-     Review grid, Person view, focus/full-image, the rolls image detail
-     — because the workflow drills into a person and their full image
-     before deciding (`markExhaust` is no longer review-mode-gated
-     under the lock). The advance ends an open full image (§4.30) and
-     lands in Person mode exactly like stepping (§4.31).
-   - **Released**: the lock switches to **Person mode with `Show →
-     All`**, closes any open full image, keeps the person anchor (the
-     pane shows where the user left off) and re-enables the select —
-     all behind the #123 staged-set confirm, like every mode switch.
-   - **Actions are unchanged**: the lock pins the filter, guards the
-     position and widens the advance's reach — no verdict or
-     assignment rule moves.
+40. **The Review lock** (#175, rewritten by #188) ⇒ the lock IS the
+   Review mode:
+   - **Indicator only**: a **padlock in the top bar, beside the `Show`
+     select** — a pure indicator, never a control: it reads **🔒 exactly
+     while Review mode is active** and 🔓 otherwise, and it is not
+     clickable. The old session-lock machinery (engage in any mode,
+     release forcing Person mode + Show → All) is gone — the state
+     derives from `mode === "review"`.
+   - **Locked while in Review**: `Show` pins to **New**
+     (`provisional`) through the ordinary filter path (§4.10/#141:
+     faces the new filter hides leave the selection and their staged
+     ops drop) and the select renders **disabled** — on every entry
+     into Review (the top-bar *Review* button, the tree's *Review*
+     action, the post-delete fallback, and the initial load) and for
+     as long as Review stays active. If the entering anchor holds no
+     new face, the **position guard** first advances to the next person
+     in the step list that does (forward, else the first such person;
+     with none, stay and report `no more persons to review`).
+   - **Exit is a mode switch**: the user selects **Rolls** or
+     **Person** — the ordinary #123-confirm switch. The select
+     **re-enables** and its **value stays** (no forced Show → All, no
+     forced follow-up mode): the tab click *is* the exit. The §4.41
+     guards (*No new faces*, *Please select a person…*) cover any
+     resulting empty state, so nothing else fires on exit.
+   - **Reach**: with the lock being the mode, the §4.30/#125 exhaust
+     machinery is exactly its mode-gated self again — verdicts made in
+     Review mark and hand over as before; #175's any-view widening and
+     its `!reviewLock` bypass are gone (verdicts in Person/focus/rolls
+     never advance, and §4.30's accept keeps its plain path while a
+     split is open).
+   - **Actions are unchanged**: no verdict or assignment rule moves.
 
 41. **Person mode: sticky person, guard dialogs, counts, status
    colours** (#176) ⇒ Person mode's behaviour is otherwise unchanged:
@@ -1722,7 +1728,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      *Please select a person in the tree on the left* (a single
      **Close** button). With an anchor the click is the plain mode
      switch — the anchor survives mode switches (§3), so the person
-     last worked on (incl. out of the Review-lock workflow, §4.40) is
+     last worked on (incl. out of the Review workflow, §4.40) is
      still the one shown.
    - **Sticky person**: once selected the user stays on that person. If
      a Show change — or a verdict — leaves the anchored person with
