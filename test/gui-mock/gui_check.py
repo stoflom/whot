@@ -123,6 +123,13 @@ Checks (contract refs: docs/gui-design.md):
       the window (never past window − left − 200px), double-click
       restores the left-following default, and opening an image restores
       the normal layout (right pane back to its fixed width)
+  C36 the Review lock (#175, §4.40): engaging the padlock beside Show
+      pins Show → New (select disabled, button latched) and an anchored
+      person WITHOUT a new face advances to the next one that has one;
+      a verdict in PERSON view with focus open (the locked any-view
+      mark) exhausts the person → auto-advance to the next person with
+      new faces AND the focus split closes (§4.15); releasing lands in
+      Person mode with Show → All re-enabled
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -2714,6 +2721,142 @@ def c35_rolls_layout(t):
            f"(right≈290, centre≈{opened['w'] - opened['left'] - 290 - 2}): {restored_ok}")
 
 
+def c36_review_lock(t):
+    """#175 (§4.40): the Review lock — the padlock beside Show pins the
+    filter to New (select disabled, button latched) and guards the
+    position (an anchored person without a new face advances to the
+    next one that has any); a verdict made in PERSON view while focus
+    mode is open exhausts the person → the locked any-view mark fires,
+    auto-advancing to the next person with new faces and closing the
+    full image (§4.15); releasing lands in Person mode with Show → All
+    re-enabled (session-only lock — the select works again)."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def lock_state():
+        return js(t, r"""
+          const b = document.querySelector('.lock-btn');
+          const s = document.querySelector('.topbar-right select');
+          return {btn: !!b, latched: !!b && b.classList.contains('locked'),
+                  pressed: b?.getAttribute('aria-pressed') ?? null,
+                  disabled: s?.disabled ?? null, value: s?.value ?? null,
+                  selected: document.querySelector('.tree-person.selected')
+                    ? Number(document.querySelector('.tree-person.selected').dataset.personId)
+                    : null,
+                  focus: !!document.querySelector('.focus-pane'),
+                  tab: (document.querySelector('.topbar nav button.active')?.textContent ?? '')
+                    .trim().split(/\s+/)[0] ?? ''};
+        """)
+
+    # ── pick: a person WITHOUT new faces (guard target), then a person
+    #    with EXACTLY one new face (the verdict target) ────────────────
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const done = snap.persons.find(p => p.name !== 'Rejected' &&
+        !/^unknown/i.test(p.name) && p.counts.total > 0 && p.counts.provisional === 0
+        && p.counts.confirmed > 0);
+      const one = snap.persons.find(p => p.name !== 'Rejected' &&
+        !/^unknown/i.test(p.name) && p.counts.provisional === 1 && p.counts.total >= 1);
+      // the ONE new face — the focus film roll shows every face of its
+      // image (the Show filter does not apply there), so the verdict
+      // must target this exact card
+      const fid = one ? snap.faces.find(f =>
+        f.person_id === one.id && f.link_status === 'provisional')?.id ?? null : null;
+      return done && one && fid != null
+        ? {doneId: done.id, oneId: one.id, oneFid: fid} : null;
+    """)
+    if pick is None:
+        record("C36 the Review lock (#175/§4.40)", True,
+               "need a fully-reviewed person + a person with exactly one new face — vacuous")
+        return
+
+    # anchor on the reviewed person (Show = All, row visible)
+    t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['doneId']}']").click()
+    time.sleep(0.8)
+
+    # ── engage: Show pins New, disabled, latched; position guard fires ─
+    t.find_element(By.CSS_SELECTOR, ".lock-btn").click()
+    time.sleep(1.2)
+    engaged = lock_state()
+
+    # ── the verdict target: exactly one new face, focus open ───────────
+    has_one = js(t, "return !!document.querySelector('.tree-person[data-person-id=\"' + arguments[0] + '\"]');", pick["oneId"])
+    if not has_one:
+        record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
+               False, "the one-new-face person is not in the locked tree — unexpected")
+        return
+    t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['oneId']}']").click()
+    time.sleep(0.8)
+    card = t.find_element(By.CSS_SELECTOR, ".face-card")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()          # pre-click: absorb the selection re-render (WebKit dblclick window)
+    time.sleep(0.5)
+    card = t.find_element(By.CSS_SELECTOR, ".face-card")
+    AC(t.driver).double_click(card).perform()   # focus mode — the locked workflow's full image
+    time.sleep(1.0)
+    before_verdict = lock_state()
+
+    # ── the verdict inside focus: select THE provisional face's card,
+    #    bar Accept (the roll lists every face of the image) ───────────
+    fcard = t.find_element(
+        By.CSS_SELECTOR, f".focus-pane .face-card[data-face-id='{pick['oneFid']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", fcard)
+    time.sleep(0.3)
+    fcard.click()
+    time.sleep(0.5)
+    accept = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+              if "Accept" in b.text and b.is_enabled()]
+    if not accept:
+        record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
+               False, "rulebar Accept not enabled after selecting the card in focus")
+        return
+    accept[0].click()
+    time.sleep(1.5)
+    after_verdict = lock_state()
+    advanced = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const sel = document.querySelector('.tree-person.selected');
+      const id = sel ? Number(sel.dataset.personId) : null;
+      const p = id == null ? null : snap.persons.find(x => x.id === id);
+      return {id, hasNew: p ? p.counts.provisional > 0 : false,
+              oldGone: !snap.persons.some(x => x.id === arguments[0]),
+              oldNew: (snap.persons.find(x => x.id === arguments[0])?.counts.provisional) ?? 0};
+    """, pick["oneId"])
+
+    # ── release: Person mode, Show → All, select usable again ──────────
+    t.find_element(By.CSS_SELECTOR, ".lock-btn").click()
+    time.sleep(1.2)
+    released = lock_state()
+    guard_new = js(t,
+                   "return window.__MOCK_SNAP.persons.find(x => x.id === arguments[0])?.counts.provisional ?? -1;",
+                   engaged["selected"])
+
+    ok = (
+        engaged["latched"] and engaged["pressed"] == "true"
+        and engaged["disabled"] and engaged["value"] == "provisional"      # Show pinned New
+        and engaged["selected"] not in (None, pick["doneId"])               # position guard
+        and guard_new > 0                                                    # …landed on a person with new faces
+        and before_verdict["focus"]                                          # focus opened (person view)
+        and advanced["oldNew"] == 0                                     # the person drained of new faces
+        and advanced["id"] != pick["oneId"] and advanced["hasNew"]          # …and the context advanced
+        and not after_verdict["focus"]                                       # the full image closed (§4.15)
+        and after_verdict["tab"].startswith("Person")                        # lands in Person mode
+        and not released["latched"] and released["pressed"] == "false"
+        and not released["disabled"] and released["value"] == "all"         # Show → All, usable
+        and released["tab"].startswith("Person")                             # Person mode
+    )
+    record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
+           ok,
+           f"engage: latched={engaged['latched']} disabled={engaged['disabled']} value={engaged['value']} "
+           f"guard {pick['doneId']}→{engaged['selected']} (new={guard_new}); "
+           f"verdict: focus {before_verdict['focus']}→closed={not after_verdict['focus']}, "
+           f"old new={advanced['oldNew']} gone={advanced['oldGone']}, "
+           f"advanced {pick['oneId']}→{advanced['id']} hasNew={advanced['hasNew']} tab={after_verdict['tab']!r}; "
+           f"release: latched={released['latched']} disabled={released['disabled']} "
+           f"value={released['value']!r} tab={released['tab']!r}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -2756,6 +2899,7 @@ def main():
         c33_person_group_list_update(t)
         c34_rolls_branch_thumbnails(t)
         c35_rolls_layout(t)
+        c36_review_lock(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
