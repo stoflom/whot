@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
 import { rotStyle } from "../rotation";
-import { applyGroupOps, isSeat, stageAdd, stageRemove, stageRehome, type GroupOp } from "../groupList";
+import { applyGroupOps, type GroupOp } from "../groupList";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
+import GroupListEditor from "./GroupListEditor";
 import type { SuggestOption } from "./SuggestInput";
 import { matchesStatusFilter, type FaceFilter } from "../viewFilters";
 import { selectAll } from "../autoText";
@@ -124,8 +125,6 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
   // path, a rename-merge onto the target) and the drafts resync on a
   // committed rename/note of the same person
   const [ops, setOps] = useState<GroupOp[]>([]);
-  const [addPath, setAddPath] = useState("");
-  const [editing, setEditing] = useState<{ path: string; value: string } | null>(null);
   const [nameDraft, setNameDraft] = useState(person.name);
   const [noteDraft, setNoteDraft] = useState(person.note ?? "");
   const pidRef = useRef(person.id);
@@ -133,8 +132,6 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
     if (pidRef.current !== person.id) {
       pidRef.current = person.id;
       setOps([]);
-      setAddPath("");
-      setEditing(null);
       setNameDraft(person.name);
       setNoteDraft(person.note ?? "");
     }
@@ -152,31 +149,13 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
   const display = applyGroupOps(person.groups, ops);
   const commit = (next: GroupOp[]) => {
     // a successful commit clears the staging — the ops must never
-    // replay over the already-committed result
+    // replay over the already-committed result (the add/edit drafts
+    // live inside GroupListEditor and clear themselves on staging)
     void (onUpdate?.(person.id, nameDraft, noteDraft, next) ?? Promise.resolve(false)).then(
       (ok) => {
-        if (ok) {
-          setOps([]);
-          setAddPath("");
-          setEditing(null);
-        }
+        if (ok) setOps([]);
       }
     );
-  };
-  const stageAddPath = (thenCommit: boolean) => {
-    const next = stageAdd(ops, display, addPath);
-    if (!next) return; // reserved/empty/duplicate: informed no-op
-    setOps(next);
-    setAddPath("");
-    // Enter stages the typed path AND commits the whole staged set
-    // (§4.38) — against the ops INCLUDING it; the button only stages
-    if (thenCommit) commit(next);
-  };
-  const commitEdit = () => {
-    if (!editing) return;
-    const next = stageRehome(ops, display, editing.path, editing.value);
-    if (next) setOps(next);
-    setEditing(null);
   };
   return (
     <div className="dp-person" key={person.id}>
@@ -221,84 +200,19 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
         // is dimmed with an inert × — system furniture, §4.35); rows are
         // editable inline (re-home that one membership); Add group stages
         // a new membership; the staged set commits via Enter-in-add or
-        // the Update person button (#173) — never per-gesture
+        // the Update person button (#173) — never per-gesture. #181:
+        // the rows live in the SHARED GroupListEditor (the Edit dialog
+        // fronts the same list when the Name holds a known person)
         <div className="dp-field">
           <span>Groups ({display.length})</span>
-          <ul className="dp-groups">
-            {display.map((g) => {
-              const seat = isSeat(g);
-              const staged = ops.some((o) => o.to === g);
-              return (
-                <li key={g} className={`dp-group-row${staged ? " staged" : ""}`}>
-                  {editing?.path === g ? (
-                    <PathTypeahead
-                      className="input-group dp-group-edit"
-                      value={editing.value}
-                      onChange={(v) => setEditing({ path: g, value: v })}
-                      options={pathOptions}
-                      autoFocus
-                      onSubmit={commitEdit}
-                      onEscape={() => setEditing(null)}
-                      onLeave={commitEdit}
-                      title="Re-home this membership (Enter commits, Esc cancels)"
-                    />
-                  ) : seat ? (
-                    <span
-                      className="dp-group-path seat"
-                      title="status seat (§4.35) — system-written, never removed"
-                    >
-                      {g}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="dp-group-path"
-                      title="click to edit — re-homes just this membership (§4.16)"
-                      onClick={() => setEditing({ path: g, value: g })}
-                    >
-                      {g}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="dp-group-x"
-                    disabled={seat}
-                    title={
-                      seat
-                        ? "status seat (§4.35) — never removed"
-                        : "remove this membership (staged — commit with Update person)"
-                    }
-                    onClick={() => {
-                      const next = stageRemove(ops, display, g);
-                      if (next) setOps(next);
-                    }}
-                  >
-                    ×
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="dp-add-group">
-            <PathTypeahead
-              className="input-group"
-              value={addPath}
-              onChange={setAddPath}
-              options={pathOptions}
-              placeholder="e.g. family|lombards"
-              title="Add a group membership — staged, Enter commits the staged set (§4.38)"
-              onSubmit={() => stageAddPath(true)}
-            />
-            <button
-              type="button"
-              className="dp-add-btn"
-              disabled={!addPath.trim()}
-              title="stage this membership — commit with Enter or Update person"
-              onClick={() => stageAddPath(false)}
-            >
-              Add group
-            </button>
-          </div>
+          <GroupListEditor
+            groups={person.groups}
+            ops={ops}
+            onOps={setOps}
+            options={pathOptions}
+            className="dp-groups"
+            onAddCommit={commit}
+          />
         </div>
       )}
       <Editable

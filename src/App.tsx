@@ -1621,8 +1621,11 @@ export default function App() {
       staged ids. The review advance anchors as before — last-selected,
       hovered, first id) */
   const commitPending = useCallback(
-    async (all: Stage[], acceptIds?: number[]) => {
-      if (all.length === 0) return;
+    async (all: Stage[], acceptIds?: number[], groupOps?: GroupOp[]) => {
+      const opsLive = (groupOps ?? []).length > 0;
+      // #181: a list-only Accept (nothing field-staged) still runs — the
+      // membership edits commit even when every field is untouched
+      if (all.length === 0 && !opsLive) return;
       // #139: the whole set stays staged until the commit lands — the
       // old code wiped it before the first write, so a mid-commit
       // failure silently discarded every not-yet-applied op (§4.24
@@ -1647,10 +1650,27 @@ export default function App() {
       // #166: acceptance runs over the caller's displayed scope — the
       // staged set only staged the edits (empty scope ⇒ the staged ids)
       const ids = acceptIds && acceptIds.length > 0 ? acceptIds : union;
+      // #181 (§4.38): the dialog's group-LIST edits — the name has
+      // landed, so the scope's faces now name the SURVIVING person (the
+      // merge target when the name was taken, the renamed/created one
+      // otherwise); re-read the fresh snapshot (the closure's
+      // facesById predates the claim) and replay the ops per owner
+      if (opsLive) {
+        const s = await api.getSnapshot();
+        const owners = [
+          ...new Set(
+            ids.map((id) => s.faces.find((f) => f.id === id)?.person_id)
+              .filter((p): p is number => p != null)
+          ),
+        ];
+        for (const pid of owners)
+          for (const op of groupOps!)
+            await mutate(() => api.movePersonsBetweenGroups([pid], op.from, op.to));
+      }
       await acceptAndNext(ids, claimed);
       setPending([]);
     },
-    [acceptAndNext, stageOps]
+    [acceptAndNext, stageOps, mutate]
   );
 
   // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the
@@ -2621,8 +2641,16 @@ export default function App() {
             const st = buildStage(ids, r.values, r.touched);
             if (!st) {
               if (r.kind === "accept") {
-                // nothing staged — Accept still accepts the scope (§4.30)
-                if (ids.length > 0) void acceptAndNext([...ids]);
+                // nothing field-staged — Accept still accepts the scope
+                // (§4.30); #181: a list-only Accept commits the group
+                // ops through the same chain (no stage, just the ops)
+                if (ids.length > 0) void commitPending([], ids, r.groupOps);
+                return;
+              }
+              if (r.groupOps.length > 0) {
+                // Apply leaves the list edits LOCAL — they preview in
+                // the list itself and commit with Accept (#181)
+                setInfo("group changes commit with Accept (#181)");
                 return;
               }
               setInfo("nothing to apply — change a field first (#103)");
@@ -2633,8 +2661,10 @@ export default function App() {
               return;
             }
             // #166: the staged ops commit first, then this dialog's
-            // chosen scope is accepted (the set edits, never the scope)
-            void commitPending(upsertStage(pendingRef.current, st), ids);
+            // chosen scope is accepted (the set edits, never the scope);
+            // #181: the list edits ride along (name first, memberships
+            // against the surviving person)
+            void commitPending(upsertStage(pendingRef.current, st), ids, r.groupOps);
           }}
           onReject={(scope) => {
             // #124: a verdict, not a field edit — commits immediately.

@@ -996,6 +996,17 @@ button.dp-group-path:hover:not(:disabled) { border-color: var(--border); }
 .dp-add-group { display: flex; gap: 4px; align-items: stretch; }
 .dp-add-group .typeahead { flex: 1; min-width: 0; }
 .dp-add-btn { flex: none; }
+/* #181 (§4.24): the Edit dialog's group LIST — a known name fronts the
+   person's memberships (the shared GroupListEditor's rows, in the
+   dialog's field rhythm) */
+.ed-groups-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--dim);
+}
+.ed-groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 
 /* #67: name typeahead — suggestion dropdown over the existing persons */
 .typeahead { position: relative; display: block; }
