@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.85** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.86** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1550,12 +1550,35 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      opened the pane already found images below the top level, so a
      default-off import would silently skip the very sub-folders that
      triggered it), `--threshold <f>` (default `0.40`, the
-     script's `THRESHOLD_DEFAULT`), and `--create-db`; the **roll
+     script's `THRESHOLD_DEFAULT`); the **roll
      directory** and the resolved **database path** are shown read-only
      (the pane is opened with the directory pre-filled; re-picking goes
      through the path filter again). `--create-db` + `--dry-run` is
      refused up front (the script's `validate_args` — creation is a
      write).
+   - **Option gating (#186)**: the pane offers only options that can
+     apply — `--create-db` is **hidden while a usable database exists**
+     (the script refuses an existing non-empty DB, so the checkbox
+     could only fail; `get_import_info` now answers the probe with
+     `{ dbPath, dbExists }`, where *usable* means the **schema is
+     present**, not merely that a file exists: a failed first load can
+     have created an empty file), and it is offered **pre-checked in
+     the first-run flow (#185)**. The other flags apply to every in-app
+     run and stay.
+   - **First run — no database (#185)**: when the initial snapshot load
+     fails and **no usable database exists** (the same schema probe),
+     the app does not dead-end on the raw error: a dialog states it
+     (*No database yet* — the configured path, built from
+     `database/schema.sql`) with **Retry** (the DB may have appeared
+     externally) and **Open import pane**. Opening picks a roll
+     directory with the **native folder picker** and shows the import
+     pane **standalone** — centred on the first-run screen, `--create-db`
+     pre-checked (so `--dry-run` is refused by the existing combo rule)
+     — so building the DB and importing the first roll happens in **one
+     flow**; a clean exit (0) loads the snapshot and the normal app
+     appears (✕ returns to the dialog, a failed retry falls back to the
+     FatalError screen). Any other load failure keeps FatalError as
+     today.
    - **Independent process**: *Start* asks the backend to spawn
      `python3 scripts/import_roll.py <roll_dir> [flags]` as a **separate
      child process** (`start_import`; the interpreter is overridable via
