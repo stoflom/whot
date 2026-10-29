@@ -1830,6 +1830,19 @@ export default function App() {
 
   const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
 
+  // #179 (§4.41): the top bar's DB-wide status totals — an overview of
+  // the whole database, independent of mode/filter/selection; one pass
+  // per refreshed snapshot so every verdict lands (#98: memoised)
+  const statusTotals = useMemo(() => {
+    const t = { provisional: 0, confirmed: 0, rejected: 0 };
+    for (const f of snap?.faces ?? []) {
+      if (f.link_status === "provisional") t.provisional++;
+      else if (f.link_status === "confirmed") t.confirmed++;
+      else if (f.link_status === "rejected") t.rejected++;
+    }
+    return t;
+  }, [snap]);
+
   // ------------------------------------------------- #88 Merge Similar Persons
 
   const saveMergeSettings = useCallback(
@@ -2086,15 +2099,14 @@ export default function App() {
           >
             {reviewLock ? "🔒" : "🔓"}
           </button>
-          {/* #176 (§4.41): the anchored person's live counts — any
-              mode: ? new (red), ✓ accepted (green), ✗ rejected (gray) */}
-          {selectedPerson && (
-            <span className="person-counts" title={`faces of ${selectedPerson.name}`}>
-              <span className="c-prov" title="new faces">? {selectedPerson.counts.provisional}</span>
-              <span className="c-conf" title="accepted faces">✓ {selectedPerson.counts.confirmed}</span>
-              <span className="c-rej" title="rejected faces">✗ {selectedPerson.counts.rejected}</span>
-            </span>
-          )}
+          {/* #179 (§4.41): the DB-wide status totals — always visible,
+              an overview of the database; never scoped to the anchor,
+              the mode or the filter */}
+          <span className="status-counts" title="totals in the database">
+            <span className="c-prov" title="new faces">? {statusTotals.provisional}</span>
+            <span className="c-conf" title="accepted faces">✓ {statusTotals.confirmed}</span>
+            <span className="c-rej" title="rejected faces">✗ {statusTotals.rejected}</span>
+          </span>
           <button
             className="ghost"
             onClick={() => refresh().catch((e) => setError(String(e)))}

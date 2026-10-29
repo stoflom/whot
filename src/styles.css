@@ -128,7 +128,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .tree-node.status-accepted .tree-node-name { color: var(--ok); }
 .tree-node.status-rejected .tree-node-name { color: var(--dim); }
 /* #176 (§4.41): the anchored person's live counts in the top bar */
-.person-counts { display: inline-flex; gap: 0.6rem; font-size: 0.85rem; }
+.status-counts { display: inline-flex; gap: 0.6rem; font-size: 0.85rem; }
 /* #100: busy roller — animated ring beside 'working…' while a mutation
    is in flight; the spin stops for users who asked for less motion */
 .busy-roller {
