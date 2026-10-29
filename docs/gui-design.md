@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.83** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.84** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -764,6 +764,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     without one) or, wrongly read, "create" something invisible; the
     tree root's empty-space menu is gone with its only item. The status
     branches still offer no group menu of their own (§4.35).
+
+    **The same entry lives in the FACE context menu** (#184): when the
+    effective scope's faces belong to **N distinct persons** the menu
+    offers *Add group…* / *Add group to N persons…*, opening the same
+    `GroupDialog` with the add semantics over those persons — a set of
+    photos (person cards, a cluster, a full image) can be filed under a
+    branch straight from the face domain; unowned faces count for
+    nothing and an all-unowned scope leaves the entry disabled.
 
     **Append mode retired** (#92, retired by #164): no menu pre-fills a
     `|`-terminated path anymore — the root/branch *Add group…* producer
