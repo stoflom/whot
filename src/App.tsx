@@ -526,6 +526,29 @@ export default function App() {
       exhaustPidRef.current = personId;
     }
   }, [mode, personId, stepIdx, reviewLock]);
+  // #189/§4.41 — focus follows the verdict: anchor the ACTED-ON person
+  // (cursor-as-target §4.25: last selected, else hovered, else the first
+  // acted face that has an owner). Called only after the mutation
+  // succeeds — and after markExhaust captured its pre-mutation mark —
+  // so #148's mark comparison and the §4.30 hand-over are untouched;
+  // reject reads the PRE-reject owner on purpose (the person the user
+  // acted on, never the system person)
+  const focusActed = useCallback(
+    (ids: number[]) => {
+      const first = [lastSelRef.current, hoverRef.current].find(
+        (v) => v != null && ids.includes(v)
+      );
+      const cands = first != null ? [first, ...ids] : ids;
+      for (const id of cands) {
+        const pid = facesById.get(id)?.person_id;
+        if (pid != null) {
+          setPersonId(pid);
+          return;
+        }
+      }
+    },
+    [facesById]
+  );
   const doAccept = useCallback(
     (ids: number[]) => {
       // #165/§4.35: plain accept never un-rejects — a rejected-only scope
@@ -539,9 +562,12 @@ export default function App() {
         return;
       }
       markExhaust();
-      return mutate(() => api.acceptFaces(ids), true);
+      return mutate(() => api.acceptFaces(ids), true).then((ok) => {
+        if (ok) focusActed(ids); // #189/§4.41: focus follows the verdict
+        return ok;
+      });
     },
-    [mutate, markExhaust, facesById]
+    [mutate, markExhaust, facesById, focusActed]
   );
   const doReject = useCallback(
     (ids: number[]) => {
@@ -552,9 +578,12 @@ export default function App() {
       // ✗, Edit dialog — the dialog previously handled this itself and
       // the other paths never did)
       setPending((p) => dropStagesForFaces(p, ids));
-      return mutate(() => api.rejectFaces(ids), true);
+      return mutate(() => api.rejectFaces(ids), true).then((ok) => {
+        if (ok) focusActed(ids); // #189/§4.41
+        return ok;
+      });
     },
-    [mutate, markExhaust]
+    [mutate, markExhaust, focusActed]
   );
   // #58 (§4.14): per-card inputs honour the same scope — editing the
   // description of a card inside a multi-selection updates the whole
@@ -1388,7 +1417,8 @@ export default function App() {
       // #175/§4.40: under the Review lock EVERY view takes the marking
       // path — the workflow decides in Person view and full images too
       if ((mode !== "review" || splitImageId != null) && !reviewLock) {
-        await mutate(() => api.acceptFaces(ids), true);
+        const ok = await mutate(() => api.acceptFaces(ids), true);
+        if (ok) focusActed(ids); // #189/§4.41: focus follows the verdict
         return;
       }
       markExhaust(); // #125: accepting may empty the current person
@@ -1406,6 +1436,7 @@ export default function App() {
       // each op its own mutate so a mid-set failure can be re-staged.)
       const ok = await mutate(() => api.acceptFaces(ids), false);
       if (!ok) return;
+      focusActed(ids); // #189/§4.41: post-success, after the pre-mutation mark
       setSel(new Set(plan?.faceIds ?? []));
       const first = plan?.faceIds[0];
       if (first != null) {
@@ -1419,7 +1450,7 @@ export default function App() {
         );
       }
     },
-    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, reviewLock]
+    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, reviewLock, focusActed]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
