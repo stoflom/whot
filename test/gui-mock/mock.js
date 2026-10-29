@@ -316,6 +316,15 @@
     remove_refcrop: () => {},
     get_refcrops: () => [],
     open_image: () => {},
+    // #174/C34 — same contract as db::rotate_image: the delta
+    // normalised to [0,360), added to the stored rotation mod 360
+    rotate_image: ({ imageId, delta }) => {
+      const img = SNAP.images.find((x) => x.id === imageId);
+      if (!img) throw new Error("image not found");
+      const d = ((delta % 360) + 360) % 360;
+      img.rotation = ((img.rotation ?? 0) + d) % 360;
+      return img.rotation;
+    },
     person_face_clusters: ({ personId }) => {
       const fs = SNAP.faces.filter(
         (f) => f.person_id === personId && f.link_status === "confirmed");

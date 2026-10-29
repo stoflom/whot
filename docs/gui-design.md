@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.71** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.73** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -136,7 +136,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   active without mutating it, and the previous roll-up state applies again
   when the filter is cleared. Rolled-up branch counts always include the
   hidden descendants.
-- **Center pane — two modes** (tabs):
+- **Modes** (the top-bar selector, #174): `Review · Rolls · Person` are
+  proper **modes**, not tabs over one layout — the selector is the mode
+  switch and each mode owns its centre panel and the default content of
+  its right pane (Review/Person: the grid + the person detail /
+  Overview; Rolls: the path hierarchy + the branch thumbnails, §4.39).
+  A mode switch is a view-context change (#123 — the staged-set
+  confirm) and mode state (the #162 root, the branch selection, the
+  person anchor) is session state, surviving switches unless a rule
+  below says otherwise.
+- **Center pane — by mode**:
   - **Review** (default): all faces that are `provisional` (i.e. still to be
     decided on), **grouped by their importer person** (`UnknownN` clusters).
     Each group section has: select-all checkbox, face count, the current
@@ -147,8 +156,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     between the review and person views (#120).
   - **Rolls**: the images sorted into a **hierarchy mirroring their actual
     filesystem path** (#161) — each image's `primary_path` split into its
-    path segments: every segment is an expandable branch and the images
-    sit in their file's directory branch, so there is a close connection
+    path segments: every **directory** segment is an expandable branch
+    and the images sit in their file's directory branch — the FILENAME
+    is never a branch of its own (#174: the old file-twig whose inline
+    thumbnail landed in the right pane), so there is a close connection
     between the filesystem and the pictures and the user can drill in to
     a smaller set. The view **no longer shows the import rolls**: the
     roll sections, their dates, and the `first_import_id`-keyed counting
@@ -159,12 +170,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     `{n} img · {n} new · {n} ✓ · {n} ✗` — counted over **every** image
     under the branch, filter-independent like the person tree's raw
     badges (#129): the Show filter changes who is listed, never any
-    counters. Clicking a header expands/collapses the branch; branches
-    start collapsed, listed alphabetically by segment (leaf images by
-    filename). A leaf image renders as the same thumbnail as before:
-    clicking opens that image's faces and its preview **annotated with
-    its detected face rectangles** (see below, #142); the context menu is
-    the image-tile menu (#32). **Show prunes the tree** (§4.10): an
+    counters. Clicking a header expands/collapses **and selects** the
+    branch (#174 — its direct images land in the right pane); branches
+    start collapsed, listed alphabetically by segment (images by
+    filename). **The centre renders no thumbnails** (#174, §4.39): the
+    inline per-branch image grids are gone — clicking a branch header
+    both toggles the branch **and selects it**, and the selected
+    branch's images appear as thumbnails in the **right pane** (direct
+    images of that path only, never the recursion); the image-tile
+    menu (#32) lives on those right-pane thumbnails. Double-clicking a
+    thumbnail opens that image's faces and its preview **annotated
+    with its detected face rectangles** (see below, #142/#174); a
+    single click only selects it. **Show prunes the tree** (§4.10): an
     image is listed only if it holds at least one face passing the Show
     filter — with `All` = everything *except* rejected (#165), an image
     holding only rejected faces lists solely under `Show → Rejected`
@@ -182,8 +199,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the root's immediate sub-directories; empty input = `/` = the
       whole tree);
     - a path **equal to an image's `primary_path`** opens **that one
-      image in full-image mode** (the same view-context change as the
-      tile click, #142 incl. the staged-set confirm);
+      image in full-image mode** (the same view-context change as a
+      thumbnail double-click, #142/#174 incl. the staged-set confirm);
     - anything else is refused with a dim hint (`no images under …`) and
       the current root stays — **unless the path is a real, not-yet-imported
       directory**: it is then checked against the filesystem
@@ -331,7 +348,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Resizable panes** (#34): the left/right pane dividers and the #25 split
   divider are draggable with clamps and double-click reset (session state);
   the face/image grids already reflow via `auto-fill` and follow the pane
-  sizes.
+  sizes. In **Rolls mode while browsing** (#174 follow-up) the centre|right
+  divider resizes the **centre** instead — see §4.39's layout rule (the
+  centre starts at the left pane's width, drags clamp 10%..70% of the
+  window, double-click returns to the left-following default).
 - **Person view**: clicking a person in the tree shows *that person's* faces
   in the center pane, **partitioned by appearance** (distinct description)
   and then **grouped by similarity to the primary face** within each
@@ -350,6 +370,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   image" menu entries), with the tooltip/title saying so; when the person
   has no primary face there is nothing to open and the click stays inert.
   (Primary-face *setting* is the refcrop list above, not the avatar.)
+- **Right pane — branch thumbnails** (Rolls mode, #174/§4.39): while
+  the user browses the path hierarchy, the right pane holds the
+  **selected branch's images** — the direct children of that path only
+  (no recursion), filename order, Show-filtered (§4.10) — as
+  thumbnails: plain click selects (ctrl/⌘ toggle, shift range),
+  **double-click opens the image** (the image detail, #142), the
+  context menu carries the image actions (§4.39). This thumbnails pane
+  **replaces the person detail/Overview while browsing** (the person
+  detail is Review/Person mode's pane); the import pane (§4.36) keeps
+  precedence while open, and **once an image is open the pane returns
+  to the person detail** for face/person editing (§4.37/§4.39).
 - **Rule bar (bottom)**: always visible when ≥1 face is selected **or a
   stage is live**, in any center-pane view: `N selected · [Apply] [Accept]
   [Undo°] [Assign name…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
@@ -905,8 +936,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       context switches; *cancel* discards it, then the context switches.
       Text is never dropped silently (Q3).
       **"Open image" is a view-context change** (#142): the image menu's
-      "Open image" and the RollsPane image-tile click rebind the centre
-      pane to another image and therefore go through `confirmContext`
+      "Open image" and a right-pane thumbnail double-click (#174) rebind
+      the centre pane to another image and therefore go through
+      `confirmContext`
       (discard-or-accept of a live staged set) like every
       tab/step/tree/focus route.
     - **The stored context-confirm action is object-wrapped** (#123):
@@ -1502,12 +1534,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    - **On entry**: opening the **focus split** (card double-click or
      *Open full image* on a face) re-anchors the right pane on **the
      person owning that face**; an image-context entry without a face
-     (the rolls tile's *Open image* / *Open full image (focused)*) —
-     like the rolls-tile/branch detail open — **keeps the current
+     (the branch thumbnail's *Open image* / *Open full image (focused)*) —
+     like the thumbnail detail open — **keeps the current
      person**. Opening the **Rolls image detail**
      re-anchors on the opening face's person when the entry carries a
      face context, and **keeps the current person** when it does not
-     (rolls tile / branch click — there
+     (a thumbnail opened without a face context — there
      is no person to follow; the pane shows whatever it showed, incl. its
      empty state when none is anchored).
    - **On rectangle click**: clicking a rect in either full-image surface
@@ -1564,6 +1596,75 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      staged and no pending name it is an informed no-op, never an
      error). The system person `Rejected` sees the list **read-only**
      (no ×, no add, no inline edit — §4.35) and no Update button.
+
+39. **Modes and the Rolls branch thumbnails** (#174) ⇒ the top-bar
+   selector is the **mode switch** (§3): each mode owns its centre
+   panel and its right pane's default content. Rolls mode changes:
+   - **Branch selection**: clicking a path node in the centre
+     hierarchy both toggles the branch's expansion (unchanged) **and
+     selects it**. The selection is session state like the #162 root —
+     it survives mode switches, defaults to the **root itself**, and is
+     re-validated when the root changes (a selection outside the new
+     root falls back to the root).
+   - **The right pane shows the selected branch's images — direct
+     children only, never recursive**: a branch that also holds
+     sub-branches lists just the images filed *at that path* (the
+     directory of the image's `primary_path` equals the branch path),
+     ordered by filename (as the old leaf grid) and Show-listed by the
+     §4.10 rule (an image lists iff it holds ≥ 1 matching face; `All`
+     lists every image — branch counters stay raw, #129). A branch
+     with no direct listing image shows a dim hint: `no images directly
+     at this path — open a sub-branch` when it has sub-branches, else
+     `nothing to show`.
+   - **The centre renders no thumbnails**: the inline per-branch grids
+     are removed — the hierarchy (headers with rollup counters +
+     expand arrows) is the centre's whole content; the #162 path
+     filter, Show pruning and the import entry (§4.36) are unchanged.
+   - **Thumbnail interactions** (right pane):
+     - plain click **replaces** the image selection with that image;
+       ctrl/⌘-click toggles; shift-click ranges over the branch's
+       display order from the anchor (the §4.23 accelerator pattern,
+       over images). The face selection is untouched; ids outside the
+       current branch's list are dropped on render.
+     - double-click opens the **image detail** (centre swaps to the
+       annotated overlay + face grid, *← rolls* returns to the
+       hierarchy with the branch selection intact) — a #123
+       view-context change, #142 as before.
+     - **while an image is open the right pane shows the person
+       detail** again (the §4.37 anchoring — the editing pane for the
+       face work); the thumbnails hold the pane only while the user
+       browses the hierarchy.
+     - the context menu (#32) opens on a thumb; if the thumb is part
+       of the selection the scope is the whole selection, otherwise
+       just that thumb (the §4.14 scope rule). It carries `Open image`,
+       *Open full image (focused)* (both: the invoked thumb), `Rotate
+       90° CW` / `Rotate 90° CCW` and `Open in system viewer` (all:
+       applied to **each image of the scope**, one command per image in
+       order — rotations batch into one refresh), plus the existing
+       faces-of-this-image entries (invoked thumb).
+   - **Selection lifecycle**: the image selection clears when the
+     branch selection changes (a different thumb set); it survives
+     mode switches with the branch selection.
+   - **Deferred** (later expansions, not #174): *remove the images from
+     Whot* — a new `remove_images` backend command whose face/person
+     semantics needs backend-design + schema-design sections — and
+     further bulk actions over the selection.
+   - **Rolls layout while browsing** (#174 follow-up): while the centre
+     shows the **hierarchy** (no image open, no focus split) the centre
+     takes an **explicit width that starts at the left pane's width** —
+     most of the window goes to the right pane, whose thumbnails flex
+     to fill it. The centre|right divider then drags the **centre**
+     between **10% and 70% of the window** (and never past
+     `window − left − 200px`, keeping the right pane a usable floor);
+     double-click restores the default (centre follows the left pane
+     again). The choice is session state and survives mode switches.
+     **Opening an image or the focus split restores the normal
+     layout** — the centre flexes again and the right pane returns to
+     its fixed 200–560px drag (the detail views need the width, and
+     the right pane is the person detail again).
+   - **Precedence**: the import pane (§4.36) keeps the right pane while
+     open (the branch selection may update underneath); the person
+     detail keeps its Review/Person-mode home (§4.38).
 
 ## 5. Related documents
 

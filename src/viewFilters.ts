@@ -52,6 +52,21 @@ export function personTreeMembers<P extends { id: number; name?: string }>(
   return persons.filter((p) => visible.has(p.id));
 }
 
+/** #174 (§4.39) — which images the Show filter lists (§4.10): an
+    image lists iff it holds ≥ 1 face passing the filter; under `all`
+    every image lists (no-face images included). Shared by the Rolls
+    path tree (#161) and the right-pane branch thumbnails. */
+export function listedImages(
+  images: { id: number }[],
+  faces: { image_id: number; link_status: string }[],
+  filter: FaceFilter,
+): Set<number> {
+  const listed = new Set<number>();
+  for (const f of faces) if (matchesStatusFilter(f.link_status, filter)) listed.add(f.image_id);
+  if (filter === "all") for (const i of images) listed.add(i.id);
+  return listed;
+}
+
 /** Description mode (#99): one cluster per distinct description over the
     faces given (already visibility-filtered by the caller) — ordered by
     first appearance, the empty description last (Ungrouped convention). */

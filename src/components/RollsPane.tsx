@@ -1,9 +1,7 @@
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { scanImportDir, type Face, type ImageRow } from "../api";
-import { useImageThumbImg } from "../hooks";
-import { rotStyle } from "../rotation";
-import { matchesStatusFilter, type FaceFilter } from "../viewFilters";
+import { listedImages, type FaceFilter } from "../viewFilters";
 
 // #161 (gui-design §3): the Rolls pane is a hierarchy mirroring the
 // images' actual filesystem paths — each image's primary_path split into
@@ -14,6 +12,9 @@ import { matchesStatusFilter, type FaceFilter } from "../viewFilters";
 // Show (§4.10) is active here: an image is listed only if it holds a
 // face matching the filter and an emptied branch is pruned — the branch
 // counters stay filter-independent raw totals (#129 convention).
+// #174 (§4.39): the centre renders NO thumbnails any more — a header
+// click toggles the branch AND selects it, and the selected branch's
+// direct images appear in the right pane (RollsThumbs).
 
 interface Props {
   images: ImageRow[];
@@ -23,8 +24,9 @@ interface Props {
   root: string;
   onRootChange: (path: string) => void;
   onOpenImage: (id: number) => void;
-  /** right-click menu on image tiles (#32) */
-  onContextMenuImage: (image: ImageRow, e: ReactMouseEvent) => void;
+  /** #174 (§4.39): the selected branch — ABSOLUTE path, session state in App */
+  selected: string;
+  onSelect: (path: string) => void;
   /** #167 (§4.36): a not-yet-imported directory opens the import pane */
   onImportDir: (path: string) => void;
 }
@@ -44,13 +46,12 @@ interface Totals {
   rejected: number;
 }
 
-function basename(p: string): string {
-  const i = p.lastIndexOf("/");
-  return i === -1 ? p : p.slice(i + 1);
-}
-
-/** split every primary_path into segments relative to the #162 root and
-    file the image under its directory */
+/** split every primary_path into DIRECTORY segments relative to the #162
+    root and file the image under its directory — #174 (§4.39): the
+    FILENAME segment is no longer a branch (the old leaf twig whose
+    inline thumbnail the right-pane thumbs replaced); a file directly
+    at the root lives in the tree's root node (shown by the right pane
+    when the root branch is selected) */
 function buildTree(images: ImageRow[], root: string): DirNode {
   const rootPrefix = root === "/" ? "/" : `${root}/`;
   const inRoot = images.filter((x) => x.primary_path.startsWith(rootPrefix));
@@ -58,7 +59,8 @@ function buildTree(images: ImageRow[], root: string): DirNode {
   const tree: DirNode = { name: "", children: new Map(), images: [] };
   for (const img of inRoot) {
     let node = tree;
-    for (const seg of rel(img.primary_path).split("/").filter(Boolean)) {
+    const segs = rel(img.primary_path).split("/").filter(Boolean);
+    for (const seg of segs.slice(0, -1)) { // stop BEFORE the filename
       let next = node.children.get(seg);
       if (!next) {
         next = { name: seg, children: new Map(), images: [] };
@@ -100,41 +102,36 @@ function hasListed(node: DirNode, listed: Set<number>): boolean {
   return false;
 }
 
-function ImageThumb({ image, onOpen, onContextMenu }: {
-  image: ImageRow;
-  onOpen: () => void;
-  onContextMenu: (e: ReactMouseEvent) => void;
-}) {
-  const img = useImageThumbImg(image.id);
-  return (
-    <button className="img-thumb" onClick={onOpen} onContextMenu={onContextMenu} title={image.primary_path}>
-      {img ? <img src={img} alt="" style={rotStyle(image.rotation)} /> : <span className="dim">…</span>}
-      {image.state === "no-face" && <span className="no-face">no face</span>}
-    </button>
-  );
-}
-
-function BranchView({ node, path, openSet, onToggle, listed, faceTotals, onOpenImage, onContextMenuImage }: {
+function BranchView({ node, path, openSet, selected, onToggle, listed, faceTotals, toAbs, onSelect }: {
   node: DirNode;
   /** '/'-joined segment path — the expand-state key and the header's title */
   path: string;
   openSet: Set<string>;
+  /** the selected branch's ABSOLUTE path (#174) */
+  selected: string;
   onToggle: (path: string) => void;
   listed: Set<number>;
   faceTotals: Map<number, Totals>;
-  onOpenImage: (id: number) => void;
-  onContextMenuImage: (image: ImageRow, e: ReactMouseEvent) => void;
+  /** relative branch path → absolute directory path (for selection) */
+  toAbs: (path: string) => string;
+  onSelect: (path: string) => void;
 }) {
   const open = openSet.has(path);
   const t = rollup(node, faceTotals);
-  const thumbs = node.images.filter((x) => listed.has(x.id))
-    .sort((a, b) => basename(a.primary_path).localeCompare(basename(b.primary_path)));
   const branches = [...node.children.values()]
     .filter((c) => hasListed(c, listed))
     .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <section className="roll">
-      <header className="roll-header" onClick={() => onToggle(path)}>
+      <header
+        className={`roll-header${toAbs(path) === selected ? " selected" : ""}`}
+        onClick={() => {
+          // #174/§4.39: one click toggles AND selects — the selected
+          // branch's direct images land in the right pane
+          onToggle(path);
+          onSelect(toAbs(path));
+        }}
+      >
         <span className="roll-arrow">{open ? "▾" : "▸"}</span>
         <span className="roll-path" title={path}>
           {node.name}
@@ -145,29 +142,18 @@ function BranchView({ node, path, openSet, onToggle, listed, faceTotals, onOpenI
       </header>
       {open && (
         <div className="roll-children">
-          {thumbs.length > 0 && (
-            <div className="img-grid">
-              {thumbs.map((img) => (
-                <ImageThumb
-                  key={img.id}
-                  image={img}
-                  onOpen={() => onOpenImage(img.id)}
-                  onContextMenu={(e) => onContextMenuImage(img, e)}
-                />
-              ))}
-            </div>
-          )}
           {branches.map((c) => (
             <BranchView
               key={c.name}
               node={c}
               path={`${path}/${c.name}`}
               openSet={openSet}
+              selected={selected}
               onToggle={onToggle}
               listed={listed}
               faceTotals={faceTotals}
-              onOpenImage={onOpenImage}
-              onContextMenuImage={onContextMenuImage}
+              toAbs={toAbs}
+              onSelect={onSelect}
             />
           ))}
         </div>
@@ -176,15 +162,18 @@ function BranchView({ node, path, openSet, onToggle, listed, faceTotals, onOpenI
   );
 }
 
-export default function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, onContextMenuImage, onImportDir }: Props) {
+export default function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, selected, onSelect, onImportDir }: Props) {
   const tree = useMemo(() => buildTree(images, root), [images, root]);
+  // relative branch path (the tree's keys) → absolute directory path
+  // (#174: the selection state lives in App, keyed absolutely)
+  const toAbs = (p: string) => (root === "/" ? `/${p}` : `${root}/${p}`);
 
-  // per-image raw face counters + the Show-filter presence set: an image
-  // is listed iff it holds ≥ 1 face matching the filter; under 'all'
+  // per-image raw face counters + the Show-filter presence set (§4.10,
+  // shared with the right-pane thumbnails, #174): an image is listed
+  // iff it holds ≥ 1 face matching the filter; under 'all'
   // every image is listed (faceless shells included)
   const { faceTotals, listed } = useMemo(() => {
     const faceTotals = new Map<number, Totals>();
-    const listed = new Set<number>();
     for (const f of faces) {
       let t = faceTotals.get(f.image_id);
       if (!t) {
@@ -194,10 +183,8 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
       if (f.link_status === "provisional") t.pending++;
       else if (f.link_status === "confirmed") t.done++;
       else if (f.link_status === "rejected") t.rejected++;
-      if (matchesStatusFilter(f.link_status, faceFilter)) listed.add(f.image_id);
     }
-    if (faceFilter === "all") for (const img of images) listed.add(img.id);
-    return { faceTotals, listed };
+    return { faceTotals, listed: listedImages(images, faces, faceFilter) };
   }, [images, faces, faceFilter]);
 
   // branches start collapsed — the user drills in (#161); open state is
@@ -298,7 +285,9 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
       </div>
       {images.length === 0 ? (
         <div className="empty">no images yet</div>
-      ) : roots.length === 0 ? (
+      ) : roots.length === 0 && tree.images.length === 0 ? (
+        // #174: a root without sub-branches is not empty — its images
+        // are in the right pane (the root is the default selection)
         <div className="empty">nothing to show</div>
       ) : (
         <div className="rolls">
@@ -308,11 +297,12 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
               node={c}
               path={c.name}
               openSet={openSet}
+              selected={selected}
               onToggle={toggle}
               listed={listed}
               faceTotals={faceTotals}
-              onOpenImage={onOpenImage}
-              onContextMenuImage={onContextMenuImage}
+              toAbs={toAbs}
+              onSelect={onSelect}
             />
           ))}
         </div>
