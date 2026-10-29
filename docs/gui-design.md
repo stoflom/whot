@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.72** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.73** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -348,7 +348,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Resizable panes** (#34): the left/right pane dividers and the #25 split
   divider are draggable with clamps and double-click reset (session state);
   the face/image grids already reflow via `auto-fill` and follow the pane
-  sizes.
+  sizes. In **Rolls mode while browsing** (#174 follow-up) the centre|right
+  divider resizes the **centre** instead — see §4.39's layout rule (the
+  centre starts at the left pane's width, drags clamp 10%..70% of the
+  window, double-click returns to the left-following default).
 - **Person view**: clicking a person in the tree shows *that person's* faces
   in the center pane, **partitioned by appearance** (distinct description)
   and then **grouped by similarity to the primary face** within each
@@ -1646,6 +1649,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      Whot* — a new `remove_images` backend command whose face/person
      semantics needs backend-design + schema-design sections — and
      further bulk actions over the selection.
+   - **Rolls layout while browsing** (#174 follow-up): while the centre
+     shows the **hierarchy** (no image open, no focus split) the centre
+     takes an **explicit width that starts at the left pane's width** —
+     most of the window goes to the right pane, whose thumbnails flex
+     to fill it. The centre|right divider then drags the **centre**
+     between **10% and 70% of the window** (and never past
+     `window − left − 200px`, keeping the right pane a usable floor);
+     double-click restores the default (centre follows the left pane
+     again). The choice is session state and survives mode switches.
+     **Opening an image or the focus split restores the normal
+     layout** — the centre flexes again and the right pane returns to
+     its fixed 200–560px drag (the detail views need the width, and
+     the right pane is the person detail again).
    - **Precedence**: the import pane (§4.36) keeps the right pane while
      open (the branch selection may update underneath); the person
      detail keeps its Review/Person-mode home (§4.38).
