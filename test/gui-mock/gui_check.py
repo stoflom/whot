@@ -141,6 +141,12 @@ Checks (contract refs: docs/gui-design.md):
       chips and the tree status branches resolve to the same rgb
       (New = red, Accepted = green, Rejected = gray; All = the normal
       text colour)
+  C38 verdict icon shortcuts (#177, §4.42): the card tick accepts ONE
+      card as-is (mock: only that face flips to confirmed — the §4.14
+      card scope); the cluster header's ✓ flips the WHOLE group's faces
+      to confirmed and ✗ rejects them all; the bottom bar's selection
+      shortcuts carry the icons (button.ok reads '✓ Accept', button.bad
+      '✗ Reject')
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -329,7 +335,7 @@ def c3_bar_accept_commits(t):
     edit_and_apply(t, "GuiCheck Accept")  # stages; dialog closed by Apply
     # bottom-bar Accept with a live stage = stage-then-commit (§4.30)
     [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
-     if b.text.strip() == "Accept"][0].click()
+     if "Accept" in b.text][0].click()
     time.sleep(1.5)
     strip = strip_text(t)
     f = face_by_id(t, fid)
@@ -714,7 +720,7 @@ def c30_bar_accept_selection_over_stage(t):
     count = js(t, "const b = document.querySelector('.rulebar b'); "
                   "return b ? Number(b.textContent) : -1")
     [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
-     if b.text.strip() == "Accept"][0].click()
+     if "Accept" in b.text][0].click()
     time.sleep(1.6)
     after = js(t, r"""
       const fs = window.__MOCK_SNAP.faces.filter(f => f.person_id === Number(arguments[0]));
@@ -902,7 +908,7 @@ def c19_staged_desc_regroups(t):
      if b.text.strip() == "Apply"][0].click()
     time.sleep(0.5)
     [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
-     if b.text.strip() == "Accept"][0].click()
+     if "Accept" in b.text][0].click()
     time.sleep(1.5)
     committed_a = header_for(pick["a"])
     mock_desc = js(t, """
@@ -1475,7 +1481,7 @@ def c22_review_exhaust_skips_reviewed(t):
     """, pick["aname"])
     time.sleep(0.6)
     acc = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
-           if b.text.strip() == "Accept"]
+           if "Accept" in b.text]
     acc[0].click()
     time.sleep(2.5)
     landed = js(t, r"""
@@ -3005,6 +3011,81 @@ def c37_person_sticky_colors(t):
            f"rgb new={new_rgb} ok={ok_rgb} rej={rej_rgb} all={all_rgb} vs normal={normal_rgb}")
 
 
+def c38_verdict_icons(t):
+    """#177 (§4.42): the verdict icon shortcuts — the card's ✓ accepts
+    ONE card as-is (the §4.14 card scope: only that face flips in the
+    mock), the cluster header's ✓/✗ verdict the WHOLE group (every face
+    of the section confirms / rejects), and the bottom bar's selection
+    shortcuts carry the icons (✓ Accept / ✗ Reject, semantics
+    unchanged — C30 covers the bar behaviour)."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def sections():
+        return js(t, r"""
+          return [...document.querySelectorAll('.face-section')].map(s => ({
+            key: s.dataset.sectionKey ?? '',
+            prov: [...s.querySelectorAll('.face-card.status-provisional')]
+              .map(c => Number(c.dataset.faceId)),
+            all: [...s.querySelectorAll('.face-card')].map(c => Number(c.dataset.faceId)),
+          }));
+        """)
+
+    def statuses(ids):
+        return js(t, r"""
+          const want = new Set(arguments[0]);
+          return window.__MOCK_SNAP.faces
+            .filter(f => want.has(f.id))
+            .map(f => `${f.id}:${f.link_status}`);
+        """, ids)
+
+    secs = sections()
+    a = next((s for s in secs if len(s["prov"]) >= 2), None)
+    b = next((s for s in secs if s is not a and len(s["prov"]) >= 1), None)
+    if a is None or b is None:
+        record("C38 verdict icon shortcuts (#177/§4.42)", True,
+               "need two sections holding provisional faces — vacuous")
+        return
+
+    # ── the card tick: ONE card, as-is (§4.14 card scope) ────────────
+    one = a["prov"][0]
+    t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{one}'] .card-accept").click()
+    time.sleep(1.2)
+    one_ok = statuses([one]) == [f"{one}:confirmed"]
+    rest_still = all(s.endswith(":provisional")
+                     for s in statuses([i for i in a["prov"][1:]]))
+
+    # ── the cluster header ✓: the whole group ───────────────────────
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-section[data-section-key='{a['key']}'] .sec-accept").click()
+    time.sleep(1.5)
+    group_ok = all(s.endswith(":confirmed") for s in statuses(a["prov"]))
+
+    # ── and ✗: the whole other group ─────────────────────────────────
+    t.find_element(By.CSS_SELECTOR,
+                   f".face-section[data-section-key='{b['key']}'] .sec-reject").click()
+    time.sleep(1.5)
+    reject_ok = all(s.endswith(":rejected") for s in statuses(b["prov"]))
+
+    # ── the bar carries the icons ────────────────────────────────────
+    js(t, "arguments[0].scrollIntoView({block:'center'})",
+       t.find_element(By.CSS_SELECTOR, ".face-card"))
+    t.find_element(By.CSS_SELECTOR, ".face-card").click()
+    time.sleep(0.5)
+    bar = js(t, r"""
+      const btn = (cls) => [...document.querySelectorAll(`.rulebar button.${cls}`)]
+        .map(b => b.textContent.trim());
+      return {ok: btn('ok'), bad: btn('bad')};
+    """)
+    bar_ok = bar["ok"] == ["✓ Accept"] and bar["bad"] == ["✗ Reject"]
+
+    ok = one_ok and rest_still and group_ok and reject_ok and bar_ok
+    record("C38 verdict icon shortcuts (#177/§4.42): card tick = one card as-is, cluster ✓/✗ = the whole group, bar icons",
+           ok,
+           f"card {one} → {statuses([one])} (others still provisional: {rest_still}); "
+           f"group {a['key']} ✓ → confirmed={group_ok}; group {b['key']} ✗ → rejected={reject_ok}; bar={bar}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -3049,6 +3130,7 @@ def main():
         c35_rolls_layout(t)
         c36_review_lock(t)
         c37_person_sticky_colors(t)
+        c38_verdict_icons(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
