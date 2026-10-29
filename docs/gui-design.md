@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.82** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.83** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1349,11 +1349,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       menu). Persisted by `rotate_image(image_id,
       ±90)`; the snapshot carries the angle and the renderer applies
       `transform: rotate(⟨angle⟩deg)` from it — rotate once, it sticks.
+      **A rotation of the IMAGE cascades the same delta to every crop
+      on it** (#183, one transaction): each crop's orientation
+      *relative to the image* is preserved (the crop pixels are fixed
+      at creation, so the two display angles move together).
     - **`faces.rotation`** — display rotation of the **face crop**
       (0/90/180/270, default 0), **independent
-      of the image rotation** (crop pixels are fixed at creation; both
-      rotations are pure display state — image 90° CW + crop 90° CCW is
-      legal). Same control pattern on the card: ⟲/⟳ buttons on the card
+      of the image rotation** in the converse direction only (#183:
+      crop pixels are fixed at creation; both rotations are pure
+      display state — image 90° CW + crop 90° CCW is legal — and
+      `rotate_face` stays the per-crop correction, never touching
+      `images.rotation`; the IMAGE→crop cascade above runs one way).
+      Same control pattern on the card: ⟲/⟳ buttons on the card
       action row + context-menu entries, persisted by
       `rotate_face(face_id, ±90)`.
     - **Import interlock** (#118): a legacy file's harvested EXIF
