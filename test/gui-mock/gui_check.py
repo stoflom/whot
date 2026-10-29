@@ -1989,10 +1989,12 @@ def c28_add_group_person_rows_only(t):
 
 
 def c31_rolls_import_pane(t):
-    """#167 (§4.36): a real, not-yet-imported directory committed in the
-    Rolls path filter (typed AND via browse…) opens the import pane in
+    """#167/#186 (§4.36): a real, not-yet-imported directory committed in
+    the Rolls path filter (typed AND via browse…) opens the import pane in
     the right pane — DetailPane gone, the rolls tree still interactive —
-    with the per-roll toggles, the create-db+dry-run refusal, start
+    with the per-roll toggles MINUS --create-db (#186: a usable database
+    exists in this flow, so the checkbox could only fail; the combo
+    refusal now lives in C47's first-run pane where it is offered), start
     filling the stdout viewport from the polled mock status, and exit 0
     shown; a non-directory path keeps the plain #162 hint."""
     fresh(t)
@@ -2025,6 +2027,8 @@ def c31_rolls_import_pane(t):
         dir: p.querySelector('.import-path')?.textContent ?? null,
         db: [...p.querySelectorAll('.import-path')][1]?.textContent ?? null,
         toggles,
+        // #186: --create-db is GONE here — a usable database exists
+        createDbAbsent: !labels.some(l => l.textContent.includes('--create-db')),
         // #169: --recursive starts CHECKED — the probe that opened the
         // pane found its images below the top level
         recursiveDefault: (() => {
@@ -2038,26 +2042,7 @@ def c31_rolls_import_pane(t):
       };
     """)
 
-    # 2) the create-db + dry-run combination is refused up front
-    js(t, r"""
-      const labels = [...document.querySelectorAll('.import-opts label')];
-      const find = (frag) => labels.find(l => l.textContent.includes(frag)).querySelector('input[type=checkbox]');
-      find('--dry-run').click(); find('--create-db').click();
-    """)
-    time.sleep(0.3)
-    combo = js(t, r"""
-      const p = document.querySelector('.import-pane');
-      const start = [...p.querySelectorAll('button')].find(b => b.textContent.trim() === 'start');
-      return {err: !!p.querySelector('.import-error'), startDisabled: start.disabled};
-    """)
-    js(t, r"""
-      const labels = [...document.querySelectorAll('.import-opts label')];
-      const find = (frag) => labels.find(l => l.textContent.includes(frag)).querySelector('input[type=checkbox]');
-      find('--create-db').click();   // back to a valid combo (--dry-run stays on)
-    """)
-    time.sleep(0.3)
-
-    # 3) start → the stdout viewport fills from the polled status
+    # 2) start → the stdout viewport fills from the polled status
     js(t, "[...document.querySelectorAll('.import-actions button')].find(b => b.textContent.trim() === 'start').click();")
     time.sleep(2.0)  # the mock streams 8 lines over ~1 s; the pane polls at 300 ms
     log = js(t, r"""
@@ -2073,7 +2058,7 @@ def c31_rolls_import_pane(t):
       };
     """)
 
-    # 4) a non-directory path keeps the plain #162 hint (no pane opens);
+    # 3) a non-directory path keeps the plain #162 hint (no pane opens);
     #    close the pane first (§4.36: only ✕ closes it)
     js(t, "[...document.querySelectorAll('.import-head button')].find(b => b.textContent.includes('✕'))?.click();")
     time.sleep(0.3)
@@ -2087,16 +2072,16 @@ def c31_rolls_import_pane(t):
       };
     """)
 
-    exp_toggles = ["--dry-run", "--all", "--gpu", "--recursive", "--create-db", "--threshold"]
+    exp_toggles = ["--dry-run", "--all", "--gpu", "--recursive", "--threshold"]  # #186: no --create-db
     ok = (
         pane.get("open") and pane.get("detailGone")
         and pane.get("dir") == "/mnt/rolls/new-roll"
         and pane.get("db") == "/mock/data/faces.db"
         and pane.get("toggles") == exp_toggles
+        and pane.get("createDbAbsent")
         and pane.get("threshold") and pane.get("start") and pane.get("stop")
         and pane.get("recursiveDefault") is True
         and pane.get("state")
-        and combo.get("err") and combo.get("startDisabled")
         and "WhoT import_roll" in log.get("text", "")
         and "done — imported 3 image(s)" in log.get("text", "")
         and log.get("selectable") == "text"
@@ -2104,9 +2089,9 @@ def c31_rolls_import_pane(t):
         and after.get("hint") is not None and "no images under" in after.get("hint", "")
         and after.get("paneGone")
     )
-    record("C31 Rolls import pane: dir → pane in right pane, toggles, recursive default on, combo refusal, stdout viewport, exit 0 (#167/#169)",
+    record("C31 Rolls import pane: dir → pane in right pane, toggles (no --create-db #186), recursive default on, stdout viewport, exit 0 (#167/#169)",
            ok,
-           f"pane={pane}; combo={combo}; log state={log.get('state')!r} "
+           f"pane={pane}; log state={log.get('state')!r} "
            f"selectable={log.get('selectable')!r} chars={len(log.get('text', ''))}; "
            f"non-dir hint={after.get('hint')!r} paneGone={after.get('paneGone')}")
 
@@ -4270,6 +4255,106 @@ def c46_edit_dialog_group_list(t):
            f"B: pick={b} → {pb} (ok={b_ok}); C: pick={c} {c_state} (ok={c_ok})")
 
 
+def c47_first_run_no_database(t):
+    """#185/#186 (§4.36): with NO usable database the app shows the
+    first-run dialog instead of the raw error — 'No database yet' with
+    Retry + Open import pane; the offer picks a folder natively and
+    shows the STANDALONE import pane with --create-db pre-checked
+    (--dry-run then refused by the existing combo rule), ✕ returns to
+    the dialog, and once a usable database exists Retry loads the normal
+    app. NOT fresh(): there are no cards to wait for — the no-DB state
+    is seeded through the mock's ?no_db=1 init param."""
+    t.navigate(URL + "?no_db=1")
+    appeared = False
+    for _ in range(30):
+        time.sleep(0.4)
+        if js(t, "return !!document.querySelector('.first-run .dialog')"):
+            appeared = True
+            break
+    if not appeared:
+        record("C47 first-run (#185/#186): no usable DB → dialog → standalone pane (--create-db pre-checked, combo refused) → Retry loads the app",
+               False, "the first-run dialog never appeared")
+        return
+    d = js(t, r"""
+      const dlg = document.querySelector('.first-run .dialog');
+      return {
+        title: dlg.querySelector('h3')?.textContent.trim() ?? '',
+        buttons: [...dlg.querySelectorAll('button')].map(b => b.textContent.trim()),
+        noFatal: !document.body.innerText.includes('Could not load database'),
+      };
+    """)
+    d_ok = (d["title"] == "No database yet"
+            and d["buttons"] == ["Retry", "Open import pane"]
+            and d["noFatal"])
+
+    # the offer — the native picker returns the seeded folder
+    js(t, "window.__MOCK_DIALOG_PICK__ = '/mnt/rolls/first-roll';")
+    js(t, r"""
+      [...document.querySelectorAll('.first-run .dialog button')]
+        .find(b => b.textContent.trim() === 'Open import pane').click();
+    """)
+    pane_up = False
+    for _ in range(25):
+        time.sleep(0.4)
+        if js(t, "return !!document.querySelector('.first-run .import-pane')"):
+            pane_up = True
+            break
+    p = js(t, r"""
+      const el = document.querySelector('.first-run .import-pane');
+      if (!el) return null;
+      const labels = [...el.querySelectorAll('.import-opts label')];
+      const cd = labels.find(l => l.textContent.includes('--create-db'));
+      return {
+        dir: el.querySelector('.import-path')?.textContent ?? null,
+        hasCreateDb: !!cd,
+        createDbChecked: cd ? cd.querySelector('input[type=checkbox]').checked : null,
+        toggles: labels.map(l => l.textContent.trim().split(/\s+/)[0]),
+      };
+    """)
+    pane_ok = (pane_up and p is not None
+               and p["dir"] == "/mnt/rolls/first-roll"
+               and p["hasCreateDb"] and p["createDbChecked"] is True)  # #185 pre-checked
+
+    # the combo rule — reachable HERE (the option exists with no DB):
+    # create-db pre-checked ⇒ --dry-run is refused up front
+    js(t, r"""
+      const labels = [...document.querySelectorAll('.import-opts label')];
+      const l = labels.find(x => x.textContent.includes('--dry-run'));
+      l.querySelector('input[type=checkbox]').click();
+    """)
+    time.sleep(0.4)
+    combo = js(t, r"""
+      const el = document.querySelector('.first-run .import-pane');
+      const start = [...el.querySelectorAll('button')].find(b => b.textContent.trim() === 'start');
+      return {err: !!el.querySelector('.import-error'), startDisabled: start?.disabled ?? null};
+    """)
+    combo_ok = combo["err"] and combo["startDisabled"]
+
+    # ✕ back to the dialog
+    js(t, "[...document.querySelectorAll('.import-head button')].find(b => b.textContent.includes('✕')).click();")
+    time.sleep(0.5)
+    back_ok = js(t, "return !!document.querySelector('.first-run .dialog') && !document.querySelector('.first-run .import-pane')")
+
+    # a usable database now exists → Retry loads the normal app
+    js(t, "delete window.__MOCK_NO_DB__;")
+    js(t, r"""
+      [...document.querySelectorAll('.first-run .dialog button')]
+        .find(b => b.textContent.trim() === 'Retry').click();
+    """)
+    retry_ok = False
+    for _ in range(30):
+        time.sleep(0.4)
+        if js(t, "return !!document.querySelector('.face-card') && !document.querySelector('.first-run')"):
+            retry_ok = True
+            break
+
+    ok = d_ok and pane_ok and combo_ok and back_ok and retry_ok
+    record("C47 first-run (#185/#186): no usable DB → dialog → standalone pane (--create-db pre-checked, combo refused) → ✕ back → Retry loads the app",
+           ok,
+           f"dialog={d} (ok={d_ok}); pane={p} (ok={pane_ok}); combo={combo} (ok={combo_ok}); "
+           f"back={back_ok} retry={retry_ok}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -4323,6 +4408,7 @@ def main():
         c44_rotate_image_cascades(t)
         c45_face_menu_add_group(t)
         c46_edit_dialog_group_list(t)
+        c47_first_run_no_database(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

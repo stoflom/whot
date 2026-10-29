@@ -22,6 +22,11 @@
 // window.__MOCK_SNAP exposes the live in-memory snapshot to test scripts.
 
 (() => {
+  // #185 (§4.36): the no-usable-database case must exist BEFORE the
+  // app's first get_snapshot — a query param survives into the mock's
+  // init, a post-load window flag would not (the load has already run)
+  if (new URLSearchParams(location.search).get("no_db") === "1")
+    window.__MOCK_NO_DB__ = true;
   let SNAP = null;
   let nextPersonId = 1;
   // #167: the import slot (mirrors importer.rs: one child at a time,
@@ -202,7 +207,13 @@
   };
 
   const cmd = {
-    get_snapshot: () => JSON.parse(JSON.stringify(SNAP)),
+    get_snapshot: () => {
+      // #185: the no-usable-database case — the load fails exactly like
+      // the real backend (sqlite: no such table on an empty file)
+      if (window.__MOCK_NO_DB__)
+        throw new Error("no such table: images (sqlite)");
+      return JSON.parse(JSON.stringify(SNAP));
+    },
     assign_person: assignPerson,
     accept_faces: ({ faceIds }) => {
       // #165/§4.3: plain accept never un-rejects; seat-holders re-derive
@@ -378,7 +389,12 @@
     // live slot to test scripts.
     scan_import_dir: ({ path }) =>
       ((window.__MOCK_ROLL_DIRS__ ?? {})[path] ?? 0) > 0,
-    get_import_info: () => "/mock/data/faces.db",
+    // #185/#186 (§4.36): path + the USABLE-database probe (schema
+    // present — gates the --create-db offer; the no-DB flow flips it)
+    get_import_info: () => ({
+      dbPath: "/mock/data/faces.db",
+      dbExists: !window.__MOCK_NO_DB__,
+    }),
     start_import: ({ options }) => {
       if (imp.running) throw new Error("an import is already running");
       if (options.createDb && options.dryRun)
