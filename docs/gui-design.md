@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.78** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.79** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1238,7 +1238,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       under the current face filter), the context advances to the
       **next person of the review step list — exactly what “›”
       (`stepPerson(1)`) does** — instead of leaving a black centre
-      panel. Partial actions (remaining faces/sections) keep the
+      panel. The verdict also **focuses its acted-on person**
+      (post-success, §4.41/#189): with the anchor on the acted person
+      the #148 mark comparison below is unchanged and this hand-over
+      fires exactly as before, while a grid-only verdict (no anchor ⇒
+      no mark) simply gains the anchor for Person mode to open. Partial actions (remaining faces/sections) keep the
       existing section-level advance or stay put; the step reuses the
       ‹ › code path, so cursor-as-target (#75) and list-end behaviour
       follow the stepping rules. At the end of the list the context
@@ -1728,6 +1732,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      (accepted/rejected; under All *No faces to show*) — with
      **Show All** (sets Show → All) and **Close** (dismissed for that
      person+filter pair until either changes).
+   - **Focus follows the verdict** (#189): every successful **Accept /
+     Reject** moves the anchor to the **acted-on person** — the owner
+     of the cursor-as-target face (§4.25) — so Person mode always
+     opens at the **last person the user worked on**: the grid-only
+     verdict (no anchor yet ⇒ no §4.30 mark, no hand-over — the
+     verdict itself anchors the drained person, so the picker dialog
+     can no longer dead-end a relook), the verdict on a person other
+     than the current anchor (the anchor follows the action), or a
+     run of verdicts (the anchor walks with the work). The update runs
+     **after** the mutation succeeds and **after** the pre-mutation
+     exhaust mark is captured, so #148's mark comparison and the
+     §4.30 hand-over are untouched: when anchor and acted person
+     coincide (the common case) the drain hand-over to the next
+     pending person behaves exactly as before (#125/#159).
    - **Top-bar status totals** (#179, revising the #176 person counts):
      the top bar **always** shows the **database's live face totals** as
      an overview — `? N` (New), `✓ N` (Accepted), `✗ N` (Rejected) —
