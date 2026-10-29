@@ -213,6 +213,14 @@ export default function App() {
       return value) instead of being stored — which silently disabled the
       context-change dialog (#123, found via gui-mock C5) */
   const [contextConfirm, setContextConfirm] = useState<{ fn: () => void } | null>(null);
+  // #187: the Q4 dialog's open is set SYNCHRONOUSLY with the click that
+  // queues it — unlike the #138 registry count (a passive-effect chain
+  // measured at >1 s under load), so BOTH keyboard guards read this
+  // render-time ref (the pendingRef pattern) and never act behind the
+  // dialog: dropping the set there unmounts it mid-dispatch and its own
+  // Esc listener never runs the stored context switch (#123)
+  const contextConfirmRef = useRef<{ fn: () => void } | null>(null);
+  contextConfirmRef.current = contextConfirm;
 
   const [error, setError] = useState<string | null>(null);
   // #132 (§4.26): guidance/info — expected no-ops, quiet toast, no Copy,
@@ -356,6 +364,10 @@ export default function App() {
           tgt.tagName === "TEXTAREA" ||
           tgt.tagName === "SELECT" ||
           tgt.isContentEditable);
+      // #187: a queued/open Q4 dialog owns Esc even before the
+      // overlayCount chain catches up — preview-undo here would drop the
+      // set behind it and unmount the dialog mid-dispatch
+      if (contextConfirmRef.current != null && pendingRef.current.length > 0) return;
       if (pendingRef.current.length > 0) {
         if (!typing) {
           setPending([]); // #123: Undo = Cancel — the whole set drops
@@ -420,6 +432,14 @@ export default function App() {
     if (pendingRef.current.length > 0) setContextConfirm({ fn: action });
     else action();
   }, []);
+  // #187: the set can empty through a path that bypasses the dialog's
+  // own handlers (an Enter-commit behind it inside the stale-count
+  // window, a filter drop) — the dialog unmounts on
+  // `pending.length === 0`, so drop the guard signal with it or the
+  // keyboard stays owned by a dialog that is no longer there
+  useEffect(() => {
+    if (contextConfirm != null && pending.length === 0) setContextConfirm(null);
+  }, [contextConfirm, pending]);
 
   // ------------------------------------------------------------ selection
 
@@ -1701,6 +1721,9 @@ export default function App() {
       // dialog, tree menus/group dialog and the settings popover slip
       // through)
       if (overlayCount > 0) return;
+      // #187: same stale-count window as the Esc stack — never act
+      // (select-all, Accept, reject, step …) behind a queued/open Q4 dialog
+      if (contextConfirmRef.current != null && pendingRef.current.length > 0) return;
       // #53 (§4.17): Ctrl-G toggles the whole section — the one under
       // the mouse cursor first (#74), else the hovered card's, else the
       // most recently selected card's; preventDefault so webkit cannot
