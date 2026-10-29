@@ -933,6 +933,9 @@ export default function App() {
                 // #123: opening focus mode is a view-context change;
                 // #171/§4.37: the right pane follows the opening face's person
                 label: "Open full image",
+                // #182/§4.14: focus mode shows one image — disabled for
+                // a multi-scope like its primary/reference/crop siblings
+                disabled: multi,
                 onClick: () =>
                   confirmContext(() => {
                     setSplitImageId(f.image_id);
@@ -1034,6 +1037,9 @@ export default function App() {
             // the drop-or-accept dialog exactly like the focused-open
             // entry just below — it never silently carries a staged set
             label: "Open image",
+            // #182/§4.14: one-image-only — never silently the invoked
+            // thumb out of a multi-scope
+            disabled: many,
             onClick: () =>
               confirmContext(() => {
                 setMode("rolls");
@@ -1043,6 +1049,8 @@ export default function App() {
           {
             // #123: opening focus mode is a view-context change
             label: "Open full image (focused)",
+            // #182/§4.14: focus mode shows one image
+            disabled: many,
             onClick: () => confirmContext(() => setSplitImageId(image.id)),
           },
           // #122: stored display rotation (EXIF key, #118) — over the
