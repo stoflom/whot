@@ -3086,6 +3086,180 @@ def c38_verdict_icons(t):
            f"group {a['key']} ✓ → confirmed={group_ok}; group {b['key']} ✗ → rejected={reject_ok}; bar={bar}")
 
 
+def c39_rename_seated_person(t):
+    """#178 (§4.1): a status seat never reaches assign_person. Phase A:
+    an unfiled UnknownN (seat New) renamed through the pane's Update
+    person to a NEW name — no 'reserved group name' error, the id and
+    the pane anchor survive, the claim confirms the faces and the seat
+    derives to Accepted (§4.35). Phase B: a seated person renamed to a
+    KNOWN name — a clean merge, with the pane re-anchored on the target
+    listing ITS groups (§4.38). Phase C: merging another person INTO
+    the phase-A product (a named person holding only a seat) succeeds
+    and leaves its group untouched (F2 — the merge callers pass "")."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def wait_for(pred, tries=30):
+        for _ in range(tries):
+            time.sleep(0.3)
+            if pred():
+                return True
+        return False
+
+    def err():
+        return js(t, r"""return document.querySelector('.toast[role="alert"] .toast-text')?.textContent ?? null""")
+
+    def set_name(value, enter=True):
+        # the pane's Name field (the first .typeahead input in .dp-person)
+        js(t, r"""
+          const el = document.querySelector('.dp-person .typeahead input');
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+        """, value)
+        if enter:
+            js(t, r"""
+              document.querySelector('.dp-person .typeahead input')
+                ?.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+            """)
+
+    def select_person(pid):
+        row = t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pid}']")
+        js(t, "arguments[0].scrollIntoView({block:'center'})", row)
+        time.sleep(0.3)
+        row.click()
+        time.sleep(0.8)
+
+    # ── phase A: an unfiled UnknownN renamed in place (the #178 repro) ──
+    apick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const p = snap.persons.find(x => /^unknown/i.test(x.name) && x.counts.total > 0
+                   && x.groups.length === 1 && x.groups[0] === 'New');
+      if (!p) return null;
+      const taken = new Set(snap.persons.map(x => x.name));
+      let nm = 'Ck39Renamed';
+      for (let i = 2; taken.has(nm); i++) nm = 'Ck39Renamed' + i;
+      return {id: p.id, total: p.counts.total,
+              faces: snap.faces.filter(f => f.person_id === p.id).map(f => f.id),
+              new: nm};
+    """)
+    if apick is None:
+        record("C39 rename of a seated person (#178/§4.1)", True,
+               "no unfiled UnknownN with faces in the seed — vacuous")
+        return
+    select_person(apick["id"])
+    set_name(apick["new"], enter=False)       # the repro: type, then Update person
+    time.sleep(0.4)
+    t.find_element(By.CSS_SELECTOR, ".dp-update").click()
+    a_ok = wait_for(lambda: js(t, r"""
+      const p = window.__MOCK_SNAP.persons.find(x => x.id === arguments[0]);
+      return !!p && p.name === arguments[1] && p.groups.length === 1
+             && p.groups[0] === 'Accepted';
+    """, apick["id"], apick["new"]))
+    a_claim = js(t, r"""
+      const want = new Set(arguments[0]);
+      const fs = window.__MOCK_SNAP.faces.filter(f => want.has(f.id));
+      return fs.length === arguments[1] && fs.every(f => f.link_status === 'confirmed');
+    """, apick["faces"], apick["total"])
+    a_anchor = js(t, r"""
+      const el = document.querySelector('.dp-person .typeahead input');
+      const row = document.querySelector(arguments[0]);
+      return {pane: el ? el.value : null,
+              tree: row ? row.textContent.trim() : null};
+    """, f".tree-person[data-person-id='{apick['id']}'] .tree-name")
+    a_err = err()
+
+    # ── phase B: a seated person renamed to a KNOWN name ⇒ clean merge ──
+    bpick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const src = snap.persons.find(x => /^unknown/i.test(x.name) && x.counts.total > 0);
+      const dst = snap.persons.find(x => x.id !== arguments[0] && !/^unknown/i.test(x.name)
+                     && x.name !== 'Rejected' && x.counts.total > 0
+                     && x.groups.length === 1 && !['New','Accepted','Rejected'].includes(x.groups[0]));
+      if (!src || !dst) return null;
+      return {srcId: src.id, srcTotal: src.counts.total,
+              dstId: dst.id, dstName: dst.name, dstTotal: dst.counts.total,
+              dstGroups: [...dst.groups]};
+    """, apick["id"])
+    merge_b = None
+    anchor_b = None
+    if bpick:
+        select_person(bpick["srcId"])
+        set_name(bpick["dstName"], enter=False)
+        time.sleep(0.4)
+        t.find_element(By.CSS_SELECTOR, ".dp-update").click()
+        merge_b = wait_for(lambda: js(t, r"""
+          const snap = window.__MOCK_SNAP;
+          return !snap.persons.some(p => p.id === arguments[0]) &&
+                 (snap.persons.find(p => p.id === arguments[1])?.counts.total ?? 0)
+                   === arguments[2] + arguments[3];
+        """, bpick["srcId"], bpick["dstId"], bpick["srcTotal"], bpick["dstTotal"]))
+        anchor_b = js(t, r"""
+          const el = document.querySelector('.dp-person .typeahead input');
+          return {name: el ? el.value : null,
+                  groups: [...document.querySelectorAll('.dp-groups .dp-group-path')]
+                    .map(x => x.textContent.trim())};
+        """)
+    b_err = err()
+
+    # ── phase C: merge INTO the seated rename product (F2: "", never the seat) ──
+    cpick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const dst = snap.persons.find(x => x.id === arguments[0]);
+      const src = snap.persons.find(x => x.id !== arguments[0] && x.counts.total > 0
+                     && !/^unknown/i.test(x.name) && x.name !== 'Rejected');
+      if (!dst || !src) return null;
+      return {dstId: dst.id, dstName: dst.name, dstTotal: dst.counts.total,
+              srcId: src.id, srcTotal: src.counts.total};
+    """, apick["id"])
+    merge_c = None
+    if cpick:
+        select_person(cpick["srcId"])
+        AC(t.driver).context_click(
+            t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{cpick['srcId']}']")
+        ).perform()
+        time.sleep(0.6)
+        items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+                 if "into" in b.text and "Merge" in b.text]
+        if not items:
+            AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        else:
+            items[0].click()
+            time.sleep(0.8)
+            inp = t.find_element(By.CSS_SELECTOR, ".overlay .dialog .typeahead input")
+            inp.click()
+            inp.send_keys(cpick["dstName"])
+            time.sleep(0.6)
+            btn = [b for b in t.find_elements(By.CSS_SELECTOR, ".overlay .dialog button.bad")
+                   if b.is_enabled()]
+            if btn:
+                btn[0].click()
+                merge_c = wait_for(lambda: js(t, r"""
+                  const snap = window.__MOCK_SNAP;
+                  return !snap.persons.some(p => p.id === arguments[0]) &&
+                         (snap.persons.find(p => p.id === arguments[1])?.counts.total ?? 0)
+                           === arguments[2] + arguments[3];
+                """, cpick["srcId"], cpick["dstId"], cpick["srcTotal"], cpick["dstTotal"]))
+    c_groups = js(t, r"""
+      return window.__MOCK_SNAP.persons.find(p => p.id === arguments[0])?.groups ?? null;
+    """, apick["id"])
+    c_err = err()
+
+    ok = (a_ok and a_claim
+          and a_anchor["pane"] == apick["new"] and a_anchor["tree"] == apick["new"]
+          and a_err is None
+          and (bpick is None or (merge_b is True and b_err is None
+                                 and anchor_b["name"] == bpick["dstName"]
+                                 and anchor_b["groups"] == bpick["dstGroups"]))
+          and (cpick is None or (merge_c is True and c_err is None
+                                 and c_groups == ["Accepted"])))
+    record("C39 rename of a seated person (#178/§4.1): in-place rename ⇒ Accepted seat, rename-to-known merges + re-anchors, merge INTO a seated target keeps its group",
+           ok,
+           f"A: renamed={a_ok} claimed={a_claim} anchor={a_anchor} err={a_err}; "
+           f"B: pick={bpick} merged={merge_b} anchor={anchor_b} err={b_err}; "
+           f"C: pick={cpick} merged={merge_c} groups={c_groups} err={c_err}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -3131,6 +3305,7 @@ def main():
         c36_review_lock(t)
         c37_person_sticky_colors(t)
         c38_verdict_icons(t)
+        c39_rename_seated_person(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
