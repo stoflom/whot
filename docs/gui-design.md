@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.81** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.82** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -291,13 +291,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Context menus** (#32): face cards, person rows and image thumbs show a
   right-click menu with grouped entries — *selection* (select/deselect/
   select-all/clear) and *actions* (accept/reject, primary, reference,
-  assign, open image …) — reusing the same commands and selection state.
+  edit…, open image …) — reusing the same commands and selection state.
   **Tree rows** additionally support **multi-select** (click sets the
   selection, ctrl/cmd-click toggles, shift-click extends over the tree's
   visible order; the anchor row stays the person shown) and offer
   **Remove person / Remove N persons** (§4.13) and — #164 —
   ***Add group…*** beside *Move to group…* (the typed path becomes an
-  **additional** membership; Move replaces); **real group branches**
+  **additional** membership; Move replaces) — the one-person-only
+  entries (*Open person*, *Rename…*, *Select their pending faces*)
+  grey out while the scope is a multi-selection (§4.14/#182); **real group branches**
   have their own menu — *remove all persons in this branch* (counts shown,
   confirm dialog required) plus *rename/move group…* and *delete group*
   (§4.16/§4.18, #50 — **#164 removed *add group…* from the branch and
@@ -645,10 +647,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     (*Accept*, *Reject*, *Edit…*) and the card's ✗/undo button
     all honour this scope — the same ids the rule-bar buttons would act
     on — so "select whole section → reject" rejects the section from any
-    entry point. Actions that cannot apply to more than one face —
-    **★ set as primary** and **◈ add as reference** — are greyed out
-    (disabled) whenever the effective scope would exceed one face, never
-    silently applied to a single card. **Opening the shared Edit dialog
+    entry point. **One-item-only actions are greyed out (disabled)
+    whenever the effective scope would exceed one item — never silently
+    applied to a single one** (#182, generalised): on the face side
+    **★ set as primary**, **◈ add as reference**, **Rotate crop 90° …**
+    and **Open full image** (focus mode shows one image); on the
+    thumbnail side **Open image** and **Open full image (focused)**; on
+    the tree person menu **Open person**, **Rename…** (inline rename is
+    single-person — the multi-scope has *Rename N persons to…*) and
+    **Select their pending faces** (the move/add/merge/remove entries
+    already speak N). **Opening the shared Edit dialog
     follows the selection** (#101, §4.24): on a card inside the current
     selection the selection is kept — an active selection, **of any size,
     including a single face** (#59), is itself the answer to "just this
@@ -1665,7 +1673,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      - the context menu (#32) opens on a thumb; if the thumb is part
        of the selection the scope is the whole selection, otherwise
        just that thumb (the §4.14 scope rule). It carries `Open image`,
-       *Open full image (focused)* (both: the invoked thumb), `Rotate
+       *Open full image (focused)* (both: the invoked thumb — greyed out
+       for a multi-scope, §4.14/#182), `Rotate
        90° CW` / `Rotate 90° CCW` and `Open in system viewer` (all:
        applied to **each image of the scope**, one command per image in
        order — rotations batch into one refresh), plus the existing
