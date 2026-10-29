@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.80** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.81** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -91,7 +91,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 │ counts:      │ (name strip · image · group · desc ·      │ refcrops      │
 │ prov/conf/rej│  accuracy + Edit…)                        │ (scrollable)  │
 ├──────────────┴───────────────────────────────────────────┴───────────────┤
-│ rule bar: N sel · [Apply][Accept][Undo°][Assign…][Reject][clear]         │
+│ rule bar: N sel · [Apply][Accept][Undo°][Edit…][Reject][clear]           │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -387,9 +387,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   to the person detail** for face/person editing (§4.37/§4.39).
 - **Rule bar (bottom)**: always visible when ≥1 face is selected **or a
   stage is live**, in any center-pane view: `N selected · [Apply] [Accept]
-  [Undo°] [Assign name…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
+  [Undo°] [Edit…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
   preview (a `staged: …` strip shows it), `Accept` commits it, `Undo`
-  greys out without a preview; `Assign name…` opens the shared Edit dialog
+  greys out without a preview; `Edit…` opens the shared Edit dialog
   with scope preset to Selection (§4.24).
 
 - **Face card** (#102): top to bottom — the **name strip inside the image
@@ -642,7 +642,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 14. **Selection-scoped face actions** (#49) ⇒ every face action has one
     *effective scope*: the active selection when the invoked card is part
     of it (`sel.size > 1`), otherwise just that card. Context-menu entries
-    (*Accept*, *Reject*, *Assign to person…*) and the card's ✗/undo button
+    (*Accept*, *Reject*, *Edit…*) and the card's ✗/undo button
     all honour this scope — the same ids the rule-bar buttons would act
     on — so "select whole section → reject" rejects the section from any
     entry point. Actions that cannot apply to more than one face —
@@ -787,7 +787,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     per-face tags) — the frame *style* carries the distinction for
     colour-blind users, the hues only reinforce it. Applied to the
     section rule bar's group field, the face-card desc input, the
-    AssignDialog/GroupDialog group fields and the detail pane's Group
+    EditDialog/GroupDialog group fields and the detail pane's Group
     field (Name/Note keep the default look; `Editable` has a variant).
     The tints stay legible in the dark theme and clear of the
     warn/ok/bad status colours.
@@ -805,13 +805,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       group path is a structural value that is replaced wholesale,
       never edited in place (#67 follow-up, confirmed in testing) — on
       focus and on click alike.
-    - **Name typeahead**: the AssignDialog and the detail-pane Name
+    - **Name typeahead**: the EditDialog and the detail-pane Name
       field suggest existing persons (substring match, max 8, `UnknownN`
       names excluded — the point is to reach a real name; each row shows
       the person's group because **picking a suggestion merges into that
       person**, assign-not-rename §3). Arrow keys + Enter navigate,
       Enter without a highlight submits as before, Esc closes the
-      dropdown before it touches anything else. In the AssignDialog a
+      dropdown before it touches anything else. In the EditDialog a
       pick mirrors the target's group into the group field (unless the
       user already typed one).
     - **Every value field suggests** (#97 → #101 hosts): the name
@@ -985,6 +985,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       scope ambiguity); the grid's cards, cluster headers and rule bar
       carry only labels plus the shared Edit dialog (no inline inputs, no
       per-object apply buttons, no auto-apply on focus).
+    - **ONE label — `Edit…` — for every opener** (#180): the card
+      button, the cluster-header button, the face context menu item
+      (the scope suffix stays: `Edit… (N selected)`) and the rule-bar
+      button all read `Edit…`, and the dialog's title is *Edit* —
+      “Edit” is the program-wide term for the function (assign a person
+      / set name, group, description); the old *Assign to person…* and
+      *Assign name…* wordings retire.
 25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
     selection the mouse cursor decides the target: a face-card context
     menu opened on an **empty selection selects that card first**
@@ -1215,10 +1222,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - **Person mode and focus mode: context never moves by itself**
       (Q10) — same selection rules, same dialog, same stage/commit;
       only the advance disappears, and the right panel stays extra.
-    - **Bottom bar** (Q9): `Apply · Accept · Undo° · Assign name… ·
+    - **Bottom bar** (Q9): `Apply · Accept · Undo° · Edit… ·
       Reject · clear` — every action scoped to the selection with no
       confirmation dialog; selection actions grey out at N = 0 and
-      `Undo` greys out without a preview. `Assign name…` opens the
+      `Undo` greys out without a preview. `Edit…` opens the
       shared Edit dialog with scope preset to Selection.
     - **Key/bar Accept with a live pending set commits the staged ops
       first, then accepts the DISPLAYED scope** (#166) — the dialog's
@@ -1483,7 +1490,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       affordances retire (context-menu relabel, card undo, dialog
       relabel): on a rejected-only scope Accept is inert with the info
       toast “assign a person to bring it back”, and the assignment paths
-      (rule bar *Assign…*, context menu, Edit dialog committed with a
+      (rule bar *Edit…*, context menu, Edit dialog committed with a
       name) are the way back — reachable only while `Show = Rejected`
       (§4.10), so no bulk operation can claim by accident.
     - **Data fix**: `scripts/fix_status_groups.py` upgrades a v1.6
