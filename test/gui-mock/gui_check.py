@@ -116,6 +116,13 @@ Checks (contract refs: docs/gui-design.md):
       the right pane (§4.37), '← rolls' returns to the hierarchy with
       the branch's thumbs intact; a branch with no direct images shows
       the drill hint
+  C35 Rolls layout while browsing (#174 follow-up, §4.39): entering
+      Rolls gives the centre an explicit width equal to the LEFT pane's
+      (the right pane flexes — most of the window for the thumbnails);
+      dragging the centre|right divider clamps the centre to 10%..70% of
+      the window (never past window − left − 200px), double-click
+      restores the left-following default, and opening an image restores
+      the normal layout (right pane back to its fixed width)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -2619,6 +2626,94 @@ def c34_rolls_branch_thumbnails(t):
            f"back: detail={e3['detail']} thumbs={len(e3['thumbs'])}")
 
 
+def c35_rolls_layout(t):
+    """#174 follow-up (§4.39): browsing Rolls gives the centre an
+    explicit width that starts at the LEFT pane's width (the right pane
+    flexes — most of the window for the thumbnails); the centre|right
+    divider drags the centre clamped to 10%..70% of the window (never
+    past window − left − 200px), double-click restores the left-
+    following default, and opening an image restores the normal layout
+    (right pane back to its fixed width)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
+    time.sleep(1.0)
+
+    def widths():
+        return js(t, r"""
+          const c = document.querySelector('main.center');
+          const l = document.querySelector('aside.left');
+          const r = document.querySelector('aside.right');
+          return {w: window.innerWidth, center: c.offsetWidth,
+                  left: l.offsetWidth, right: r.offsetWidth};
+        """)
+
+    def drag_divider(dx):
+        """synthetic drag of the centre|right divider: mousedown on it,
+        twelve window-level mousemoves (the app listens on window),
+        mouseup — deterministic and independent of the viewport"""
+        js(t, r"""
+          const el = document.querySelector('main.center + .v-divider');
+          const rect = el.getBoundingClientRect();
+          const x0 = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+          el.dispatchEvent(new MouseEvent('mousedown', {clientX: x0, clientY: y, bubbles: true}));
+          const steps = 12, d = arguments[0];
+          for (let i = 1; i <= steps; i++)
+            window.dispatchEvent(new MouseEvent('mousemove',
+              {clientX: x0 + (d * i) / steps, clientY: y, bubbles: true}));
+          window.dispatchEvent(new MouseEvent('mouseup', {clientX: x0 + d, clientY: y, bubbles: true}));
+        """, dx)
+        time.sleep(0.5)
+
+    w0 = widths()
+    # round-half-up like the app's Math.round (Python round is banker's)
+    rnd = lambda x: int(x + 0.5)
+    exp_lo = rnd(w0["w"] * 0.1)
+    exp_hi = max(min(rnd(w0["w"] * 0.7), w0["w"] - w0["left"] - 200), exp_lo)
+    initial_ok = abs(w0["center"] - w0["left"]) <= 2 and w0["right"] > w0["center"]
+
+    div = t.find_element(By.CSS_SELECTOR, "main.center + .v-divider")
+    # ── floor: drag the divider far LEFT → the centre shrinks to 10% ──
+    drag_divider(-w0["w"])
+    floor = widths()
+    floor_ok = abs(floor["center"] - exp_lo) <= 2
+    # ── cap: drag far RIGHT → min(70%, window − left − 200) ───────────
+    drag_divider(2 * w0["w"])
+    cap = widths()
+    cap_ok = abs(cap["center"] - exp_hi) <= 2 and cap["right"] >= 190
+    # ── double-click: back to the left-following default ──────────────
+    AC(t.driver).double_click(div).perform()
+    time.sleep(0.5)
+    reset = widths()
+    reset_ok = abs(reset["center"] - reset["left"]) <= 2 and reset["right"] > reset["center"]
+
+    # ── an open image restores the normal layout (right = fixed 290) ──
+    img = js(t, "return window.__MOCK_SNAP.images[0].primary_path")
+    js(t, r"""
+      const el = document.querySelector('.roll-filter input');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, arguments[0]);
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+    """, img)
+    time.sleep(1.2)
+    opened = widths()
+    detail = js(t, "return !!document.querySelector('.image-detail')")
+    # centre flexes again: window − left − right − the two 1px dividers
+    restored_ok = (detail and abs(opened["right"] - 290) <= 2
+                   and abs(opened["center"] - (opened["w"] - opened["left"] - 290 - 2)) <= 6)
+
+    ok = initial_ok and floor_ok and cap_ok and reset_ok and restored_ok
+    record("C35 Rolls layout while browsing (#174/§4.39): centre = left pane, divider drags the centre 10–70%, dbl-click resets, an open image restores the normal layout",
+           ok,
+           f"win={w0['w']} initial c/l/r={w0['center']}/{w0['left']}/{w0['right']} "
+           f"(centre==left: {initial_ok}); floor {floor['center']} (want {exp_lo}): {floor_ok}; "
+           f"cap {cap['center']} (want {exp_hi}, right {cap['right']} ≥ 190): {cap_ok}; "
+           f"reset c/l={reset['center']}/{reset['left']}: {reset_ok}; "
+           f"opened: detail={detail} c/l/r={opened['center']}/{opened['left']}/{opened['right']} "
+           f"(right≈290, centre≈{opened['w'] - opened['left'] - 290 - 2}): {restored_ok}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -2660,6 +2755,7 @@ def main():
         c32_full_image_follows_person(t)
         c33_person_group_list_update(t)
         c34_rolls_branch_thumbnails(t)
+        c35_rolls_layout(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
