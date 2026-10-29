@@ -11,6 +11,7 @@ import * as api from "./api";
 import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
+import GroupDialog from "./components/GroupDialog";
 import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
@@ -191,6 +192,10 @@ export default function App() {
   const [faceMerge, setFaceMerge] = useState<
     { faceIds: number[]; targetId: number } | null
   >(null);
+  // #184 (§4.18): the face menu's 'Add group…' — the dialog over every
+  // DISTINCT person of the scope (the tree owns its own instance for
+  // person rows)
+  const [faceAddGroup, setFaceAddGroup] = useState<{ ids: number[] } | null>(null);
   // #101 (§4.24): grid editing lives in one dialog; #123: Apply extends
   // the pending SET (screen only, nothing commits), Accept commits it all
   const [edit, setEdit] = useState<{
@@ -503,6 +508,14 @@ export default function App() {
   const doAssign = useCallback(
     (ids: number[], name: string, group: string) =>
       mutate(() => api.assignPerson(ids, name, group), true),
+    [mutate]
+  );
+  // #184 (§4.18/#164 semantics): ADD a membership — from='' deletes
+  // nothing, INSERT OR IGNORE files them, every current group is kept —
+  // shared by the tree's person rows and the face menu's entry
+  const addPersonsToGroup = useCallback(
+    (ids: number[], path: string) =>
+      void mutate(() => api.movePersonsBetweenGroups(ids, "", path)),
     [mutate]
   );
   // #125: a verdict that might empty the current person in Review marks
@@ -866,6 +879,13 @@ export default function App() {
     const scope = actionScope(id);
     const multi = scope.length > 1;
     const label = (s: string) => (multi ? `${s} (${scope.length} selected)` : s);
+    // #184 (§4.18): the distinct OWNED persons of the effective scope —
+    // the Add group… entry files them all (unowned faces count nothing)
+    const groupIds = [
+      ...new Set(
+        scope.map((sid) => facesById.get(sid)?.person_id).filter((p): p is number => p != null)
+      ),
+    ];
     openMenu(e, [
       {
         title: "Selection",
@@ -923,6 +943,16 @@ export default function App() {
             label: label("Rotate crop 90° CCW"),
             onClick: () => rotateFace(id, -90),
             disabled: multi,
+          },
+          // #184 (§4.18/#164): file every DISTINCT person of the scope —
+          // the same GroupDialog + add semantics as the tree's rows
+          {
+            label:
+              groupIds.length > 1
+                ? `Add group to ${groupIds.length} persons…`
+                : "Add group…",
+            onClick: () => setFaceAddGroup({ ids: groupIds }),
+            disabled: groupIds.length === 0,
           },
           // #180/§4.24: ONE label — 'Edit…' — for every dialog opener
           { label: label("Edit…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
@@ -2192,10 +2222,8 @@ export default function App() {
             }}
             // #164 (§4.18): 'Add group…' on person rows — ADD a membership
             // (from='' deletes nothing, INSERT OR IGNORE files them; every
-            // current group is kept)
-            onAddGroup={(ids, path) =>
-              void mutate(() => api.movePersonsBetweenGroups(ids, "", path))
-            }
+            // current group is kept); #184 shares it with the face menu
+            onAddGroup={addPersonsToGroup}
             onError={setError}
             onOpenMerge={() => setMergeOpen(true)}
             onMergeInto={openMergeInto}
@@ -2549,6 +2577,26 @@ export default function App() {
           target={personsById.get(faceMerge.targetId)!}
           onConfirm={() => void confirmFaceMerge()}
           onCancel={() => setFaceMerge(null)}
+        />
+      )}
+      {faceAddGroup && (
+        <GroupDialog
+          options={pathOptions}
+          title={
+            faceAddGroup.ids.length > 1
+              ? `Add a group to ${faceAddGroup.ids.length} persons`
+              : `Add a group to '${personsById.get(faceAddGroup.ids[0])?.name ?? "?"}'`
+          }
+          body="Adds this path as ANOTHER group — every current group of the person(s) is kept (a person can belong to several, §4.16); a status seat, if any, is dropped instead (#165, §4.35). Faces and names are untouched."
+          defaultPath=""
+          submitLabel="add group"
+          onSubmit={(path) => {
+            const ids = faceAddGroup.ids;
+            setFaceAddGroup(null);
+            const norm = path.split("|").map((s) => s.trim()).filter(Boolean).join("|");
+            if (norm && ids.length > 0) addPersonsToGroup(ids, norm);
+          }}
+          onCancel={() => setFaceAddGroup(null)}
         />
       )}
       {edit && snap && (
