@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.74** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.75** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1698,6 +1698,36 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    - **Actions are unchanged**: the lock pins the filter, guards the
      position and widens the advance's reach — no verdict or
      assignment rule moves.
+
+41. **Person mode: sticky person, guard dialogs, counts, status
+   colours** (#176) ⇒ Person mode's behaviour is otherwise unchanged:
+   - **The Person tab is always clickable** (#176): without an anchored
+     person a click switches to Person mode, sets **Show → All** (the
+     status branches `New`/`Accepted` are then listed — `Rejected` only
+     under Show → Rejected, §4.35 unchanged) and opens the dialog
+     *Please select a person in the tree on the left* (a single
+     **Close** button). With an anchor the click is the plain mode
+     switch — the anchor survives mode switches (§3), so the person
+     last worked on (incl. out of the Review-lock workflow, §4.40) is
+     still the one shown.
+   - **Sticky person**: once selected the user stays on that person. If
+     a Show change — or a verdict — leaves the anchored person with
+     **zero faces under the current filter** (while holding faces at
+     all; faceless shells are their own state and never trigger it),
+     Person mode opens *No new faces* — the title follows the filter
+     (accepted/rejected; under All *No faces to show*) — with
+     **Show All** (sets Show → All) and **Close** (dismissed for that
+     person+filter pair until either changes).
+   - **Top-bar person counts**: while a person is anchored — **any
+     mode** — the top bar shows their live face counts: `? N` (New),
+     `✓ N` (Accepted), `✗ N` (Rejected).
+   - **One status colour scheme** (#176): **New = red, Accepted =
+     green, Rejected = gray, All/default = normal text** — everywhere
+     status TEXT appears: the tree's status branches and group branch
+     labels, the Show select (its options **and** its closed value),
+     the face-card status badges and the count chips
+     (`c-prov`/`c-conf`/`c-rej`). The face-rectangle overlay palette
+     (§4.11) is a separate mechanism and stays unchanged.
 
 ## 5. Related documents
 
