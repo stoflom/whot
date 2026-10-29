@@ -22,6 +22,11 @@
 // window.__MOCK_SNAP exposes the live in-memory snapshot to test scripts.
 
 (() => {
+  // #185 (§4.36): the no-usable-database case must exist BEFORE the
+  // app's first get_snapshot — a query param survives into the mock's
+  // init, a post-load window flag would not (the load has already run)
+  if (new URLSearchParams(location.search).get("no_db") === "1")
+    window.__MOCK_NO_DB__ = true;
   let SNAP = null;
   let nextPersonId = 1;
   // #167: the import slot (mirrors importer.rs: one child at a time,
@@ -202,7 +207,13 @@
   };
 
   const cmd = {
-    get_snapshot: () => JSON.parse(JSON.stringify(SNAP)),
+    get_snapshot: () => {
+      // #185: the no-usable-database case — the load fails exactly like
+      // the real backend (sqlite: no such table on an empty file)
+      if (window.__MOCK_NO_DB__)
+        throw new Error("no such table: images (sqlite)");
+      return JSON.parse(JSON.stringify(SNAP));
+    },
     assign_person: assignPerson,
     accept_faces: ({ faceIds }) => {
       // #165/§4.3: plain accept never un-rejects; seat-holders re-derive
@@ -328,13 +339,26 @@
     get_refcrops: () => [],
     open_image: () => {},
     // #174/C34 — same contract as db::rotate_image: the delta
-    // normalised to [0,360), added to the stored rotation mod 360
+    // normalised to [0,360), added to the stored rotation mod 360;
+    // #183: the delta CASCades to every crop on the image (db parity)
     rotate_image: ({ imageId, delta }) => {
       const img = SNAP.images.find((x) => x.id === imageId);
       if (!img) throw new Error("image not found");
       const d = ((delta % 360) + 360) % 360;
       img.rotation = ((img.rotation ?? 0) + d) % 360;
+      for (const f of SNAP.faces)
+        if (f.image_id === imageId)
+          f.rotation = ((f.rotation ?? 0) + d) % 360;
       return img.rotation;
+    },
+    // #183 — same contract as db::rotate_face: the per-crop correction —
+    // the image and the image's other crops never move
+    rotate_face: ({ faceId, delta }) => {
+      const f = SNAP.faces.find((x) => x.id === faceId);
+      if (!f) throw new Error("face not found");
+      const d = ((delta % 360) + 360) % 360;
+      f.rotation = ((f.rotation ?? 0) + d) % 360;
+      return f.rotation;
     },
     person_face_clusters: ({ personId }) => {
       const fs = SNAP.faces.filter(
@@ -365,7 +389,12 @@
     // live slot to test scripts.
     scan_import_dir: ({ path }) =>
       ((window.__MOCK_ROLL_DIRS__ ?? {})[path] ?? 0) > 0,
-    get_import_info: () => "/mock/data/faces.db",
+    // #185/#186 (§4.36): path + the USABLE-database probe (schema
+    // present — gates the --create-db offer; the no-DB flow flips it)
+    get_import_info: () => ({
+      dbPath: "/mock/data/faces.db",
+      dbExists: !window.__MOCK_NO_DB__,
+    }),
     start_import: ({ options }) => {
       if (imp.running) throw new Error("an import is already running");
       if (options.createDb && options.dryRun)

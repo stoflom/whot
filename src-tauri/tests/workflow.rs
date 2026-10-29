@@ -982,3 +982,53 @@ fn rename_keeps_id_and_never_seats_the_caller_178() {
     );
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+/// #183 / §4.32 — rotating an image cascades the same delta to every
+/// crop on it; the converse (rotate_face) never touches the image.
+#[test]
+fn rotate_image_cascades_to_crops_183() {
+    let p = fixture_paths("rot183");
+    // image 1 holds faces 1, 2, 6; image 3 holds 4, 5
+    assert_eq!(db::rotate_image(&p, 1, 90).unwrap(), 90);
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.images.iter().find(|x| x.id == 1).unwrap().rotation, 90);
+    for f in s.faces.iter().filter(|f| f.image_id == 1) {
+        assert_eq!(f.rotation, 90, "face {} cascaded with the image", f.id);
+    }
+    assert_eq!(
+        s.faces.iter().find(|f| f.id == 4).unwrap().rotation,
+        0,
+        "faces of OTHER images are untouched"
+    );
+
+    // the converse: a crop rotation never touches the image
+    assert_eq!(db::rotate_face(&p, 1, -90).unwrap(), 0);
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.images.iter().find(|x| x.id == 1).unwrap().rotation, 90);
+    assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().rotation, 0);
+    assert_eq!(s.faces.iter().find(|f| f.id == 2).unwrap().rotation, 90);
+
+    // a second image rotation adds to the crop's own correction
+    assert_eq!(db::rotate_image(&p, 1, 90).unwrap(), 180);
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.images.iter().find(|x| x.id == 1).unwrap().rotation, 180);
+    assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().rotation, 90); // 0 + 90
+    assert_eq!(s.faces.iter().find(|f| f.id == 2).unwrap().rotation, 180); // 90 + 90
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #185 / §4.36 — a USABLE database means the schema is present: the
+/// missing file and the empty file a failed first load can leave behind
+/// both report false, the fixture true.
+#[test]
+fn has_schema_probes_usable_database_185() {
+    let p = fixture_paths("schema185");
+    assert!(db::has_schema(&p), "the fixture is usable");
+    std::fs::remove_file(&p.db).unwrap();
+    assert!(!db::has_schema(&p), "a missing file is not a database");
+    // an empty file — Connection::open creates exactly this on a failed
+    // first load, so file-existence alone must never gate the offer
+    std::fs::write(&p.db, b"").unwrap();
+    assert!(!db::has_schema(&p), "an empty file is not a usable database");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}

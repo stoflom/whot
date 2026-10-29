@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.80** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.86** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -91,7 +91,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 │ counts:      │ (name strip · image · group · desc ·      │ refcrops      │
 │ prov/conf/rej│  accuracy + Edit…)                        │ (scrollable)  │
 ├──────────────┴───────────────────────────────────────────┴───────────────┤
-│ rule bar: N sel · [Apply][Accept][Undo°][Assign…][Reject][clear]         │
+│ rule bar: N sel · [Apply][Accept][Undo°][Edit…][Reject][clear]           │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -291,13 +291,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Context menus** (#32): face cards, person rows and image thumbs show a
   right-click menu with grouped entries — *selection* (select/deselect/
   select-all/clear) and *actions* (accept/reject, primary, reference,
-  assign, open image …) — reusing the same commands and selection state.
+  edit…, open image …) — reusing the same commands and selection state.
   **Tree rows** additionally support **multi-select** (click sets the
   selection, ctrl/cmd-click toggles, shift-click extends over the tree's
   visible order; the anchor row stays the person shown) and offer
   **Remove person / Remove N persons** (§4.13) and — #164 —
   ***Add group…*** beside *Move to group…* (the typed path becomes an
-  **additional** membership; Move replaces); **real group branches**
+  **additional** membership; Move replaces) — the one-person-only
+  entries (*Open person*, *Rename…*, *Select their pending faces*)
+  grey out while the scope is a multi-selection (§4.14/#182); **real group branches**
   have their own menu — *remove all persons in this branch* (counts shown,
   confirm dialog required) plus *rename/move group…* and *delete group*
   (§4.16/§4.18, #50 — **#164 removed *add group…* from the branch and
@@ -387,9 +389,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   to the person detail** for face/person editing (§4.37/§4.39).
 - **Rule bar (bottom)**: always visible when ≥1 face is selected **or a
   stage is live**, in any center-pane view: `N selected · [Apply] [Accept]
-  [Undo°] [Assign name…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
+  [Undo°] [Edit…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
   preview (a `staged: …` strip shows it), `Accept` commits it, `Undo`
-  greys out without a preview; `Assign name…` opens the shared Edit dialog
+  greys out without a preview; `Edit…` opens the shared Edit dialog
   with scope preset to Selection (§4.24).
 
 - **Face card** (#102): top to bottom — the **name strip inside the image
@@ -642,13 +644,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 14. **Selection-scoped face actions** (#49) ⇒ every face action has one
     *effective scope*: the active selection when the invoked card is part
     of it (`sel.size > 1`), otherwise just that card. Context-menu entries
-    (*Accept*, *Reject*, *Assign to person…*) and the card's ✗/undo button
+    (*Accept*, *Reject*, *Edit…*) and the card's ✗/undo button
     all honour this scope — the same ids the rule-bar buttons would act
     on — so "select whole section → reject" rejects the section from any
-    entry point. Actions that cannot apply to more than one face —
-    **★ set as primary** and **◈ add as reference** — are greyed out
-    (disabled) whenever the effective scope would exceed one face, never
-    silently applied to a single card. **Opening the shared Edit dialog
+    entry point. **One-item-only actions are greyed out (disabled)
+    whenever the effective scope would exceed one item — never silently
+    applied to a single one** (#182, generalised): on the face side
+    **★ set as primary**, **◈ add as reference**, **Rotate crop 90° …**
+    and **Open full image** (focus mode shows one image); on the
+    thumbnail side **Open image** and **Open full image (focused)**; on
+    the tree person menu **Open person**, **Rename…** (inline rename is
+    single-person — the multi-scope has *Rename N persons to…*) and
+    **Select their pending faces** (the move/add/merge/remove entries
+    already speak N). **Opening the shared Edit dialog
     follows the selection** (#101, §4.24): on a card inside the current
     selection the selection is kept — an active selection, **of any size,
     including a single face** (#59), is itself the answer to "just this
@@ -757,6 +765,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     tree root's empty-space menu is gone with its only item. The status
     branches still offer no group menu of their own (§4.35).
 
+    **The same entry lives in the FACE context menu** (#184): when the
+    effective scope's faces belong to **N distinct persons** the menu
+    offers *Add group…* / *Add group to N persons…*, opening the same
+    `GroupDialog` with the add semantics over those persons — a set of
+    photos (person cards, a cluster, a full image) can be filed under a
+    branch straight from the face domain; unowned faces count for
+    nothing and an all-unowned scope leaves the entry disabled.
+
     **Append mode retired** (#92, retired by #164): no menu pre-fills a
     `|`-terminated path anymore — the root/branch *Add group…* producer
     is gone — so every group dialog opens in *replace* mode: the
@@ -787,7 +803,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     per-face tags) — the frame *style* carries the distinction for
     colour-blind users, the hues only reinforce it. Applied to the
     section rule bar's group field, the face-card desc input, the
-    AssignDialog/GroupDialog group fields and the detail pane's Group
+    EditDialog/GroupDialog group fields and the detail pane's Group
     field (Name/Note keep the default look; `Editable` has a variant).
     The tints stay legible in the dark theme and clear of the
     warn/ok/bad status colours.
@@ -805,13 +821,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       group path is a structural value that is replaced wholesale,
       never edited in place (#67 follow-up, confirmed in testing) — on
       focus and on click alike.
-    - **Name typeahead**: the AssignDialog and the detail-pane Name
+    - **Name typeahead**: the EditDialog and the detail-pane Name
       field suggest existing persons (substring match, max 8, `UnknownN`
       names excluded — the point is to reach a real name; each row shows
       the person's group because **picking a suggestion merges into that
       person**, assign-not-rename §3). Arrow keys + Enter navigate,
       Enter without a highlight submits as before, Esc closes the
-      dropdown before it touches anything else. In the AssignDialog a
+      dropdown before it touches anything else. In the EditDialog a
       pick mirrors the target's group into the group field (unless the
       user already typed one).
     - **Every value field suggests** (#97 → #101 hosts): the name
@@ -985,6 +1001,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       scope ambiguity); the grid's cards, cluster headers and rule bar
       carry only labels plus the shared Edit dialog (no inline inputs, no
       per-object apply buttons, no auto-apply on focus).
+    - **ONE label — `Edit…` — for every opener** (#180): the card
+      button, the cluster-header button, the face context menu item
+      (the scope suffix stays: `Edit… (N selected)`) and the rule-bar
+      button all read `Edit…`, and the dialog's title is *Edit* —
+      “Edit” is the program-wide term for the function (assign a person
+      / set name, group, description); the old *Assign to person…* and
+      *Assign name…* wordings retire.
 25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
     selection the mouse cursor decides the target: a face-card context
     menu opened on an **empty selection selects that card first**
@@ -1215,10 +1238,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - **Person mode and focus mode: context never moves by itself**
       (Q10) — same selection rules, same dialog, same stage/commit;
       only the advance disappears, and the right panel stays extra.
-    - **Bottom bar** (Q9): `Apply · Accept · Undo° · Assign name… ·
+    - **Bottom bar** (Q9): `Apply · Accept · Undo° · Edit… ·
       Reject · clear` — every action scoped to the selection with no
       confirmation dialog; selection actions grey out at N = 0 and
-      `Undo` greys out without a preview. `Assign name…` opens the
+      `Undo` greys out without a preview. `Edit…` opens the
       shared Edit dialog with scope preset to Selection.
     - **Key/bar Accept with a live pending set commits the staged ops
       first, then accepts the DISPLAYED scope** (#166) — the dialog's
@@ -1334,11 +1357,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       menu). Persisted by `rotate_image(image_id,
       ±90)`; the snapshot carries the angle and the renderer applies
       `transform: rotate(⟨angle⟩deg)` from it — rotate once, it sticks.
+      **A rotation of the IMAGE cascades the same delta to every crop
+      on it** (#183, one transaction): each crop's orientation
+      *relative to the image* is preserved (the crop pixels are fixed
+      at creation, so the two display angles move together).
     - **`faces.rotation`** — display rotation of the **face crop**
       (0/90/180/270, default 0), **independent
-      of the image rotation** (crop pixels are fixed at creation; both
-      rotations are pure display state — image 90° CW + crop 90° CCW is
-      legal). Same control pattern on the card: ⟲/⟳ buttons on the card
+      of the image rotation** in the converse direction only (#183:
+      crop pixels are fixed at creation; both rotations are pure
+      display state — image 90° CW + crop 90° CCW is legal — and
+      `rotate_face` stays the per-crop correction, never touching
+      `images.rotation`; the IMAGE→crop cascade above runs one way).
+      Same control pattern on the card: ⟲/⟳ buttons on the card
       action row + context-menu entries, persisted by
       `rotate_face(face_id, ±90)`.
     - **Import interlock** (#118): a legacy file's harvested EXIF
@@ -1483,7 +1513,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       affordances retire (context-menu relabel, card undo, dialog
       relabel): on a rejected-only scope Accept is inert with the info
       toast “assign a person to bring it back”, and the assignment paths
-      (rule bar *Assign…*, context menu, Edit dialog committed with a
+      (rule bar *Edit…*, context menu, Edit dialog committed with a
       name) are the way back — reachable only while `Show = Rejected`
       (§4.10), so no bulk operation can claim by accident.
     - **Data fix**: `scripts/fix_status_groups.py` upgrades a v1.6
@@ -1520,12 +1550,35 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      opened the pane already found images below the top level, so a
      default-off import would silently skip the very sub-folders that
      triggered it), `--threshold <f>` (default `0.40`, the
-     script's `THRESHOLD_DEFAULT`), and `--create-db`; the **roll
+     script's `THRESHOLD_DEFAULT`); the **roll
      directory** and the resolved **database path** are shown read-only
      (the pane is opened with the directory pre-filled; re-picking goes
      through the path filter again). `--create-db` + `--dry-run` is
      refused up front (the script's `validate_args` — creation is a
      write).
+   - **Option gating (#186)**: the pane offers only options that can
+     apply — `--create-db` is **hidden while a usable database exists**
+     (the script refuses an existing non-empty DB, so the checkbox
+     could only fail; `get_import_info` now answers the probe with
+     `{ dbPath, dbExists }`, where *usable* means the **schema is
+     present**, not merely that a file exists: a failed first load can
+     have created an empty file), and it is offered **pre-checked in
+     the first-run flow (#185)**. The other flags apply to every in-app
+     run and stay.
+   - **First run — no database (#185)**: when the initial snapshot load
+     fails and **no usable database exists** (the same schema probe),
+     the app does not dead-end on the raw error: a dialog states it
+     (*No database yet* — the configured path, built from
+     `database/schema.sql`) with **Retry** (the DB may have appeared
+     externally) and **Open import pane**. Opening picks a roll
+     directory with the **native folder picker** and shows the import
+     pane **standalone** — centred on the first-run screen, `--create-db`
+     pre-checked (so `--dry-run` is refused by the existing combo rule)
+     — so building the DB and importing the first roll happens in **one
+     flow**; a clean exit (0) loads the snapshot and the normal app
+     appears (✕ returns to the dialog, a failed retry falls back to the
+     FatalError screen). Any other load failure keeps FatalError as
+     today.
    - **Independent process**: *Start* asks the backend to spawn
      `python3 scripts/import_roll.py <roll_dir> [flags]` as a **separate
      child process** (`start_import`; the interpreter is overridable via
@@ -1617,6 +1670,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      staged and no pending name it is an informed no-op, never an
      error). The system person `Rejected` sees the list **read-only**
      (no ×, no add, no inline edit — §4.35) and no Update button.
+   - **The Edit dialog fronts the same list** (#181): whenever the
+     dialog's **Name field holds a known person's name** (typed or
+     prefilled), the single Group field is replaced by that person's
+     group LIST — the identical rows (× removal, inert seat, inline
+     re-home, add row — one shared `GroupListEditor`, so the pane and
+     the dialog can never drift). The list edits stage **locally in the
+     dialog**; **Apply** leaves them staged (they preview in the list
+     itself — an informed note says they commit with Accept), **Accept**
+     commits them **after the name lands** — the membership ops replay
+     in order against the **surviving person** (the merge target when
+     the name was taken; re-derived from the fresh snapshot, so an
+     in-place rename hits the renamed person). With an empty or new
+     (unknown) name the dialog keeps its single Group field. Scope
+     switches discard the staged ops (they are per-scope, like every
+     other dialog field).
 
 39. **Modes and the Rolls branch thumbnails** (#174) ⇒ the top-bar
    selector is the **mode switch** (§3): each mode owns its centre
@@ -1658,7 +1726,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      - the context menu (#32) opens on a thumb; if the thumb is part
        of the selection the scope is the whole selection, otherwise
        just that thumb (the §4.14 scope rule). It carries `Open image`,
-       *Open full image (focused)* (both: the invoked thumb), `Rotate
+       *Open full image (focused)* (both: the invoked thumb — greyed out
+       for a multi-scope, §4.14/#182), `Rotate
        90° CW` / `Rotate 90° CCW` and `Open in system viewer` (all:
        applied to **each image of the scope**, one command per image in
        order — rotations batch into one refresh), plus the existing

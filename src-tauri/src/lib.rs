@@ -247,11 +247,23 @@ fn get_import_status(state: State<AppState>, since: usize) -> importer::ImportSt
     state.runner.status(since)
 }
 
-/// #167 (§4.36) — the pane's read-only header info: the resolved DB path
-/// (same resolution as the script) for the run summary line
+/// #185/#186 (§4.36) — the pane's read-only header info: the resolved
+/// DB path (same resolution as the script) and whether a USABLE
+/// database exists (schema present — gates the --create-db offer)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportInfo {
+    db_path: String,
+    db_exists: bool,
+}
+
 #[tauri::command]
-fn get_import_info(state: State<AppState>) -> Result<String, String> {
-    Ok(state.paths()?.db.display().to_string())
+fn get_import_info(state: State<AppState>) -> Result<ImportInfo, String> {
+    let paths = state.paths()?;
+    Ok(ImportInfo {
+        db_path: paths.db.display().to_string(),
+        db_exists: db::has_schema(&paths),
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

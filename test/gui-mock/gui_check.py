@@ -1989,10 +1989,12 @@ def c28_add_group_person_rows_only(t):
 
 
 def c31_rolls_import_pane(t):
-    """#167 (§4.36): a real, not-yet-imported directory committed in the
-    Rolls path filter (typed AND via browse…) opens the import pane in
+    """#167/#186 (§4.36): a real, not-yet-imported directory committed in
+    the Rolls path filter (typed AND via browse…) opens the import pane in
     the right pane — DetailPane gone, the rolls tree still interactive —
-    with the per-roll toggles, the create-db+dry-run refusal, start
+    with the per-roll toggles MINUS --create-db (#186: a usable database
+    exists in this flow, so the checkbox could only fail; the combo
+    refusal now lives in C47's first-run pane where it is offered), start
     filling the stdout viewport from the polled mock status, and exit 0
     shown; a non-directory path keeps the plain #162 hint."""
     fresh(t)
@@ -2025,6 +2027,8 @@ def c31_rolls_import_pane(t):
         dir: p.querySelector('.import-path')?.textContent ?? null,
         db: [...p.querySelectorAll('.import-path')][1]?.textContent ?? null,
         toggles,
+        // #186: --create-db is GONE here — a usable database exists
+        createDbAbsent: !labels.some(l => l.textContent.includes('--create-db')),
         // #169: --recursive starts CHECKED — the probe that opened the
         // pane found its images below the top level
         recursiveDefault: (() => {
@@ -2038,26 +2042,7 @@ def c31_rolls_import_pane(t):
       };
     """)
 
-    # 2) the create-db + dry-run combination is refused up front
-    js(t, r"""
-      const labels = [...document.querySelectorAll('.import-opts label')];
-      const find = (frag) => labels.find(l => l.textContent.includes(frag)).querySelector('input[type=checkbox]');
-      find('--dry-run').click(); find('--create-db').click();
-    """)
-    time.sleep(0.3)
-    combo = js(t, r"""
-      const p = document.querySelector('.import-pane');
-      const start = [...p.querySelectorAll('button')].find(b => b.textContent.trim() === 'start');
-      return {err: !!p.querySelector('.import-error'), startDisabled: start.disabled};
-    """)
-    js(t, r"""
-      const labels = [...document.querySelectorAll('.import-opts label')];
-      const find = (frag) => labels.find(l => l.textContent.includes(frag)).querySelector('input[type=checkbox]');
-      find('--create-db').click();   // back to a valid combo (--dry-run stays on)
-    """)
-    time.sleep(0.3)
-
-    # 3) start → the stdout viewport fills from the polled status
+    # 2) start → the stdout viewport fills from the polled status
     js(t, "[...document.querySelectorAll('.import-actions button')].find(b => b.textContent.trim() === 'start').click();")
     time.sleep(2.0)  # the mock streams 8 lines over ~1 s; the pane polls at 300 ms
     log = js(t, r"""
@@ -2073,7 +2058,7 @@ def c31_rolls_import_pane(t):
       };
     """)
 
-    # 4) a non-directory path keeps the plain #162 hint (no pane opens);
+    # 3) a non-directory path keeps the plain #162 hint (no pane opens);
     #    close the pane first (§4.36: only ✕ closes it)
     js(t, "[...document.querySelectorAll('.import-head button')].find(b => b.textContent.includes('✕'))?.click();")
     time.sleep(0.3)
@@ -2087,16 +2072,16 @@ def c31_rolls_import_pane(t):
       };
     """)
 
-    exp_toggles = ["--dry-run", "--all", "--gpu", "--recursive", "--create-db", "--threshold"]
+    exp_toggles = ["--dry-run", "--all", "--gpu", "--recursive", "--threshold"]  # #186: no --create-db
     ok = (
         pane.get("open") and pane.get("detailGone")
         and pane.get("dir") == "/mnt/rolls/new-roll"
         and pane.get("db") == "/mock/data/faces.db"
         and pane.get("toggles") == exp_toggles
+        and pane.get("createDbAbsent")
         and pane.get("threshold") and pane.get("start") and pane.get("stop")
         and pane.get("recursiveDefault") is True
         and pane.get("state")
-        and combo.get("err") and combo.get("startDisabled")
         and "WhoT import_roll" in log.get("text", "")
         and "done — imported 3 image(s)" in log.get("text", "")
         and log.get("selectable") == "text"
@@ -2104,9 +2089,9 @@ def c31_rolls_import_pane(t):
         and after.get("hint") is not None and "no images under" in after.get("hint", "")
         and after.get("paneGone")
     )
-    record("C31 Rolls import pane: dir → pane in right pane, toggles, recursive default on, combo refusal, stdout viewport, exit 0 (#167/#169)",
+    record("C31 Rolls import pane: dir → pane in right pane, toggles (no --create-db #186), recursive default on, stdout viewport, exit 0 (#167/#169)",
            ok,
-           f"pane={pane}; combo={combo}; log state={log.get('state')!r} "
+           f"pane={pane}; log state={log.get('state')!r} "
            f"selectable={log.get('selectable')!r} chars={len(log.get('text', ''))}; "
            f"non-dir hint={after.get('hint')!r} paneGone={after.get('paneGone')}")
 
@@ -3629,6 +3614,747 @@ def c41_verdict_focuses_person(t):
            f"C: pick={pick2} {c}")
 
 
+def c42_edit_label_everywhere(t):
+    """#180 (§4.24): ONE label — 'Edit…' — for every opener of the shared
+    Edit dialog: the rule-bar button, the face-card button and the
+    cluster-header button read 'Edit…', the face context menu item reads
+    'Edit…' ('Edit… (N selected)' for a multi-scope), the dialog title
+    is 'Edit', and no opener says 'Assign' any more."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def menu_texts():
+        return js(t, r"""
+          return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim());
+        """)
+
+    def close_menu():
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.4)
+
+    # ── the card buttons, the header buttons and the rule bar ─────────
+    ids = js(t, r"""
+      return [...document.querySelectorAll('.face-card')].slice(0, 2)
+        .map(c => Number(c.dataset.faceId));
+    """)
+    if len(ids) < 2:
+        record("C42 'Edit…' everywhere (#180/§4.24): one label for every dialog opener", True,
+               "need at least two face cards — vacuous")
+        return
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[0]}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()          # select it — the rule bar shows
+    time.sleep(0.5)
+    state = js(t, r"""
+      const bar = [...document.querySelectorAll('.rulebar button')].map(b => b.textContent.trim());
+      const cardBtns = [...document.querySelectorAll('.face-card button')].map(b => b.textContent.trim());
+      const headBtns = [...document.querySelectorAll('.face-section button')].map(b => b.textContent.trim());
+      const all = [...bar, ...cardBtns, ...headBtns];
+      return {bar, cardBtns, headBtns,
+              editBar: bar.filter(x => x.startsWith('Edit')),
+              editCard: cardBtns.filter(x => x === 'Edit…').length,
+              editHead: headBtns.filter(x => x === 'Edit…').length,
+              assign: all.filter(x => x.includes('Assign'))};
+    """)
+    btn_ok = (state["editBar"] == ["Edit…"] and state["editCard"] >= 1
+              and state["editHead"] >= 1 and not state["assign"])
+
+    # the rule bar's Edit… opens the dialog titled 'Edit' (Cancel closes)
+    edit_btn = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+                if b.text.strip().startswith("Edit")][0]
+    edit_btn.click()
+    time.sleep(0.8)
+    opened = js(t, r"""
+      const d = document.querySelector('.overlay .dialog');
+      return d ? (d.querySelector('h3')?.textContent.trim() ?? '') : null;
+    """)
+    cancel = t.find_elements(By.CSS_SELECTOR, ".overlay .dialog button.secondary")
+    if cancel:
+        cancel[0].click()
+        time.sleep(0.5)
+    dialog_ok = opened == "Edit" and not js(t, "return !!document.querySelector('.overlay .dialog')")
+
+    # ── the face context menu: single scope, then a 2-face multi ──────
+    AC(t.driver).context_click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[0]}']")).perform()
+    time.sleep(0.6)
+    single = menu_texts()
+    close_menu()
+    # the single-phase click left {ids[0]} selected — ctrl-click adds the
+    # second card (a plain click would TOGGLE it off)
+    AC(t.driver).key_down(Keys.CONTROL).click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[1]}']")).key_up(Keys.CONTROL).perform()
+    time.sleep(0.4)
+    AC(t.driver).context_click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[1]}']")).perform()
+    time.sleep(0.6)
+    multi = menu_texts()
+    close_menu()
+
+    single_ok = "Edit…" in single and not any("Assign" in x for x in single)
+    multi_ok = "Edit… (2 selected)" in multi and not any("Assign" in x for x in multi)
+
+    ok = btn_ok and dialog_ok and single_ok and multi_ok
+    record("C42 'Edit…' everywhere (#180/§4.24): one label for every dialog opener, no 'Assign' left",
+           ok,
+           f"bar edit={state['editBar']} card×{state['editCard']} head×{state['editHead']} "
+           f"assign-left={state['assign']}; dialog={opened!r} closed={dialog_ok}; "
+           f"menu single={single_ok} multi={multi_ok} (multi items: {[x for x in multi if 'Edit' in x]})")
+
+
+def c43_single_only_menu_items(t):
+    """#182 (§4.14): one-item-only context-menu entries grey out when the
+    scope exceeds one item — the face menu's 'Open full image'
+    (2-card scope), the thumbnail menu's 'Open image' + 'Open full image
+    (focused)' (2-thumb scope) and the tree person menu's one-person
+    trio (Open person / Rename… / Select their pending faces) — while
+    the scope-wide entries (Accept, Rotate…) stay enabled; and every
+    one of them is enabled again for a single-item scope."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def item(label_text):
+        return js(t, r"""
+          const want = arguments[0];
+          const el = [...document.querySelectorAll('.ctx-item')]
+            .find(x => x.textContent.trim().startsWith(want));
+          return el ? {found: true, disabled: el.disabled} : {found: false};
+        """, label_text)
+
+    def close_menu():
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.4)
+
+    # ── phase A: the face menu (review grid) ──────────────────────────
+    ids = js(t, r"""
+      return [...document.querySelectorAll('.face-card')].slice(0, 2)
+        .map(c => Number(c.dataset.faceId));
+    """)
+    if len(ids) < 2:
+        record("C43 one-item-only menu entries disable for a multi-scope (#182/§4.14)", True,
+               "need at least two face cards — vacuous")
+        return
+    c0 = f".face-card[data-face-id='{ids[0]}']"
+    c1 = f".face-card[data-face-id='{ids[1]}']"
+    js(t, "arguments[0].scrollIntoView({block:'center'})", t.find_element(By.CSS_SELECTOR, c0))
+    time.sleep(0.3)
+    t.find_element(By.CSS_SELECTOR, c0).click()
+    time.sleep(0.4)
+    AC(t.driver).key_down(Keys.CONTROL).click(
+        t.find_element(By.CSS_SELECTOR, c1)).key_up(Keys.CONTROL).perform()
+    time.sleep(0.4)
+    AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, c1)).perform()
+    time.sleep(0.6)
+    a_multi = item("Open full image")
+    a_scope = item("Accept")          # scope-wide: enabled in BOTH states
+    close_menu()
+    t.find_element(By.CSS_SELECTOR, c0).click()      # plain click replaces → {c0}
+    time.sleep(0.4)
+    AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, c0)).perform()
+    time.sleep(0.6)
+    a_single = item("Open full image")
+    close_menu()
+    a_ok = (a_multi["found"] and a_multi["disabled"]
+            and a_scope["found"] and not a_scope["disabled"]
+            and a_single["found"] and not a_single["disabled"])
+
+    # ── phase B: the thumbnail menu (Rolls) ───────────────────────────
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+     if "Rolls" in b.text][0].click()
+    time.sleep(1.0)
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const dirOf = p => { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); };
+      const dirs = new Map();
+      for (const im of snap.images) {
+        const d = dirOf(im.primary_path);
+        if (d !== '/') dirs.set(d, (dirs.get(d) || 0) + 1);
+      }
+      let best = null, nbest = 1;
+      for (const [d, n] of dirs) if (n > nbest) { best = d; nbest = n; }
+      return best ? {dir: best, n: nbest} : null;
+    """)
+    b_ok = None
+    if pick:
+        def drill(path):
+            segs = [s for s in path.strip('/').split('/') if s]
+            for i, seg in enumerate(segs):
+                last = i == len(segs) - 1
+                state = js(t, r"""
+                  const prefix = arguments[0], seg = arguments[1], last = arguments[2];
+                  let container = document.querySelector('.rolls');
+                  for (const p of prefix) {
+                    const s = [...container.children].find(x => x.classList.contains('roll') &&
+                      x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === p);
+                    if (!s) return 'no-parent';
+                    container = s.querySelector(':scope > .roll-children');
+                    if (!container) return 'closed-parent';
+                  }
+                  const target = [...container.children].find(x => x.classList.contains('roll') &&
+                    x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === seg);
+                  if (!target) return 'not-found';
+                  const isOpen = !!target.querySelector(':scope > .roll-children');
+                  if (last || !isOpen) target.querySelector(':scope > .roll-header').click();
+                  return 'ok';
+                """, segs[:i], seg, last)
+                time.sleep(0.6)
+                if state != "ok":
+                    return False
+            return True
+
+        drilled = drill(pick["dir"])
+
+        def thumb(i):
+            return t.find_elements(By.CSS_SELECTOR, ".rolls-thumbs .img-thumb")[i]
+
+        thumb(0).click()          # plain click selects ONE
+        time.sleep(0.4)
+        t2 = thumb(1)
+        AC(t.driver).key_down(Keys.CONTROL).click(t2).key_up(Keys.CONTROL).perform()
+        time.sleep(0.4)
+        AC(t.driver).context_click(t2).perform()
+        time.sleep(0.6)
+        b_open = item("Open image")
+        b_full = item("Open full image (focused)")
+        b_rot = item("Rotate 90° CW")     # scope-wide: stays enabled
+        close_menu()
+        thumb(0).click()                  # back to a single selection
+        time.sleep(0.4)
+        AC(t.driver).context_click(thumb(0)).perform()
+        time.sleep(0.6)
+        b_open_s = item("Open image")
+        b_full_s = item("Open full image (focused)")
+        close_menu()
+        b_ok = (drilled
+                and b_open["found"] and b_open["disabled"]
+                and b_full["found"] and b_full["disabled"]
+                and b_rot["found"] and not b_rot["disabled"]
+                and b_open_s["found"] and not b_open_s["disabled"]
+                and b_full_s["found"] and not b_full_s["disabled"])
+
+    # ── phase C: the tree person menu ─────────────────────────────────
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+     if "Review" in b.text][0].click()
+    time.sleep(1.0)
+    pids = js(t, r"""
+      return [...document.querySelectorAll('.tree-person')]
+        .map(x => Number(x.dataset.personId))
+        .filter(id => (window.__MOCK_SNAP.persons.find(p => p.id === id)?.counts.provisional ?? 0) > 0)
+        .slice(0, 2);
+    """)  # persons WITH pending faces — 'Select their pending faces' is
+         # then disabled only by the multi-scope (#182), never by content
+    c_ok = None
+    if len(pids) == 2:
+        r0 = f".tree-person[data-person-id='{pids[0]}']"
+        r1 = f".tree-person[data-person-id='{pids[1]}']"
+        js(t, "arguments[0].scrollIntoView({block:'center'})", t.find_element(By.CSS_SELECTOR, r0))
+        time.sleep(0.3)
+        t.find_element(By.CSS_SELECTOR, r0).click()   # single
+        time.sleep(0.6)
+        AC(t.driver).key_down(Keys.CONTROL).click(
+            t.find_element(By.CSS_SELECTOR, r1)).key_up(Keys.CONTROL).perform()
+        time.sleep(0.4)
+        AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, r1)).perform()
+        time.sleep(0.6)
+        c_open = item("Open person")
+        c_ren = item("Rename…")
+        c_pend = item("Select their pending faces")
+        c_move = item(f"Move 2 persons to group…")   # scope-wide: enabled
+        close_menu()
+        t.find_element(By.CSS_SELECTOR, r0).click()   # back to single
+        time.sleep(0.6)
+        AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, r0)).perform()
+        time.sleep(0.6)
+        c_open_s = item("Open person")
+        c_ren_s = item("Rename…")
+        c_pend_s = item("Select their pending faces")
+        close_menu()
+        c_ok = (c_open["found"] and c_open["disabled"]
+                and c_ren["found"] and c_ren["disabled"]
+                and c_pend["found"] and c_pend["disabled"]
+                and c_move["found"] and not c_move["disabled"]
+                and c_open_s["found"] and not c_open_s["disabled"]
+                and c_ren_s["found"] and not c_ren_s["disabled"]
+                and c_pend_s["found"] and not c_pend_s["disabled"])
+    else:
+        c_ok = True  # vacuous sub-phase
+
+    ok = a_ok and (b_ok is not False) and c_ok
+    record("C43 one-item-only menu entries disable for a multi-scope (#182/§4.14): face/thumbnail/tree menus",
+           ok,
+           f"A: multi={a_multi} scope={a_scope} single={a_single}; "
+           f"B: pick={pick} open={b_open} full={b_full} rot={b_rot} "
+           f"single open={b_open_s} full={b_full_s} (ok={b_ok}); "
+           f"C: pids={pids} open={c_open} rename={c_ren} pend={c_pend} move={c_move} "
+           f"single open={c_open_s} rename={c_ren_s} (ok={c_ok})")
+
+
+def c44_rotate_image_cascades(t):
+    """#183 (§4.32): rotating the IMAGE cascades the delta to every crop
+    on it — the focus header's ⟳ button advances images.rotation AND
+    every face of that image by +90 in the mock — while a CROP rotation
+    never touches the image (the face menu's 'Rotate crop 90° CW' moves
+    that one face by +90; the image and its other crops stay)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const byImg = new Map();
+      for (const f of snap.faces) {
+        const a = byImg.get(f.image_id) ?? [];
+        a.push(f.id); byImg.set(f.image_id, a);
+      }
+      for (const [imgId, fids] of byImg) {
+        if (fids.length < 2 || !snap.images.some(x => x.id === imgId)) continue;
+        // the card must be IN the grid — the review sections hold the
+        // provisional faces (under Show → All too, §4.10)
+        const prov = snap.faces.filter(f =>
+          f.image_id === imgId && f.link_status === 'provisional').map(f => f.id);
+        if (prov.length) return {imgId, fids, provFid: prov[0]};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C44 rotate image cascades to its crops (#183/§4.32)", True,
+               "no image with ≥2 faces — vacuous")
+        return
+
+    def rots():
+        return js(t, r"""
+          const img = window.__MOCK_SNAP.images.find(x => x.id === arguments[0]);
+          const faces = window.__MOCK_SNAP.faces.filter(f => f.image_id === arguments[0])
+            .map(f => ({id: f.id, rot: f.rotation ?? 0}));
+          return {img: img?.rotation ?? null, faces};
+        """, pick["imgId"])
+
+    fid = pick["provFid"]
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()
+    time.sleep(0.5)
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")
+    AC(t.driver).double_click(card).perform()
+    time.sleep(1.0)
+    before = rots()
+
+    # ⟳ in the focus header — the image AND every crop
+    t.find_element(By.CSS_SELECTOR, ".focus-top button[title^='Rotate 90° clockwise']").click()
+    time.sleep(1.2)
+    after_img = rots()
+    cascade_ok = (after_img["img"] == (before["img"] + 90) % 360
+                  and len(after_img["faces"]) == len(before["faces"])
+                  and all(a["rot"] == (b["rot"] + 90) % 360
+                          for a, b in zip(after_img["faces"], before["faces"])))
+
+    # close the focus (Esc), then a CROP rotation via the face menu
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.8)
+    t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']").click()  # single scope
+    time.sleep(0.4)
+    AC(t.driver).context_click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")).perform()
+    time.sleep(0.6)
+    items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+             if b.text.strip() == "Rotate crop 90° CW"]
+    rotated = False
+    if items and items[0].is_enabled():
+        items[0].click()
+        time.sleep(1.2)
+        rotated = True
+    after_crop = rots()
+    face_rot = next((f["rot"] for f in after_crop["faces"] if f["id"] == fid), None)
+    others = [f["rot"] for f in after_crop["faces"] if f["id"] != fid]
+    crop_ok = (rotated
+               and face_rot == (next(f["rot"] for f in after_img["faces"] if f["id"] == fid) + 90) % 360
+               and after_crop["img"] == after_img["img"]            # the image never moves
+               and all(r == next(f["rot"] for f in after_img["faces"] if f["id"] == i)
+                       for r, i in zip(others, [f["id"] for f in after_crop["faces"] if f["id"] != fid])))
+
+    ok = cascade_ok and crop_ok
+    record("C44 rotate image cascades to its crops (#183/§4.32): image ⟳ moves every face, crop rotate leaves the image",
+           ok,
+           f"pick={pick} before={before} after ⟳={after_img} (cascade={cascade_ok}); "
+           f"crop menu item={bool(items)} → {after_crop} (crop={crop_ok})")
+
+
+def c45_face_menu_add_group(t):
+    """#184 (§4.18): the face menu's 'Add group…' — a scope over N
+    DISTINCT persons reads 'Add group to N persons…' and the
+    GroupDialog adds the typed path as ANOTHER membership to all N (the
+    #164 add semantics — every real group kept); a single-person scope
+    reads plain 'Add group…'. Both pick persons are FILED (real group)
+    so the kept-membership assertion is exact."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const SEATS = ['New', 'Accepted', 'Rejected'];
+      const byId = new Map(snap.persons.map(p => [p.id, p]));
+      const filed = id => {
+        const p = byId.get(id);
+        return !!p && p.groups.some(g => !SEATS.includes(g));
+      };
+      const prov = snap.faces.filter(f =>
+        f.link_status === 'provisional' && f.person_id != null && filed(f.person_id));
+      for (const a of prov) {
+        for (const b of prov)
+          if (a.id !== b.id && a.person_id !== b.person_id)
+            return {a: a.id, b: b.id, pa: a.person_id, pb: b.person_id};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C45 face menu 'Add group…' over N persons (#184/§4.18)", True,
+               "need two provisional faces of DIFFERENT filed persons — vacuous")
+        return
+
+    def groups():
+        return js(t, r"""
+          const g = id => (window.__MOCK_SNAP.persons.find(p => p.id === id)?.groups ?? []).slice();
+          return {pa: g(arguments[0]), pb: g(arguments[1])};
+        """, pick["pa"], pick["pb"])
+
+    def card(fid):
+        return t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")
+
+    before = groups()
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card(pick["a"]))
+    time.sleep(0.3)
+    card(pick["a"]).click()
+    time.sleep(0.4)
+    # the two cards can sit far apart — AC clicks need b in the viewport
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card(pick["b"]))
+    time.sleep(0.3)
+    AC(t.driver).key_down(Keys.CONTROL).click(card(pick["b"])).key_up(Keys.CONTROL).perform()
+    time.sleep(0.4)
+    AC(t.driver).context_click(card(pick["b"])).perform()
+    time.sleep(0.6)
+    labels = js(t, r"""
+      return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim());
+    """)
+    two_ok = "Add group to 2 persons…" in labels
+    clicked = js(t, r"""
+      const it = [...document.querySelectorAll('.ctx-item')]
+        .find(x => x.textContent.trim() === 'Add group to 2 persons…');
+      if (!it) return false;
+      it.click();
+      return true;
+    """)
+    time.sleep(0.5)
+    title = js(t, "return document.querySelector('.dialog h3')?.textContent.trim() ?? null;")
+    typed = js(t, r"""
+      const el = document.querySelector('.dialog input');
+      if (!el) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, arguments[0]);
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      return true;
+    """, "Ck45|Grp")
+    submitted = js(t, r"""
+      const b = [...document.querySelectorAll('.dialog-actions button')]
+        .find(x => x.textContent.trim() === 'add group');
+      if (!b) return false;
+      b.click();
+      return true;
+    """)
+    time.sleep(1.2)
+    after = groups()
+
+    def expect(old):
+        real = [g for g in old if g not in ("New", "Accepted", "Rejected")]
+        return sorted(set(real + ["Ck45|Grp"]))     # kept + added
+    added_ok = (sorted(after["pa"]) == expect(before["pa"])
+                and sorted(after["pb"]) == expect(before["pb"]))
+
+    # single-person scope reads plain 'Add group…'
+    card(pick["a"]).click()          # plain click replaces the selection
+    time.sleep(0.4)
+    AC(t.driver).context_click(card(pick["a"])).perform()
+    time.sleep(0.6)
+    labels1 = js(t, r"""
+      return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim());
+    """)
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.4)
+    single_ok = ("Add group…" in labels1
+                 and "Add group to 2 persons…" not in labels1)
+
+    ok = (two_ok and clicked and title == "Add a group to 2 persons"
+          and typed and submitted and added_ok and single_ok)
+    record("C45 face menu 'Add group…' over N persons (#184/§4.18): 2-person label + adds to both with groups kept, single scope plain",
+           ok,
+           f"pick={pick} before={before} two-label={two_ok} title={title!r} "
+           f"after={after} (kept+added={added_ok}); single={single_ok}")
+
+
+def c46_edit_dialog_group_list(t):
+    """#181 (§4.38): a KNOWN name fronts the person's group list in the
+    Edit dialog — the shared rows (× removal, add row); the edits stage
+    locally and Accept commits them AFTER the name (a list-only Accept
+    runs the chain too), landing on the SURVIVING person (the merge
+    target when the name merges); a NEW name keeps the single Group
+    field."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def pick_filed(exclude=()):
+        return js(t, r"""
+          const snap = window.__MOCK_SNAP;
+          const SEATS = ['New', 'Accepted', 'Rejected'];
+          const ex = arguments[0];
+          const byId = new Map(snap.persons.map(p => [p.id, p]));
+          for (const f of snap.faces) {
+            if (f.link_status !== 'provisional' || f.person_id == null) continue;
+            if (ex.includes(f.person_id)) continue;
+            const p = byId.get(f.person_id);
+            if (!p || /^unknown/i.test(p.name) || p.name === 'Rejected') continue;
+            const real = p.groups.filter(g => !SEATS.includes(g));
+            if (real.length >= 1)
+              return {fid: f.id, pid: p.id, name: p.name, groups: p.groups.slice(), real};
+          }
+          return null;
+        """, list(exclude))
+
+    def open_dialog(fid):
+        """the card's Edit… button"""
+        return js(t, r"""
+          const c = document.querySelector(`.face-card[data-face-id='${arguments[0]}']`);
+          if (!c) return false;
+          const b = [...c.querySelectorAll('button')].find(x => x.textContent.trim() === 'Edit…');
+          if (!b) return false;
+          b.scrollIntoView({block: 'center'});
+          b.click();
+          return true;
+        """, fid)
+
+    def rows():
+        return js(t, r"""
+          return {
+            list: !!document.querySelector('.edit-dialog .ed-groups'),
+            paths: [...document.querySelectorAll('.edit-dialog .ed-groups .dp-group-path')]
+              .map(x => x.textContent.trim()),
+            single: [...document.querySelectorAll('.edit-dialog .typeahead input')]
+              .some(i => (i.placeholder ?? '').includes('ungrouped')),
+          };
+        """)
+
+    def set_name(v):
+        js(t, r"""
+          const el = document.querySelector('.edit-dialog .typeahead input');
+          if (!el) return;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+        """, v)
+        time.sleep(0.4)
+
+    def click_btn(sel, text):
+        return js(t, r"""
+          const b = [...document.querySelectorAll(arguments[0])]
+            .find(x => x.textContent.trim() === arguments[1]);
+          if (!b) return false;
+          b.click();
+          return true;
+        """, sel, text)
+
+    def set_add(v):
+        js(t, r"""
+          const el = document.querySelector('.edit-dialog .dp-add-group .typeahead input');
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+        """, v)
+        time.sleep(0.3)
+
+    def groups_of(pid):
+        return js(t, r"""
+          return (window.__MOCK_SNAP.persons.find(p => p.id === arguments[0])?.groups ?? []).slice();
+        """, pid)
+
+    # ── phase A: known (prefilled) name → the list; a list-only Accept
+    #    commits × the row + the added path ────────────────────────────
+    a = pick_filed()
+    if not a:
+        record("C46 Edit dialog group list (#181/§4.38)", True,
+               "need a provisional face of a filed person — vacuous")
+        return
+    js(t, "arguments[0].scrollIntoView({block:'center'})",
+       t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{a['fid']}']"))
+    time.sleep(0.3)
+    opened = open_dialog(a["fid"])
+    time.sleep(0.6)
+    pa = rows()
+    pa_ok = (opened and pa["list"] and pa["paths"] == a["groups"] and not pa["single"])
+    x = t.find_element(By.CSS_SELECTOR, ".edit-dialog .ed-groups .dp-group-x")
+    x.click()
+    time.sleep(0.4)
+    set_add("Ck46|G2")
+    click_btn(".edit-dialog .dp-add-btn", "Add group")
+    time.sleep(0.4)
+    untouched = groups_of(a["pid"]) == a["groups"]    # staged only
+    click_btn(".edit-dialog .dialog-actions button", "Accept")
+    time.sleep(1.5)
+    a_after = groups_of(a["pid"])
+    dialog_gone = not js(t, "return !!document.querySelector('.edit-dialog')")
+    a_commit_ok = (untouched and a_after == ["Ck46|G2"] and dialog_gone)
+
+    # ── phase B: a NEW name keeps the single Group field ──────────────
+    b = pick_filed(exclude=[a["pid"]])
+    b_ok = None
+    pb = None
+    if b:
+        js(t, "arguments[0].scrollIntoView({block:'center'})",
+           t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{b['fid']}']"))
+        time.sleep(0.3)
+        open_dialog(b["fid"])
+        time.sleep(0.6)
+        set_name("Ck46NewPerson")
+        pb = rows()
+        b_ok = (not pb["list"] and pb["single"])
+        click_btn(".edit-dialog .dialog-actions button", "cancel")
+        time.sleep(0.4)
+
+    # ── phase C: a name MERGE — the ops land on the target ───────────
+    c = pick_filed(exclude=[a["pid"], b["pid"] if b else -1])
+    c_ok = None
+    c_state = {}
+    if c and b:
+        js(t, "arguments[0].scrollIntoView({block:'center'})",
+           t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{c['fid']}']"))
+        time.sleep(0.3)
+        open_dialog(c["fid"])
+        time.sleep(0.6)
+        set_name(a["name"])              # a KNOWN name — the list appears
+        pc = rows()
+        # stage on the TARGET'S list: × their row, add another
+        x = t.find_element(By.CSS_SELECTOR, ".edit-dialog .ed-groups .dp-group-x")
+        x.click()
+        time.sleep(0.4)
+        set_add("Ck46|G3")
+        click_btn(".edit-dialog .dp-add-btn", "Add group")
+        time.sleep(0.4)
+        c_before = groups_of(a["pid"])   # still ['Ck46|G2'] — staged only
+        click_btn(".edit-dialog .dialog-actions button", "Accept")
+        time.sleep(1.8)
+        c_after = groups_of(a["pid"])
+        merged_face = js(t, r"""
+          const f = window.__MOCK_SNAP.faces.find(x => x.id === arguments[0]);
+          return f ? f.person_id : null;
+        """, c["fid"])
+        c_state = {"list": pc["list"], "before": c_before, "after": c_after, "owner": merged_face}
+        c_ok = (pc["list"] and c_before == ["Ck46|G2"]
+                and c_after == ["Ck46|G3"]
+                and merged_face == a["pid"])   # the face landed on the TARGET
+
+    ok = pa_ok and a_commit_ok and (b_ok is not False) and (c_ok is not False)
+    record("C46 Edit dialog group list (#181/§4.38): known name fronts the list, staged ops commit on Accept (list-only too), merge ops hit the target, new name keeps the single field",
+           ok,
+           f"A: pick={a} rows={pa} staged-only={untouched} after={a_after} closed={dialog_gone}; "
+           f"B: pick={b} → {pb} (ok={b_ok}); C: pick={c} {c_state} (ok={c_ok})")
+
+
+def c47_first_run_no_database(t):
+    """#185/#186 (§4.36): with NO usable database the app shows the
+    first-run dialog instead of the raw error — 'No database yet' with
+    Retry + Open import pane; the offer picks a folder natively and
+    shows the STANDALONE import pane with --create-db pre-checked
+    (--dry-run then refused by the existing combo rule), ✕ returns to
+    the dialog, and once a usable database exists Retry loads the normal
+    app. NOT fresh(): there are no cards to wait for — the no-DB state
+    is seeded through the mock's ?no_db=1 init param."""
+    t.navigate(URL + "?no_db=1")
+    appeared = False
+    for _ in range(30):
+        time.sleep(0.4)
+        if js(t, "return !!document.querySelector('.first-run .dialog')"):
+            appeared = True
+            break
+    if not appeared:
+        record("C47 first-run (#185/#186): no usable DB → dialog → standalone pane (--create-db pre-checked, combo refused) → Retry loads the app",
+               False, "the first-run dialog never appeared")
+        return
+    d = js(t, r"""
+      const dlg = document.querySelector('.first-run .dialog');
+      return {
+        title: dlg.querySelector('h3')?.textContent.trim() ?? '',
+        buttons: [...dlg.querySelectorAll('button')].map(b => b.textContent.trim()),
+        noFatal: !document.body.innerText.includes('Could not load database'),
+      };
+    """)
+    d_ok = (d["title"] == "No database yet"
+            and d["buttons"] == ["Retry", "Open import pane"]
+            and d["noFatal"])
+
+    # the offer — the native picker returns the seeded folder
+    js(t, "window.__MOCK_DIALOG_PICK__ = '/mnt/rolls/first-roll';")
+    js(t, r"""
+      [...document.querySelectorAll('.first-run .dialog button')]
+        .find(b => b.textContent.trim() === 'Open import pane').click();
+    """)
+    pane_up = False
+    for _ in range(25):
+        time.sleep(0.4)
+        if js(t, "return !!document.querySelector('.first-run .import-pane')"):
+            pane_up = True
+            break
+    p = js(t, r"""
+      const el = document.querySelector('.first-run .import-pane');
+      if (!el) return null;
+      const labels = [...el.querySelectorAll('.import-opts label')];
+      const cd = labels.find(l => l.textContent.includes('--create-db'));
+      return {
+        dir: el.querySelector('.import-path')?.textContent ?? null,
+        hasCreateDb: !!cd,
+        createDbChecked: cd ? cd.querySelector('input[type=checkbox]').checked : null,
+        toggles: labels.map(l => l.textContent.trim().split(/\s+/)[0]),
+      };
+    """)
+    pane_ok = (pane_up and p is not None
+               and p["dir"] == "/mnt/rolls/first-roll"
+               and p["hasCreateDb"] and p["createDbChecked"] is True)  # #185 pre-checked
+
+    # the combo rule — reachable HERE (the option exists with no DB):
+    # create-db pre-checked ⇒ --dry-run is refused up front
+    js(t, r"""
+      const labels = [...document.querySelectorAll('.import-opts label')];
+      const l = labels.find(x => x.textContent.includes('--dry-run'));
+      l.querySelector('input[type=checkbox]').click();
+    """)
+    time.sleep(0.4)
+    combo = js(t, r"""
+      const el = document.querySelector('.first-run .import-pane');
+      const start = [...el.querySelectorAll('button')].find(b => b.textContent.trim() === 'start');
+      return {err: !!el.querySelector('.import-error'), startDisabled: start?.disabled ?? null};
+    """)
+    combo_ok = combo["err"] and combo["startDisabled"]
+
+    # ✕ back to the dialog
+    js(t, "[...document.querySelectorAll('.import-head button')].find(b => b.textContent.includes('✕')).click();")
+    time.sleep(0.5)
+    back_ok = js(t, "return !!document.querySelector('.first-run .dialog') && !document.querySelector('.first-run .import-pane')")
+
+    # a usable database now exists → Retry loads the normal app
+    js(t, "delete window.__MOCK_NO_DB__;")
+    js(t, r"""
+      [...document.querySelectorAll('.first-run .dialog button')]
+        .find(b => b.textContent.trim() === 'Retry').click();
+    """)
+    retry_ok = False
+    for _ in range(30):
+        time.sleep(0.4)
+        if js(t, "return !!document.querySelector('.face-card') && !document.querySelector('.first-run')"):
+            retry_ok = True
+            break
+
+    ok = d_ok and pane_ok and combo_ok and back_ok and retry_ok
+    record("C47 first-run (#185/#186): no usable DB → dialog → standalone pane (--create-db pre-checked, combo refused) → ✕ back → Retry loads the app",
+           ok,
+           f"dialog={d} (ok={d_ok}); pane={p} (ok={pane_ok}); combo={combo} (ok={combo_ok}); "
+           f"back={back_ok} retry={retry_ok}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -3677,6 +4403,12 @@ def main():
         c39_rename_seated_person(t)
         c40_db_status_totals(t)
         c41_verdict_focuses_person(t)
+        c42_edit_label_everywhere(t)
+        c43_single_only_menu_items(t)
+        c44_rotate_image_cascades(t)
+        c45_face_menu_add_group(t)
+        c46_edit_dialog_group_list(t)
+        c47_first_run_no_database(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

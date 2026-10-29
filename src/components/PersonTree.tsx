@@ -388,6 +388,8 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   const branchIds = branchMenu ? collectSubtreeIds(branchMenu.node) : [];
   // #165/§4.35: the system person offers no rename/move/file/merge/remove
   const systemInMenu = menuTargets.some((id) => byId.get(id)?.name === "Rejected");
+  // #182/§4.14: the one-person-only entries grey out for a multi-scope
+  const manyInMenu = menuTargets.length > 1;
 
   // ------------------------------------------------------------ #50 drag & drop (§4.16)
 
@@ -670,13 +672,24 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
             groups: [
               {
                 items: [
-                  { label: "Open person", onClick: () => onSelect(menu.id) },
-                  { label: "Rename…", onClick: () => setRenamingId(menu.id), disabled: systemInMenu },
+                  {
+                    label: "Open person",
+                    onClick: () => onSelect(menu.id),
+                    disabled: manyInMenu, // #182: one person at a time
+                  },
+                  {
+                    label: "Rename…",
+                    onClick: () => setRenamingId(menu.id),
+                    // #182: inline rename is single-person — the
+                    // multi-scope has 'Rename N persons to…' below
+                    disabled: systemInMenu || manyInMenu,
+                  },
                   {
                     label: "Select their pending faces",
                     onClick: () => onSelectPending?.(menu.id),
                     disabled:
-                      (persons.find((p) => p.id === menu.id)?.counts.provisional ?? 0) === 0,
+                      (persons.find((p) => p.id === menu.id)?.counts.provisional ?? 0) === 0 ||
+                      manyInMenu,
                   },
                 ],
               },

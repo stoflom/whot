@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead from "./PathTypeahead";
+import GroupListEditor from "./GroupListEditor";
+import { applyGroupOps, type GroupOp } from "../groupList";
 import type { SuggestOption } from "./SuggestInput";
 import { useOwnsKeyboard } from "../overlays";
 import type { Prefill, StageScope } from "../stage";
@@ -18,6 +20,10 @@ export interface EditResult {
   scope: StageScope;
   values: { name: string; group: string; desc: string };
   touched: { name: boolean; group: boolean; desc: boolean };
+  /** #181 (§4.38): the group-LIST edits — staged locally, committed by
+      Accept (the name first, then the memberships on the surviving
+      person); Apply leaves them local */
+  groupOps: GroupOp[];
 }
 
 interface Props {
@@ -73,6 +79,12 @@ export default function EditDialog({
   const [group, setGroup] = useState(base.group ?? "");
   const [desc, setDesc] = useState(base.desc ?? "");
   const [touched, setTouched] = useState({ name: false, group: false, desc: false });
+  // #181 (§4.38): the staged membership edits of the group LIST — shown
+  // while the Name field holds a KNOWN person's name (the same list the
+  // details pane shows, §4.38); a new/empty name keeps the single field
+  const [groupOps, setGroupOps] = useState<GroupOp[]>([]);
+  const knownName = name.trim();
+  const known = knownName ? persons.find((p) => p.name.trim() === knownName) ?? null : null;
 
   // switching scope re-bases the fields on that scope's values (§4.24)
   useEffect(() => {
@@ -81,13 +93,14 @@ export default function EditDialog({
     setGroup(b.group ?? "");
     setDesc(b.desc ?? "");
     setTouched({ name: false, group: false, desc: false });
+    setGroupOps([]); // #181: the list staging is per-scope
   }, [scope, prefills]);
 
   const ph = (f: "name" | "group" | "desc") =>
     (base.mixed ?? []).includes(f) ? MIXED_HINT : undefined;
 
   const done = (kind: EditResult["kind"]) =>
-    onDone({ kind, scope, values: { name, group, desc }, touched });
+    onDone({ kind, scope, values: { name, group, desc }, touched, groupOps });
 
   const enter = (e: React.KeyboardEvent) => {
     e.stopPropagation();
@@ -157,21 +170,37 @@ export default function EditDialog({
             onEscape={onCancel}
           />
         </label>
-        <label>
-          Group
-          <PathTypeahead
-            value={group}
-            onChange={(v) => {
-              setGroup(v);
-              setTouched((t) => ({ ...t, group: true }));
-            }}
-            options={pathOptions}
-            placeholder={ph("group") ?? "ungrouped (empty)"}
-            title="Group path — '|' separated; empty files the faces as ungrouped"
-            onSubmit={() => done("accept")}
-            onEscape={onCancel}
-          />
-        </label>
+        {known ? (
+          // #181 (§4.38): a KNOWN name fronts that person's group LIST —
+          // the shared rows (× removal, inline re-home, add), staged
+          // locally here; Accept commits them after the name lands
+          <div className="ed-groups-field">
+            <span>Groups ({applyGroupOps(known.groups, groupOps).length})</span>
+            <GroupListEditor
+              groups={known.groups}
+              ops={groupOps}
+              onOps={setGroupOps}
+              options={pathOptions}
+              className="ed-groups"
+            />
+          </div>
+        ) : (
+          <label>
+            Group
+            <PathTypeahead
+              value={group}
+              onChange={(v) => {
+                setGroup(v);
+                setTouched((t) => ({ ...t, group: true }));
+              }}
+              options={pathOptions}
+              placeholder={ph("group") ?? "ungrouped (empty)"}
+              title="Group path — '|' separated; empty files the faces as ungrouped"
+              onSubmit={() => done("accept")}
+              onEscape={onCancel}
+            />
+          </label>
+        )}
         <label>
           Description
           <input

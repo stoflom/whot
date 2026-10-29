@@ -8,9 +8,11 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
+import GroupDialog from "./components/GroupDialog";
 import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
@@ -57,6 +59,11 @@ type Mode = "review" | "rolls" | "person";
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // #185 (§4.36): no USABLE database ⇒ the first-run screen (the dialog
+  // offers the import pane with --create-db) instead of the raw error;
+  // firstRunDir null = the dialog, a string = the standalone pane
+  const [noDb, setNoDb] = useState(false);
+  const [firstRunDir, setFirstRunDir] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("review");
   // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
   // pointer (modeless — the tree under it stays clickable) and the
@@ -191,6 +198,10 @@ export default function App() {
   const [faceMerge, setFaceMerge] = useState<
     { faceIds: number[]; targetId: number } | null
   >(null);
+  // #184 (§4.18): the face menu's 'Add group…' — the dialog over every
+  // DISTINCT person of the scope (the tree owns its own instance for
+  // person rows)
+  const [faceAddGroup, setFaceAddGroup] = useState<{ ids: number[] } | null>(null);
   // #101 (§4.24): grid editing lives in one dialog; #123: Apply extends
   // the pending SET (screen only, nothing commits), Accept commits it all
   const [edit, setEdit] = useState<{
@@ -245,7 +256,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refresh().catch((e) => setLoadError(String(e)));
+    refresh().catch(async (e) => {
+      // #185 (§4.36): a failed load with NO usable database is the
+      // first-run case — offer the create+import flow, not the raw error
+      const usable = await api
+        .getImportInfo()
+        .then((i) => i.dbExists)
+        .catch(() => true); // probe failed — keep the error screen
+      if (usable) setLoadError(String(e));
+      else setNoDb(true);
+    });
   }, [refresh]);
 
   // F12: pick up imports/mutations done while the window is in the background
@@ -503,6 +523,14 @@ export default function App() {
   const doAssign = useCallback(
     (ids: number[], name: string, group: string) =>
       mutate(() => api.assignPerson(ids, name, group), true),
+    [mutate]
+  );
+  // #184 (§4.18/#164 semantics): ADD a membership — from='' deletes
+  // nothing, INSERT OR IGNORE files them, every current group is kept —
+  // shared by the tree's person rows and the face menu's entry
+  const addPersonsToGroup = useCallback(
+    (ids: number[], path: string) =>
+      void mutate(() => api.movePersonsBetweenGroups(ids, "", path)),
     [mutate]
   );
   // #125: a verdict that might empty the current person in Review marks
@@ -866,6 +894,13 @@ export default function App() {
     const scope = actionScope(id);
     const multi = scope.length > 1;
     const label = (s: string) => (multi ? `${s} (${scope.length} selected)` : s);
+    // #184 (§4.18): the distinct OWNED persons of the effective scope —
+    // the Add group… entry files them all (unowned faces count nothing)
+    const groupIds = [
+      ...new Set(
+        scope.map((sid) => facesById.get(sid)?.person_id).filter((p): p is number => p != null)
+      ),
+    ];
     openMenu(e, [
       {
         title: "Selection",
@@ -924,7 +959,18 @@ export default function App() {
             onClick: () => rotateFace(id, -90),
             disabled: multi,
           },
-          { label: label("Assign to person…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
+          // #184 (§4.18/#164): file every DISTINCT person of the scope —
+          // the same GroupDialog + add semantics as the tree's rows
+          {
+            label:
+              groupIds.length > 1
+                ? `Add group to ${groupIds.length} persons…`
+                : "Add group…",
+            onClick: () => setFaceAddGroup({ ids: groupIds }),
+            disabled: groupIds.length === 0,
+          },
+          // #180/§4.24: ONE label — 'Edit…' — for every dialog opener
+          { label: label("Edit…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
           // #51: pointless while this very image is already open in the split
           ...(f.image_id === splitImageId
             ? []
@@ -932,6 +978,9 @@ export default function App() {
                 // #123: opening focus mode is a view-context change;
                 // #171/§4.37: the right pane follows the opening face's person
                 label: "Open full image",
+                // #182/§4.14: focus mode shows one image — disabled for
+                // a multi-scope like its primary/reference/crop siblings
+                disabled: multi,
                 onClick: () =>
                   confirmContext(() => {
                     setSplitImageId(f.image_id);
@@ -1033,6 +1082,9 @@ export default function App() {
             // the drop-or-accept dialog exactly like the focused-open
             // entry just below — it never silently carries a staged set
             label: "Open image",
+            // #182/§4.14: one-image-only — never silently the invoked
+            // thumb out of a multi-scope
+            disabled: many,
             onClick: () =>
               confirmContext(() => {
                 setMode("rolls");
@@ -1042,6 +1094,8 @@ export default function App() {
           {
             // #123: opening focus mode is a view-context change
             label: "Open full image (focused)",
+            // #182/§4.14: focus mode shows one image
+            disabled: many,
             onClick: () => confirmContext(() => setSplitImageId(image.id)),
           },
           // #122: stored display rotation (EXIF key, #118) — over the
@@ -1582,8 +1636,11 @@ export default function App() {
       staged ids. The review advance anchors as before — last-selected,
       hovered, first id) */
   const commitPending = useCallback(
-    async (all: Stage[], acceptIds?: number[]) => {
-      if (all.length === 0) return;
+    async (all: Stage[], acceptIds?: number[], groupOps?: GroupOp[]) => {
+      const opsLive = (groupOps ?? []).length > 0;
+      // #181: a list-only Accept (nothing field-staged) still runs — the
+      // membership edits commit even when every field is untouched
+      if (all.length === 0 && !opsLive) return;
       // #139: the whole set stays staged until the commit lands — the
       // old code wiped it before the first write, so a mid-commit
       // failure silently discarded every not-yet-applied op (§4.24
@@ -1608,10 +1665,27 @@ export default function App() {
       // #166: acceptance runs over the caller's displayed scope — the
       // staged set only staged the edits (empty scope ⇒ the staged ids)
       const ids = acceptIds && acceptIds.length > 0 ? acceptIds : union;
+      // #181 (§4.38): the dialog's group-LIST edits — the name has
+      // landed, so the scope's faces now name the SURVIVING person (the
+      // merge target when the name was taken, the renamed/created one
+      // otherwise); re-read the fresh snapshot (the closure's
+      // facesById predates the claim) and replay the ops per owner
+      if (opsLive) {
+        const s = await api.getSnapshot();
+        const owners = [
+          ...new Set(
+            ids.map((id) => s.faces.find((f) => f.id === id)?.person_id)
+              .filter((p): p is number => p != null)
+          ),
+        ];
+        for (const pid of owners)
+          for (const op of groupOps!)
+            await mutate(() => api.movePersonsBetweenGroups([pid], op.from, op.to));
+      }
       await acceptAndNext(ids, claimed);
       setPending([]);
     },
-    [acceptAndNext, stageOps]
+    [acceptAndNext, stageOps, mutate]
   );
 
   // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the
@@ -2013,6 +2087,66 @@ export default function App() {
     void mutate(() => api.movePersonsToGroup(ids, group));
   }, [mutate]);
 
+  if (noDb) {
+    // #185 (§4.36): no usable database — build it and import the first
+    // roll in ONE flow instead of dead-ending on the raw error
+    return (
+      <div className="first-run">
+        {firstRunDir == null ? (
+          <div className="overlay">
+            <div className="dialog">
+              <h3>No database yet</h3>
+              <p className="dim">
+                No usable database exists at the configured path — build it from{" "}
+                <b>database/schema.sql</b> and import your first roll.
+              </p>
+              <div className="dialog-actions">
+                <button
+                  onClick={() =>
+                    refresh()
+                      .then(() => setNoDb(false))
+                      .catch((e) => {
+                        setNoDb(false);
+                        setLoadError(String(e)); // exists-but-broken: the raw screen
+                      })
+                  }
+                >
+                  Retry
+                </button>
+                <button
+                  className="ok"
+                  title="pick a roll folder — the import pane opens with --create-db pre-checked (#185)"
+                  onClick={() =>
+                    void openFolderDialog({ directory: true }).then((d) => {
+                      if (typeof d === "string" && d) setFirstRunDir(d);
+                    })
+                  }
+                >
+                  Open import pane
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <ImportPane
+            dir={firstRunDir}
+            // #185: one flow — creation is on, so dry-run is refused by
+            // the pane's existing combo rule
+            initial={{ createDb: true }}
+            onClose={() => setFirstRunDir(null)} // ✕ back to the dialog
+            onImported={() =>
+              refresh()
+                .then(() => {
+                  setNoDb(false);
+                  setFirstRunDir(null); // exit 0 — the app appears
+                })
+                .catch((e) => setError(String(e)))
+            }
+          />
+        )}
+      </div>
+    );
+  }
   if (loadError) {
     return <FatalError title="Could not load database" message={loadError} />;
   }
@@ -2183,10 +2317,8 @@ export default function App() {
             }}
             // #164 (§4.18): 'Add group…' on person rows — ADD a membership
             // (from='' deletes nothing, INSERT OR IGNORE files them; every
-            // current group is kept)
-            onAddGroup={(ids, path) =>
-              void mutate(() => api.movePersonsBetweenGroups(ids, "", path))
-            }
+            // current group is kept); #184 shares it with the face menu
+            onAddGroup={addPersonsToGroup}
             onError={setError}
             onOpenMerge={() => setMergeOpen(true)}
             onMergeInto={openMergeInto}
@@ -2542,6 +2674,26 @@ export default function App() {
           onCancel={() => setFaceMerge(null)}
         />
       )}
+      {faceAddGroup && (
+        <GroupDialog
+          options={pathOptions}
+          title={
+            faceAddGroup.ids.length > 1
+              ? `Add a group to ${faceAddGroup.ids.length} persons`
+              : `Add a group to '${personsById.get(faceAddGroup.ids[0])?.name ?? "?"}'`
+          }
+          body="Adds this path as ANOTHER group — every current group of the person(s) is kept (a person can belong to several, §4.16); a status seat, if any, is dropped instead (#165, §4.35). Faces and names are untouched."
+          defaultPath=""
+          submitLabel="add group"
+          onSubmit={(path) => {
+            const ids = faceAddGroup.ids;
+            setFaceAddGroup(null);
+            const norm = path.split("|").map((s) => s.trim()).filter(Boolean).join("|");
+            if (norm && ids.length > 0) addPersonsToGroup(ids, norm);
+          }}
+          onCancel={() => setFaceAddGroup(null)}
+        />
+      )}
       {edit && snap && (
         <EditDialog
           defaultScope={edit.defaultScope}
@@ -2564,8 +2716,16 @@ export default function App() {
             const st = buildStage(ids, r.values, r.touched);
             if (!st) {
               if (r.kind === "accept") {
-                // nothing staged — Accept still accepts the scope (§4.30)
-                if (ids.length > 0) void acceptAndNext([...ids]);
+                // nothing field-staged — Accept still accepts the scope
+                // (§4.30); #181: a list-only Accept commits the group
+                // ops through the same chain (no stage, just the ops)
+                if (ids.length > 0) void commitPending([], ids, r.groupOps);
+                return;
+              }
+              if (r.groupOps.length > 0) {
+                // Apply leaves the list edits LOCAL — they preview in
+                // the list itself and commit with Accept (#181)
+                setInfo("group changes commit with Accept (#181)");
                 return;
               }
               setInfo("nothing to apply — change a field first (#103)");
@@ -2576,8 +2736,10 @@ export default function App() {
               return;
             }
             // #166: the staged ops commit first, then this dialog's
-            // chosen scope is accepted (the set edits, never the scope)
-            void commitPending(upsertStage(pendingRef.current, st), ids);
+            // chosen scope is accepted (the set edits, never the scope);
+            // #181: the list edits ride along (name first, memberships
+            // against the surviving person)
+            void commitPending(upsertStage(pendingRef.current, st), ids, r.groupOps);
           }}
           onReject={(scope) => {
             // #124: a verdict, not a field edit — commits immediately.

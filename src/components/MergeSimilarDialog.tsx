@@ -346,7 +346,7 @@ export default function MergeSimilarDialog({
           <button
             disabled={sel.size === 0}
             onClick={() => onRename([...sel])}
-            title="Rename/merge all selected persons to one name — opens the Assign dialog with their faces (§4.1)"
+            title="Rename/merge all selected persons to one name — opens the Edit dialog with their faces (§4.1)"
           >
             rename to…
           </button>
