@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.84** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.85** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1647,6 +1647,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      staged and no pending name it is an informed no-op, never an
      error). The system person `Rejected` sees the list **read-only**
      (no ×, no add, no inline edit — §4.35) and no Update button.
+   - **The Edit dialog fronts the same list** (#181): whenever the
+     dialog's **Name field holds a known person's name** (typed or
+     prefilled), the single Group field is replaced by that person's
+     group LIST — the identical rows (× removal, inert seat, inline
+     re-home, add row — one shared `GroupListEditor`, so the pane and
+     the dialog can never drift). The list edits stage **locally in the
+     dialog**; **Apply** leaves them staged (they preview in the list
+     itself — an informed note says they commit with Accept), **Accept**
+     commits them **after the name lands** — the membership ops replay
+     in order against the **surviving person** (the merge target when
+     the name was taken; re-derived from the fresh snapshot, so an
+     in-place rename hits the renamed person). With an empty or new
+     (unknown) name the dialog keeps its single Group field. Scope
+     switches discard the staged ops (they are per-scope, like every
+     other dialog field).
 
 39. **Modes and the Rolls branch thumbnails** (#174) ⇒ the top-bar
    selector is the **mode switch** (§3): each mode owns its centre
