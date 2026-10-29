@@ -4415,7 +4415,7 @@ dependencies = [
 
 [[package]]
 name = "whotapp"
-version = "3.82.0"
+version = "3.83.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

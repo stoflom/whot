@@ -1179,19 +1179,33 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
 /// signed quarter-turn (the GUI sends +90/−90); the stored value is
 /// normalised to 0/90/180/270 CW. The same column is the geometric key
 /// #118 lands harvested EXIF angles in at import time.
+/// #122/#183 — image display rotation: the delta cascades to every
+/// crop on the image (one transaction), so each crop's orientation
+/// RELATIVE to the image is preserved — the crop pixels are fixed at
+/// creation, so the display angles move together. The converse is not
+/// true: `rotate_face` is the per-crop correction and never touches
+/// `images.rotation` (§4.32).
 pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<i64> {
     let d = ((delta % 360) + 360) % 360;
-    let con = connect(paths)?;
-    let cur: i64 = con
+    let mut con = connect(paths)?;
+    let tx = con.transaction()?;
+    let cur: i64 = tx
         .query_row("SELECT rotation FROM images WHERE id = ?", params![image_id], |r| r.get(0))
         .context("image not found")?;
     let next = (cur + d) % 360;
-    con.execute("UPDATE images SET rotation = ? WHERE id = ?", params![next, image_id])?;
+    tx.execute("UPDATE images SET rotation = ? WHERE id = ?", params![next, image_id])?;
+    tx.execute(
+        "UPDATE faces SET rotation = ((rotation + ?1) % 360 + 360) % 360 WHERE image_id = ?2",
+        params![d, image_id],
+    )?;
+    tx.commit()?;
     Ok(next)
 }
 
-/// #122 — face-crop display rotation (server state): independent of the
-/// full-image rotation; same ±90 quarter-turn contract as `rotate_image`.
+/// #122/#183 — face-crop display rotation (server state): the per-crop
+/// correction — independent of the full-image rotation in the CONVERSE
+/// direction only (rotating the image cascades to its crops, this never
+/// touches the image); same ±90 quarter-turn contract as `rotate_image`.
 pub fn rotate_face(paths: &Paths, face_id: i64, delta: i64) -> Result<i64> {
     let d = ((delta % 360) + 360) % 360;
     let con = connect(paths)?;
