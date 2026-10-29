@@ -104,6 +104,18 @@ Checks (contract refs: docs/gui-design.md):
       pane person to a KNOWN person re-anchors the pane on the merge
       target and lists ITS groups; the system person Rejected sees the
       list read-only with no Update button
+  C34 Modes — the Rolls branch thumbnails (#174, §4.39): the centre is
+      a pure hierarchy (no inline .img-grid); a header click toggles AND
+      selects the branch; the right pane lists the branch's DIRECT images
+      only (non-recursive — thumb paths all sit at the branch, header
+      rollup counts more), filename order, selected header styled; the
+      selection survives a mode round-trip and clears when the branch
+      selection changes; ctrl-click extends it, the thumb context menu's
+      Rotate is scoped ('(2)') and lands on both mock images; a thumb
+      double-click opens the image detail with the person detail back in
+      the right pane (§4.37), '← rolls' returns to the hierarchy with
+      the branch's thumbs intact; a branch with no direct images shows
+      the drill hint
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -693,10 +705,12 @@ def c30_bar_accept_selection_over_stage(t):
 
 
 def c18_rolls_path_tree(t):
-    """#161 (v3.60): the Rolls pane is a filesystem-path tree — branch
-    headers mirror the primary_path segments (collapsed at start), every
-    image is filed under its own file's directory branch once expanded,
-    and Show=New prunes images/branches without a provisional face."""
+    """#161 (v3.60) + #174 (§4.39): the Rolls pane is a filesystem-path
+    tree — branch headers mirror the primary_path segments (collapsed at
+    start), every directory branch (and its ancestors) renders once
+    expanded, the CENTRE renders no thumbnails (#174 — images live as
+    the right pane's branch thumbs), and Show=New prunes branches
+    without a provisional face."""
     fresh(t)
     set_show_filter(t, "all")  # the persisted whotrc filter must not tilt the baseline
     js(t, """
@@ -709,7 +723,8 @@ def c18_rolls_path_tree(t):
         .map(i => i.primary_path.split('/').filter(Boolean)[0]))].length;
     """)
     headers0 = js(t, "return document.querySelectorAll('.roll-header').length")
-    # drill in: expand every closed header until none is left
+    # drill in: expand every closed header until none is left (a click
+    # now also selects the branch — irrelevant to this check)
     for _ in range(60):
         n = js(t, """
           const closed = [...document.querySelectorAll('.roll-header')]
@@ -721,31 +736,49 @@ def c18_rolls_path_tree(t):
         if not n:
             break
     time.sleep(0.5)
-    # every image renders exactly under its own primary_path
-    thumbs = js(t, """
-      return [...document.querySelectorAll('.img-thumb')].map(b => b.title);
+    # #174: the centre is a pure hierarchy — no inline grids/thumbs
+    center = js(t, r"""
+      return {grids: document.querySelectorAll('.rolls .img-grid').length,
+              thumbs: document.querySelectorAll('.rolls .img-thumb').length};
     """)
-    all_paths = js(t, "return window.__MOCK_SNAP.images.map(i => i.primary_path)")
-    open_ok = sorted(thumbs) == sorted(all_paths)
-    # Show=New (branches stay open): only images holding a provisional
-    # face survive, elsewhere pruned
+    pure = center["grids"] == 0 and center["thumbs"] == 0
+    # every DIRECTORY branch renders: the rel-path of each header title
+    # equals the ancestors-closure of the image directories
+    def header_paths():
+        return js(t, "return [...document.querySelectorAll('.roll-path')].map(x => x.title);")
+
+    def expected_dirs(listed_js):
+        return sorted(js(t, r"""
+          const dirOf = p => { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); };
+          const anc = new Set();
+          for (const im of %s) {
+            let p = dirOf(im.primary_path);
+            while (p && p !== '/') {
+              anc.add(p.startsWith('/') ? p.slice(1) : p);
+              p = dirOf(p);
+            }
+          }
+          return [...anc];
+        """ % listed_js))
+
+    headers = header_paths()
+    open_ok = sorted(headers) == expected_dirs("window.__MOCK_SNAP.images")
+    # Show=New: branches survive only where a provisional face lists
     set_show_filter(t, "provisional")
     time.sleep(0.8)
-    thumbs_new = js(t, """
-      return [...document.querySelectorAll('.img-thumb')].map(b => b.title);
-    """)
-    expected_new = js(t, """
-      const ids = new Set(window.__MOCK_SNAP.faces
-        .filter(f => f.link_status === 'provisional').map(f => f.image_id));
-      return window.__MOCK_SNAP.images.filter(i => ids.has(i.id)).map(i => i.primary_path);
-    """)
-    prune_ok = sorted(thumbs_new) == sorted(expected_new)
+    headers_new = header_paths()
+    prune_ok = sorted(headers_new) == expected_dirs(
+        "window.__MOCK_SNAP.images.filter(i => "
+        "new Set(window.__MOCK_SNAP.faces.filter(f => f.link_status === 'provisional')"
+        ".map(f => f.image_id)).has(i.id))"
+    )
     set_show_filter(t, "all")
-    ok = headers0 == top and open_ok and prune_ok
-    record("C18 Rolls pane mirrors the filesystem path tree, Show prunes (#161)", ok,
-           f"top-level headers={headers0} (expected {top}); fully expanded "
-           f"thumbs={len(thumbs)}/{len(all_paths)} exact={open_ok}; Show=New "
-           f"thumbs={len(thumbs_new)}/{len(expected_new)} exact={prune_ok}")
+    ok = headers0 == top and pure and open_ok and prune_ok
+    record("C18 Rolls pane mirrors the filesystem path tree, Show prunes (#161/#174)", ok,
+           f"top-level headers={headers0} (expected {top}); centre grids/thumbs="
+           f"{center['grids']}/{center['thumbs']} (want 0/0); branches after expand "
+           f"={len(headers)} exact={open_ok}; Show=New branches={len(headers_new)} "
+           f"exact={prune_ok}")
 
 
 def c19_staged_desc_regroups(t):
@@ -2383,6 +2416,209 @@ def c33_person_group_list_update(t):
            f"seat={seat_rows}; merge={merge_ok} anchor={anchor}; system={sys_ok}")
 
 
+def c34_rolls_branch_thumbnails(t):
+    """#174 (§4.39): Modes — the Rolls centre is a pure hierarchy and
+    the right pane holds the SELECTED branch's images: a header click
+    toggles AND selects; the thumbs are the branch's DIRECT images only
+    (non-recursive), selection survives a mode round-trip and clears on
+    a branch change, ctrl-click extends, the context menu Rotate is
+    scoped and lands on both mock images (new mock rotate_image); a
+    thumb double-click opens the image detail with the person detail
+    back in the right pane (§4.37), '← rolls' returns with the branch's
+    thumbs intact; a branch without direct images shows the drill hint."""
+    fresh(t)
+    set_show_filter(t, "all")
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
+    time.sleep(0.8)
+
+    # ── target dirs: one WITH direct+deeper images, one WITHOUT direct
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const dirOf = p => { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); };
+      const dirs = new Map();
+      for (const im of snap.images) dirs.set(dirOf(im.primary_path), (dirs.get(dirOf(im.primary_path)) || 0) + 1);
+      // the target: direct+deeper images, MOST direct thumbs (≥ 2 — the
+      // ctrl-click phase needs two)
+      let withKids = null, best = 1;
+      // a branch with NO direct images but deeper ones (ancestor scan —
+      // such a branch is never any image's own directory)
+      let withoutDirect = null;
+      const cand = new Set();
+      for (const im of snap.images) {
+        const d = dirOf(im.primary_path);
+        const kids = snap.images.some(x => dirOf(x.primary_path) !== d && x.primary_path.startsWith(d + '/'));
+        const n = dirs.get(d) || 0;
+        if (kids && n > best) { best = n; withKids = d; }
+        let p = d;
+        while (p && p !== '/') { cand.add(p); p = dirOf(p); }
+      }
+      for (const P of cand) {
+        const direct = snap.images.some(im => dirOf(im.primary_path) === P);
+        const deeper = snap.images.some(im => im.primary_path.startsWith(P + '/'));
+        if (!direct && deeper) { withoutDirect = P; break; }
+      }
+      return {withKids, withoutDirect};
+    """)
+
+    def drill(path):
+        """open every ancestor (click only when closed) and ALWAYS click
+        the LAST segment — a click toggles AND selects (#174), so an
+        already-open target still gets selected (and, yes, collapsed —
+        the right pane reads the state, not the open set)"""
+        segs = [s for s in path.strip('/').split('/') if s]
+        for i, seg in enumerate(segs):
+            last = i == len(segs) - 1
+            state = js(t, r"""
+              const prefix = arguments[0], seg = arguments[1], last = arguments[2];
+              let container = document.querySelector('.rolls');
+              for (const p of prefix) {
+                const s = [...container.children].find(x => x.classList.contains('roll') &&
+                  x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === p);
+                if (!s) return 'no-parent';
+                container = s.querySelector(':scope > .roll-children');
+                if (!container) return 'closed-parent';
+              }
+              const target = [...container.children].find(x => x.classList.contains('roll') &&
+                x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === seg);
+              if (!target) return 'not-found';
+              const isOpen = !!target.querySelector(':scope > .roll-children');
+              if (last || !isOpen) target.querySelector(':scope > .roll-header').click();
+              return 'ok';
+            """, segs[:i], seg, last)
+            time.sleep(0.6)
+            if state != "ok":
+                return False
+        return True
+
+    def pane_state():
+        return js(t, r"""
+          const thumbs = [...document.querySelectorAll('.rolls-thumbs .img-thumb')];
+          return {
+            thumbs: thumbs.map(b => b.title),
+            selected: document.querySelectorAll('.img-thumb.selected').length,
+            head: document.querySelector('.rolls-thumbs-head')?.textContent ?? null,
+            hint: document.querySelector('.rolls-thumbs-empty')?.textContent ?? null,
+            centerGrids: document.querySelectorAll('.rolls .img-grid').length,
+            centerThumbs: document.querySelectorAll('.rolls .img-thumb').length,
+            selHdr: document.querySelector('.roll-header.selected .roll-path')?.textContent.trim() ?? null,
+            selCounts: document.querySelector('.roll-header.selected .roll-counts')?.textContent.trim() ?? null,
+            detail: !!document.querySelector('.image-detail'),
+            dp: !!document.querySelector('.dp-person') || !!document.querySelector('.dp-summary'),
+          };
+        """)
+
+    if pick is None or pick["withKids"] is None:
+        record("C34 Modes — Rolls branch thumbnails (#174/§4.39)", True,
+               "need a branch with direct + deeper images — vacuous")
+        return
+
+    # ── phase A: the centre is a pure hierarchy ────────────────────────
+    a = pane_state()
+
+    # ── phase B: drill to the target — direct images only in the pane ─
+    drilled = drill(pick["withKids"])
+    b = pane_state()
+    base = pick["withKids"].rstrip('/').split('/')[-1]
+    direct = [i for i in js(t, "return window.__MOCK_SNAP.images.map(x => x.primary_path)")
+              if os.path.dirname(i) == pick["withKids"]]
+    rollup_n = int(b["selCounts"].split()[0]) if b["selCounts"] else -1
+
+    # ── mode round-trip: the branch selection is session state ────────
+    js(t, "document.querySelectorAll('.topbar nav button')[0]?.click();")  # Review
+    time.sleep(0.8)
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
+    time.sleep(0.8)
+    after_trip = pane_state()
+
+    # ── phase C: selection (click, ctrl-click) + scoped Rotate ────────
+    def thumb(i):
+        return t.find_elements(By.CSS_SELECTOR, ".rolls-thumbs .img-thumb")[i]
+    thumb(0).click()
+    time.sleep(0.4)
+    sel_one = pane_state()["selected"]
+    t2 = thumb(1)
+    AC(t.driver).key_down(Keys.CONTROL).click(t2).key_up(Keys.CONTROL).perform()
+    time.sleep(0.4)
+    c = pane_state()
+    two_ids = js(t, r"""
+      return [...document.querySelectorAll('.rolls-thumbs .img-thumb.selected')]
+        .map(b => window.__MOCK_SNAP.images.find(x => x.primary_path === b.title)?.id);
+    """)
+    AC(t.driver).context_click(t2).perform()
+    time.sleep(0.6)
+    rot_items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+                 if "Rotate 90° CW" in b.text]
+    rotated_ok = False
+    if rot_items:
+        rot_items[0].click()
+        time.sleep(1.2)
+        rotated_ok = js(t, r"""
+          const [a, b] = arguments[0];
+          return window.__MOCK_SNAP.images
+            .filter(x => x.id === a || x.id === b)
+            .every(x => x.rotation === 90);
+        """, two_ids)
+
+    # ── phase D: a DIFFERENT branch clears the selection, and its
+    #    drill hint (the branch has no direct images) ──────────────────
+    # (drilling to a non-ancestor-of-target path keeps the opened
+    # ancestors intact for the re-drill below; the last segment is
+    # always clicked — toggle + select)
+    d = None
+    f_hint = None
+    if pick["withoutDirect"]:
+        drilled_alt = drill(pick["withoutDirect"])
+        d = pane_state() if drilled_alt else None
+        f_hint = d["hint"] if d else None
+
+    # ── back to the target for the open round-trip ─────────────────────
+    re_drilled = drill(pick["withKids"])
+    # ── phase E: double-click opens; person detail returns; ← rolls ────
+    e1 = pane_state()
+    tgt = thumb(0)
+    js(t, "arguments[0].scrollIntoView({block:'center'})", tgt)
+    time.sleep(0.3)
+    tgt.click()  # pre-click: absorb the selection re-render (WebKit dblclick window)
+    time.sleep(0.5)
+    tgt = thumb(0)
+    AC(t.driver).double_click(tgt).perform()
+    time.sleep(1.0)
+    e2 = pane_state()
+    back = t.find_element(By.CSS_SELECTOR, ".image-detail-top button")
+    back.click()
+    time.sleep(0.8)
+    e3 = pane_state()
+
+    ok = (
+        a["centerGrids"] == 0 and a["centerThumbs"] == 0            # centre pure
+        and drilled and b["selHdr"] == base                          # branch selected
+        and len(b["thumbs"]) == len(direct) > 0                      # direct children…
+        and rollup_n > len(direct)                                   # …≠ the rollup (non-recursive)
+        and all(os.path.dirname(p) == pick["withKids"] for p in b["thumbs"])
+        and after_trip["thumbs"] == b["thumbs"]                      # survives a mode round-trip
+        and sel_one == 1                                             # click selects one
+        and c["selected"] == 2 and "2 selected" in (c["head"] or "")  # ctrl-click extends
+        and rotated_ok                                                # scoped Rotate landed
+        and (d is None or d["selected"] == 0)                         # branch change clears
+        and (f_hint is None or "no images directly at this path" in f_hint)
+        and re_drilled
+        and e1["thumbs"] and e2["detail"] and e2["dp"]               # dblclick → detail + person pane
+        and not e2["thumbs"]
+        and not e3["detail"] and e3["thumbs"] == e1["thumbs"]         # ← rolls: back, intact
+    )
+    record("C34 Modes — Rolls branch thumbnails (#174/§4.39): pure hierarchy, direct-only thumbs, selection lifecycle, scoped rotate, open round-trip, drill hint",
+           ok,
+           f"centre grids/thumbs={a['centerGrids']}/{a['centerThumbs']}; "
+           f"drill={drilled} sel={b['selHdr']!r} (want {base!r}) thumbs={len(b['thumbs'])} "
+           f"direct={len(direct)} rollup={rollup_n} head={b['head']!r}; "
+           f"roundtrip={after_trip['thumbs'] == b['thumbs']}; select 1→{sel_one} ctrl→{c['selected']} "
+           f"head={c['head']!r} rotate={rotated_ok} ids={two_ids}; "
+           f"parent-clear={d and d['selected']} alt={pick['withoutDirect']!r} hint={f_hint!r} "
+           f"re-drill={re_drilled}; "
+           f"open: detail={e2['detail']} dp={e2['dp']} thumbs={e2['thumbs'] and len(e2['thumbs'])}; "
+           f"back: detail={e3['detail']} thumbs={len(e3['thumbs'])}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -2423,6 +2659,7 @@ def main():
         c31_rolls_import_pane(t)
         c32_full_image_follows_person(t)
         c33_person_group_list_update(t)
+        c34_rolls_branch_thumbnails(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
