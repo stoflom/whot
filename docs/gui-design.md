@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.77** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.78** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1728,9 +1728,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      (accepted/rejected; under All *No faces to show*) — with
      **Show All** (sets Show → All) and **Close** (dismissed for that
      person+filter pair until either changes).
-   - **Top-bar person counts**: while a person is anchored — **any
-     mode** — the top bar shows their live face counts: `? N` (New),
-     `✓ N` (Accepted), `✗ N` (Rejected).
+   - **Top-bar status totals** (#179, revising the #176 person counts):
+     the top bar **always** shows the **database's live face totals** as
+     an overview — `? N` (New), `✓ N` (Accepted), `✗ N` (Rejected) —
+     **independent of mode, Show filter and selection** (shown with no
+     anchor at all) and re-derived from the refreshed snapshot on every
+     mutation (accept, reject, assign/merge, delete). Same chips and
+     the colours below; the tooltip reads `totals in the database` —
+     never one person's faces. Person-scoped counts are gone from the
+     bar; a person's own counts stay in the tree badges and the right
+     pane.
    - **One status colour scheme** (#176): **New = red, Accepted =
      green, Rejected = gray, All/default = normal text** — everywhere
      status TEXT appears: the tree's status branches and group branch
