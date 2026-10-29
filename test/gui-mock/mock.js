@@ -328,13 +328,26 @@
     get_refcrops: () => [],
     open_image: () => {},
     // #174/C34 — same contract as db::rotate_image: the delta
-    // normalised to [0,360), added to the stored rotation mod 360
+    // normalised to [0,360), added to the stored rotation mod 360;
+    // #183: the delta CASCades to every crop on the image (db parity)
     rotate_image: ({ imageId, delta }) => {
       const img = SNAP.images.find((x) => x.id === imageId);
       if (!img) throw new Error("image not found");
       const d = ((delta % 360) + 360) % 360;
       img.rotation = ((img.rotation ?? 0) + d) % 360;
+      for (const f of SNAP.faces)
+        if (f.image_id === imageId)
+          f.rotation = ((f.rotation ?? 0) + d) % 360;
       return img.rotation;
+    },
+    // #183 — same contract as db::rotate_face: the per-crop correction —
+    // the image and the image's other crops never move
+    rotate_face: ({ faceId, delta }) => {
+      const f = SNAP.faces.find((x) => x.id === faceId);
+      if (!f) throw new Error("face not found");
+      const d = ((delta % 360) + 360) % 360;
+      f.rotation = ((f.rotation ?? 0) + d) % 360;
+      return f.rotation;
     },
     person_face_clusters: ({ personId }) => {
       const fs = SNAP.faces.filter(

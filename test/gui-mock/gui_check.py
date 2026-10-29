@@ -3905,6 +3905,95 @@ def c43_single_only_menu_items(t):
            f"single open={c_open_s} rename={c_ren_s} (ok={c_ok})")
 
 
+def c44_rotate_image_cascades(t):
+    """#183 (§4.32): rotating the IMAGE cascades the delta to every crop
+    on it — the focus header's ⟳ button advances images.rotation AND
+    every face of that image by +90 in the mock — while a CROP rotation
+    never touches the image (the face menu's 'Rotate crop 90° CW' moves
+    that one face by +90; the image and its other crops stay)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const byImg = new Map();
+      for (const f of snap.faces) {
+        const a = byImg.get(f.image_id) ?? [];
+        a.push(f.id); byImg.set(f.image_id, a);
+      }
+      for (const [imgId, fids] of byImg) {
+        if (fids.length < 2 || !snap.images.some(x => x.id === imgId)) continue;
+        // the card must be IN the grid — the review sections hold the
+        // provisional faces (under Show → All too, §4.10)
+        const prov = snap.faces.filter(f =>
+          f.image_id === imgId && f.link_status === 'provisional').map(f => f.id);
+        if (prov.length) return {imgId, fids, provFid: prov[0]};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C44 rotate image cascades to its crops (#183/§4.32)", True,
+               "no image with ≥2 faces — vacuous")
+        return
+
+    def rots():
+        return js(t, r"""
+          const img = window.__MOCK_SNAP.images.find(x => x.id === arguments[0]);
+          const faces = window.__MOCK_SNAP.faces.filter(f => f.image_id === arguments[0])
+            .map(f => ({id: f.id, rot: f.rotation ?? 0}));
+          return {img: img?.rotation ?? null, faces};
+        """, pick["imgId"])
+
+    fid = pick["provFid"]
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()
+    time.sleep(0.5)
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")
+    AC(t.driver).double_click(card).perform()
+    time.sleep(1.0)
+    before = rots()
+
+    # ⟳ in the focus header — the image AND every crop
+    t.find_element(By.CSS_SELECTOR, ".focus-top button[title^='Rotate 90° clockwise']").click()
+    time.sleep(1.2)
+    after_img = rots()
+    cascade_ok = (after_img["img"] == (before["img"] + 90) % 360
+                  and len(after_img["faces"]) == len(before["faces"])
+                  and all(a["rot"] == (b["rot"] + 90) % 360
+                          for a, b in zip(after_img["faces"], before["faces"])))
+
+    # close the focus (Esc), then a CROP rotation via the face menu
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.8)
+    t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']").click()  # single scope
+    time.sleep(0.4)
+    AC(t.driver).context_click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")).perform()
+    time.sleep(0.6)
+    items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+             if b.text.strip() == "Rotate crop 90° CW"]
+    rotated = False
+    if items and items[0].is_enabled():
+        items[0].click()
+        time.sleep(1.2)
+        rotated = True
+    after_crop = rots()
+    face_rot = next((f["rot"] for f in after_crop["faces"] if f["id"] == fid), None)
+    others = [f["rot"] for f in after_crop["faces"] if f["id"] != fid]
+    crop_ok = (rotated
+               and face_rot == (next(f["rot"] for f in after_img["faces"] if f["id"] == fid) + 90) % 360
+               and after_crop["img"] == after_img["img"]            # the image never moves
+               and all(r == next(f["rot"] for f in after_img["faces"] if f["id"] == i)
+                       for r, i in zip(others, [f["id"] for f in after_crop["faces"] if f["id"] != fid])))
+
+    ok = cascade_ok and crop_ok
+    record("C44 rotate image cascades to its crops (#183/§4.32): image ⟳ moves every face, crop rotate leaves the image",
+           ok,
+           f"pick={pick} before={before} after ⟳={after_img} (cascade={cascade_ok}); "
+           f"crop menu item={bool(items)} → {after_crop} (crop={crop_ok})")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -3955,6 +4044,7 @@ def main():
         c41_verdict_focuses_person(t)
         c42_edit_label_everywhere(t)
         c43_single_only_menu_items(t)
+        c44_rotate_image_cascades(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
