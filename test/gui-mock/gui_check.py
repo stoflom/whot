@@ -217,6 +217,23 @@ def fresh(t):
     while time.time() < deadline:
         n = js(t, "return document.querySelectorAll('.face-card').length")
         if n:
+            # #188/§4.40: the load lands in Review, where the entry pin
+            # fires (Show → New) — the suite's baseline has always been
+            # the seed's Show → All, so force it back (the dispatch
+            # reaches React even on the disabled select — the harness's
+            # test-only bypass), then wait for it to settle
+            js(t, r"""
+              const s = document.querySelector('.topbar-right select');
+              if (s && s.value !== 'all') {
+                s.value = 'all';
+                s.dispatchEvent(new Event('change', {bubbles: true}));
+              }
+            """)
+            settle = time.time() + 5
+            while time.time() < settle:
+                if js(t, "return document.querySelector('.topbar-right select')?.value") == 'all':
+                    break
+                time.sleep(0.2)
             return n
         time.sleep(0.3)
     raise RuntimeError(
@@ -603,8 +620,14 @@ def c16_filter_prunes_tree(t):
 def c29_show_rejected_bin_165(t):
     """#165/§4.10: Show=All excludes rejected entirely — the system
     person `Rejected` and its branch list only under Show→Rejected, and
-    the Show tooltip spells the contract out."""
+    the Show tooltip spells the contract out (read OUTSIDE Review —
+    while Review is active the label instead spells the lock, #188/§4.40
+    and C36; the Person tab's modeless picker may open, the tree behind
+    it is what this check reads)."""
     fresh(t)
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+     if "Person" in b.text][0].click()
+    time.sleep(0.8)
     tip = js(t, """
       const s = [...document.querySelectorAll('select')]
         .find(x => [...x.options].some(o => o.value === 'rejected'));
@@ -2557,6 +2580,23 @@ def c34_rolls_branch_thumbnails(t):
     # ── mode round-trip: the branch selection is session state ────────
     js(t, "document.querySelectorAll('.topbar nav button')[0]?.click();")  # Review
     time.sleep(0.8)
+    # #188/§4.40: entering Review re-pins Show → New (an async settings
+    # write) — this check's baseline is Show → All (harness dispatch
+    # through the disabled select) or the thumbs prune to the pending
+    # images only. Wait for the pin to LAND first: dispatching 'all'
+    # while it is in flight early-returns (settings still read 'all')
+    # and the pin then wins the race.
+    pin_deadline = time.time() + 5
+    while time.time() < pin_deadline:
+        if js(t, "return document.querySelector('.topbar-right select')?.value") == "provisional":
+            break
+        time.sleep(0.2)
+    set_show_filter(t, "all")
+    settle = time.time() + 5
+    while time.time() < settle:
+        if js(t, "return document.querySelector('.topbar-right select')?.value") == "all":
+            break
+        time.sleep(0.2)
     js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
     time.sleep(0.8)
     after_trip = pane_state()
@@ -2739,24 +2779,31 @@ def c35_rolls_layout(t):
 
 
 def c36_review_lock(t):
-    """#175 (§4.40): the Review lock — the padlock beside Show pins the
-    filter to New (select disabled, button latched) and guards the
-    position (an anchored person without a new face advances to the
-    next one that has any); a verdict made in PERSON view while focus
-    mode is open exhausts the person → the locked any-view mark fires,
-    auto-advancing to the next person with new faces and closing the
-    full image (§4.15); releasing lands in Person mode with Show → All
-    re-enabled (session-only lock — the select works again)."""
-    fresh(t)
-    set_show_filter(t, "all")
+    """#175 rewritten by #188 (§4.40): the lock IS the Review mode —
+    the padlock beside Show is a pure INDICATOR (a span, never
+    clickable): 🔒 + Show disabled exactly while Review is active.
+    Entering Review pins Show → New through the ordinary filter path
+    and runs the position guard (an anchored person without a new face
+    advances to the next one that has any); leaving via the
+    Rolls/Person tab re-enables the select with its VALUE kept (no
+    forced Show → All, no forced mode, no release action — the padlock
+    ignores clicks in either state); and with the session lock gone a
+    verdict made OUTSIDE Review never advances the context and never
+    closes the focus split (the #175 any-view mark is dead — the old
+    check asserted exactly the opposite while locked)."""
+    fresh(t)   # Show → All baseline (fresh forces it after the load pin)
 
     def lock_state():
         return js(t, r"""
           const b = document.querySelector('.lock-btn');
           const s = document.querySelector('.topbar-right select');
-          return {btn: !!b, latched: !!b && b.classList.contains('locked'),
+          return {btn: !!b, isSpan: !!b && b.tagName === 'SPAN',
+                  isButton: !!document.querySelector('button.lock-btn'),
+                  latched: !!b && b.classList.contains('locked'),
                   pressed: b?.getAttribute('aria-pressed') ?? null,
                   disabled: s?.disabled ?? null, value: s?.value ?? null,
+                  labelTitle: document.querySelector('.topbar-right label')?.getAttribute('title') ?? '',
+                  padlockTitle: b?.getAttribute('title') ?? '',
                   selected: document.querySelector('.tree-person.selected')
                     ? Number(document.querySelector('.tree-person.selected').dataset.personId)
                     : null,
@@ -2765,113 +2812,138 @@ def c36_review_lock(t):
                     .trim().split(/\s+/)[0] ?? ''};
         """)
 
-    # ── pick: a person WITHOUT new faces (guard target), then a person
-    #    with EXACTLY one new face (the verdict target) ────────────────
+    def click_tab(name):
+        [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+         if name in b.text][0].click()
+        time.sleep(1.0)
+
+    # ── phase 1: in Review (the load) — indicator + disabled, a span
+    #    (not a button), no aria-pressed, rule-worded tooltips, and the
+    #    harness's Show → All baseline intact ──────────────────────────
+    p1 = lock_state()
+    p1_ok = (p1["btn"] and p1["isSpan"] and not p1["isButton"]
+             and p1["latched"] and p1["pressed"] is None
+             and p1["disabled"] and p1["value"] == "all"
+             and p1["tab"].startswith("Review")
+             and "Locked to New while Review is active" in p1["labelTitle"]
+             and "locked to New while Review is active" in p1["padlockTitle"])
+
+    # ── phase 2: exit via Rolls keeps the value; the padlock ignores
+    #    clicks (there is no engage/release any more) ─────────────────
+    set_show_filter(t, "confirmed")   # harness dispatch — a real user can't
+    click_tab("Rolls")
+    p2 = lock_state()
+    t.find_element(By.CSS_SELECTOR, ".lock-btn").click()
+    time.sleep(0.8)
+    p2_after = lock_state()
+    p2_ok = (p2["tab"].startswith("Rolls") and not p2["disabled"]
+             and p2["value"] == "confirmed"                    # value KEPT on exit
+             and not p2["latched"]
+             and "unlocked outside Review" in p2["padlockTitle"]
+             and p2_after["tab"].startswith("Rolls")           # the click did nothing
+             and not p2_after["latched"] and not p2_after["disabled"]
+             and p2_after["value"] == "confirmed")
+
+    # ── phase 3: enter Review — pins New + disabled + locked, and the
+    #    position guard advances off a fully-reviewed anchor ──────────
     pick = js(t, r"""
       const snap = window.__MOCK_SNAP;
       const done = snap.persons.find(p => p.name !== 'Rejected' &&
         !/^unknown/i.test(p.name) && p.counts.total > 0 && p.counts.provisional === 0
         && p.counts.confirmed > 0);
-      const one = snap.persons.find(p => p.name !== 'Rejected' &&
-        !/^unknown/i.test(p.name) && p.counts.provisional === 1 && p.counts.total >= 1);
-      // the ONE new face — the focus film roll shows every face of its
-      // image (the Show filter does not apply there), so the verdict
-      // must target this exact card
-      const fid = one ? snap.faces.find(f =>
-        f.person_id === one.id && f.link_status === 'provisional')?.id ?? null : null;
-      return done && one && fid != null
-        ? {doneId: done.id, oneId: one.id, oneFid: fid} : null;
+      const two = snap.persons.find(p => p.name !== 'Rejected' &&
+        !/^unknown/i.test(p.name) && p.counts.provisional >= 2);
+      const twoFid = two ? snap.faces.find(f =>
+        f.person_id === two.id && f.link_status === 'provisional')?.id ?? null : null;
+      return done && two && twoFid != null
+        ? {doneId: done.id, twoId: two.id, twoFid: twoFid} : null;
     """)
     if pick is None:
-        record("C36 the Review lock (#175/§4.40)", True,
-               "need a fully-reviewed person + a person with exactly one new face — vacuous")
+        record("C36 the Review lock (#175/§4.40, rewritten #188): indicator span, pin+guard on entry, value kept on exit, no any-view advance",
+               p1_ok and p2_ok,
+               f"need a fully-reviewed person + a person with ≥2 new faces — vacuous; p1={p1} p2={p2}")
         return
-
-    # anchor on the reviewed person (Show = All, row visible)
     t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['doneId']}']").click()
     time.sleep(0.8)
+    click_tab("Review")
+    p3 = lock_state()
+    landed = js(t, r"""
+      const el = document.querySelector('.tree-person.selected');
+      const id = el ? Number(el.dataset.personId) : null;
+      const p = id == null ? null : window.__MOCK_SNAP.persons.find(x => x.id === id);
+      return {id, hasNew: p ? p.counts.provisional > 0 : false};
+    """)
+    p3_ok = (p3["tab"].startswith("Review") and p3["disabled"] and p3["latched"]
+             and p3["value"] == "provisional"                 # pinned New on entry
+             and landed["id"] not in (None, pick["doneId"])    # position guard
+             and landed["hasNew"])
 
-    # ── engage: Show pins New, disabled, latched; position guard fires ─
+    # ── phase 4: while locked the indicator still ignores clicks ─────
     t.find_element(By.CSS_SELECTOR, ".lock-btn").click()
-    time.sleep(1.2)
-    engaged = lock_state()
-
-    # ── the verdict target: exactly one new face, focus open ───────────
-    has_one = js(t, "return !!document.querySelector('.tree-person[data-person-id=\"' + arguments[0] + '\"]');", pick["oneId"])
-    if not has_one:
-        record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
-               False, "the one-new-face person is not in the locked tree — unexpected")
-        return
-    t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['oneId']}']").click()
     time.sleep(0.8)
-    card = t.find_element(By.CSS_SELECTOR, ".face-card")
+    p4 = lock_state()
+    p4_ok = (p4["tab"].startswith("Review") and p4["disabled"] and p4["latched"]
+             and p4["value"] == "provisional")
+
+    # ── phase 5/6: exit via Person (value kept again); a verdict made
+    #    OUTSIDE Review — person view with the focus split open — must
+    #    NOT advance the context and NOT close the focus: the #175
+    #    any-view mark died with the session lock ─────────────────────
+    click_tab("Person")
+    p5 = lock_state()
+    t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['twoId']}']").click()
+    time.sleep(0.8)
+    # open focus on EXACTLY the new face targeted below (the roll lists
+    # every face of THAT image)
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['twoFid']}']")
     js(t, "arguments[0].scrollIntoView({block:'center'})", card)
     time.sleep(0.3)
-    card.click()          # pre-click: absorb the selection re-render (WebKit dblclick window)
+    card.click()          # pre-click: absorb the selection re-render
     time.sleep(0.5)
-    card = t.find_element(By.CSS_SELECTOR, ".face-card")
-    AC(t.driver).double_click(card).perform()   # focus mode — the locked workflow's full image
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['twoFid']}']")
+    AC(t.driver).double_click(card).perform()
     time.sleep(1.0)
-    before_verdict = lock_state()
-
-    # ── the verdict inside focus: select THE provisional face's card,
-    #    bar Accept (the roll lists every face of the image) ───────────
+    focus_before = lock_state()
     fcard = t.find_element(
-        By.CSS_SELECTOR, f".focus-pane .face-card[data-face-id='{pick['oneFid']}']")
+        By.CSS_SELECTOR, f".focus-pane .face-card[data-face-id='{pick['twoFid']}']")
     js(t, "arguments[0].scrollIntoView({block:'center'})", fcard)
     time.sleep(0.3)
     fcard.click()
     time.sleep(0.5)
     accept = [b for b in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
               if "Accept" in b.text and b.is_enabled()]
-    if not accept:
-        record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
-               False, "rulebar Accept not enabled after selecting the card in focus")
-        return
-    accept[0].click()
-    time.sleep(1.5)
-    after_verdict = lock_state()
-    advanced = js(t, r"""
-      const snap = window.__MOCK_SNAP;
-      const sel = document.querySelector('.tree-person.selected');
-      const id = sel ? Number(sel.dataset.personId) : null;
-      const p = id == null ? null : snap.persons.find(x => x.id === id);
-      return {id, hasNew: p ? p.counts.provisional > 0 : false,
-              oldGone: !snap.persons.some(x => x.id === arguments[0]),
-              oldNew: (snap.persons.find(x => x.id === arguments[0])?.counts.provisional) ?? 0};
-    """, pick["oneId"])
+    accepted = bool(accept)
+    if accept:
+        accept[0].click()
+        time.sleep(1.5)
+    p6 = lock_state()
+    two_prov = js(t, r"""
+      return window.__MOCK_SNAP.faces.filter(
+        f => f.person_id === Number(arguments[0]) && f.link_status === 'provisional').length;
+    """, pick["twoId"])
+    p56_ok = (p5["tab"].startswith("Person") and not p5["disabled"]
+              and p5["value"] == "provisional"               # value kept (2nd exit)
+              and not p5["latched"]
+              and accepted
+              and focus_before["focus"]                      # focus opened
+              and p6["focus"]                                # …and STAYS open (#175 gone)
+              and p6["tab"].startswith("Person")             # no hand-over anywhere
+              and p6["selected"] == pick["twoId"]            # anchor unchanged
+              and two_prov >= 1)                             # partial: two had ≥2
 
-    # ── release: Person mode, Show → All, select usable again ──────────
-    t.find_element(By.CSS_SELECTOR, ".lock-btn").click()
-    time.sleep(1.2)
-    released = lock_state()
-    guard_new = js(t,
-                   "return window.__MOCK_SNAP.persons.find(x => x.id === arguments[0])?.counts.provisional ?? -1;",
-                   engaged["selected"])
-
-    ok = (
-        engaged["latched"] and engaged["pressed"] == "true"
-        and engaged["disabled"] and engaged["value"] == "provisional"      # Show pinned New
-        and engaged["selected"] not in (None, pick["doneId"])               # position guard
-        and guard_new > 0                                                    # …landed on a person with new faces
-        and before_verdict["focus"]                                          # focus opened (person view)
-        and advanced["oldNew"] == 0                                     # the person drained of new faces
-        and advanced["id"] != pick["oneId"] and advanced["hasNew"]          # …and the context advanced
-        and not after_verdict["focus"]                                       # the full image closed (§4.15)
-        and after_verdict["tab"].startswith("Person")                        # lands in Person mode
-        and not released["latched"] and released["pressed"] == "false"
-        and not released["disabled"] and released["value"] == "all"         # Show → All, usable
-        and released["tab"].startswith("Person")                             # Person mode
-    )
-    record("C36 the Review lock (#175/§4.40): engage pins New + guards position, any-view verdict advances + closes focus, release → Person/All",
+    ok = p1_ok and p2_ok and p3_ok and p4_ok and p56_ok
+    record("C36 the Review lock (#175/§4.40, rewritten #188): indicator span, pin+guard on entry, value kept on exit, no any-view advance",
            ok,
-           f"engage: latched={engaged['latched']} disabled={engaged['disabled']} value={engaged['value']} "
-           f"guard {pick['doneId']}→{engaged['selected']} (new={guard_new}); "
-           f"verdict: focus {before_verdict['focus']}→closed={not after_verdict['focus']}, "
-           f"old new={advanced['oldNew']} gone={advanced['oldGone']}, "
-           f"advanced {pick['oneId']}→{advanced['id']} hasNew={advanced['hasNew']} tab={after_verdict['tab']!r}; "
-           f"release: latched={released['latched']} disabled={released['disabled']} "
-           f"value={released['value']!r} tab={released['tab']!r}")
+           f"1(load): span={p1['isSpan']} btn={p1['isButton']} locked={p1['latched']} "
+           f"disabled={p1['disabled']} value={p1['value']!r}; "
+           f"2(exit→Rolls): value={p2['value']!r} enabled={not p2['disabled']} "
+           f"lock={p2['latched']} clickNoOp={p2_after['tab']}/{p2_after['latched']}; "
+           f"3(entry): value={p3['value']!r} disabled={p3['disabled']} "
+           f"guard {pick['doneId']}→{landed}; "
+           f"4(locked click): {p4['tab']}/{p4['value']!r}/{p4['latched']}; "
+           f"5/6(→Person, verdict outside Review): kept={p5['value']!r} "
+           f"accepted={accepted} focus {focus_before['focus']}→{p6['focus']} "
+           f"tab={p6['tab']!r} sel={p6['selected']} (want {pick['twoId']}) twoProv={two_prov}")
 
 
 def status_totals(t):
