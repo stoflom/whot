@@ -36,6 +36,9 @@ interface Props {
   onPrimary: (id: number) => void;
   onRefcrop: (id: number) => void;
   onReject: (id: number) => void;
+  /** #177 (§4.42): ✓ — accept this card as-is (bar semantics, §4.14
+      effective-action-scope: the selection when the card is in it) */
+  onAccept: (id: number) => void;
   /** #135/#136 (rule 34): start dragging this card — or the whole
       selection it is part of (the payload rule lives in App) */
   onFaceDragStart: (id: number, e: ReactDragEvent) => void;
@@ -72,6 +75,7 @@ function FaceCard({
   onPrimary,
   onRefcrop,
   onReject,
+  onAccept,
   onFaceDragStart,
   onFaceDragEnd,
   onFaceDragOver,
@@ -247,7 +251,24 @@ function FaceCard({
         </button>
         {/* #165/§4.35: the Un-reject (undo) affordance retired — plain
             accept never un-rejects, the way back is an assignment; a
-            rejected face renders with no action button. */}
+            rejected face renders no REJECT button. #177/§4.42: the ✓
+            renders for every face accept can still address — a
+            confirmed card needs none (its status badge reads ✓). */}
+        {face.link_status !== "confirmed" && (
+          <button
+            className="card-accept"
+            title={
+              "Accept this card as-is" +
+              scopeLabel +
+              (face.link_status === "rejected"
+                ? " — a rejected face needs an assignment (§4.2/§4.35)"
+                : " — live stages commit first, then accept (#177)")
+            }
+            onClick={() => onAccept(face.id)}
+          >
+            ✓
+          </button>
+        )}
         {face.link_status !== "rejected" && (
           <button
             title={

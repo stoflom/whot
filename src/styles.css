@@ -954,6 +954,11 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .dp-remove { margin: 0.5rem 0 0; }
 
+/* #177 (§4.42): verdict icons — the card tick, the cluster-header ✓/✗ */
+.card-accept { color: var(--ok); }
+.sec-accept { color: var(--ok); }
+.sec-reject { color: var(--bad); }
+
 /* #172/#173 (§4.38) — the person pane's staged group list + Update person */
 .dp-update { margin: 0.5rem 0 0; }
 .dp-groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }

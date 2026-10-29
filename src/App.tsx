@@ -1079,6 +1079,9 @@ export default function App() {
   const personOptions = useMemo(() => snap?.persons ?? [], [snap]);
   const pathOptions = useMemo(() => groupPathOptions(personOptions), [personOptions]);
 
+  // #177 (§4.42): the accept path behind the ✓ — bound through a ref
+  // so this early memo (#98 identity rule) keeps a stable callback
+  const acceptFlowRef = useRef<(ids: number[]) => void>(() => {});
   // #98 (§4.31): the card handlers are ONE memo — identity changes only
   // when their inputs do (never per hover, never per selection change:
   // sel/hover/sections are read through refs), which is what lets
@@ -1108,6 +1111,11 @@ export default function App() {
     // selection when the card is part of it (member-preserving), else
     // just the card; bottom-bar/keys never confirm (Q2/Q9)
     onReject: (id: number) => doReject(actionScope(id)),
+    // #177 (§4.42): ✓ on the card (bar semantics under the §4.14
+    // scope) and ✓/✗ on the cluster header (the whole group)
+    onAccept: (id: number) => acceptFlowRef.current(actionScope(id)),
+    onAcceptGroup: (ids: number[]) => acceptFlowRef.current(ids),
+    onRejectGroup: (ids: number[]) => doReject(ids),
     // #101: the grid's only editable surface — one dialog
     onEditCard: (id: number) => openEdit("card", { card: id }),
     onEditGroup: (ids: number[]) => openEdit("group", { group: ids }),
@@ -1551,6 +1559,13 @@ export default function App() {
     },
     [acceptAndNext, stageOps]
   );
+
+  // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the
+  // selection: live stages commit first (#166), then the accept (+
+  // the §4.30 advance in Review). Re-bound every render so the callers
+  // through acceptFlowRef always see the current pending set.
+  acceptFlowRef.current = (ids: number[]) =>
+    pending.length > 0 ? void commitPending(pending, ids) : acceptAndNext(ids);
 
   /** bottom-bar Apply (Q2/Q9, #123): opens the dialog on the selection —
       the Apply loop extends the set; it never re-scopes or commits.
