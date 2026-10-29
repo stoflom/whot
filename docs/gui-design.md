@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.70** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.71** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -289,7 +289,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the system person `Rejected`, so a fully-decided `UnknownN` is already
   a zero-face shell that §4.27's stale-shell sweep deletes on every
   read. The reference-set
-  pane exposes **Remove person** as a button.
+  pane exposes **Remove person** as a button, and — #173 — **Update
+  person** directly above it (§4.38).
 - **Group management & drag-and-drop** (#50, §4.16): real group branches
   (not the status branches) can be **renamed/moved**
   (a path dialog, prefilled; the whole subtree follows the prefix rewrite)
@@ -420,7 +421,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      deletion, an empty input is a no-op, and a rename keeps the
      person's current group path (#153 — a renamed `UnknownN` keeps its
      status seat, §4.35, until it is filed into a real group; #38's
-     force-to-empty rule stays obsolete).
+     force-to-empty rule stays obsolete). A **detail-pane rename-merge**
+     re-anchors the right pane on the surviving person — the merge
+     target when the name was taken (§4.38/#172: the pane must keep
+     showing the person the faces now belong to).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
      are per `(person, description)` — see §4.12.
@@ -1521,6 +1525,45 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      DetailPane on the import pane's close). The followed person's
      DetailPane edits (rename/group/note/refcrops) keep working — it is
      still `displayPerson`.
+
+38. **The person pane's group list** (#172) and the **Update person
+   button** (#173) ⇒ the right pane must show and edit *all* of a
+   person's group memberships, not just the first:
+   - **List**: the pane's single Group field is replaced by a list of
+     every membership (`person_groups` rows — persons can belong to
+     several groups; the tree already renders them under each branch,
+     §4.16). Each row shows the path and an **×** button that removes
+     that membership; removing the last real membership re-seats the
+     person by state (§4.35 — the backend's `ensure_seat`).
+   - **Status seats are inert**: a row that is the person's status seat
+     (`New`/`Accepted`/`Rejected`, §4.35 — system furniture) renders
+     dimmed with its × **disabled**; it is never staged for removal.
+   - **Add group**: a path input below the list (path typeahead, §4.18
+     options) appends a **new** membership — every current group is
+     kept and the status seat drops when a real group is filed (#164 /
+     §4.35 rules, unchanged). Reserved segments (#165) are refused
+     client-side before staging, exactly as the backend refuses them.
+   - **Editable rows**: clicking a row's path edits it inline (path
+     typeahead); a committed change re-homes **that one** membership
+     (from = old path, to = new path — the §4.16 D&D semantics),
+     staging the same way × and add do.
+   - **Staged commit**: × / add / inline-edit edits are held locally
+     (the list shows the staged result); **Enter in the add input or
+     the Update person button commits them** — the name field first
+     (the rename-merge helper, §4.1 — which may re-anchor the pane on
+     the merge target), then the membership ops applied **in order
+     against the surviving person** (`move_persons_between_groups`,
+     §4.16 — one call per op: `from=''` add, `to=''` remove, both
+     non-empty re-home). A failed name commit aborts the ops. The Name
+     and Note fields keep their immediate commit-on-blur behaviour —
+     only the group list is staged. Staging is pane-local UI state:
+     re-anchoring the pane (any §4.37 path, tree select) discards it.
+   - **Update person** (#173): a button directly above *Remove person*,
+     styled like it — it performs the same action as the commit above
+     (pending name first, then the staged group ops; with nothing
+     staged and no pending name it is an informed no-op, never an
+     error). The system person `Rejected` sees the list **read-only**
+     (no ×, no add, no inline edit — §4.35) and no Update button.
 
 ## 5. Related documents
 
