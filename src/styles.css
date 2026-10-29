@@ -109,9 +109,19 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 /* #99: cluster-group toggle + status filter in the top bar */
 .topbar-right .seg { display: inline-flex; gap: 2px; }
 .topbar-right label { display: inline-flex; align-items: center; gap: 0.35rem; }
-/* #175 (§4.40): the Review lock beside the Show select */
+/* #188 (§4.40): the Review lock beside the Show select — an INDICATOR
+   (a span, never clickable), so it carries the button chrome itself */
 .topbar-right select:disabled { opacity: 0.55; cursor: not-allowed; }
-.lock-btn { font-size: 0.95rem; padding: 0.1rem 0.45rem; }
+.lock-btn {
+  display: inline-block;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.95rem;
+  padding: 0.1rem 0.45rem;
+  cursor: default;
+}
 .lock-btn.locked {
   background: color-mix(in srgb, var(--accent) 25%, var(--panel2));
   border-color: var(--accent);
