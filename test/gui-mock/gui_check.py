@@ -3718,6 +3718,193 @@ def c42_edit_label_everywhere(t):
            f"menu single={single_ok} multi={multi_ok} (multi items: {[x for x in multi if 'Edit' in x]})")
 
 
+def c43_single_only_menu_items(t):
+    """#182 (§4.14): one-item-only context-menu entries grey out when the
+    scope exceeds one item — the face menu's 'Open full image'
+    (2-card scope), the thumbnail menu's 'Open image' + 'Open full image
+    (focused)' (2-thumb scope) and the tree person menu's one-person
+    trio (Open person / Rename… / Select their pending faces) — while
+    the scope-wide entries (Accept, Rotate…) stay enabled; and every
+    one of them is enabled again for a single-item scope."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def item(label_text):
+        return js(t, r"""
+          const want = arguments[0];
+          const el = [...document.querySelectorAll('.ctx-item')]
+            .find(x => x.textContent.trim().startsWith(want));
+          return el ? {found: true, disabled: el.disabled} : {found: false};
+        """, label_text)
+
+    def close_menu():
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.4)
+
+    # ── phase A: the face menu (review grid) ──────────────────────────
+    ids = js(t, r"""
+      return [...document.querySelectorAll('.face-card')].slice(0, 2)
+        .map(c => Number(c.dataset.faceId));
+    """)
+    if len(ids) < 2:
+        record("C43 one-item-only menu entries disable for a multi-scope (#182/§4.14)", True,
+               "need at least two face cards — vacuous")
+        return
+    c0 = f".face-card[data-face-id='{ids[0]}']"
+    c1 = f".face-card[data-face-id='{ids[1]}']"
+    js(t, "arguments[0].scrollIntoView({block:'center'})", t.find_element(By.CSS_SELECTOR, c0))
+    time.sleep(0.3)
+    t.find_element(By.CSS_SELECTOR, c0).click()
+    time.sleep(0.4)
+    AC(t.driver).key_down(Keys.CONTROL).click(
+        t.find_element(By.CSS_SELECTOR, c1)).key_up(Keys.CONTROL).perform()
+    time.sleep(0.4)
+    AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, c1)).perform()
+    time.sleep(0.6)
+    a_multi = item("Open full image")
+    a_scope = item("Accept")          # scope-wide: enabled in BOTH states
+    close_menu()
+    t.find_element(By.CSS_SELECTOR, c0).click()      # plain click replaces → {c0}
+    time.sleep(0.4)
+    AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, c0)).perform()
+    time.sleep(0.6)
+    a_single = item("Open full image")
+    close_menu()
+    a_ok = (a_multi["found"] and a_multi["disabled"]
+            and a_scope["found"] and not a_scope["disabled"]
+            and a_single["found"] and not a_single["disabled"])
+
+    # ── phase B: the thumbnail menu (Rolls) ───────────────────────────
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+     if "Rolls" in b.text][0].click()
+    time.sleep(1.0)
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const dirOf = p => { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); };
+      const dirs = new Map();
+      for (const im of snap.images) {
+        const d = dirOf(im.primary_path);
+        if (d !== '/') dirs.set(d, (dirs.get(d) || 0) + 1);
+      }
+      let best = null, nbest = 1;
+      for (const [d, n] of dirs) if (n > nbest) { best = d; nbest = n; }
+      return best ? {dir: best, n: nbest} : null;
+    """)
+    b_ok = None
+    if pick:
+        def drill(path):
+            segs = [s for s in path.strip('/').split('/') if s]
+            for i, seg in enumerate(segs):
+                last = i == len(segs) - 1
+                state = js(t, r"""
+                  const prefix = arguments[0], seg = arguments[1], last = arguments[2];
+                  let container = document.querySelector('.rolls');
+                  for (const p of prefix) {
+                    const s = [...container.children].find(x => x.classList.contains('roll') &&
+                      x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === p);
+                    if (!s) return 'no-parent';
+                    container = s.querySelector(':scope > .roll-children');
+                    if (!container) return 'closed-parent';
+                  }
+                  const target = [...container.children].find(x => x.classList.contains('roll') &&
+                    x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === seg);
+                  if (!target) return 'not-found';
+                  const isOpen = !!target.querySelector(':scope > .roll-children');
+                  if (last || !isOpen) target.querySelector(':scope > .roll-header').click();
+                  return 'ok';
+                """, segs[:i], seg, last)
+                time.sleep(0.6)
+                if state != "ok":
+                    return False
+            return True
+
+        drilled = drill(pick["dir"])
+
+        def thumb(i):
+            return t.find_elements(By.CSS_SELECTOR, ".rolls-thumbs .img-thumb")[i]
+
+        thumb(0).click()          # plain click selects ONE
+        time.sleep(0.4)
+        t2 = thumb(1)
+        AC(t.driver).key_down(Keys.CONTROL).click(t2).key_up(Keys.CONTROL).perform()
+        time.sleep(0.4)
+        AC(t.driver).context_click(t2).perform()
+        time.sleep(0.6)
+        b_open = item("Open image")
+        b_full = item("Open full image (focused)")
+        b_rot = item("Rotate 90° CW")     # scope-wide: stays enabled
+        close_menu()
+        thumb(0).click()                  # back to a single selection
+        time.sleep(0.4)
+        AC(t.driver).context_click(thumb(0)).perform()
+        time.sleep(0.6)
+        b_open_s = item("Open image")
+        b_full_s = item("Open full image (focused)")
+        close_menu()
+        b_ok = (drilled
+                and b_open["found"] and b_open["disabled"]
+                and b_full["found"] and b_full["disabled"]
+                and b_rot["found"] and not b_rot["disabled"]
+                and b_open_s["found"] and not b_open_s["disabled"]
+                and b_full_s["found"] and not b_full_s["disabled"])
+
+    # ── phase C: the tree person menu ─────────────────────────────────
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+     if "Review" in b.text][0].click()
+    time.sleep(1.0)
+    pids = js(t, r"""
+      return [...document.querySelectorAll('.tree-person')]
+        .map(x => Number(x.dataset.personId))
+        .filter(id => (window.__MOCK_SNAP.persons.find(p => p.id === id)?.counts.provisional ?? 0) > 0)
+        .slice(0, 2);
+    """)  # persons WITH pending faces — 'Select their pending faces' is
+         # then disabled only by the multi-scope (#182), never by content
+    c_ok = None
+    if len(pids) == 2:
+        r0 = f".tree-person[data-person-id='{pids[0]}']"
+        r1 = f".tree-person[data-person-id='{pids[1]}']"
+        js(t, "arguments[0].scrollIntoView({block:'center'})", t.find_element(By.CSS_SELECTOR, r0))
+        time.sleep(0.3)
+        t.find_element(By.CSS_SELECTOR, r0).click()   # single
+        time.sleep(0.6)
+        AC(t.driver).key_down(Keys.CONTROL).click(
+            t.find_element(By.CSS_SELECTOR, r1)).key_up(Keys.CONTROL).perform()
+        time.sleep(0.4)
+        AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, r1)).perform()
+        time.sleep(0.6)
+        c_open = item("Open person")
+        c_ren = item("Rename…")
+        c_pend = item("Select their pending faces")
+        c_move = item(f"Move 2 persons to group…")   # scope-wide: enabled
+        close_menu()
+        t.find_element(By.CSS_SELECTOR, r0).click()   # back to single
+        time.sleep(0.6)
+        AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, r0)).perform()
+        time.sleep(0.6)
+        c_open_s = item("Open person")
+        c_ren_s = item("Rename…")
+        c_pend_s = item("Select their pending faces")
+        close_menu()
+        c_ok = (c_open["found"] and c_open["disabled"]
+                and c_ren["found"] and c_ren["disabled"]
+                and c_pend["found"] and c_pend["disabled"]
+                and c_move["found"] and not c_move["disabled"]
+                and c_open_s["found"] and not c_open_s["disabled"]
+                and c_ren_s["found"] and not c_ren_s["disabled"]
+                and c_pend_s["found"] and not c_pend_s["disabled"])
+    else:
+        c_ok = True  # vacuous sub-phase
+
+    ok = a_ok and (b_ok is not False) and c_ok
+    record("C43 one-item-only menu entries disable for a multi-scope (#182/§4.14): face/thumbnail/tree menus",
+           ok,
+           f"A: multi={a_multi} scope={a_scope} single={a_single}; "
+           f"B: pick={pick} open={b_open} full={b_full} rot={b_rot} "
+           f"single open={b_open_s} full={b_full_s} (ok={b_ok}); "
+           f"C: pids={pids} open={c_open} rename={c_ren} pend={c_pend} move={c_move} "
+           f"single open={c_open_s} rename={c_ren_s} (ok={c_ok})")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -3767,6 +3954,7 @@ def main():
         c40_db_status_totals(t)
         c41_verdict_focuses_person(t)
         c42_edit_label_everywhere(t)
+        c43_single_only_menu_items(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
