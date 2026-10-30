@@ -37,6 +37,9 @@ export default tseslint.config(
         // over timers (mock.js's window-sandbox emulation)
         setTimeout: "readonly",
         clearTimeout: "readonly",
+        // #185: mock.js reads its ?no_db=1 init param from the URL
+        location: "readonly",
+        URLSearchParams: "readonly",
       },
     },
   },

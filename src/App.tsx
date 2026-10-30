@@ -78,6 +78,54 @@ export default function App() {
     if (pickPersonDialog && (personId != null || mode !== "person"))
       setPickPersonDialog(false);
   }, [pickPersonDialog, personId, mode]);
+  // #191 — WebKitGTK quirk (the engine Tauri ships): a right-click on
+  // ANY element is followed by a spurious LEFT `click` (button=0, no
+  // modifiers) on that same element — at the SAME pixel — after the
+  // `contextmenu`. The click is queued behind the contextmenu's
+  // re-render, so its lag is render-proportional (sub-100 ms on the
+  // tree/thumbs, ~1 s on the big face grid). On every selectable (tree
+  // rows, face cards, thumbs) its plain-click path replaces the
+  // multi-selection with the clicked item, silently collapsing the
+  // scope the menu/rulebar act on. Swallow the synthetic pair: button
+  // 0, no modifiers, the right-clicked element (or one of its
+  // descendants/ancestors) at the right-click's spot, within a 3 s
+  // sanity bound. A real user's mouse (and Firefox) never produce the
+  // pair — a second deliberate click lands elsewhere, and modifier
+  // clicks pass through untouched. One document-capture guard covers
+  // every element class (React 19 delegates to the root container, so
+  // capture at document wins).
+  useEffect(() => {
+    let guard: { el: Element; x: number; y: number; t: number } | null = null;
+    const onCtx = (e: MouseEvent) => {
+      guard = { el: e.target as Element, x: e.clientX, y: e.clientY, t: Date.now() };
+    };
+    const onClick = (e: MouseEvent) => {
+      if (!guard) return;
+      if (
+        Date.now() - guard.t > 3000 ||
+        e.button !== 0 ||
+        e.ctrlKey || e.metaKey || e.shiftKey || e.altKey
+      )
+        return;
+      const el = e.target as Element;
+      const sameElement =
+        el === guard.el || el.contains(guard.el) || guard.el.contains(el);
+      const sameSpot =
+        Math.abs(e.clientX - guard.x) <= 5 &&
+        Math.abs(e.clientY - guard.y) <= 5;
+      if (sameElement && sameSpot) {
+        e.stopPropagation();
+        e.preventDefault();
+        guard = null;
+      }
+    };
+    document.addEventListener("contextmenu", onCtx, true);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      document.removeEventListener("contextmenu", onCtx, true);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, []);
   const [imageId, setImageId] = useState<number | null>(null);
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
@@ -552,26 +600,52 @@ export default function App() {
   }, [mode, personId, stepIdx]);
   // #189/§4.41 — focus follows the verdict: anchor the ACTED-ON person
   // (cursor-as-target §4.25: last selected, else hovered, else the first
-  // acted face that has an owner). Called only after the mutation
+  // acted face that has an owner). focusTarget computes the anchor to
+  // apply; focusActed applies it. Called only after the mutation
   // succeeds — and after markExhaust captured its pre-mutation mark —
   // so #148's mark comparison and the §4.30 hand-over are untouched;
   // reject reads the PRE-reject owner on purpose (the person the user
   // acted on, never the system person)
-  const focusActed = useCallback(
-    (ids: number[]) => {
+  const focusTarget = useCallback(
+    (ids: number[]): number | null => {
       const first = [lastSelRef.current, hoverRef.current].find(
         (v) => v != null && ids.includes(v)
       );
       const cands = first != null ? [first, ...ids] : ids;
       for (const id of cands) {
         const pid = facesById.get(id)?.person_id;
-        if (pid != null) {
-          setPersonId(pid);
-          return;
-        }
+        if (pid != null) return pid;
       }
+      return null;
     },
     [facesById]
+  );
+  const focusActed = useCallback(
+    (ids: number[]) => {
+      const pid = focusTarget(ids);
+      if (pid != null) setPersonId(pid);
+    },
+    [focusTarget]
+  );
+  // #189/§4.41 + #125/§4.30 interplay: after a verdict, focusActed's
+  // setPersonId commits AFTER the exhaust-advance effect (which fires
+  // on the refreshed snap). When the focus target IS the acted-upon
+  // anchor (the common Review case — the sections are that person's
+  // faces) and the verdict drains it, the advance moves the anchor to
+  // the next person and focusActed's update would clobber that
+  // hand-over (observed on WebKit, where React flushes the focus
+  // update as its own commit; Firefox batches it into the refresh
+  // commit and the effect wins). So the markExhaust call sites skip
+  // focusActed when its target equals the anchor as of the ACTION
+  // (the closure value — pre-advance). Targets differing from the
+  // anchor (a verdict on ANOTHER person's faces — C41 phase B) always
+  // apply: the advance is inert then (#148 — the mark belongs to the
+  // old anchor).
+  const focusActedUnlessNoop = useCallback(
+    (ids: number[], anchorAtAction: number | null) => {
+      if (focusTarget(ids) !== anchorAtAction) focusActed(ids);
+    },
+    [focusTarget, focusActed]
   );
   const doAccept = useCallback(
     (ids: number[]) => {
@@ -587,11 +661,11 @@ export default function App() {
       }
       markExhaust();
       return mutate(() => api.acceptFaces(ids), true).then((ok) => {
-        if (ok) focusActed(ids); // #189/§4.41: focus follows the verdict
+        if (ok) focusActedUnlessNoop(ids, personId); // #189/§4.41
         return ok;
       });
     },
-    [mutate, markExhaust, facesById, focusActed]
+    [mutate, markExhaust, facesById, personId, focusActedUnlessNoop]
   );
   const doReject = useCallback(
     (ids: number[]) => {
@@ -603,11 +677,11 @@ export default function App() {
       // the other paths never did)
       setPending((p) => dropStagesForFaces(p, ids));
       return mutate(() => api.rejectFaces(ids), true).then((ok) => {
-        if (ok) focusActed(ids); // #189/§4.41
+        if (ok) focusActedUnlessNoop(ids, personId); // #189/§4.41
         return ok;
       });
     },
-    [mutate, markExhaust, focusActed]
+    [mutate, markExhaust, personId, focusActedUnlessNoop]
   );
   // #58 (§4.14): per-card inputs honour the same scope — editing the
   // description of a card inside a multi-selection updates the whole
@@ -1485,7 +1559,11 @@ export default function App() {
       // each op its own mutate so a mid-set failure can be re-staged.)
       const ok = await mutate(() => api.acceptFaces(ids), false);
       if (!ok) return;
-      focusActed(ids); // #189/§4.41: post-success, after the pre-mutation mark
+      // #189/§4.41: focus follows the verdict — with the #125 interplay
+      // guard (focusActedUnlessNoop): a no-op anchor re-set would
+      // clobber the exhaust hand-over on engines that flush this update
+      // as its own commit (WebKit); see the helper's comment.
+      focusActedUnlessNoop(ids, personId);
       setSel(new Set(plan?.faceIds ?? []));
       const first = plan?.faceIds[0];
       if (first != null) {
@@ -1499,7 +1577,7 @@ export default function App() {
         );
       }
     },
-    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, focusActed]
+    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, personId, focusActed, focusActedUnlessNoop]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
