@@ -320,13 +320,6 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     | null
   >(null);
   const [dropPath, setDropPath] = useState<string | null>(null); // '' = Ungrouped node
-  // WebKitGTK quirk (the engine Tauri ships): a right-click on a <button>
-  // fires a spurious LEFT `click` (button=0, no modifiers) right after the
-  // contextmenu — swallowing it, or it would replace the multi-selection
-  // with the clicked row and collapse the menu scope to one. Firefox
-  // (and the real user's mouse) don't do this, so the guard only ever
-  // eats an immediate same-row click following a right-click.
-  const ctxClickGuard = useRef<{ id: number; t: number } | null>(null);
   const [dropPerson, setDropPerson] = useState<number | null>(null); // #88 merge target
   // #135 (rule 34): face drag in flight (state view — highlight/effects)
   const faceDrag = faceDragIds != null && faceDragIds.length > 0;
@@ -598,21 +591,13 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                   multi={selectedIds.has(p.id)}
                   renaming={renamingId === p.id}
                   rot={primaryRot.get(p.id) ?? 0}
-                  onSelect={(e) => {
-                    const g = ctxClickGuard.current;
-                    if (g && g.id === p.id && Date.now() - g.t < 500) {
-                      ctxClickGuard.current = null;
-                      return; // spurious post-right-click click (WebKitGTK)
-                    }
-                    onSelect(p.id, e);
-                  }}
+                  onSelect={(e) => onSelect(p.id, e)}
                   onStartRename={() => setRenamingId(p.id)}
                   onRename={onRename}
                   onRenameCancel={() => setRenamingId(null)}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    ctxClickGuard.current = { id: p.id, t: Date.now() };
                     setMenu({ x: e.clientX, y: e.clientY, id: p.id });
                   }}
                   onDragStart={(e) => startDragPerson(e, p.id, groupPath)}
