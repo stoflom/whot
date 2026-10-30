@@ -3719,7 +3719,15 @@ def c43_single_only_menu_items(t):
     (focused)' (2-thumb scope) and the tree person menu's one-person
     trio (Open person / Rename… / Select their pending faces) — while
     the scope-wide entries (Accept, Rotate…) stay enabled; and every
-    one of them is enabled again for a single-item scope."""
+    one of them is enabled again for a single-item scope.
+
+    Each phase also asserts the SELECTION SURVIVES the right-click:
+    WebKitGTK fires a spurious left click on the just-right-clicked
+    element right after the contextmenu (#191), and on every selectable
+    its plain-click path replaces the multi-selection with the clicked
+    item — the face/thumbnail menus bake their items at contextmenu time
+    so they still look multi-scope while the selection underneath is
+    already collapsed to one."""
     fresh(t)
     set_show_filter(t, "all")
 
@@ -3757,6 +3765,11 @@ def c43_single_only_menu_items(t):
     time.sleep(0.6)
     a_multi = item("Open full image")
     a_scope = item("Accept")          # scope-wide: enabled in BOTH states
+    # #191: the spurious post-right-click click must not collapse the
+    # 2-card selection (the menu items are baked at contextmenu time,
+    # so only the selection state betrays the collapse)
+    a_sel = js(t, "return [...document.querySelectorAll('.face-card')]"
+                ".filter(x => x.classList.contains('selected')).length")
     close_menu()
     t.find_element(By.CSS_SELECTOR, c0).click()      # plain click replaces → {c0}
     time.sleep(0.4)
@@ -3766,7 +3779,8 @@ def c43_single_only_menu_items(t):
     close_menu()
     a_ok = (a_multi["found"] and a_multi["disabled"]
             and a_scope["found"] and not a_scope["disabled"]
-            and a_single["found"] and not a_single["disabled"])
+            and a_single["found"] and not a_single["disabled"]
+            and a_sel == 2)
 
     # ── phase B: the thumbnail menu (Rolls) ───────────────────────────
     [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
@@ -3827,6 +3841,10 @@ def c43_single_only_menu_items(t):
         b_open = item("Open image")
         b_full = item("Open full image (focused)")
         b_rot = item("Rotate 90° CW")     # scope-wide: stays enabled
+        # #191: the 2-thumb selection must survive the right-click
+        # (the '· N selected' header is the visible witness)
+        b_sel = js(t, "return (document.querySelector('.rolls-thumbs-head')"
+                      "?.textContent) || ''")
         close_menu()
         thumb(0).click()                  # back to a single selection
         time.sleep(0.4)
@@ -3840,7 +3858,8 @@ def c43_single_only_menu_items(t):
                 and b_full["found"] and b_full["disabled"]
                 and b_rot["found"] and not b_rot["disabled"]
                 and b_open_s["found"] and not b_open_s["disabled"]
-                and b_full_s["found"] and not b_full_s["disabled"])
+                and b_full_s["found"] and not b_full_s["disabled"]
+                and "2 selected" in b_sel)
 
     # ── phase C: the tree person menu ─────────────────────────────────
     [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
@@ -3870,6 +3889,15 @@ def c43_single_only_menu_items(t):
         c_ren = item("Rename…")
         c_pend = item("Select their pending faces")
         c_move = item(f"Move 2 persons to group…")   # scope-wide: enabled
+        # #191: the 2-row selection must survive the right-click (the
+        # menu re-renders from it, so a collapse would also break the
+        # scope labels above — assert the state directly as well);
+        # rows mark the anchor with 'selected' and multi-membership with
+        # 'multi-selected' (the anchor row carries both)
+        c_sel = js(t, "return [...document.querySelectorAll('" +
+                    ".tree-person')].filter(x =>"
+                    " x.classList.contains('selected') ||"
+                    " x.classList.contains('multi-selected')).length")
         close_menu()
         t.find_element(By.CSS_SELECTOR, r0).click()   # back to single
         time.sleep(0.6)
@@ -3885,18 +3913,19 @@ def c43_single_only_menu_items(t):
                 and c_move["found"] and not c_move["disabled"]
                 and c_open_s["found"] and not c_open_s["disabled"]
                 and c_ren_s["found"] and not c_ren_s["disabled"]
-                and c_pend_s["found"] and not c_pend_s["disabled"])
+                and c_pend_s["found"] and not c_pend_s["disabled"]
+                and c_sel == 2)
     else:
         c_ok = True  # vacuous sub-phase
 
     ok = a_ok and (b_ok is not False) and c_ok
     record("C43 one-item-only menu entries disable for a multi-scope (#182/§4.14): face/thumbnail/tree menus",
            ok,
-           f"A: multi={a_multi} scope={a_scope} single={a_single}; "
+           f"A: multi={a_multi} scope={a_scope} single={a_single} sel={a_sel}; "
            f"B: pick={pick} open={b_open} full={b_full} rot={b_rot} "
-           f"single open={b_open_s} full={b_full_s} (ok={b_ok}); "
+           f"single open={b_open_s} full={b_full_s} sel={b_sel!r} (ok={b_ok}); "
            f"C: pids={pids} open={c_open} rename={c_ren} pend={c_pend} move={c_move} "
-           f"single open={c_open_s} rename={c_ren_s} (ok={c_ok})")
+           f"single open={c_open_s} rename={c_ren_s} sel={c_sel} (ok={c_ok})")
 
 
 def c44_rotate_image_cascades(t):
