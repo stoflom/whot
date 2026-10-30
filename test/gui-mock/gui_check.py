@@ -219,21 +219,11 @@ def fresh(t):
         if n:
             # #188/§4.40: the load lands in Review, where the entry pin
             # fires (Show → New) — the suite's baseline has always been
-            # the seed's Show → All, so force it back (the dispatch
-            # reaches React even on the disabled select — the harness's
-            # test-only bypass), then wait for it to settle
-            js(t, r"""
-              const s = document.querySelector('.topbar-right select');
-              if (s && s.value !== 'all') {
-                s.value = 'all';
-                s.dispatchEvent(new Event('change', {bubbles: true}));
-              }
-            """)
-            settle = time.time() + 5
-            while time.time() < settle:
-                if js(t, "return document.querySelector('.topbar-right select')?.value") == 'all':
-                    break
-                time.sleep(0.2)
+            # the seed's Show → All, so force it back. The pin may fire
+            # AFTER a dispatch (engine-dependent microtask ordering —
+            # seen on WebKit), but it consumes itself, so retry until
+            # the value sticks (set_show_filter does the retry loop).
+            set_show_filter(t, "all")
             return n
         time.sleep(0.3)
     raise RuntimeError(
@@ -552,14 +542,33 @@ def tree_badges(t):
     """)
 
 
+def _show_select_js():
+    return (
+        "[...document.querySelectorAll('select')]"
+        ".find(x => [...x.options].some(o => o.value === arguments[0]))"
+    )
+
+
 def set_show_filter(t, value):
-    """flip the top-bar Show filter (§4.10) to `value` and wait for the refetch"""
-    js(t, """
-      const s = [...document.querySelectorAll('select')]
-        .find(x => [...x.options].some(o => o.value === arguments[0]));
-      if (s) { s.value = arguments[0]; s.dispatchEvent(new Event('change', {bubbles: true})); }
-    """, value)
-    time.sleep(0.8)
+    """flip the top-bar Show filter (§4.10) to `value` and wait for the refetch.
+
+    #188/§4.40: the Review entry pin (Show → New) can fire AFTER our
+    dispatch — engine-dependent microtask ordering (seen on WebKit,
+    where React also flushes the app's focus-actor updates separately).
+    The pin consumes itself, so re-dispatch until the value sticks."""
+    for _ in range(4):
+        js(t, f"""
+          const s = {_show_select_js()};
+          if (s && s.value !== arguments[0]) {{
+            s.value = arguments[0];
+            s.dispatchEvent(new Event('change', {{bubbles: true}}));
+          }}
+        """, value)
+        for _ in range(12):
+            if js(t, f"return {_show_select_js()}?.value", value) == value:
+                return
+            time.sleep(0.2)
+    raise RuntimeError(f"Show filter would not take: wanted {value!r}")
 
 
 def c8_tree_counts_ignore_filter(t):
