@@ -21,7 +21,7 @@ sidecars is available today — see [Legacy recovery](#legacy-recovery-harvest--
 | Legacy harvest | `scripts/harvest_legacy.py` | read-only scan of sidecars/Lightroom/digiKam into a staging DB (`docs/scripts-design.md` §8) |
 | Harvest import | `scripts/import_harvested.py` | attaches harvested persons to existing faces in a **copy** of `faces.db` (`docs/scripts-design.md` §9) |
 | Annotation snapshot | `scripts/annotation_snapshot.py` | export/restore manual annotations across drop & recreate |
-| Status-group fix | `scripts/fix_status_groups.py` | one-off #165 data fix: upgrades a v1.6 `faces.db` in place to the v1.7 status-group layout (`docs/gui-design.md` §4.35) |
+| Status-group fix | `scripts/fix_status_groups.py` | data fix: upgrades a v1.6 `faces.db` in place to the v1.7 status-group layout (`docs/gui-design.md` §4.35) |
 | Staging schema | `database/harvest_schema.sql` | harvest staging DB, created by `harvest_legacy.py` |
 | GUI | repo root (Tauri 2 + React + TS, Rust backend in `src-tauri/`) | review/naming/annotation; serves images from DB BLOBs, no Python at runtime |
 | Config | `.env` (paths), `config/whotrc.json` (GUI settings, created at runtime) | |
@@ -33,7 +33,7 @@ sidecars is available today — see [Legacy recovery](#legacy-recovery-harvest--
   repo root; the buffalo_l model is downloaded on first run.
 - Node 22+, Rust (Tauri prerequisites: webkit2gtk-4.1, gtk3).
 - Paths (data, config, insightface, input directories) live in `.env` —
-  copy the committed `.env.sample` template and adjust. `${VAR}` references
+  copy the committed `env.sample` template and adjust. `${VAR}` references
   resolve against other `.env` keys first, then the process environment
   (`${HOME}`, `${USER}`, …).
 - The GUI resolves the project root by looking for `.env` or `data/` in the
@@ -65,7 +65,7 @@ suppressed).
 Flags: `--dry-run` (detect only, no writes), `--all` (also import faceless
 images), `--recursive`, `--gpu` (opt in to the MIGraphX GPU provider —
 **CPU is the default**: MIGraphX has hung this machine's AMD GPU and taken
-the desktop session down with it, #91; `--cpu` is still accepted as a
+the desktop session down with it; `--cpu` is still accepted as a
 no-op), `--threshold F` (cosine similarity, default 0.40), `--create-db` (build the
 database named by `FACES_DB` in `.env` from `database/schema.sql`, creating
 missing parent directories; refuses an existing non-empty database and
@@ -79,7 +79,7 @@ never created implicitly — use `--create-db` (design `docs/gui-design.md`
 §4.29).
 
 Every cluster becomes an `UnknownN` person; all faces start `provisional`.
-New `UnknownN` persons start in the **`New`** status branch (#165): the
+New `UnknownN` persons start in the **`New`** status branch: the
 importer seeds their `New` group row, and they stay seated by state
 (`New` while any face is provisional, `Accepted` once all are decided)
 until you file them into a group yourself.
@@ -166,7 +166,7 @@ deliberately scoped run doesn't read as a catastrophe.
 
 #### Recovery workflow: harvest → import → promote
 
-The loop is safe to repeat end to end (#82): re-importing the same
+The loop is safe to repeat end to end: re-importing the same
 staging DB converges (`faces_moved=0`, `persons_created=0`) instead of
 duplicating persons, so extend the path map and iterate until the
 coverage warning settles.
@@ -192,7 +192,7 @@ coverage warning settles.
    walk takes a few minutes (the §10 heartbeat keeps it visibly alive).
 3. **Import for real** (same command without `--dry-run`). It writes a
    new **copy** `data/faces-<YYYYmmdd-HHMMSS>.db` plus its
-   `.import.log`/`.import.json`; `data/faces.db` is never written (J1).
+   `.import.log`/`.import.json`; `data/faces.db` is never written.
    **Import from the source `data/faces.db`, not from a copy** — a copy
    that already received a harvest import is the wrong base for the
    next one.
@@ -238,37 +238,36 @@ npm run tauri build    # release bundles
   persons-mode cluster-group toggle sits in the Person view's centre
   toolbar — it is view-local). The `Show` filter
   decides which faces exist anywhere: switching to `New`/`Accepted`/
-  `Rejected` **also prunes the left-pane person tree** (#152) — persons
+  `Rejected` **also prunes the left-pane person tree** — persons
   without a face of that status are not listed; `All` lists everyone
   **except rejected faces** (rejected is visible only under `Show →
-  Rejected`, #165 — so the system person `Rejected` never shows under
+  Rejected`) — so the system person `Rejected` never shows under
   `All`).
 - **Left pane — person tree**, hierarchical by `person_groups.path`.
-  Three **status branches** carry the review states (#165): `New`
+  Three **status branches** carry the review states: `New`
   (unreviewed `UnknownN` clusters), `Accepted` (reviewed but unfiled) and
   `Rejected` (the system person holding every rejected face — listed
   only under `Show → Rejected`). Every person always has at least one
-  group: the old `Ungrouped`/`Unknown` virtual branches and the `Unknown`
-  group value are gone, and an empty group input re-seats the person
-  instead of leaving them groupless. A person with a group renders under
+  group; an empty group input re-seats the person by state (§4.35) instead
+  of leaving them groupless. A person with a group renders under
   that group even when
   named `UnknownN` — filing an Unknown you remember by face but not by
-  name into a group is normal (#153). A person with **several** group
+  name into a group is normal. A person with **several** group
   rows (the §9 harvest import can leave multiple) renders under every
-  listed path, and is stepped once (#156). Dragging a person row onto a
+  listed path, and is stepped once. Dragging a person row onto a
   branch re-homes **that one membership** — the dragged-from row leaves
-  the person, the target group is filed, other memberships stay (#157).
+  the person, the target group is filed, other memberships stay.
   Right-click: rows, branches and cards all carry menus.
 - **Centre pane** — the face grid, `Show`-filtered; Review groups the
   pending faces by the importer's `UnknownN` clusters, Rolls lists
   imports as expandable sections (a roll with **0 images** is never
-  listed — re-imported shells from #151), and double-clicking a card
+  listed), and double-clicking a card
   opens the annotated full-size image.
 - **Detail pane** — person name, group path, note, primary face,
   refcrops.
 - **Rule bar** — selection-wide actions (Apply/Accept/Assign/Reject…).
 
-**Rejected faces** (#165): every rejected face lives on one system
+**Rejected faces**: every rejected face lives on one system
 person `Rejected` (group `Rejected`), listed only under `Show →
 Rejected`; rejecting always moves the face there (including via *Remove
 person*), and the only way back is an **assignment** — which un-rejects
@@ -280,13 +279,13 @@ it on the next refresh.
 (accepts & names it, moving it into a group path, e.g. `family|Smith`,
 `friends|college`), assign selected faces to an existing or new person,
 reject faces (they move to the `Rejected` bin — see above; the way back
-is an assignment, since plain accept never un-rejects, #165), per-face
+is an assignment, since plain accept never un-rejects), per-face
 description (`beard`, `sun_glasses`,
 … — the full derived label is `person-name-description-seq`), primary
 face and per-appearance reference faces.
 
 **Merge Similar Persons** (`⧉ merge similar` in the person-tree header,
-§4.28/#88): triages clusters of near-identical names (case, seq
+§4.28): triages clusters of near-identical names (case, seq
 suffixes, Damerau-Levenshtein ≤ 2 — configurable with optional
 generational-suffix aliases) with per-pair evidence, then merge / bulk
 rename / bulk group the selection — merging always goes through a
@@ -319,20 +318,19 @@ rules are `docs/gui-design.md` §4, architecture is
 - `get_refcrops(person_id) → [{seq, description, pinned, face_id, image: base64}]
   grouped by appearance (§4.6)`
 - `open_image(image_id) → ()` — write `images.preview` to a unique temp
-  file and open it with the system viewer (opener plugin; §3 context
-  menus, #144)
+  file and open it with the system viewer (opener plugin; §3 context menus)
 - `person_face_clusters(person_id, threshold) →
   [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
   similarity clusters inside each (§4.9)
-- `scan_import_dir(path) → bool` (#167/#169, §4.36) — does the path hold
+- `scan_import_dir(path) → bool` (§4.36) — does the path hold
   ≥ 1 image file at ANY depth (recursive, hidden dirs skipped, exact
   `IMAGE_SUFFIXES` parity with `import_roll.py`, early-exit on the first
   hit); `true` + no snapshot match = "not yet imported" ⇒ the Rolls
   filter opens the import pane
 - `get_import_status(since) → { running, killed, exitCode, elapsed,
-  nextSince, lines }` (#167) — the import pane's stdout poll: lines
+  nextSince, lines }` — the import pane's stdout poll: lines
   `[since..]` of the combined stdout/stderr buffer + process state
-- `get_import_info() → String` (#167) — the resolved `FACES_DB` path for
+- `get_import_info() → String` — the resolved `FACES_DB` path for
   the pane's read-only header
 
 **Mutations** (each ends with refcrops recompute + primary backfill for all
@@ -340,12 +338,12 @@ affected persons; all return an error string on constraint violation)
 
 - `assign_person(face_ids, name, group_path)` — §4.1 (empty group ⇒ the
   person's status seat, §4.35; a rename keeps the person's current group
-  path, #153; assignment **claims** rejected faces — §4.35)
+  path; assignment **claims** rejected faces — §4.35)
 - `accept_faces(face_ids)` — §4.3 (never un-rejects; §4.35)
 - `reject_faces(face_ids)` — §4.2 (moves the face to the system person
   `Rejected`; §4.35)
 - `rotate_image(image_id, delta)` / `rotate_face(face_id, delta)` —
-  display rotation in 90° steps (§4.32, #122)
+  display rotation in 90° steps (§4.32)
 - `set_face_description(face_id, description)` — §4.4
 - `set_primary_face(person_id, face_id)` — §4.5
 - `set_person_name(person_id, name)` / `set_person_group(person_id, path)` /
@@ -355,13 +353,13 @@ affected persons; all return an error string on constraint violation)
 - `remove_persons(person_ids)` — §4.13 (reject + move to `Rejected` +
   delete, no undo)
 - `rename_group(old_path, new_path)` / `delete_group(path)` /
-  `move_persons_to_group(person_ids, group)` — §4.16 (#50) group
+  `move_persons_to_group(person_ids, group)` — §4.16 group
   membership: prefix rewrite / subtree drop to status seats (§4.35) /
-  per-person replace; normalised (#42); the `Ungrouped`, `New`,
+  per-person replace; normalised; the `Ungrouped`, `New`,
   `Accepted`, `Rejected` and `Unknown` segments are reserved
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
 
-**Import runner** (#167/#169, §4.36 — spawns, never blocks the GUI)
+**Import runner** (§4.36 — spawns, never blocks the GUI)
 
 - `start_import(options) → { running, killed, exitCode, elapsed,
   nextSince, lines }` — spawn `scripts/import_roll.py` as an independent
@@ -389,9 +387,10 @@ whot/
       FaceMergeDialog.tsx                      # MergeSimilar, FaceMerge);
       NameTypeahead.tsx  PathTypeahead.tsx     # typeaheads + suggestions
       SuggestInput.tsx  SettingsPopover.tsx    # (Name/Path/Suggest); settings
-    viewFilters.ts  reviewFlow.ts  stage.ts  faceDrop.ts    # pure logic
-    nameCluster.ts  autoText.ts  rotation.ts  hooks.ts      # helpers
-    overlays.tsx                   # #138: one overlay registry (Q8 Esc/keys)
+    viewFilters.ts  reviewFlow.ts  stage.ts  faceDrop.ts  stepFlow.ts   # pure logic
+    groupList.ts  imageSelect.ts  nameCluster.ts  autoText.ts          # helpers
+    rotation.ts  hooks.ts                                              # helpers
+    overlays.tsx                   # one overlay registry (Esc/keys)
     styles.css
     *.test.ts                      # vitest unit tests (`npm test`)
   src-tauri/
@@ -412,7 +411,7 @@ whot/
     harvest_schema.sql             # staging DDL for harvest_legacy.py (v1.2)
   test/
     test_*.py                      # Python unit tests (import + harvest helpers)
-    gui-mock/                      # Firefox-driven GUI contract checks (see test/gui-mock/README.md)
+    gui-mock/                      # GUI contract checks against a mocked backend (see test/gui-mock/README.md)
   docs/                            # design documents (see Docs below)
   config/whotrc.json               # created at runtime
   data/faces.db                    # (existing; never touched by the §8/§9 scripts)
@@ -430,7 +429,7 @@ npm run build                     # dist/ first — cargo test and gui-mock need
 (cd src-tauri && cargo test)      # Rust integration tests (fixture DB built from database/schema.sql)
 python3 -m unittest discover -s test   # Python: harvest + import + annotation helpers (needs numpy + blake3)
 
-# GUI contract checks against the mocked backend (#170: WebKitGTK by
+# GUI contract checks against the mocked backend (WebKitGTK by
 # default — the engine Tauri ships; needs selenium, the system
 # WebKitWebDriver binary + a display (Xvfb on CI), snap.json, and the
 # mock server; Firefox stays available via WHOT_GUI_DRIVER=firefox):
@@ -448,4 +447,4 @@ WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox
 - `docs/scripts-design.md` — Python tooling: §8 harvest, §9 harvest import
 - `docs/schema-design.md` — `faces.db` DDL design: identities, version gate, drop & recreate
 - `docs/backend-design.md` — Rust backend architecture (`lib.rs`/`db.rs`)
-- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C18`)
+- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C49`)

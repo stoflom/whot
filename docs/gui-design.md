@@ -34,8 +34,8 @@ user:
 - give a face a **description** (e.g. `beard|glasses`);
 - pick each person's **primary face** (icon);
 - browse persons in a **hierarchical tree by group**, with a name/group filter;
-- browse **images by their filesystem path** (#161), rooted at any
-  chosen path (#162);
+- browse **images by their filesystem path**, rooted at any
+  chosen path;
 - maintain each person's **reference faces** for future recognition.
 
 All panes re-sync after every mutation.
@@ -43,7 +43,7 @@ All panes re-sync after every mutation.
 Non-goals: deleting faces (persons *can* be removed — §4.13; their
 faces become rejected and join the system person `Rejected`, §4.35), editing embeddings, multi-group
 membership UI (one group path per person), i18n. (Moving faces between
-persons by drag & drop is a feature — rule 34, #135/#136.)
+persons by drag & drop is a feature — rule 34.)
 
 ## 2. Stack
 
@@ -67,7 +67,7 @@ The GUI (`db::connect`) and `import_roll.py` verify it on every connection
 and **refuse a missing or mismatched version** with recreate instructions —
 exact match, no migrations (AGENTS.md). `scripts/annotation_snapshot.py`
 preserves manual annotations across such a drop & recreate, and
-`scripts/fix_status_groups.py` (#165) upgrades a v1.6 database **in place**
+`scripts/fix_status_groups.py` upgrades a v1.6 database **in place**
 (backup first) to the status-group layout of §4.35, so the long-lived live
 DB never needs a re-import.
 
@@ -96,17 +96,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 ```
 
 - **Left pane — person tree.** Hierarchy built from `person_groups.path`
-  (segments split on `|`). **Group first** (#153): a person with a group
+  (segments split on `|`). **Group first**: a person with a group
   row renders under their path even when named `UnknownN` — the
   user may group an UnknownN they remember by face but not by name.
-  **Multi-group persons render under every listed path** (#156, v3.56):
+  **Multi-group persons render under every listed path**:
   the §9 harvest importer legally leaves several `person_groups` rows per
-  person (§9.6, #128 — additive shell groups), and the earlier
-  `groups[0]`-only placement made such a person unfindable in the branch
-  the user filed them under. Each distinct row is one placement; the
+  person (§9.6 — additive shell groups). Each distinct row is one
+  placement; the
   person is stepped (‹ › / arrows) **once**, at the first placement
   reached, and branch bulk operations (§4.13 subtree remove) dedupe the
-  ids across placements. **Status branches** (#165, §4.35) hold the
+  ids across placements. **Status branches** (§4.35) hold the
   rest: `New`, `Accepted` and `Rejected` are ordinary group paths that
   are system-written *status seats* — every person always has ≥ 1 group
   row, so the virtual `Ungrouped`/`Unknown` branches and the `Unknown`
@@ -119,14 +118,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
   rejected). The tree's header — **roll up/down buttons on the left,
   filter box on the right, then the Review button** — is **pinned flush
-  to the top of the pane** while the list scrolls (#78; one sticky
+  to the top of the pane** while the list scrolls (one sticky
   block whose panel background covers the full pane width and the
   pane's top padding, so no text can show through above or beside it).
   The filter matches **person name and/or
   group path** (case-insensitive substring); tree stays hierarchical
   below the match.
   Within every branch, persons are ordered by **face count, most first**
-  (#61; ties broken by name, then id — deterministic, no sort toggle);
+  (ties broken by name, then id — deterministic, no sort toggle);
   sub-branches keep their order. The stepping shortcuts and the
   selection ranges therefore follow this display order.
   Branches **roll up/down** by clicking their header (any branch holding
@@ -136,13 +135,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   active without mutating it, and the previous roll-up state applies again
   when the filter is cleared. Rolled-up branch counts always include the
   hidden descendants.
-- **Modes** (the top-bar selector, #174): `Review · Rolls · Person` are
+- **Modes** (the top-bar selector): `Review · Rolls · Person` are
   proper **modes**, not tabs over one layout — the selector is the mode
   switch and each mode owns its centre panel and the default content of
   its right pane (Review/Person: the grid + the person detail /
   Overview; Rolls: the path hierarchy + the branch thumbnails, §4.39).
-  A mode switch is a view-context change (#123 — the staged-set
-  confirm) and mode state (the #162 root, the branch selection, the
+  A mode switch is a view-context change (§4.24 staged-set confirm) and
+  mode state (the Rolls root, the branch selection, the
   person anchor) is session state, surviving switches unless a rule
   below says otherwise.
 - **Center pane — by mode**:
@@ -153,44 +152,42 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **Edit…** button — the shared dialog, scope Group (§4.24). The heading
     always sits on its own row above the card(s) — beside the card it left
     a tall black column next to a single card and rendered inconsistently
-    between the review and person views (#120).
+    between the review and person views.
   - **Rolls**: the images sorted into a **hierarchy mirroring their actual
-    filesystem path** (#161) — each image's `primary_path` split into its
+    filesystem path** — each image's `primary_path` split into its
     path segments: every **directory** segment is an expandable branch
     and the images sit in their file's directory branch — the FILENAME
-    is never a branch of its own (#174: the old file-twig whose inline
-    thumbnail landed in the right pane), so there is a close connection
+    is never a branch of its own, so there is a close connection
     between the filesystem and the pictures and the user can drill in to
-    a smaller set. The view **no longer shows the import rolls**: the
-    roll sections, their dates, and the `first_import_id`-keyed counting
-    (#146) and zero-image-roll rule (#151) are gone — the pane simply
-    organises the pictures according to their paths. (The imports
+    a smaller set. The view **does not show the import rolls** — the
+    pane simply organises the pictures according to their paths. (The
+    imports
     themselves stay in the DB and snapshot; the pane just ignores them.)
     A branch header shows the segment name and the branch totals —
     `{n} img · {n} new · {n} ✓ · {n} ✗` — counted over **every** image
     under the branch, filter-independent like the person tree's raw
-    badges (#129): the Show filter changes who is listed, never any
+    badges: the Show filter changes who is listed, never any
     counters. Clicking a header expands/collapses **and selects** the
-    branch (#174 — its direct images land in the right pane); branches
+    branch (its direct images land in the right pane); branches
     start collapsed, listed alphabetically by segment (images by
-    filename). **The centre renders no thumbnails** (#174, §4.39): the
-    inline per-branch image grids are gone — clicking a branch header
-    both toggles the branch **and selects it**, and the selected
+    filename). **The centre renders no thumbnails** (§4.39):
+    clicking a branch header both toggles the branch **and selects it**,
+    and the selected
     branch's images appear as thumbnails in the **right pane** (direct
     images of that path only, never the recursion); the image-tile
-    menu (#32) lives on those right-pane thumbnails. Double-clicking a
+    menu lives on those right-pane thumbnails. Double-clicking a
     thumbnail opens that image's faces and its preview **annotated
-    with its detected face rectangles** (see below, #142/#174); a
+    with its detected face rectangles** (see below); a
     single click only selects it. **Show prunes the tree** (§4.10): an
     image is listed only if it holds at least one face passing the Show
-    filter — with `All` = everything *except* rejected (#165), an image
+    filter — with `All` = everything *except* rejected, an image
     holding only rejected faces lists solely under `Show → Rejected`
     (a `no-face` image still lists under `All`) — and a branch holding
     no listing image
     is pruned entirely (set Show back to All to see everything again —
     the branch raw counts keep such branches discoverable). An empty DB
     shows `no images yet`.
-    **Path filter** (#162): the pane is topped by a pinned (sticky)
+    **Path filter**: the pane is topped by a pinned (sticky)
     path-filter row — a text input plus a **browse…** button opening the
     native **folder picker** (tauri-plugin-dialog). The typed/picked path
     is validated against the snapshot (no fs IPC):
@@ -200,35 +197,36 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       whole tree);
     - a path **equal to an image's `primary_path`** opens **that one
       image in full-image mode** (the same view-context change as a
-      thumbnail double-click, #142/#174 incl. the staged-set confirm);
+      thumbnail double-click, incl. the §4.24 staged-set confirm);
     - anything else is refused with a dim hint (`no images under …`) and
       the current root stays — **unless the path is a real, not-yet-imported
       directory**: it is then checked against the filesystem
-      (`scan_import_dir`, §4.36/#167) and a directory holding ≥ 1 image
+      (`scan_import_dir`, §4.36) and a directory holding ≥ 1 image
       file opens the **import pane in the right pane** instead of the hint.
     The root lives for the session (it survives tab switches; not
     persisted to whotrc) and the Show filter keeps pruning under it
     (§4.10). The native picker is stubbed in the GUI-mock harness.
-- **Status filter + cluster group** (§4.10/§4.9, #99/#100): `Show
+- **Status filter + cluster group** (§4.10/§4.9): `Show
   [All | New | Accepted | Rejected]` — the face-status filter applied by
   every view (default All; **New** is the `provisional` status, spelled
-  the way the face-card badge spells it) — lives in the **top bar**
-  (#158, v3.57). Beside it sits the **Review lock** (#175, §4.40,
-  rewritten by #188): a padlock **indicator** — 🔒 exactly while Review
+  the way the face-card badge spells it) — lives in the **top bar**.
+  Beside it sits the **Review lock** (§4.40): a padlock
+  **indicator** — 🔒 exactly while Review
   mode is active, never a control. In Review the Show select pins to
   **New** and renders **disabled**; the way out is the ordinary
   *Rolls*/*Person* tab switch (the select re-enables, its value stays). The center pane's toolbar right side carries the
   persons-mode cluster-group toggle `[Description | Accuracy]`, and
-  **only in the person view** (#163): `cluster_group` shapes only how
+  **only in the person view**: `cluster_group` shapes only how
+
   the person view forms its sections (§4.9), so the seg is hidden in
   the Review and Rolls views, where it would change nothing. **Rolls
-  renders no centre toolbar at all** (#163): neither the navigation
+  renders no centre toolbar at all**: neither the navigation
   cluster nor the seg appear there — the grid gets the pane's full
   height (Review and Person keep the navigation cluster). The
   toolbar is the center pane's **fixed header** (in the views that have
   one): the sections scroll
   beneath it in their own, shorter scroll area — nothing can scroll past
-  above it (#100). While a mutation is in flight the bar's
+  above it. While a mutation is in flight the bar's
   right side shows an animated **busy roller** beside `working…` (the
   `busy` state; `prefers-reduced-motion` disables the spin).
 - **Full-image views** (§4.11): every full-size image — the Rolls image
@@ -236,28 +234,28 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   name-labelled rectangle** per visible face of that image, colour-coded by
   `link_status`; hover highlights the rectangle and its card (bidirectional),
   click toggles the face's selection **and moves the right pane to that
-  face's person (#171, §4.37)** — and on opening a full image the right
+  face's person (§4.37)** — and on opening a full image the right
   pane follows the opening face's person.
-- **Card double-click — full-image focus** (#55, §4.19): double-clicking a
+- **Card double-click — full-image focus** (§4.19): double-clicking a
   face card opens the center pane's **focus mode**: the annotated full
-  image spans the pane's full width (height-fitted, §4.11 overlay
-  unchanged) and is **pinned at the top of the pane** — only the film roll
-  below scrolls (#57, §4.19). The **film roll** shows only that image's
+  image spans the pane's full width (height-fitted, §4.11 overlay)
+  and is **pinned at the top of the pane** — only the film roll
+  below scrolls (§4.19). The **film roll** shows only that image's
   face cards
   (horizontal scroll strip; all card operations keep working). The
   regular grid is hidden while the mode is active. Closable via ×/Esc;
   selection and current view survive; single-click selection is
   unaffected (the two clicks of a double-click cancel each other out).
-  **Lifecycle (#51/#52/#62, §4.15)**: the mode ends when a person is
+  **Lifecycle** (§4.15): the mode ends when a person is
   selected — tree row or stepping (always — the attention has shifted,
   §4.15) — when a card/rectangle selection moves to a different image,
   or the user navigates explicitly (top-bar tabs, *Review*); the
   face-rectangle menu hides *Open full image* while its image is the one
   already open.
-- **Face vs person tiles** (#30): face crops render as **rounded squares
+- **Face vs person tiles**: face crops render as **rounded squares
   with a large corner radius**, so a face tile never reads as a person
   tile (whose avatar is a small circle) without cropping the face tight.
-- **Face-card name label** (#29, #101): the card's name is a **label**
+- **Face-card name label**: the card's name is a **label**
   (the strip inside the image frame), not an input — editing goes through
   the shared Edit dialog scoped to the card (§4.24); a name commit
   **assigns that person** — an existing person is merged into, a new one is
@@ -266,11 +264,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   group (§4.24). The full
   derived label stays in the tooltip; the detail pane's rename routes
   through the same rename-merge helper (§4.1).
-- **Inline rename** (#29): double-clicking a person row in the tree turns
+- **Inline rename**: double-clicking a person row in the tree turns
   its name into an entry field (Enter/blur commits via the rename-merge
   helper, §4.1, Esc cancels — same pattern as the detail-pane fields;
   validation errors surface as toast).
-  **The renaming row is never a `<button>` while renaming** (#143):
+  **The renaming row is never a `<button>` while renaming**:
   an entry field must not nest inside a button (invalid HTML; WebKit
   mis-handles it — clicks in the input bubble to the row's `onClick` and
   focus juggling fights the typeahead). While `renaming`, the row renders
@@ -278,43 +276,42 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   styling keeps the geometry identical), without the select/drag
   handlers: the rename input owns the interaction, blur (click-away)
   commits via `onLeave` exactly as documented above.
-- **Section stepping** (#31): ‹ › buttons in the center toolbar — and the
+- **Section stepping**: ‹ › buttons in the center toolbar — and the
   `←`/`→` **shortcuts** — step through the persons in the tree's current
   (filtered) display order, selecting each (person view); disabled at the
   ends, `n/m` indicator in the toolbar. **Neither exists in the Rolls
-  view** (#163): the toolbar is not rendered there and the shortcuts are
-  inert — person stepping always lands in the person view, which used to
-  yank a rolls browser to Person at the press of ‹/← (confusing, and it
-  stole the pane's height). Shortcuts never fire while an
+  view**: the toolbar is not rendered there and the shortcuts are
+  inert — person stepping can only land in the person view, so ‹/← have
+  no target in Rolls. Shortcuts never fire while an
   input or dialog has focus; the current set is listed in the settings
   popover (`Esc` closes overlays, `Enter` commits fields).
-- **Context menus** (#32): face cards, person rows and image thumbs show a
+- **Context menus**: face cards, person rows and image thumbs show a
   right-click menu with grouped entries — *selection* (select/deselect/
   select-all/clear) and *actions* (accept/reject, primary, reference,
   edit…, open image …) — reusing the same commands and selection state.
   **Tree rows** additionally support **multi-select** (click sets the
   selection, ctrl/cmd-click toggles, shift-click extends over the tree's
   visible order; the anchor row stays the person shown) and offer
-  **Remove person / Remove N persons** (§4.13) and — #164 —
+  **Remove person / Remove N persons** (§4.13) and
   ***Add group…*** beside *Move to group…* (the typed path becomes an
   **additional** membership; Move replaces) — the one-person-only
   entries (*Open person*, *Rename…*, *Select their pending faces*)
-  grey out while the scope is a multi-selection (§4.14/#182); **real group branches**
+  grey out while the scope is a multi-selection (§4.14); **real group branches**
   have their own menu — *remove all persons in this branch* (counts shown,
   confirm dialog required) plus *rename/move group…* and *delete group*
-  (§4.16/§4.18, #50 — **#164 removed *add group…* from the branch and
-  root menus**, superseding #54: a group is added *to a person* now, and
-  the root's empty-space menu goes with its only item); the **status
+  (§4.16/§4.18: a group is added *to a person* — the branch and root
+  menus carry no *add group…* entry, and the root's empty-space menu goes
+  with its only item); the **status
   branches** (`New`/`Accepted`/`Rejected`) offer **no** branch
   menu — they are system furniture (§4.35), and bulk actions target
-  real branches only. Unknown cleanup needs **no button** (#165,
-  superseding #154): rejecting a face moves it off its `UnknownN` onto
+  real branches only. Unknown cleanup needs **no button**: rejecting a
+  face moves it off its `UnknownN` onto
   the system person `Rejected`, so a fully-decided `UnknownN` is already
   a zero-face shell that §4.27's stale-shell sweep deletes on every
   read. The reference-set
-  pane exposes **Remove person** as a button, and — #173 — **Update
-  person** directly above it (§4.38).
-- **Group management & drag-and-drop** (#50, §4.16): real group branches
+  pane exposes **Remove person** as a button, and **Update person**
+  directly above it (§4.38).
+- **Group management & drag-and-drop** (§4.16): real group branches
   (not the status branches) can be **renamed/moved**
   (a path dialog, prefilled; the whole subtree follows the prefix rewrite)
   and **deleted** (persons — incl. sub-branches — fall to their status
@@ -323,8 +320,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   person context menu (path dialog) or by **dragging** rows onto a branch
   node (unfile = *Move to group…* with an empty input — §4.16); whole branches drag the same way (a drop onto
   the branch itself or into its own subtree is refused). Drops and dialog
-  submits normalise the path like every other group write (#42).
-- **Add group…** (#164 supersedes #54, §4.18): the **person-row**
+  submits normalise the path like every other group write.
+- **Add group…** (§4.18): the **person-row**
   context menu offers *add group…* (multi-select: *add group to N
   persons…*) — a path dialog whose submit adds the typed path as an
   **additional** membership: every current **user** group of the person(s)
@@ -333,28 +330,29 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   (`move_persons_to_group`-replace stays with *Move to group…*; the add
   runs `move_persons_between_groups` with `from = ''`, §4.16), so the
   group can never be empty — the person is in it — and the entry is
-  never disabled. The **branch and root menus no longer offer it**
-  (#164): branches derive from person paths, so the branch entry only
-  ever moved the selection or did nothing; the root's empty-space menu
-  disappears with its only item.
-- **Full images get their own context menu** (#33): the webview default
+  never disabled. The **branch and root menus offer no such entry**:
+  branches derive from person paths, so a branch-level entry could only
+  move the selection or do nothing, and the root's empty-space menu goes
+  with its only item.
+- **Full images get their own context menu**: the webview default
   menu's entries ("open image in new window", …) are not functional inside
   Tauri, so image areas intercept `contextmenu` and offer a WhoT menu —
   the **open in system viewer** entry (the Rust `open_image` command
   writes the BLOB to a temp file and hands it to the opener plugin) and
   the rotate entries (§4.32).
-  **The `open_image` temp file is unique and magic-sniffed** (#144):
+  **The `open_image` temp file is unique and magic-sniffed**:
   the name `whot-image-{image_id}-{pid}-{unix_nanos}.jpg` is unique per
   open — the same image opened twice never clobbers the first viewer's
   still-loading file, and the path cannot be pre-squatted by another
   local user — and the extension is derived from the pixel magic
   (JPEG default, PNG recognised), not hard-coded. The frontend handler
   routes a failure (no preview blob, viewer not found) through the
-  standard error toast like every other mutation path (#132).
-- **Resizable panes** (#34): the left/right pane dividers and the #25 split
-  divider are draggable with clamps and double-click reset (session state);
-  the face/image grids already reflow via `auto-fill` and follow the pane
-  sizes. In **Rolls mode while browsing** (#174 follow-up) the centre|right
+  standard error toast like every other mutation path.
+- **Resizable panes**: the two pane dividers (left|centre and
+  centre|right) are draggable with clamps and double-click reset (session
+  state);
+  the face/image grids reflow via `auto-fill` and follow the pane
+  sizes. In **Rolls mode while browsing** (§4.39) the centre|right
   divider resizes the **centre** instead — see §4.39's layout rule (the
   centre starts at the left pane's width, drags clamp 10%..70% of the
   window, double-click returns to the left-following default).
@@ -369,19 +367,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   for known persons), group path (editable, `|`-separated; empty ⇒
   the person's status seat, §4.35 — and read-only for the system person
   `Rejected`), note, primary-face picker, refcrops list.
-  **The avatar click opens the primary face's image** (#145): the large
+  **The avatar click opens the primary face's image**: the large
   avatar *is* the primary face, and clicking it opens the **full-image
   focus mode** for that face's image (the same `confirmContext` →
   `setSplitImageId` path as the card double-click and the "Open full
   image" menu entries), with the tooltip/title saying so; when the person
   has no primary face there is nothing to open and the click stays inert.
   (Primary-face *setting* is the refcrop list above, not the avatar.)
-- **Right pane — branch thumbnails** (Rolls mode, #174/§4.39): while
+- **Right pane — branch thumbnails** (Rolls mode, §4.39): while
   the user browses the path hierarchy, the right pane holds the
   **selected branch's images** — the direct children of that path only
   (no recursion), filename order, Show-filtered (§4.10) — as
   thumbnails: plain click selects (ctrl/⌘ toggle, shift range),
-  **double-click opens the image** (the image detail, #142), the
+  **double-click opens the image** (the image detail), the
   context menu carries the image actions (§4.39). This thumbnails pane
   **replaces the person detail/Overview while browsing** (the person
   detail is Review/Person mode's pane); the import pane (§4.36) keeps
@@ -389,12 +387,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   to the person detail** for face/person editing (§4.37/§4.39).
 - **Rule bar (bottom)**: always visible when ≥1 face is selected **or a
   stage is live**, in any center-pane view: `N selected · [Apply] [Accept]
-  [Undo°] [Edit…] [Reject] [clear]` (Q9, §4.30) — `Apply` stages a
+  [Undo°] [Edit…] [Reject] [clear]` (§4.30) — `Apply` stages a
   preview (a `staged: …` strip shows it), `Accept` commits it, `Undo`
   greys out without a preview; `Edit…` opens the shared Edit dialog
   with scope preset to Selection (§4.24).
 
-- **Face card** (#102): top to bottom — the **name strip inside the image
+- **Face card**: top to bottom — the **name strip inside the image
   frame at the top** (label; edited via the card's **Edit…** dialog, §4.24),
   the image, **group** and **description** as full-width label rows
   (descriptions are `|`-separated tags), **accuracy + Edit…**, then the
@@ -403,22 +401,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   An **empty** group or description label shows a **dimmed hint** instead of
   a bare dash — group: e.g. `Friends|School`, description: the neutral word
   **`description`** — so the row reads as “where this may go / what may be
-  noted” rather than as a hole (#119/#130; the feature-example hint
+  noted” rather than as a hole (the feature-example hint
   `glasses|beard` lives in the Edit dialog's placeholder
   `e.g. beard|glasses`). The section-heading rule labels use
-  the same hints. The hint is dim like the old empty colour; real values
-  keep their current colours. (The empty-state modifier class is
-  `is-empty`, distinct from the app-level `.empty` no-results rule,
-  #119.)
+  the same hints. The hint is dim; real values keep their normal
+  colours. (The empty-state modifier class is `is-empty`, distinct from
+  the app-level `.empty` no-results rule.)
   Double-click opens the full-image focus mode (§3).
-- **Accept/reject asymmetry** (#63): *accepted* (`confirmed`) is the
+- **Accept/reject asymmetry**: *accepted* (`confirmed`) is the
   default status, so the card's reject **button** is the only styled
   action embellishment; acceptance is indicated by the status badge's
   `✓`. Tooltips on both states spell this out. More generally, every
   tooltip is user-facing prose: sentence-style capitalisation, no issue
   numbers, and cryptic-symbol buttons (`⌃`/`⌄`, `✕`) always name their
-  action (#64, #65).
-- **Input families** (#56, §4.20): group-path inputs and face-description
+  action.
+- **Input families** (§4.20): group-path inputs and face-description
   inputs carry different frames and backgrounds everywhere they appear —
   solid accent-tinted frame for group paths, dashed second-accent frame
   for descriptions — so *where a person lives* and *what a face looks
@@ -435,7 +432,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      `link_status='confirmed'` — **claim rule (§4.35): this includes any
      `rejected` faces in the selection, which an assignment un-rejects**
      (§4.2). The
-     old `UnknownN` number is retired and never reused (importer numbering
+     `UnknownN` number is never reused (importer numbering
      is max-based over remaining names — safe).
    - If selected faces span multiple persons or the name is new: move the
      selected faces to that person (create if needed), `confirmed` (claim
@@ -447,7 +444,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      selection into that person (names are not required to be unique for
      assign); the target person's group path and note are **left untouched**
      in that case. The group field only applies to the rename-in-place /
-     new-person branches (review F2/F22). The same holds for a **tree
+     new-person branches. The same holds for a **tree
      rename**: it is routed through `assign_person` over *all* the person's
      faces, so a misspelling corrected to an existing name merges instead
      of erroring. A person left with **zero faces** by an assignment is
@@ -456,21 +453,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      helper: the `set_person_name` collision error can never surface in
      the GUI; a *faceless* person renamed to an existing name merges by
      deletion, an empty input is a no-op, and a rename keeps the
-     person's current **real** group path — #153 revised by #178: a
-     **status seat is never passed** into the assignment
-     (`assign_person` validates the path up front, #165 — a seated
-     person's `New` used to trip *reserved group name* before the branch
-     that would have ignored it). Instead the seat derives by state:
-     the claim confirms the person's faces, so an unfiled `UnknownN`
-     renamed in place lands on **Accepted** automatically (the old
-     "keeps its status seat" wording was unimplementable — a caller can
-     never write `New`, and an empty path derives by state; #38's
-     force-to-empty rule stays obsolete). In the **merge** case the
-     group is never applied (F2 above), so a rename-to-known simply
+     person's current **real** group path: a **status seat is never
+     passed** into the assignment (`assign_person` validates the path up
+     front — reserved segments are refused, §4.35). The seat derives by
+     state instead: the claim confirms the person's faces, so an unfiled
+     `UnknownN` renamed in place lands on **Accepted** automatically — a
+     caller can never write `New`, and an empty path derives by state.
+     In the **merge** case the
+     group is never applied, so a rename-to-known simply
      re-anchors the pane on the target (§4.38) — no group error is
      possible. A **detail-pane rename-merge**
      re-anchors the right pane on the surviving person — the merge
-     target when the name was taken (§4.38/#172: the pane must keep
+     target when the name was taken (§4.38: the pane must keep
      showing the person the faces now belong to).
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
@@ -483,14 +477,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    Rejected faces: excluded from similarity grouping, primary-face
    eligibility, refcrops and importer corpora, and **visible only under
    `Show → Rejected`** (§4.10). **Exit is assignment alone — the claim
-   rule, which replaces the old sticky rule:** plain Accept never
+   rule:** plain Accept never
    un-rejects (§4.3); only an explicit assignment (assign, rename, merge,
    move, section rule, the Edit dialog committed with a name) un-rejects
    the faces it claims *and* moves them to the target. A rejected face can
    only enter a selection while `Show = Rejected`, so claiming is always a
    deliberate act.
 3. **Accept (without rename)** ⇒ selected faces `link_status='confirmed'`
-   (stay with their current person; used to confirm a `UnknownN` as-is).
+   (stay with their current person; confirm an `UnknownN` as-is).
    `rejected` faces in the scope are **skipped** — accept never un-rejects
    (§4.2); and when the person holds no user-given group, the accept
    re-seats it `Accepted` (§4.35).
@@ -517,7 +511,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 7. **Face `name` derivation** ⇒ `person.name[-description]-seq`; `seq` is
    per (person, description) as in the importer, computed as `MAX(seq)+1`
    (gap-proof, so labels stay unique within a person even after faces are
-   moved out and back in — review F5). On a move, a face gets the next free
+   moved out and back in). On a move, a face gets the next free
    seq of its new person; renames only re-derive names, description edits
    re-derive names *and* re-assign seq within the new group (§4.4).
 8. **Sync** ⇒ every mutation runs in one SQLite transaction; the frontend
@@ -527,7 +521,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    External changes (a roll imported while the GUI is open) become visible
    via a **manual refresh button** in the top bar and an automatic re-fetch
    when the window regains focus/visibility; focus-refetch errors are
-   ignored so they cannot stomp the current view (review F12).
+   ignored so they cannot stomp the current view.
 9. **Similarity grouping** (person view only) uses the same single-linkage
    cosine rule and default 0.40 threshold as the importer — it is a display
    aid for impostors, it does *not* re-cluster or reassign anything; the
@@ -538,20 +532,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    section instead of an impostor cluster — and a true impostor still shows
    as a low-similarity cluster inside the appearance it impersonates.
    The clustering is display-only code that must **degrade, not panic**,
-   on corrupted embeddings (#149): a non-finite cosine result (`NaN`/±inf)
-   is treated exactly like the #41 missing-embedding case — no similarity
+   on corrupted embeddings: a non-finite cosine result (`NaN`/±inf)
+   is treated exactly like the missing-embedding case — no similarity
    evidence, `0.0`, keeping every stored similarity finite — and no
    comparison site may `unwrap` a `partial_cmp` on non-finite data
    (orderings use `unwrap_or(Ordering::Equal)`).
    A **cluster-group toggle** sits in the Person view's centre toolbar —
-   **only** there (#163: hidden in Review and Rolls, where it changes
-   nothing) — hugging its right edge (#99) — the Show filter it once hugged there is
-   a **global** control and was moved to the top bar (#158, v3.57):
+   **only** there (hidden in Review and Rolls, where it changes
+   nothing) — hugging its right edge. (The Show filter is a **global**
+   control in the top bar.) Its values:
    `Accuracy` (default) keeps the rule above; `Description`
    collapses each appearance to **one section per distinct description**
    over the visible faces — no similarity split: the threshold is not
    consulted and `person_face_clusters` is not called (no IPC). The
-   §4.24 staged preview drives the grouping too (#155): a face with a
+   §4.24 staged preview drives the grouping too: a face with a
    **staged** description groups under the description it will land in
    on **Accept** — the preview shows the staged label in the section it
    belongs to; commit, Undo and Cancel return the committed grouping.
@@ -560,28 +554,27 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    titled `(no description)`, and make no
    similarity claims in this mode. The choice persists as
    `cluster_group` in `whotrc.json` (`accuracy` default).
-10. **Status filter** (`face_filter`, #99 — generalises #23/#28;
-    `All` semantics changed by #165) ⇒
+10. **Status filter** (`face_filter`) ⇒
     `Show [All | New | Accepted | Rejected]` in the top bar: one
     setting (whotrc `face_filter`: `all` (default) | `provisional` — UI
-    label **New**, the face-card badge's word (#100) — | `confirmed` —
+    label **New**, the face-card badge's word — | `confirmed` —
     UI label **Accepted** — | `rejected`). **`All` means every face
-    *except* `rejected`** (#165): rejected faces are visible **only**
+    *except* `rejected`**: rejected faces are visible **only**
     under an explicit `Show → Rejected`, so the reject bin can never
     surprise the user mid-review. A legacy `show_rejected` key in the
     config file is ignored on read. The Show control's **tooltip spells
-    this out** (#165 — the user-facing contract): `All = everything
+    this out** (the user-facing contract): `All = everything
     except rejected; rejected faces appear only under Show → Rejected
-    (#165, §4.10); switching it drops hidden faces from the selection`.
+    (§4.10); switching it drops hidden faces from the selection`.
     The chosen status decides **every view's**
     visibility: the person view's cluster sections and its Rejected
     section, image grids and full-image rectangles, the review grid, the
-    **left-pane person presence** (#152) — a person holding no face that
+    **left-pane person presence** — a person holding no face that
     matches the filter leaves the tree (set Show back to All to list
     everyone again, including the faceless shells; the system person
     `Rejected` is listed **only** under `Show → Rejected`, never under
     `All` — §4.35) — the
-    **Rolls path tree** (#161) — an image holding no face that matches
+    **Rolls path tree** — an image holding no face that matches
     the filter is dropped from its branch and a branch left without a
     listing image is pruned entirely (raw branch counts stay, so the
     pruned branch is discoverable; under the new `All` this prunes
@@ -590,7 +583,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **right-pane overview totals** (under `All` they therefore exclude
     rejected faces; the rejected total reads under `Show → Rejected`).
     The badges of the persons that stay
-    listed carry their raw totals (#129): the filter changes who is
+    listed carry their raw totals: the filter changes who is
     listed, never any counters. A selection survives its person dropping
     out of the tree — the person view simply shows nothing for them under
     the filter. `link_status`
@@ -600,7 +593,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     §4.35) safe: rejected faces are unreachable except while
     `Show = Rejected`.
     **Review special case**: `All`/`Provisional` show the pending set
-    (provisional — the default review is unchanged), `Accepted` shows
+    (provisional — the default review), `Accepted` shows
     confirmed faces, `Rejected` shows the reject bin — every rejected
     face on the one system person `Rejected` (§4.35), so it renders as a
     single section to **assign from**; Accept is inert there (§4.2).
@@ -609,10 +602,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     `images.width/height` coordinate space, percentage-scaled so it stays
     correct at any rendered size. Rectangles are active: hover highlights
     rectangle + card (shared hover state), click toggles selection **and
-    re-anchors the right pane on the face's person (#171, §4.37)**; colours
+    re-anchors the right pane on the face's person (§4.37)**; colours
     follow `link_status` (warn/ok/bad). `no-face` images and hidden faces
     (§4.10) draw no rectangles.
-12. **Import-time appearance inheritance** (#27 option A) ⇒ the importer's
+12. **Import-time appearance inheritance** ⇒ the importer's
     known/unknown corpora are keyed by `(person, COALESCE(description,''))` —
     a *partition* of the person's confirmed vectors, so the winning person
     and match/no-match are identical to pooled matching (max over a
@@ -622,8 +615,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     none), takes its `seq` from that `(person, description)` group, and its
     label derives accordingly — imported matches arrive already labelled
     with the appearance they matched. Faces with no match above threshold
-    still cluster into new `UnknownN` persons (accepted status quo).
-13. **Removing a person** (#35) ⇒ `remove_persons(person_ids)`, one
+    still cluster into new `UnknownN` persons.
+13. **Removing a person** ⇒ `remove_persons(person_ids)`, one
     transaction per call: every face of each person becomes
     `link_status='rejected'` and **moves to the system person `Rejected`**
     (§4.2/§4.35 — every path that rejects a face lands it there, so no
@@ -635,13 +628,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     and can be re-claimed **only by an assignment** — §4.2/§4.35 — which
     un-rejects and moves them). With `face_filter` set to anything but
     `Rejected` (§4.10) the removed faces vanish
-    immediately (the image-detail grid's *unassigned* title retires with
-    the concept — #165, no unowned faces exist anymore). The system
+    immediately (the image-detail grid shows no *unassigned* section — no
+    unowned faces exist). The system
     person `Rejected` itself **cannot be removed** (§4.35). Available from
     the person-tile context menu (also for a
     multi-selection), the reference-set pane and — batched — from tree
     branch menus (§3).
-14. **Selection-scoped face actions** (#49) ⇒ every face action has one
+14. **Selection-scoped face actions** ⇒ every face action has one
     *effective scope*: the active selection when the invoked card is part
     of it (`sel.size > 1`), otherwise just that card. Context-menu entries
     (*Accept*, *Reject*, *Edit…*) and the card's ✗/undo button
@@ -649,7 +642,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     on — so "select whole section → reject" rejects the section from any
     entry point. **One-item-only actions are greyed out (disabled)
     whenever the effective scope would exceed one item — never silently
-    applied to a single one** (#182, generalised): on the face side
+    applied to a single one**: on the face side
     **★ set as primary**, **◈ add as reference**, **Rotate crop 90° …**
     and **Open full image** (focus mode shows one image); on the
     thumbnail side **Open image** and **Open full image (focused)**; on
@@ -657,17 +650,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     single-person — the multi-scope has *Rename N persons to…*) and
     **Select their pending faces** (the move/add/merge/remove entries
     already speak N). **Opening the shared Edit dialog
-    follows the selection** (#101, §4.24): on a card inside the current
+    follows the selection** (§4.24): on a card inside the current
     selection the selection is kept — an active selection, **of any size,
-    including a single face** (#59), is itself the answer to "just this
+    including a single face**, is itself the answer to "just this
     face or whole group?"; on a card outside it, the selection becomes
     that card. Cards and headers carry labels, not inputs (§4.24).
-15. **Split-pane lifecycle** (#51/#52, #62) ⇒ the double-click image
+15. **Split-pane lifecycle** ⇒ the double-click image
     split:
     - a **tree-row select** (plain, ctrl/cmd or shift) and **person
       stepping** (‹ › / ← →) **always** end it — selecting another
       person means the attention has shifted to them, whether or not
-      they have a face on the open image (#62);
+      they have a face on the open image;
     - a **card/rectangle select** ends it when the new selection's
       `image_id` differs from `splitImageId` and it **stays open** when
       the new selection is a face **on the open image** (focus mode
@@ -675,8 +668,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - manual opens — card double-click, *Open beside (split)*, *Open
       full image* — always win; Esc/× keep their meaning. In the
       rectangle context menu the *Open full image* entry is hidden
-      while `face.image_id` is already the open image (#51).
-16. **Group management** (#50) ⇒ membership-only operations in one
+      while `face.image_id` is already the open image.
+16. **Group management** ⇒ membership-only operations in one
     transaction each; faces, names, statuses, primaries and refcrops are
     untouched:
     - `rename_group(old, new)` — rewrites the path prefix for every person
@@ -684,8 +677,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       empty ⇒ every person in the subtree **falls to their status seat**
       (§4.35 — group invariant: never zero rows). A branch cannot be
       moved inside itself (`new == old` or `new` prefixed by `old`).
-      **A clash with an existing branch is a merge, never an error**
-      (#193): when a person is a member of both the source branch and the
+      **A clash with an existing branch is a merge, never an error**:
+      when a person is a member of both the source branch and the
       destination path (the `person_groups` key `(person_id, path)`), the
       rewrite must not surface the unique-constraint failure — the
       conflicting source rows are dropped (the person keeps the single
@@ -702,27 +695,26 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the branch is not preserved — re-group by move/rename).
     - `move_persons_to_group(person_ids, group)` — replaces each person's
       group path with the target (empty ⇒ the person **falls to their
-      status seat**, §4.35 — this is the *unfile* gesture that replaces
-      the old Ungrouped drop); works for any
+      status seat**, §4.35 — this is the *unfile* gesture); works for
+      any
       selection, wherever the persons live (incl. the status branches).
-    All three normalise the path (#42) and reject the **reserved
-    segments** `Ungrouped`, `New`, `Accepted`, `Rejected` and the retired
-    `Unknown` (#165/§4.35: status seats are system-written — no typed
-    path, dialog or drop may produce them; `Ungrouped` no longer exists
-    as a state, since every person always has a group row).
+    All three normalise the path and reject the **reserved
+    segments** `Ungrouped`, `New`, `Accepted`, `Rejected` and
+    `Unknown` (§4.35: status seats are system-written — no typed path,
+    dialog or drop may produce them; `Ungrouped` is not a state — every
+    person always has a group row).
     **The status branches carry no branch menu and are not drop
-    targets** (like the old virtual nodes — they are system furniture);
+    targets** (they are system furniture);
     the persons *inside* them are ordinary rows (select, drag out,
     remove).
     GUI entry points: branch menu (*rename/move…*, *delete group* with
     confirm dialog) — real branches only —, person menu (*move to group…*
     for the selection), and
     drag-and-drop of persons/selections/branches onto branch nodes
-    (status/virtual nodes are not draggable/renameable themselves; the
-    Ungrouped drop target is gone — #165: unfile via *Move to group…*
-    with an empty input, which seats the person instead of leaving them
-    groupless).
-    **D&D move semantics** (#157, v3.59, owner ruling): a person drop
+    (status branches are not draggable/renameable themselves; unfile via
+    *Move to group…* with an empty input, which seats the person instead
+    of leaving them groupless).
+    **D&D move semantics**: a person drop
     re-homes **the dragged membership only** — the row's own group path
     (its placement) is removed from the person, the person is filed into
     the target branch (`move_persons_between_groups`; `INSERT OR IGNORE`
@@ -735,27 +727,25 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     bulk group apply) keep the replace-all meaning — they do not carry a
     placement context.
 
-    **Display guarantees** (#127/#129): group paths are **case-significant**
+    **Display guarantees**: group paths are **case-significant**
     — `Family|Lombards` and `family|Lombard` are distinct data and each
     renders its own branch (the builder is case-sensitive; do not fold).
     Under the **All** face-status filter and an empty text filter, **every
     person in the snapshot is findable in the tree** — including faceless
-    named persons (#127/#128; their own branch, or their status seat when
-    unfiled, §4.35). Under New/Accepted/Rejected the
-    tree lists only persons holding ≥ 1 face of that status (#152,
-    §4.10) — a person with no matching face is not listed, so reach them
+    named persons (their own branch, or their status seat when unfiled,
+    §4.35). Under New/Accepted/Rejected the
+    tree lists only persons holding ≥ 1 face of that status (§4.10) — a
+    person with no matching face is not listed, so reach them
     by switching Show to All. The badges of the persons that stay listed
-    always carry their raw totals (#129); the filter changes who is
+    always carry their raw totals; the filter changes who is
     listed and which faces render in the middle pane, never whose faces
-    exist or their counts. #156 (v3.56) supersedes the single-placement
-    rule: a person renders under **every** listed path (see §3); further
-    groups stay visible in the row tooltip.
+    exist or their counts. A person renders under **every** listed path
+    (see §3); further groups stay visible in the row tooltip.
     A branch whose listed persons are all filtered out disappears with
-    them — the same rule the old virtual `Unknown`/`Ungrouped` nodes
-    followed; the system person `Rejected` is listed only under
+    them; the system person `Rejected` is listed only under
     `Show → Rejected` (§4.35), so its branch is invisible under every
     other setting.
-17. **Selection accelerators** (#53) ⇒ Ctrl/⌘-click on a face-card body
+17. **Selection accelerators** ⇒ Ctrl/⌘-click on a face-card body
     toggles that card in the selection — the tree's idiom, mirrored
     on cards; plain click stays inert so double-click-to-open is
     unaffected. **Ctrl-G** toggles the whole section: the one holding the
@@ -764,9 +754,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     select all. Shortcuts obey the existing guards (never while an input
     or dialog has focus, `preventDefault` so webkit cannot steal Ctrl-G)
     and are listed in the settings popover.
-18. **Add group…** (#164 supersedes #54) ⇒ context menu of **person
+18. **Add group…** ⇒ context menu of **person
     rows** (*add group…*; multi-select: *add group to N persons…*): a
-    `GroupDialog` (empty prefill, wholesale-select #67) whose submit
+    `GroupDialog` (empty prefill, §4.21 wholesale-select) whose submit
     **adds** the typed path as another membership via
     `move_persons_between_groups(ids, '', path)` (§4.16 — `INSERT OR
     IGNORE`, every other membership kept; *Move to group…* keeps the
@@ -774,11 +764,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     person joins it), so the entry is never disabled. The **branch and
     root menus do not offer it** — with branches derived from person
     paths the branch entry could only move the selection (disabled
-    without one) or, wrongly read, "create" something invisible; the
-    tree root's empty-space menu is gone with its only item. The status
+    without one) or, wrongly read, "create" something invisible — so the tree
+    root's empty-space menu offers no group item there. The status
     branches still offer no group menu of their own (§4.35).
 
-    **The same entry lives in the FACE context menu** (#184): when the
+    **The same entry lives in the FACE context menu**: when the
     effective scope's faces belong to **N distinct persons** the menu
     offers *Add group…* / *Add group to N persons…*, opening the same
     `GroupDialog` with the add semantics over those persons — a set of
@@ -786,29 +776,27 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     branch straight from the face domain; unowned faces count for
     nothing and an all-unowned scope leaves the entry disabled.
 
-    **Append mode retired** (#92, retired by #164): no menu pre-fills a
-    `|`-terminated path anymore — the root/branch *Add group…* producer
-    is gone — so every group dialog opens in *replace* mode: the
-    structural path is selected wholesale on focus (#67), selecting an
-    empty value is a no-op. `groupInputMode()` was removed from
-    `src/autoText.ts` together with its producer.
-19. **Full-image focus mode** (#55) ⇒ opening a full image (card
+    **Append mode does not exist**: no menu pre-fills a `|`-terminated
+    path — every group dialog opens in *replace* mode: the structural
+    path is selected wholesale on focus, and selecting an empty value is
+    a no-op.
+19. **Full-image focus mode** ⇒ opening a full image (card
     double-click or *Open full image*) turns the center pane into a
     focused workspace: the annotated image spans the pane's full width
-    (height-fitted, §4.11 unchanged) — **on entry the right pane follows
-    the opening face's person (#171, §4.37)** — with a **film roll** below — one
+    (height-fitted, §4.11) — **on entry the right pane follows
+    the opening face's person (§4.37)** — with a **film roll** below — one
     horizontal, scrollable strip of that image's face cards (all card
     operations keep working; no other faces are shown). The image and its
     header row are **pinned at the top** of the pane while the film roll
-    scrolls beneath it (#57) — the user works against the image, so it
+    scrolls beneath it — the user works against the image, so it
     never scrolls out of sight; the pinned block gets a solid backdrop so
     cards pass behind it cleanly. The regular grid
     is hidden while the mode is active; it returns when the mode ends:
     × / **Esc**, a left-pane selection or person stepping (§4.15), or
     explicit navigation (top-bar tabs, *Review*). Selection and view
-    state survive as before; there is no side-by-side split (the regular
-    grid replaces it when the mode ends).
-20. **Input families** (#56) ⇒ group-path inputs (`family|lombards`) and
+    state survive the mode; there is no side-by-side split (the
+    regular grid returns when the mode ends).
+20. **Input families** ⇒ group-path inputs (`family|lombards`) and
     face-description inputs (`beard|glasses`) are **visually distinct**
     everywhere they appear: group paths get a solid accent-tinted frame
     and slightly tinted background (structural, hierarchical value),
@@ -820,7 +808,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     field (Name/Note keep the default look; `Editable` has a variant).
     The tints stay legible in the dark theme and clear of the
     warn/ok/bad status colours.
-21. **Auto-filled fields & name typeahead** (#67) ⇒ two related input
+21. **Auto-filled fields & name typeahead** ⇒ two related input
     behaviours:
     - **Select-all for generated values**: when an input holds
       *auto-generated* text — today an `UnknownN` name — focusing it
@@ -832,127 +820,126 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       Name field. **Group-path inputs** go further
       and always select all on focus, user-entered value or not — a
       group path is a structural value that is replaced wholesale,
-      never edited in place (#67 follow-up, confirmed in testing) — on
-      focus and on click alike.
+      never edited in place — on focus and on click alike.
     - **Name typeahead**: the EditDialog and the detail-pane Name
       field suggest existing persons (substring match, max 8, `UnknownN`
       names excluded — the point is to reach a real name; each row shows
       the person's group because **picking a suggestion merges into that
       person**, assign-not-rename §3). Arrow keys + Enter navigate,
-      Enter without a highlight submits as before, Esc closes the
+      Enter without a highlight submits the typed value, Esc closes the
       dropdown before it touches anything else. In the EditDialog a
       pick mirrors the target's group into the group field (unless the
       user already typed one).
-    - **Every value field suggests** (#97 → #101 hosts): the name
+    - **Every value field suggests**: the name
       typeahead (existing persons, `UnknownN` excluded, pick = merge
       target) and the group-path suggestions (no `ungrouped` quick-pick
-      anymore — an empty input seats, §4.35)
+      — an empty input seats, §4.35)
       live wherever a value is typed: **the §4.24 Edit dialog** (name
       and group; description stays free text), the detail-pane
       Name/Group, the tree inline rename, `GroupDialog` and the merge
-      dialog's bulk-group field — the grid's own fields are labels now
-      (#101). One shared widget backs all of it (options + label +
+      dialog's bulk-group field — the grid's own fields are labels.
+      One shared widget backs all of it (options + label +
       hint — navigation/Enter/Esc behave identically everywhere); a
       pick never counts as leaving (mousedown keeps focus), and
       click-away still commits where fields stayed inline. Free text
       stays plain: descriptions, notes, the tree filter, the alias
       list, settings numbers.
-22. **Keyboard shortcut set** (#68, extends #53) ⇒ shortcuts act on the
+22. **Keyboard shortcut set** ⇒ shortcuts act on the
     selection, or on the hovered/last-selected card when nothing is
     selected (the Ctrl-G rule): **Ctrl-G** toggles the section **under
-    the mouse cursor** — no prior click or card hover required (#74,
-    cursor hit-test via the section's `data-section-key`) — falling back
-    to the hovered/last-selected card's section (#53); **Space** toggles
+    the mouse cursor** — no prior click or card hover required (cursor
+    hit-test via the section's `data-section-key`) — falling back
+    to the hovered/last-selected card's section; **Space** toggles
     the card itself, **Ctrl-A** selects
     all cards of the current view, **A**/**R** accept/reject the
-    selection (the rule-bar buttons' scope), ←/→ step persons (#31,
-    **not in Rolls**) and
+    selection (the rule-bar buttons' scope), ←/→ step persons (**not in
+    Rolls**) and
     Esc closes split/dialog/menu (§4.19). Shortcuts are suppressed while
     typing in any input and while a menu or dialog is open. Context-menu
     items display their shortcut as a right-aligned dim hint
     (`MenuItem.hint`); the rule-bar tooltips and the settings popover's
     Keyboard list document the set. No shortcuts for destructive
     actions (remove person, delete group) — they keep confirm dialogs.
-23. **Anchor + shift-click ranges** (#69) ⇒ a plain card click selects
+23. **Anchor + shift-click ranges** ⇒ a plain card click selects
     just that card and drops the *range anchor*; **Shift-click** selects
     the contiguous run of rendered cards from the anchor up to and
     including the clicked card, replacing the selection. Ranges are
     computed over the flat rendered order, so they may span section
     boundaries — the context menus, rule-bar buttons and A/R shortcuts
     then act on the whole set through the existing selection scope
-    (§4.14). Ctrl/⌘-click keeps its toggle meaning (#53) and moves the
+    (§4.14). Ctrl/⌘-click keeps its toggle meaning and moves the
     anchor when it selects; Space follows the hovered card. A vanished
     anchor (filtered/removed card) degrades shift-click to a plain
     select. Double-click-to-open is unaffected.
-24. **Grid editing: labels + one Edit dialog** (#101) ⇒
+24. **Grid editing: labels + one Edit dialog** ⇒
     - **Cards and cluster headers show labels, not inputs**: the three
       value fields — **name, group, description** (headers gain the
       description label; cards show all three) — are per-object,
-      **live labels** (H1: an empty group/description renders as the
-      dimmed hint, §Face card / #119/#130) plus one **Edit…** button.
+      **live labels** (an empty group/description renders as the dimmed
+      hint, §Face card) plus one **Edit…** button.
       The fields stay **visually
       distinct**: name plain, group accent-coloured, description in the
-      tag colour (#102). Card order top to bottom (#102): the **name
+      tag colour. Card order top to bottom: the **name
       strip inside the image frame at the top**, the image, **group**
       and **description** as full-width rows, then **accuracy + Edit…**
       (and the ★/◈/✗ action row). Labels are display only: they update
       per object when an apply/accept changed some cards and not others,
       and a pending preview marks them — **unmistakably** (accent tint
-      + underline + weight, #103), echoed by a `staged: …` strip on the
+      + underline + weight), echoed by a `staged: …` strip on the
       bottom bar while a stage is live. Empty group/description render as
-      the dimmed hints (§Face card: `Friends|School` / `description`,
-      #119/#130). Apply with **no changed field**
+      the dimmed hints (§Face card: `Friends|School` / `description`).
+      Apply with **no changed field**
       raises the "nothing to apply" toast; Accept with no changes still
-      accepts the scope (#103, §4.30).
+      accepts the scope (§4.30).
     - **One shared dialog**: three labelled fields — name, group,
       description — each carrying the §4.21 suggestions (a picked name
       mirrors its group unless one was typed), plus a scope selector
       `Card | Group | Selection` with a live face count (H3). Opening
-      it follows the selection rules (Q1/G3): on an object **inside**
-      the current selection the selection is kept; **outside**, the
+      it follows the selection rules: on an object **inside** the
+      current selection the selection is kept; **outside**, the
       selection becomes that card (header → that cluster). The
-      **scope default follows the invocation site** (final #101
-      answer): Edit on a **card → `Card`**, Edit on a **header →
+      **scope default follows the invocation site**: Edit on a **card
+      → `Card`**, Edit on a **header →
       `Group`**, bottom bar → **`Selection`** (greyed at N = 0); the
       selector switches scope explicitly and **Apply binds the stage to
       the chosen scope's faceIds**; Accept commits those staged ops and
-      then accepts the **chosen scope** (#166 — the staged set supplies
-      the edits, never the acceptance scope).
+      then accepts the **chosen scope** (the staged set supplies the
+      edits, never the acceptance scope).
     - **Buttons**: `Apply` = stage + close (screen preview), `Accept` =
-      commit the staged ops, then accept the chosen scope (#166; the
-      shortcut — “Accept is what makes
-      my changes permanent”, Q3), `Reject` = the scope’s verdict,
+      commit the staged ops, then accept the chosen scope (the shortcut
+      — “Accept is what makes my changes permanent”), `Reject` = the
+      scope’s verdict,
       `Cancel`/Esc = discard the pending set. **Enter = Accept**, **Esc
-      = Cancel** — inside the dialog only (G2).
-    - **Reject in the dialog** (#124): acts on the chosen scope (Card →
+      = Cancel** — inside the dialog only.
+    - **Reject in the dialog**: acts on the chosen scope (Card →
       that face; Group → the cluster; Selection → the selected set),
       **commits immediately** (a verdict, not a field edit — the same
       path as the rule-bar Reject; §4.2) and closes
       the dialog. Pending ops touching rejected faces are dropped from
-      the set (the commit would skip them anyway, F2). A fully-rejected
+      the set (the commit would skip them anyway). A fully-rejected
       scope makes the dialog an **assignment** (§4.35): with a name typed
       its Accept claims the scope (un-rejects + moves), without one the
       Accept stays inert with the info toast “assign a person to bring
       it back”. No
       dialog key for it — Enter/Esc keep their meaning.
     - **Scope**: every action targets the **selection**; bottom-bar
-      buttons and plain keys never confirm (Q2/Q9), and the dialog's
-      selector is the *only* object-vs-selection disambiguation,
-      chosen before anything runs — the confirmation dialog the Q2
-      alignment circled around is unnecessary.
-    - **Stage / preview state — the pending set** (#123): the
+      buttons and plain keys never confirm, and the dialog's selector is
+      the *only* object-vs-selection disambiguation, chosen before
+      anything runs — no confirmation dialog is needed.
+    - **Stage / preview state — the pending set**: the
       stage is an **accumulating set of pending ops**, one per Apply —
       `{faceIds, name?, group?, desc?}` bound to that Apply's scope.
       The working loop is **Apply → change → Apply → … until Accept or
       Cancel**: Apply never commits, it only extends the set (screen
       preview on the labels, the `staged: …` strip shows the whole set;
-      in Description mode (#99) the preview includes the **section
-      regrouping** — #155); **Accept commits every op** through the #77
-      routing and drives the review advance off the committed ids; a
+      in Description mode the preview includes the **section
+      regrouping**); **Accept commits every op** through the same field
+      routing as the commit below and drives the review advance off the
+      committed ids; a
       re-Apply on the **same faceIds** replaces that op (latest wins); **Undo and
-      Cancel/Esc discard the whole set** (owner ruling: Undo = Cancel —
-      re-editing is just opening Edit… again).
-      **Apply always has a concrete target** (#147): the bar's Apply
+      Cancel/Esc discard the whole set** (Undo = Cancel — re-editing is
+      just opening Edit… again).
+      **Apply always has a concrete target**: the bar's Apply
       stays enabled while a staged set is live even when the selection
       is empty (staged ops survive selection changes by design) — with
       an empty selection, `barApply` scopes the dialog's Selection onto
@@ -960,14 +947,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       opened dialog always has a concrete target; when neither a
       selection nor a staged set exists, Apply is disabled anyway
       (RuleBar's `none && !stageLive`).
-      **A failed commit keeps the staged set** (#139): the set is
+      **A failed commit keeps the staged set**: the set is
       cleared **only after the whole commit lands** — the ops execute
       one by one, and a failure re-stages the failed op **and everything
       after it** (the applied prefix stays; the error toast names the op
       that stopped the commit), so the staged strip keeps showing what
       remains and Accept can simply be retried. The staged field writes
       are idempotent, so the retry re-applies nothing visibly.
-    - **No dialog inside the context** (#123): changing the selection
+    - **No dialog inside the context**: changing the selection
       while the set is live — clicking another card, extending the
       selection, opening Edit… on another card (whose selection rule
       then makes the card the selection) — is **part of the Apply loop
@@ -975,33 +962,33 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       context changes completely**: selecting/stepping to **another
       person**, or switching the view context (top-bar tabs / focus)
       with a live set. In that dialog **both branches move the context**
-      (as Q4 always did): *accept* commits the set first, then the
+      *accept* commits the set first, then the
       context switches; *cancel* discards it, then the context switches.
-      Text is never dropped silently (Q3).
-      **"Open image" is a view-context change** (#142): the image menu's
-      "Open image" and a right-pane thumbnail double-click (#174) rebind
+      Text is never dropped silently.
+      **"Open image" is a view-context change**: the image menu's
+      "Open image" and a right-pane thumbnail double-click rebind
       the centre pane to another image and therefore go through
       `confirmContext`
       (discard-or-accept of a live staged set) like every
       tab/step/tree/focus route.
-    - **The stored context-confirm action is object-wrapped** (#123):
+    - **The stored context-confirm action is object-wrapped**:
       the pending action is kept as `useState<{fn} | null>` and set with
       `setContextConfirm({ fn: action })` — a bare function passed to a
       `useState` setter is read by React as a function-form updater and
       **executed immediately** (storing its `undefined` return) instead
       of being stored, which would silently disable the dialog (gui-mock
       C5 locks the wrapper in place).
-    - Commit keeps the #77 field routing — a name change through
+    - **Commit keeps the field routing** — a name change through
       `assign_person` (group applied on create/UnknownN-rename, later
       explicit groups via `set_person_group`), a group-only change
       through `set_person_group`, a description change through its own
       setter — an empty field counts as unchanged.
       **Accept never un-rejects (§4.2):** a stage may display on a
-      rejected face, a plain accept-commit skips it (F2) — while
+      rejected face, a plain accept-commit skips it — while
       committing a **name** to it is the claim (§4.35: the assignment
       un-rejects).
-      **The F2 drop is owned by `doReject` and the filter change**
-      (#141): dropped pending ops (now-rejected faces, §4.2)
+      **The pending-op drop is owned by `doReject` and the filter
+      change**: dropped pending ops (now-rejected faces, §4.2)
       are not special-cased per entry point — the drop lives inside
       `doReject`, so every reject path (bar ✗, `R` key, card ✗,
       context-menu Reject, Edit-dialog Reject) drops staged ops touching
@@ -1010,18 +997,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       rejected or hidden faces must never remain in the set for the
       next commit (invisible and silently committed otherwise).
     - The right-panel DetailPane and
-      the tree inline rename **stay inline** (G4: a single person, no
+      the tree inline rename **stay inline** (a single person, no
       scope ambiguity); the grid's cards, cluster headers and rule bar
       carry only labels plus the shared Edit dialog (no inline inputs, no
       per-object apply buttons, no auto-apply on focus).
-    - **ONE label — `Edit…` — for every opener** (#180): the card
+    - **ONE label — `Edit…` — for every opener**: the card
       button, the cluster-header button, the face context menu item
       (the scope suffix stays: `Edit… (N selected)`) and the rule-bar
       button all read `Edit…`, and the dialog's title is *Edit* —
       “Edit” is the program-wide term for the function (assign a person
-      / set name, group, description); the old *Assign to person…* and
-      *Assign name…* wordings retire.
-25. **Cursor-as-target rule** (#75, generalises #74) ⇒ with no explicit
+      / set name, group, description).
+25. **Cursor-as-target rule** ⇒ with no explicit
     selection the mouse cursor decides the target: a face-card context
     menu opened on an **empty selection selects that card first**
     (anchor + last-selected), so the menu's scope, the rule bar and the
@@ -1029,17 +1015,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     card instead of no-oping. Ctrl-G's cursor hit-test (§4.22) and
     Space's hovered-card scope are the same rule — the cursor is the
     implicit selection whenever there is no explicit one. **←/→**
-    stepping honours it too (#76): with no selected person the first
+    stepping honours it too: with no selected person the first
     step starts from the person under the cursor (tree rows expose
     `data-person-id`); when the cursor is over no person row (e.g. it is
     over the ‹ › buttons themselves) the step bases on the **last
     anchored person's position** in the current step list, clamped to the
-    list's bounds (#194) — so stepping from an anchor that has just left
+    list's bounds — so stepping from an anchor that has just left
     the list (a verdict drained it, §4.10 pruned it under Show → New)
     continues where the user left off instead of jumping to the list's
     start/end and losing the place; only when no person was ever anchored
     does the step fall back to the list's start/end.
-26. **Copyable errors** (#81) ⇒ every error surfaced by the app — the
+26. **Copyable errors** ⇒ every error surfaced by the app — the
     fatal `loadError` screen and the runtime error toast — must be
     cleanly copyable for filing issues:
     - error text is selectable (`user-select: text`) and **wraps/scrolls**
@@ -1052,7 +1038,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       **✕** button, or the toast
       stays until replaced/cleared; selecting text inside it never
       dismisses it.
-    - **info vs error** (#132): expected no-ops and guidance — “nothing to
+    - **info vs error**: expected no-ops and guidance — “nothing to
       apply — change a field first”, “nothing to merge — the selected
       persons have no faces”, “no faces to rename — the selection has no
       faces”, “already merged — the drop target is the only selection”,
@@ -1063,7 +1049,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       action** (any click or keystroke that acts). Real errors (failed
       operations, backend exceptions) keep the copyable red toast with ✕
       — the copyability rule above applies to them only.
-27. **Stale-shell sweep** (#84) ⇒ on every `get_snapshot()`, persons
+27. **Stale-shell sweep** ⇒ on every `get_snapshot()`, persons
     matching `name LIKE 'Unknown%'` with **zero faces** are deleted
     (leftovers from pre-v1.9 runs, external writers — and now also
     `UnknownN`s emptied when the reject-move of §4.2/§4.35 took their
@@ -1073,7 +1059,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     swept** either (created on demand, reused by the next reject;
     §4.35). The sweep is one statement inside the snapshot transaction,
     cheap and idempotent.
-28. **Merge Similar Persons** (#88) ⇒ a triage workflow for same-name
+28. **Merge Similar Persons** ⇒ a triage workflow for same-name
     duplicates (the importer's deliberate `X 2` generations, §9.4 of
     `docs/scripts-design.md`, plus case variants and misspellings):
 
@@ -1102,18 +1088,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - *person context menu*: `Merge into…` (typeahead), `Apply group to
       selection…`, `Rename selection to…` on a (multi-)selection;
     - *drag-and-drop*: dragging a selected set **onto a person row**
-      merges into that person — a **new drop-target type** beside the
-      existing #50 branch drops. Drop-target highlighting must
+      merges into that person — a **second drop-target type**, beside
+      the branch drops. Drop-target highlighting must
       distinguish person vs branch unambiguously.
 
     **Confirmation is mandatory for every merge path** — menu, dialog
     and especially DnD (an accidental drop must not silently destroy):
     one shared dialog spelling `N person(s), M face(s) → <target>`,
     sources emptied and deleted, **no undo** (faces themselves are never
-    deleted; §4.13). #50's branch drops stay dialog-free — moving
+    deleted; §4.13). Branch drops stay dialog-free — moving
     between groups is reversible.
 
-    **Post-merge focus** (#133): after a successful merge the centre pane
+    **Post-merge focus**: after a successful merge the centre pane
     opens the **merged target** person — the selection moves there, showing
     all the combined faces (sources are emptied/deleted server-side); a
     failed merge leaves the selection unchanged.
@@ -1127,12 +1113,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     no-op; `UnknownN` targets are refused (server-side and pre-validated
     in the UI, including on drop).
 
-    **Pane UX** (#126): the dialog is **viewport-capped** — the member
+    **Pane UX**: the dialog is **viewport-capped** — the member
     list scrolls, while the title/intro and the action row (`apply
     group`, `rename to…`, `Merge into…`) stay visible (action row
     pinned at the bottom). The row ends with a visible **cancel**
-    button (#160 — Esc and an overlay click already closed the dialog,
-    but the escape was invisible): same dismiss as Esc, styled like
+    button (Esc and an overlay click close the dialog too — a visible
+    escape is still required): same dismiss as Esc, styled like
     every other dialog's cancel (`secondary`). The intro states the contract: tick the
     persons to combine — **they may come from different clusters** (a
     neighbour beyond the distance can be the same person) — and
@@ -1145,11 +1131,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     *Apply group…*) so right-clicking a person finds the exit without
     knowing the selection-first flow.
 
-    **Dialog-cap contracts** (#126, gui-mock C15): the cap must actually
+    **Dialog-cap contracts** (gui-mock C15): the cap must actually
     apply when the dialog is open — the served style sheet parses to its
     final rule (`.merge-spacer`) and the open dialog's computed
-    `max-height` is the 86vh cap, not `none` (a truncated earlier copy
-    of the typeahead block desyncs the whole sheet: nothing after the
+    `max-height` is the 86vh cap, not `none` (a truncated typeahead
+    block desyncs the whole sheet: nothing after the
     typeahead section applies, this dialog included — C15 locks both).
     Also **`.merge-cluster` carries `flex-shrink: 0`** — `.merge-list`
     is a flex column, and without it a capped list does not scroll, it
@@ -1163,12 +1149,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     unit-tested with **vitest** (the repo's only JS test runner —
     added as a devDependency; a Python mirror is explicitly rejected:
     two implementations of one rule is how they drift).
-29. **import_roll decode & CLI contract** (#89/#90) ⇒ one canonical
+29. **import_roll decode & CLI contract** ⇒ one canonical
     decode space, full paths in the log, and honest database errors:
 
-    **Decode chain** (`_decode`, #89) — try decoders in order until one
+    **Decode chain** (`_decode`) — try decoders in order until one
     produces an image; if all fail, the file is a *per-file* failure and
-    the batch continues (#47):
+    the batch continues:
     - **RAW** (`.pef/.dng/.cr2/.cr3/.nef/.arw/.rw2/.orf`): `rawpy` —
       use the embedded JPEG thumbnail when present, otherwise
       `postprocess(half_size=True, use_camera_wb=True)`. *Any*
@@ -1186,16 +1172,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     LibRaw for the RAW output and the stored JPEG thumbnails, and the
     fallbacks explicitly — so `images.width/height`, `images.thumbnail`,
     `images.preview` and every face box describe the **displayed** image,
-    never depending on which decoder won (scripts-design §9.2, v4.2).
+    never depending on which decoder won (scripts-design §9.2).
 
-    **Sample normalisation to `uint8`** (tifffile path, #89): `uint8`
+    **Sample normalisation to `uint8`** (tifffile path): `uint8`
     passes through; integers scale over their dtype range (`uint16` ⇒
     ÷257); floats with `max ≤ 1.5` are treated as **0..1 linear** and
     gamma-encoded to sRGB (so face detection sees JPEG-like tones for
     32-bit float TIFF exports of raw development), `≤ 255` are kept,
     larger values are treated as 16-bit; NaN/±inf ⇒ 0/255.
 
-    **One full path per item** (#90, #94): the `[i/N] <full path>`
+    **One full path per item**: the `[i/N] <full path>`
     progress line identifies every scanned, skipped, imported and failed
     file — a bare filename is useless across 36 k files in same-named
     roll folders — and identifies it **once**: the verdict lines that
@@ -1207,7 +1193,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     summary (scripts-design §10), so path detail is quieted by `-q` and
     never by anything else.
 
-    **Database handling** (#90): a missing `FACES_DB` file is reported
+    **Database handling**: a missing `FACES_DB` file is reported
     as `database not found: <path>` (+ how to create it) and exits 1
     *before* connecting — `sqlite3.connect()` would otherwise create an
     empty file, which the schema gate then rejected with a bogus
@@ -1215,17 +1201,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     empty-`schema_version`-table case gets its own message instead of
     `schema vempty schema_version table …`.
 
-    **`--create-db`** (#90): builds the database at the `.env`
+    **`--create-db`**: builds the database at the `.env`
     `FACES_DB` path from `database/schema.sql`, creating missing parent
     directories. An existing **non-empty** database ⇒ warning on
     stderr, exit 1, nothing written; a stray **0-byte** file (exactly
     what `sqlite3.connect()` leaves behind) counts as absent and is
-    replaced, so the #90 artifact heals itself. Combined with
+    replaced. Combined with
     `--dry-run` ⇒ argparse error (creation is a write). `ROLL_DIR`
     becomes optional with it: omitted ⇒ create and exit 0; given ⇒
     create when needed, then continue with the import.
 
-    **Provider selection** (#91): **CPU is the default** — MIGraphX over
+    **Provider selection**: **CPU is the default** — MIGraphX over
     this machine's amdgpu wedges the GPU (ring timeout → MES unrecoverable
     → every reset fails → the session itself crashes), so the unsafe path
     must be requested: `--gpu` opts in to MIGraphX (keeping the
@@ -1238,13 +1224,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     the flag contract is unit-testable without a database or the face
     model.
 
-30. **Review mode flow: apply / accept** (#96, matrix finalised #101) ⇒
+30. **Review mode flow: apply / accept** ⇒
     two commit levels, and only Review mode moves context:
     - **Apply** (dialog `Apply`, bottom-bar `Apply`) — stages on the
       selection: the labels preview, **no DB write, no regrouping**;
       Undo/Esc revert it (§4.24) and the context never moves.
     - **Accept** (dialog `Accept`, bottom-bar `Accept`, `A`, global
-      `Enter` — F3/G2: keys and the bar **never open a dialog**) —
+      `Enter` — keys and the bar **never open a dialog**) —
       stage-then-commit: the DB is written, the screen reorganises,
       **and in Review the context advances**: a partial accept keeps the
       acted-on section's remaining faces as the selection, a fully
@@ -1255,43 +1241,44 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       (`acceptAdvancePlan`), which stay valid afterwards because
       accepting never changes another section's members.
     - **Person mode and focus mode: context never moves by itself**
-      (Q10) — same selection rules, same dialog, same stage/commit;
+      — same selection rules, same dialog, same stage/commit;
       only the advance disappears, and the right panel stays extra.
-    - **Bottom bar** (Q9): `Apply · Accept · Undo° · Edit… ·
+    - **Bottom bar**: `Apply · Accept · Undo° · Edit… ·
       Reject · clear` — every action scoped to the selection with no
       confirmation dialog; selection actions grey out at N = 0 and
       `Undo` greys out without a preview. `Edit…` opens the
       shared Edit dialog with scope preset to Selection.
     - **Key/bar Accept with a live pending set commits the staged ops
-      first, then accepts the DISPLAYED scope** (#166) — the dialog's
+      first, then accepts the DISPLAYED scope** — the dialog's
       Accept takes its chosen scope, the bar's Accept and `A`/`Enter`
       take the selection (cursor-as-target when empty, §4.25); the staged
       set supplies the edits, never the acceptance scope (an empty scope
       falls back to the staged ids). Without a set they act on the
-      selection (#105, #110, #123). Global `Enter` accepts **in Review
-      only** (`A` works in every view, Q10); the advance plan anchors at
+      selection. Global `Enter` accepts **in Review only** (`A` works in
+      every view); the advance plan anchors at
       the **last-selected card**, else the hovered card, else the first
-      accepted id (#110). The rewrite runs **only on success** (#140): a
+      accepted id. The rewrite runs **only on success**: a
       failed accept surfaces its error toast and leaves the selection —
       nothing about the selection, the staged set or the advance plan
       changes on failure.
-    - **Person-exhausted fall-through** (#125): when
+    - **Person-exhausted fall-through**: when
       **Accept, Reject or Delete Person** leaves the current person with
       **no faces left** (no sections for it in the refreshed snapshot,
       under the current face filter), the context advances to the
       **next person of the review step list — exactly what “›”
       (`stepPerson(1)`) does** — instead of leaving a black centre
       panel. The verdict also **focuses its acted-on person**
-      (post-success, §4.41/#189): with the anchor on the acted person
-      the #148 mark comparison below is unchanged and this hand-over
-      fires exactly as before, while a grid-only verdict (no anchor ⇒
-      no mark) simply gains the anchor for Person mode to open. Partial actions (remaining faces/sections) keep the
+      (post-success, §4.41): with the anchor on the acted person the
+      mark comparison below is unchanged and this hand-over fires, while
+      a grid-only verdict (no anchor ⇒ no mark) simply gains the anchor
+      for Person mode to open. Partial actions (remaining faces/sections)
+      keep the
       existing section-level advance or stay put; the step reuses the
-      ‹ › code path, so cursor-as-target (#75) and list-end behaviour
+      ‹ › code path, so cursor-as-target and list-end behaviour
       follow the stepping rules. At the end of the list the context
       stays and a toast says the review is exhausted.
-      **The advance skips persons with nothing left to review** (#159,
-      v3.58): the target is the first person **after** the drained one in
+      **The advance skips persons with nothing left to review**: the
+      target is the first person **after** the drained one in
       the step list that still holds a face of the review status — not
       the raw successor, which under Show=All can be a faceless shell or
       under Show=New a person whose matching faces were just decided
@@ -1301,19 +1288,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       serves as the pruning gap to continue from). With no forward
       candidate the context stays and "no more persons to review" is
       reported.
-      **The exhaust mark is strictly bound** (#148): the pre-mutation
+      **The exhaust mark is strictly bound**: the pre-mutation
       mark (`exhaustAtRef`) remembers **which person** it was set for,
       is consumed unconditionally (so it can never linger across view
       switches, even if the snapshot refresh lands elsewhere), and acts
       only when the consumer is still the marked person **and the view
-      is Review** (§4.40/#188: the lock is the mode) — anything else
+      is Review** (§4.40: the lock is the mode) — anything else
       silently drops it. The advance **ends an open full
       image / focus split** (§4.15: the person on screen is no longer
       the one shown — stepping closes it too).
-    - **An open modal owns the keyboard**: while any layer above
-      preview-undo in Q8's stack is open (dialog, menu, settings), every
-      other shortcut is suppressed (#107, #110).
-      **One overlay registry instead of hand lists** (#138): every modal
+    - **An open modal owns the keyboard**: while any dialog, menu or
+      settings layer is open, every other shortcut is suppressed.
+      **One overlay registry instead of hand lists**: every modal
       component registers itself with the `OverlayProvider`
       (`src/overlays.tsx`) while it is mounted — all overlays are
       mounted exactly while they are open, so the mount lifetime is the
@@ -1323,32 +1309,32 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       from the single `useOverlayCount()`. One source of truth: adding a
       modal in the future means using the hook, not remembering state
       lists.
-    - Accept never touches rejected faces (F2/§4.2 — claiming is an
-      assignment, §4.35); the Esc ordering of Q8 holds:
-      dropdown → menus and dialogs → preview-undo → cancel field edit →
-      split close.
-31. **Render-performance contract** (#98) ⇒ Review mode must stay
+    - Accept never touches rejected faces (claiming is an assignment,
+      §4.35; §4.2 plain accept never un-rejects). Esc closes layers in
+      order: dropdown → menus and dialogs → preview-undo → cancel field
+      edit → split.
+31. **Render-performance contract** ⇒ Review mode must stay
     interactive over thousands of cards (4116 faces, ~1061 sections,
     ~56k DOM nodes in the default review view):
     - **Hover is not app state**: the pointer crossing cards must not
       re-render the tree — a `hoverRef` feeds the cursor-as-target
-      shortcuts (#75) and the highlight is pure CSS
+      shortcuts and the highlight is pure CSS
       (`.face-card:hover`, replacing the `.hovered` class path).
     - **Cards and handlers are stable**: `React.memo(FaceCard)` over
       `useCallback`/`useMemo` grid handlers — handler-identity churn
       would defeat the memo instantly.
     - **`sections` is computed once per input change** (`useMemo` over
       snapshot/view/person/focus inputs), never per render.
-    - **A selection change re-renders only the sections it touches**
-      (#109): each section is a memo carrying its own selection
+    - **A selection change re-renders only the sections it touches**:
+      each section is a memo carrying its own selection
       signature (which of its face ids are selected) and a
       staged-fields key — a card toggle re-renders the one or two
       touched sections, not all ~1200. Measured on the 4116-face DB
       (gui-mock R2): a toggle's interactive cost is tens of ms
       (~16–50 ms), not a full-tree re-render.
     - **Deferred: section/window virtualisation and snapshot payload
-      thinning** (#111 review, measured post-wave on gui-mock R2 +
-      DOM census, headless Firefox): the interactive bar is met —
+      thinning** (measured on gui-mock R2 + DOM census, headless
+      Firefox): the interactive bar is met —
       selection toggles 14–17 ms at the very tail of the ~356k px
       scroll (worst case for the section memos), 8×8-page scroll jumps
       11–29 ms per frame after warm-up. Virtualisation would improve
@@ -1362,8 +1348,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       thinnable fields (`created_at`, `state`, derived `name` ≈ 200 KB
       total) are not worth a contract churn — payload thinning is
       likewise deferred.
-32. **Image & face-crop rotation** (#122; import half in
-    `docs/scripts-design.md` #118) ⇒ display rotation is **server
+32. **Image & face-crop rotation** (the import half lives in
+    `docs/scripts-design.md`) ⇒ display rotation is **server
     state**, one column per entity, applied on every load:
     - **`images.rotation`** (0/90/180/270, degrees clockwise, default 0):
       the full-image view (focus mode, §4.19) rotates the annotated
@@ -1377,40 +1363,40 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       ±90)`; the snapshot carries the angle and the renderer applies
       `transform: rotate(⟨angle⟩deg)` from it — rotate once, it sticks.
       **A rotation of the IMAGE cascades the same delta to every crop
-      on it** (#183, one transaction): each crop's orientation
+      on it** (one transaction): each crop's orientation
       *relative to the image* is preserved (the crop pixels are fixed
       at creation, so the two display angles move together).
     - **`faces.rotation`** — display rotation of the **face crop**
       (0/90/180/270, default 0), **independent
-      of the image rotation** in the converse direction only (#183:
-      crop pixels are fixed at creation; both rotations are pure
+      of the image rotation** in the converse direction only (crop
+      pixels are fixed at creation; both rotations are pure
       display state — image 90° CW + crop 90° CCW is legal — and
       `rotate_face` stays the per-crop correction, never touching
       `images.rotation`; the IMAGE→crop cascade above runs one way).
       Same control pattern on the card: ⟲/⟳ buttons on the card
       action row + context-menu entries, persisted by
       `rotate_face(face_id, ±90)`.
-    - **Import interlock** (#118): a legacy file's harvested EXIF
+    - **Import interlock**: a legacy file's harvested EXIF
       rotation angle lands in `images.rotation` at import time, so a
       90°-rotated photo displays upright with zero user interaction;
       the GUI controls are the manual override. Schema/DDL details in
       `docs/schema-design.md`.
-33. **Dialog action rows above typeahead fields** (#131) ⇒ a typeahead's
+33. **Dialog action rows above typeahead fields** ⇒ a typeahead's
     suggestion list opens **downward** from its input and covers whatever
     sits below it — so in dialogs containing a typeahead (the §4.24 Edit
     dialog, the §4.16 group dialog), the **action row goes to the top** of
     the dialog (under the title/body, above the fields), where suggestions
     can never obscure it. Buttons keep their order and behaviour.
-34. **Face drag & drop** (#135, #136) ⇒ the centre-pane face cards are
+34. **Face drag & drop** ⇒ the centre-pane face cards are
     drag sources with **two drop zones** — the person tree (merge) and the
     centre pane itself (description copy):
     - **Drag source (both features)**: dragging a card that is part of the
       current multi-selection drags the **whole selection**; dragging an
-      unselected card drags just that card (the #50 person-drag rule,
+      unselected card drags just that card (the §4.16 person-drag rule,
       mirrored). The payload is App-level state — the drag starts in the
       centre pane and may land in the left pane — and `dragend` (drop
       outside, Esc, cancel) clears it with every highlight.
-    - **Drop on a person row — merge into the person** (#135): every
+    - **Drop on a person row — merge into the person**: every
       person row is a valid target during a face drag (group branches and
       the status branches are not); the row shows the
       existing `merge-target` highlight. The drop is **confirmed like every
@@ -1422,10 +1408,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       face are deleted (§4.1). The target is the dropped person — fixed,
       the drop already chose it; dropping onto an `UnknownN` row is
       refused. Faces already on the target are excluded; if nothing
-      remains the drop is a no-op info toast (#132-style). Execution is one
-      `assign_person` (#77 routing — the same call the person-merge uses)
-      and the centre pane opens the merged target (#133).
-    - **Drop on a face card — copy its description** (#136): during a face
+      remains the drop is a no-op info toast. Execution is one
+      `assign_person` (the same call the person-merge uses) and the
+      centre pane opens the merged target.
+    - **Drop on a face card — copy its description**: during a face
       drag, every centre-pane card **with a non-empty description** is a
       valid target (highlighted `desc-target`); dropping copies that card's
       description onto the **whole dragged payload** (the target card
@@ -1434,7 +1420,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       staged on the card, else the committed one. A card with an **empty
       description is not a target** (no-drop cursor, drop ignored): a drag
       onto it must never clear the payload's descriptions — text is never
-      dropped silently (Q3). Execution is the existing per-face description
+      dropped silently. Execution is the existing per-face description
       setter, batched over the payload inside one `mutate` (the §4.30
       stage-commit loop); `link_status` is untouched — a description write
       is a text edit, like every other description path in the app, and
@@ -1463,24 +1449,23 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
          mirrors it. The `faceDragIds` prop remains for highlight/clear
          bookkeeping only.
 
-35. **Status groups & the system person `Rejected`** (#165) ⇒ groups stay
+35. **Status groups & the system person `Rejected`** ⇒ groups stay
     a plain organisational attribute — a dumb `person_groups.path` whose
-    sole job is shaping the tree (§4.16); #165 gives the review states
+    sole job is shaping the tree (§4.16). The review states carry
     *meaningful default values* **without making group stateful**:
     - **Status seats**: `New`, `Accepted`, `Rejected` are ordinary group
       paths, but **system-written only** — no typed path, dialog, merge or
       drop may produce them (§4.16 reserved segments: `Ungrouped`, the
-      three seats, and the retired `Unknown`). Their branches are system
+      three seats, and `Unknown`). Their branches are system
       furniture (no branch menu, no drops, no rename) while the persons
-      inside them are ordinary rows. The virtual `Ungrouped`/`Unknown`
-      branches are gone: every person is grouped, so the tree is real
-      branches plus the three seats — the renderer keeps the retired
+      inside them are ordinary rows. Every person is grouped, so the
+      tree is real branches plus the three seats — the renderer keeps the
       bucket names only as a **lazily-created, fail-visible fallback**
       (only an invariant breach could populate one, so a healthy tree
       never shows them and no writer can produce one).
     - **The group invariant**: every person has **≥ 1 group row** — the
-      “no group” state ceases to exist. Everything that used to leave a
-      person groupless now **seats** them instead: an empty assign or
+      “no group” state does not exist. Everything that would leave a
+      person groupless **seats** them instead: an empty assign or
       *Move to group…* input, `delete_group`, a `rename_group` to `""`.
       The empty input resolves to the person's status seat — `Accepted`
       or `Rejected` as the case may be (§4.1) — derived from the faces
@@ -1488,8 +1473,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       is **writer-owned**: both writers always write a seat and never
       delete a person's last row without replacing it (no stored trigger,
       by schema-design's no-trigger rule); `scripts/fix_status_groups.py`
-      asserts it, the DDL documents it, and `schema_version` moved to
-      `1.7` so a pre-#165 database is refused at the gate until fixed.
+      asserts it, the DDL documents it, and `schema_version` is `1.7` —
+      a database predating the status seats is refused at the gate until
+      `scripts/fix_status_groups.py` has upgraded it.
     - **Seat derivation** (re-evaluated for every seat-holder after each
       mutation of their faces): ≥ 1 `provisional` face ⇒ `New`; else ⇒
       `Accepted` (all faces confirmed — or none left). Transitions
@@ -1502,7 +1488,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       `New`** until its last provisional face is decided, then flips to
       `Accepted`.
     - **Import**: every `UnknownN` the importer creates is seeded with
-      `New` (retiring #153's no-group-rows rule), and existing
+      `New`, and existing
       seat-holders that receive new provisional faces re-seat to `New`;
       the harvest importer seats its groupless persons by the same rule.
     - **Reject re-homes the face** (§4.2): every path that writes
@@ -1513,8 +1499,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       database lives on `Rejected`**, ordinary persons hold only
       `provisional`/`confirmed` faces, and no writer ever produces an
       unowned face (`faces.person_id` stays nullable in the DDL but is
-      never `NULL` — the historical `remove_persons` leftovers are moved
-      by the data fix).
+      never `NULL`).
     - **The system person `Rejected`**: created on demand; its seat row
       is always `Rejected` (the one derivation it never re-evaluates);
       the name is reserved in `validate_person_name` (exact match, like
@@ -1523,14 +1508,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       guards its removal; §4.34 guards the drop); it has no primary and
       no refcrops (every face it owns is rejected, so §4.5/§4.6
       eligibility excludes them). It is listed in the tree **only under
-      `Show → Rejected`** and only while it holds faces (§4.10/#152) —
+      `Show → Rejected`** and only while it holds faces (§4.10) —
       invisible under every other setting.
     - **Claim is the only exit from `rejected`**: an assignment that
       includes rejected faces un-rejects them (`link_status='confirmed'`)
-      and moves them to its target — the inverse of the old sticky rule:
-      plain **Accept never un-rejects** (§4.3). The *Un-reject (accept)*
-      affordances retire (context-menu relabel, card undo, dialog
-      relabel): on a rejected-only scope Accept is inert with the info
+      and moves them to its target — plain **Accept never un-rejects**
+      (§4.3). On a rejected-only scope Accept is inert with the info
       toast “assign a person to bring it back”, and the assignment paths
       (rule bar *Edit…*, context menu, Edit dialog committed with a
       name) are the way back — reachable only while `Show = Rejected`
@@ -1538,34 +1521,34 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - **Data fix**: `scripts/fix_status_groups.py` upgrades a v1.6
       database **in place** (backup first; verified; refuses anything
       but `1.6`): creates `Rejected`, moves every rejected face — owned
-      and the 494 historical unowned ones — onto it, rewrites the 971
-      `Unknown` rows to derived seats, seats any groupless person,
+      and unowned — onto it, rewrites the `Unknown` rows to derived
+      seats, seats any groupless person,
       recomputes the primaries/refcrops touched by the moves, asserts the
       invariant, and bumps `schema_version` to `1.7`. A fresh database
       built from `database/schema.sql` needs none of this.
 
-36. **Rolls import pane** (#167) ⇒ importing a fresh roll must not
-   require the terminal: the Rolls path filter (§3, #162) doubles as the
+36. **Rolls import pane** ⇒ importing a fresh roll must not
+   require the terminal: the Rolls path filter (§3) doubles as the
    import entry point.
    - **Trigger**: committing a path (typed + Enter, or the native folder
      picker) that matches no snapshot image **and** that
      `scan_import_dir(path)` confirms to be a real directory holding
      ≥ 1 image file **at any depth** (`IMAGE_SUFFIXES` of
-     `import_roll.py`, walked **recursively** — #169: real rolls are
-     organised in sub-folders, so a one-level probe misread them as
-     empty; no fs walk happens for a path that already matches snapshot
-     images). A path that is not such a directory keeps the old
-     dim refusal hint (`no images under …`) and the current root — the
-     #162 hint path is unchanged.
+     `import_roll.py`, walked **recursively** — real rolls are organised
+     in sub-folders, so a one-level probe misreads them as empty; no fs
+     walk happens for a path that already matches snapshot images).
+     A path that is not such a directory keeps the dim refusal hint
+     (`no images under …`) and the current root.
    - **The import pane** replaces the **right pane** (DetailPane's slot)
-     while open; it is rolls-scoped UI state (session-only, like the #162
-     root), closed by its own ✕ button (DetailPane returns), and survives
+     while open; it is rolls-scoped UI state (session-only, like the
+     Rolls root), closed by its own ✕ button (DetailPane returns), and
+     survives
      tab switches. It is a **pane, not a modal** — the tree, the rolls
      browser and the rule bar stay interactive; only one import pane can
      be open at a time.
    - **Options**: toggles for the `import_roll.py` CLI flags that make
      sense per roll — `--dry-run`, `--all`, `--gpu` (CPU is the default,
-     §4.29/#91), `--recursive` (**on by default** — #169: the probe that
+     §4.29), `--recursive` (**on by default** — the probe that
      opened the pane already found images below the top level, so a
      default-off import would silently skip the very sub-folders that
      triggered it), `--threshold <f>` (default `0.40`, the
@@ -1575,16 +1558,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      through the path filter again). `--create-db` + `--dry-run` is
      refused up front (the script's `validate_args` — creation is a
      write).
-   - **Option gating (#186)**: the pane offers only options that can
+   - **Option gating**: the pane offers only options that can
      apply — `--create-db` is **hidden while a usable database exists**
      (the script refuses an existing non-empty DB, so the checkbox
      could only fail; `get_import_info` now answers the probe with
      `{ dbPath, dbExists }`, where *usable* means the **schema is
      present**, not merely that a file exists: a failed first load can
      have created an empty file), and it is offered **pre-checked in
-     the first-run flow (#185)**. The other flags apply to every in-app
+     the first-run flow**. The other flags apply to every in-app
      run and stay.
-   - **First run — no database (#185)**: when the initial snapshot load
+   - **First run — no database**: when the initial snapshot load
      fails and **no usable database exists** (the same schema probe),
      the app does not dead-end on the raw error: a dialog states it
      (*No database yet* — the configured path, built from
@@ -1621,7 +1604,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      independent process); Start/Stop stay reachable by reopening the
      pane on the same directory.
 
-37. **The right pane follows the full image** (#171) ⇒ while a full-size
+37. **The right pane follows the full image** ⇒ while a full-size
    image is on screen the right pane must answer "who is this?" without
    the user hunting in the tree:
    - **On entry**: opening the **focus split** (card double-click or
@@ -1639,10 +1622,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      switches the right pane to **the clicked face's person**, *in
      addition to* the §4.11 selection toggle. The view never changes:
      the split/rolls detail stays open, no tab switch, no person-view
-     navigation (a plain `setPersonId` — deliberately NOT the §4.15/#62
+     navigation (a plain `setPersonId` — deliberately NOT the §4.15
      tree-row select, which yanks the centre pane), and the selection is
      untouched beyond the toggle itself.
-   - **Guards**: `face.person_id` may be `NULL` (legacy rows only, #165) —
+   - **Guards**: `face.person_id` may be `NULL` (the column stays
+     nullable; no row writes it) —
      then the anchor is left as it was (never cleared, never `setPersonId(null)`).
      The **import pane (§4.36) keeps precedence**: while it occupies the
      right pane, neither entry nor rect-click anchoring steals the slot
@@ -1651,8 +1635,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      DetailPane edits (rename/group/note/refcrops) keep working — it is
      still `displayPerson`.
 
-38. **The person pane's group list** (#172) and the **Update person
-   button** (#173) ⇒ the right pane must show and edit *all* of a
+38. **The person pane's group list** and the **Update person
+   button** ⇒ the right pane must show and edit *all* of a
    person's group memberships, not just the first:
    - **List**: the pane's single Group field is replaced by a list of
      every membership (`person_groups` rows — persons can belong to
@@ -1665,8 +1649,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      dimmed with its × **disabled**; it is never staged for removal.
    - **Add group**: a path input below the list (path typeahead, §4.18
      options) appends a **new** membership — every current group is
-     kept and the status seat drops when a real group is filed (#164 /
-     §4.35 rules, unchanged). Reserved segments (#165) are refused
+     kept and the status seat drops when a real group is filed (the
+     §4.35 rules). Reserved segments are refused
      client-side before staging, exactly as the backend refuses them.
    - **Editable rows**: clicking a row's path edits it inline (path
      typeahead); a committed change re-homes **that one** membership
@@ -1683,13 +1667,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      and Note fields keep their immediate commit-on-blur behaviour —
      only the group list is staged. Staging is pane-local UI state:
      re-anchoring the pane (any §4.37 path, tree select) discards it.
-   - **Update person** (#173): a button directly above *Remove person*,
+   - **Update person**: a button directly above *Remove person*,
      styled like it — it performs the same action as the commit above
      (pending name first, then the staged group ops; with nothing
      staged and no pending name it is an informed no-op, never an
      error). The system person `Rejected` sees the list **read-only**
      (no ×, no add, no inline edit — §4.35) and no Update button.
-   - **The Edit dialog fronts the same list** (#181): whenever the
+   - **The Edit dialog fronts the same list**: whenever the
      dialog's **Name field holds a known person's name** (typed or
      prefilled), the single Group field is replaced by that person's
      group LIST — the identical rows (× removal, inert seat, inline
@@ -1705,12 +1689,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      switches discard the staged ops (they are per-scope, like every
      other dialog field).
 
-39. **Modes and the Rolls branch thumbnails** (#174) ⇒ the top-bar
+39. **Modes and the Rolls branch thumbnails** ⇒ the top-bar
    selector is the **mode switch** (§3): each mode owns its centre
    panel and its right pane's default content. Rolls mode changes:
    - **Branch selection**: clicking a path node in the centre
-     hierarchy both toggles the branch's expansion (unchanged) **and
-     selects it**. The selection is session state like the #162 root —
+     hierarchy both toggles the branch's expansion **and** selects it. The selection is session state like the Rolls root —
      it survives mode switches, defaults to the **root itself**, and is
      re-validated when the root changes (a selection outside the new
      root falls back to the root).
@@ -1718,16 +1701,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      children only, never recursive**: a branch that also holds
      sub-branches lists just the images filed *at that path* (the
      directory of the image's `primary_path` equals the branch path),
-     ordered by filename (as the old leaf grid) and Show-listed by the
-     §4.10 rule (an image lists iff it holds ≥ 1 matching face; `All`
-     lists every image — branch counters stay raw, #129). A branch
+     ordered by filename and Show-listed by the §4.10 rule (an image
+     lists iff it holds ≥ 1 matching face; `All` lists every image —
+     branch counters stay raw, §4.16). A branch
      with no direct listing image shows a dim hint: `no images directly
      at this path — open a sub-branch` when it has sub-branches, else
      `nothing to show`.
-   - **The centre renders no thumbnails**: the inline per-branch grids
-     are removed — the hierarchy (headers with rollup counters +
-     expand arrows) is the centre's whole content; the #162 path
-     filter, Show pruning and the import entry (§4.36) are unchanged.
+   - **The centre renders no thumbnails**: the hierarchy (headers with
+     rollup counters + expand arrows) is the centre's whole content; the
+     Rolls path filter, Show pruning and the import entry (§4.36) apply
+     as in §3.
    - **Thumbnail interactions** (right pane):
      - plain click **replaces** the image selection with that image;
        ctrl/⌘-click toggles; shift-click ranges over the branch's
@@ -1736,17 +1719,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
        current branch's list are dropped on render.
      - double-click opens the **image detail** (centre swaps to the
        annotated overlay + face grid, *← rolls* returns to the
-       hierarchy with the branch selection intact) — a #123
-       view-context change, #142 as before.
+       hierarchy with the branch selection intact) — a view-context
+       change (incl. the §4.24 staged-set confirm).
      - **while an image is open the right pane shows the person
        detail** again (the §4.37 anchoring — the editing pane for the
        face work); the thumbnails hold the pane only while the user
        browses the hierarchy.
-     - the context menu (#32) opens on a thumb; if the thumb is part
+     - the context menu opens on a thumb; if the thumb is part
        of the selection the scope is the whole selection, otherwise
        just that thumb (the §4.14 scope rule). It carries `Open image`,
        *Open full image (focused)* (both: the invoked thumb — greyed out
-       for a multi-scope, §4.14/#182), `Rotate
+       for a multi-scope, §4.14), `Rotate
        90° CW` / `Rotate 90° CCW` and `Open in system viewer` (all:
        applied to **each image of the scope**, one command per image in
        order — rotations batch into one refresh), plus the existing
@@ -1754,11 +1737,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    - **Selection lifecycle**: the image selection clears when the
      branch selection changes (a different thumb set); it survives
      mode switches with the branch selection.
-   - **Deferred** (later expansions, not #174): *remove the images from
+   - **Deferred** (later expansions): *remove the images from
      Whot* — a new `remove_images` backend command whose face/person
      semantics needs backend-design + schema-design sections — and
      further bulk actions over the selection.
-   - **Rolls layout while browsing** (#174 follow-up): while the centre
+   - **Rolls layout while browsing**: while the centre
      shows the **hierarchy** (no image open, no focus split) the centre
      takes an **explicit width that starts at the left pane's width** —
      most of the window goes to the right pane, whose thumbnails flex
@@ -1775,18 +1758,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      open (the branch selection may update underneath); the person
      detail keeps its Review/Person-mode home (§4.38).
 
-40. **The Review lock** (#175, rewritten by #188) ⇒ the lock IS the
+40. **The Review lock** ⇒ the lock IS the
    Review mode:
    - **Indicator only**: a **padlock in the top bar, beside the `Show`
      select** — a pure indicator, never a control: it reads **🔒 exactly
      while Review mode is active** and 🔓 otherwise, and it is not
-     clickable. The old session-lock machinery (engage in any mode,
-     release forcing Person mode + Show → All) is gone — the state
-     derives from `mode === "review"`.
+     clickable. The state derives from `mode === "review"`.
    - **Locked while in Review**: `Show` pins to **New**
-     (`provisional`) through the ordinary filter path (§4.10/#141:
-     faces the new filter hides leave the selection and their staged
-     ops drop) and the select renders **disabled** — on every entry
+     (`provisional`) through the ordinary filter path (§4.10: faces the
+     new filter hides leave the selection and their staged ops drop)
+     and the select renders **disabled** — on every entry
      into Review (the top-bar *Review* button, the tree's *Review*
      action, the post-delete fallback, and the initial load) and for
      as long as Review stays active. If the entering anchor holds no
@@ -1794,25 +1775,24 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      in the step list that does (forward, else the first such person;
      with none, stay and report `no more persons to review`).
    - **Exit is a mode switch**: the user selects **Rolls** or
-     **Person** — the ordinary #123-confirm switch. The select
+     **Person** — the ordinary confirm switch (the §4.24 staged-set
+     confirm). The select
      **re-enables** and its **value stays** (no forced Show → All, no
      forced follow-up mode): the tab click *is* the exit. The §4.41
      guards (*No new faces*, *Please select a person…*) cover any
      resulting empty state, so nothing else fires on exit.
-   - **Reach**: with the lock being the mode, the §4.30/#125 exhaust
-     machinery is exactly its mode-gated self again — verdicts made in
-     Review mark and hand over as before; #175's any-view widening and
-     its `!reviewLock` bypass are gone (verdicts in Person/focus/rolls
+   - **Reach**: the §4.30 exhaust machinery is mode-gated — verdicts
+     made in Review mark and hand over; verdicts in Person/focus/rolls
      never advance, and §4.30's accept keeps its plain path while a
-     split is open).
-   - **Actions are unchanged**: no verdict or assignment rule moves.
+     split is open.
+   - **Actions**: no verdict or assignment rule is mode-dependent.
 
 41. **Person mode: sticky person, guard dialogs, counts, status
-   colours** (#176) ⇒ Person mode's behaviour is otherwise unchanged:
-   - **The Person tab is always clickable** (#176): without an anchored
+   colours** ⇒ Person mode's behaviour is otherwise unchanged:
+   - **The Person tab is always clickable**: without an anchored
      person a click switches to Person mode, sets **Show → All** (the
      status branches `New`/`Accepted` are then listed — `Rejected` only
-     under Show → Rejected, §4.35 unchanged) and opens the dialog
+     under Show → Rejected, §4.35) and opens the dialog
      *Please select a person in the tree on the left* (a single
      **Close** button). With an anchor the click is the plain mode
      switch — the anchor survives mode switches (§3), so the person
@@ -1826,7 +1806,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      (accepted/rejected; under All *No faces to show*) — with
      **Show All** (sets Show → All) and **Close** (dismissed for that
      person+filter pair until either changes).
-   - **The empty state says what to do next** (#194): when the anchored
+   - **The empty state says what to do next**: when the anchored
      person holds **no face under the current Show filter**, the centre
      pane's empty state is guidance, not a bare *nothing to show* — it
      names the active filter and points at the ‹ › controls:
@@ -1841,44 +1821,43 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
        person in the list, or click **›** to step to the next person.*
      Without an anchored person (and everywhere the pane has no person
      context — Rolls, image detail) the bare *nothing to show* stays.
-   - **Focus follows the verdict** (#189): every successful **Accept /
+   - **Focus follows the verdict**: every successful **Accept /
      Reject** moves the anchor to the **acted-on person** — the owner
      of the cursor-as-target face (§4.25) — so Person mode always
      opens at the **last person the user worked on**: the grid-only
      verdict (no anchor yet ⇒ no §4.30 mark, no hand-over — the
      verdict itself anchors the drained person, so the picker dialog
-     can no longer dead-end a relook), the verdict on a person other
+     never dead-ends a relook), the verdict on a person other
      than the current anchor (the anchor follows the action), or a
      run of verdicts (the anchor walks with the work). The update runs
      **after** the mutation succeeds and **after** the pre-mutation
-     exhaust mark is captured, so #148's mark comparison and the
-     §4.30 hand-over are untouched: when anchor and acted person
-     coincide (the common case) the drain hand-over to the next
-     pending person behaves exactly as before (#125/#159).
-   - **Top-bar status totals** (#179, revising the #176 person counts):
-     the top bar **always** shows the **database's live face totals** as
+     exhaust mark is captured, so the mark comparison and the §4.30
+     hand-over are untouched: when anchor and acted person coincide
+     (the common case) the drain hand-over proceeds as the §4.30 rules
+     describe.
+   - **Top-bar status totals**: the top bar **always** shows the
+     **database's live face totals** as
      an overview — `? N` (New), `✓ N` (Accepted), `✗ N` (Rejected) —
      **independent of mode, Show filter and selection** (shown with no
      anchor at all) and re-derived from the refreshed snapshot on every
      mutation (accept, reject, assign/merge, delete). Same chips and
      the colours below; the tooltip reads `totals in the database` —
-     never one person's faces. Person-scoped counts are gone from the
-     bar; a person's own counts stay in the tree badges and the right
-     pane.
-   - **One status colour scheme** (#176): **New = red, Accepted =
+     never one person's faces. A person's own counts stay in the tree
+     badges and the right pane.
+   - **One status colour scheme**: **New = red, Accepted =
      green, Rejected = gray, All/default = normal text** — everywhere
      status TEXT appears: the tree's status branches and group branch
      labels, the Show select (its options **and** its closed value),
      the face-card status badges and the count chips
      (`c-prov`/`c-conf`/`c-rej`). The face-rectangle overlay palette
-     (§4.11) is a separate mechanism and stays unchanged.
+     (§4.11) is a separate mechanism.
 
-42. **Accept/reject icon shortcuts** (#177) ⇒ one visual language for
+42. **Accept/reject icon shortcuts** ⇒ one visual language for
    verdicts everywhere:
    - **Card tick**: the face card's action row gains **✓** beside ✗ —
      accept the card **as is**, with the bar's Accept semantics (live
-     stages commit first, #166, then accept; the §4.30 advance in
-     Review) under the §4.14 effective-action-scope rule (the selection
+     stages commit first, then accept; the §4.30 advance in Review)
+     under the §4.14 effective-action-scope rule (the selection
      when the card is part of it, else the card). It renders for every
      face the accept can address: **provisional** accepts; **rejected**
      yields the existing *assign a person to bring it back* guidance
