@@ -22,6 +22,7 @@ import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
+  emptyStateHint,
   groupByDescription,
   listedImages,
   matchesStatusFilter,
@@ -29,6 +30,7 @@ import {
   type ClusterGroup,
   type FaceFilter,
 } from "./viewFilters";
+import { stepBase } from "./stepFlow";
 import { groupPathOptions } from "./components/PathTypeahead";
 import {
   buildStage,
@@ -1795,13 +1797,24 @@ export default function App() {
   // #125); the shortcut set is listed in the settings popover
   // shared cursor position for the cursor-as-target rules (#74/#75/#76)
   const mouseRef = useRef({ x: -1, y: -1 });
+  // #194 (§4.25): the LAST anchored person's position in the current step
+  // list — the step base when the anchor has left the list (stepIdx -1,
+  // e.g. a verdict drained it and §4.10 pruned it under Show → New) and
+  // the cursor hit missed (the cursor is over the ‹ › buttons themselves).
+  // Updated wherever the anchor lands, so every selection path feeds it.
+  const lastStepPosRef = useRef(-1);
+  useEffect(() => {
+    if (personId == null) return;
+    const i = stepIds.indexOf(personId);
+    if (i !== -1) lastStepPosRef.current = i;
+  }, [personId, stepIds]);
   const stepPerson = useCallback(
     (dir: 1 | -1) => {
       // #76 — cursor-as-target (§4.25): with no selected person the
       // person under the mouse cursor anchors the step (mouseRef is the
       // same ref object every render, so this closure never goes stale)
-      let base = stepIdx;
-      if (base === -1) {
+      let cursorIdx = -1;
+      if (stepIdx === -1) {
         const el = document.elementFromPoint(
           mouseRef.current.x,
           mouseRef.current.y
@@ -1809,9 +1822,11 @@ export default function App() {
         const v = el
           ?.closest("[data-person-id]")
           ?.getAttribute("data-person-id");
-        const i = v == null ? -1 : stepIds.indexOf(parseInt(v, 10));
-        if (i !== -1) base = i;
+        cursorIdx = v == null ? -1 : stepIds.indexOf(parseInt(v, 10));
       }
+      // #194 (§4.25): the base chain — anchored position, cursor, last
+      // anchored position (clamped), else the start/end fallback below
+      const base = stepBase(stepIdx, cursorIdx, lastStepPosRef.current, stepIds.length);
       const next =
         base === -1
           ? dir === 1
@@ -1833,6 +1848,16 @@ export default function App() {
     },
     [stepIdx, stepIds, splitImageId, confirmContext]
   );
+  // #194 (§4.41) — the empty state says what to do next: the anchored
+  // person holds no face under the current Show filter, so the bare
+  // "nothing to show" becomes guidance naming the active filter and
+  // pointing at ‹ › (see emptyStateHint). Person context only (Person
+  // mode + anchored person); everywhere else the bare message stays (the
+  // grid falls back when the hint is undefined).
+  const emptyHint =
+    mode === "person" && selectedPerson
+      ? emptyStateHint(selectedPerson.counts.total, faceFilter)
+      : undefined;
   // #74 — section under the mouse cursor: Ctrl-G must work with the
   // cursor anywhere inside a group, without a prior click/hover on one
   // of its cards — the cursor position is tracked, the DOM resolves it
@@ -2615,6 +2640,7 @@ export default function App() {
               sel={sel}
               stage={pending}
               faceDropTarget={faceDropTarget}
+              emptyHint={emptyHint} // #194: guidance instead of bare "nothing to show"
               {...gridHandlers}
               primaryFaceId={mode === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />

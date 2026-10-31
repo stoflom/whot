@@ -57,6 +57,10 @@ interface GridProps extends GridShared {
   sel: Set<number>;
   /** #136: the card a face drag currently hovers (null = none) */
   faceDropTarget: number | null;
+  /** #194 (§4.41): the empty-state guidance — replaces the bare
+      "nothing to show" when provided (App computes it for the person
+      context only; grid-level, so it never reaches a section) */
+  emptyHint?: string;
 }
 
 /** #109: a stable identity for "which staged fields preview on this
@@ -287,10 +291,11 @@ export default function FaceGrid({
   sections,
   sel,
   faceDropTarget,
+  emptyHint,
   ...shared
 }: GridProps) {
   if (sections.length === 0) {
-    return <div className="empty">nothing to show</div>;
+    return <div className="empty">{emptyHint ?? "nothing to show"}</div>;
   }
   return (
     <div className="face-sections">
