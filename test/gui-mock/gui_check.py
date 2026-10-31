@@ -147,6 +147,15 @@ Checks (contract refs: docs/gui-design.md):
       to confirmed and ✗ rejects them all; the bottom bar's selection
       shortcuts carry the icons (button.ok reads '✓ Accept', button.bad
       '✗ Reject')
+  C48 branch rename onto a path the same person already holds is a
+      SILENT MERGE, not a UNIQUE-constraint crash (#193, §4.16): the
+      person keeps one row at the destination, the rest of the branch
+      rewrites normally, no error toast
+  C49 stepping from an empty centre (#194, §4.25/§4.41): with the
+      anchored person pruned from the step list (Show switch or a
+      verdict drain) the empty pane names the active filter and points
+      at › (faceless shells get their own hint), and › continues from
+      the LAST anchored position (clamped) — not the list start
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -498,10 +507,22 @@ def r2_toggle_perf(t):
           const cb = document.querySelectorAll('.face-card input[type=checkbox]')[arguments[0]];
           const t0 = performance.now();
           cb.click();
-          return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() =>
-            res(Math.round((performance.now() - t0) * 10) / 10))));
+          return new Promise(res => {
+            let done = false;
+            const finish = (v) => { if (!done) { done = true; res(v); } };
+            // headless boxes whose compositor never presents the MiniBrowser
+            // window starve rAF (seen on an idle GNOME/Xwayland session) —
+            // bound the wait so this informational check can't wedge the suite
+            const to = setTimeout(() => finish(null), 1500);
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              clearTimeout(to);
+              finish(Math.round((performance.now() - t0) * 10) / 10);
+            }));
+          });
         """, i))
-    record("R2 selection-toggle render ms", True, str(times))
+    record("R2 selection-toggle render ms", True,
+           str(times) + (" — no paint frame (headless)"
+                        if any(v is None for v in times) else ""))
 
 
 def c7_single_section_selectall(t):
@@ -4393,6 +4414,330 @@ def c47_first_run_no_database(t):
            f"back={back_ok} retry={retry_ok}")
 
 
+def c48_branch_rename_clash_merges(t):
+    """#193 (§4.16, v3.87): renaming a branch onto a path that the SAME
+    person already holds is a SILENT MERGE, not a UNIQUE-constraint
+    crash — the person keeps one row at the destination, the rest of the
+    branch rewrites normally, no error toast, the tree re-renders. Setup:
+    a person whose ONLY group is a root branch G gets a second branch
+    'ClashC48', then the whole G branch is renamed onto 'ClashC48' —
+    the person's G row would collide with their kept ClashC48 row. They
+    must end with exactly one row: ClashC48."""
+    fresh(t)
+    set_show_filter(t, "all")
+
+    def groups_of(t, pid):
+        return js(t, """
+          const p = window.__MOCK_SNAP.persons.find(x => x.id === Number(arguments[0]));
+          return p?.groups ?? null;
+        """, pid)
+
+    def click_ctx_item(t, label):
+        time.sleep(0.4)
+        clicked = js(t, r"""
+          const it = [...document.querySelectorAll('.ctx-item')]
+            .find(x => x.textContent.trim() === arguments[0]);
+          if (!it) return null; it.click(); return true;
+        """, label)
+        time.sleep(0.5)
+        return clicked
+
+    def type_and_submit(t, value, label):
+        # type and submit are SEPARATE script ticks — the submit closure
+        # reads React state, which only lands after the input event's
+        # re-render (one-tick typing would submit the stale path)
+        typed = js(t, r"""
+          const el = document.querySelector('.dialog input');
+          if (!el) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+          return true;
+        """, value)
+        time.sleep(0.4)
+        submitted = js(t, r"""
+          const b = [...document.querySelectorAll('.dialog-actions button')]
+            .find(x => x.textContent.trim() === arguments[0]);
+          if (!b) return false;
+          b.click();
+          return true;
+        """, label)
+        time.sleep(1.4)
+        return typed and submitted
+
+    # a person whose ONLY group is a root-level real branch, with a face
+    # visible under Show All (so their row renders)
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      for (const p of snap.persons) {
+        if ((p.groups?.length ?? 0) !== 1) continue;
+        const g = p.groups[0];
+        if (g.includes('|') || ['New', 'Accepted', 'Rejected'].includes(g)) continue;
+        if ((p.counts?.total ?? 0) === 0) continue;
+        if (!snap.faces.some(f => f.person_id === p.id && f.link_status !== 'rejected'))
+          continue;
+        return {id: p.id, name: p.name, g};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C48 branch rename onto a held path merges, no UNIQUE crash (#193)", True,
+               "no single root-group person in the dump — vacuous")
+        return
+    pid, g, X = pick["id"], pick["g"], "ClashC48"
+
+    # 1) add the second branch so the rename will collide
+    js(t, r"""
+      const row = document.querySelector(`.tree-person[data-person-id='${arguments[0]}']`);
+      if (row) row.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 120, clientY: 300}));
+      window.__C48_row = !!row;
+    """, pid)
+    added = (click_ctx_item(t, "Add group…")
+             and type_and_submit(t, X, "add group"))
+    staged = groups_of(t, pid)
+    clash_ready = (isinstance(staged, list) and set(staged) == {g, X})
+
+    # 2) rename the whole G branch onto the held path — the clash.
+    # headerOf reconstructs the FULL path of a header (C23's helper) —
+    # leaf names repeat across nesting ('Friends' may exist under
+    # several parents), so match on the full path, never the leaf
+    def hdr(code):
+        return HEADER_OF + code
+
+    HEADER_OF = r"""
+      const headerOf = (h) => {
+        const parts = [];
+        let cur = h;
+        while (cur) {
+          const nm = cur.querySelector(':scope > .tree-node-name')
+            ?.textContent.trim();
+          if (nm == null) return null;
+          parts.unshift(nm);
+          const wrap = cur.parentElement;
+          const pw = wrap && wrap.parentElement;
+          if (!pw) break;
+          const parentHeader = pw.firstElementChild;
+          if (!parentHeader || !parentHeader.classList
+              || !parentHeader.classList.contains('tree-node')) break;
+          cur = parentHeader;
+        }
+        return parts.join('|');
+      };
+    """
+    js(t, hdr(r"""
+      const n = [...document.querySelectorAll('.tree-node')]
+        .find(x => headerOf(x) === arguments[0]);
+      if (n) n.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 80, clientY: 220}));
+      window.__C48_branch = !!n;
+    """), g)
+    renamed = (click_ctx_item(t, "Rename/move group…")
+               and type_and_submit(t, X, "move group"))
+    branch_found = js(t, "return window.__C48_branch")
+
+    after = groups_of(t, pid)
+    toast = js(t, "return document.querySelector('.toast[role=alert]')?.textContent ?? null")
+    src_gone = js(t, hdr(r"""
+      return ![...document.querySelectorAll('.tree-node')]
+        .some(x => headerOf(x) === arguments[0]);
+    """), g)
+    dst_branch = js(t, hdr(r"""
+      return [...document.querySelectorAll('.tree-node')]
+        .some(x => headerOf(x) === arguments[0]);
+    """), X)
+    rows = js(t, "return document.querySelectorAll(`.tree-person[data-person-id='${arguments[0]}']`).length", pid)
+
+    # the merge: the person ends with EXACTLY the one held row
+    merged = (isinstance(after, list) and after == [X])
+    ok = (branch_found and added and clash_ready and renamed and merged
+          and toast is None and src_gone and dst_branch and rows == 1)
+    record("C48 branch rename onto a held path merges, no UNIQUE crash (#193)", ok,
+           f"{pick['name']} ({pid}) in '{g}'; +{X} → {staged} (clash_ready={clash_ready}); "
+           f"renamed {g}→{X}: {after} (merged={merged}); toast={toast!r}; "
+           f"'{g}' gone={src_gone} '{X}' branch={dst_branch}; rows={rows} (want 1)")
+
+
+def c49_step_from_empty_state(t):
+    """#194 (§4.25/§4.41, v3.87): with the anchored person OUT of the
+    current step list (a verdict drained them and the Show filter pruned
+    them, or a Show switch hid every face) the empty centre pane says
+    WHAT TO DO — it names the active filter and points at › (the bare
+    'nothing to show' is gone) — and › continues from the LAST anchored
+    position (clamped), not the list start. Two paths: (A) a Show switch
+    prunes the anchor; (B) the §4.41 guard Close on a verdict drain.
+    Faceless shells (total 0) get their own hint."""
+    HINT_SHELL = ("This person has no faces — pick another person in the list, "
+                  "or click › to step to the next person.")
+
+    def step_ids(t):
+        """distinct tree-list ids in display order (the step list)"""
+        return js(t, r"""
+          const seen = new Set(); const ids = [];
+          for (const el of document.querySelectorAll('.tree-person')) {
+            const id = String(el.getAttribute('data-person-id'));
+            if (!seen.has(id)) { seen.add(id); ids.push(id); }
+          }
+          return ids;
+        """)
+
+    def click_next(t):
+        b = t.find_element(By.CSS_SELECTOR,
+                           ".center-toolbar .toolbar-left button[title='next person (→)']")
+        b.click()
+        time.sleep(1.2)
+
+    def landed_id(t):
+        return js(t, "return Number(document.querySelector('.tree-person.selected')?.getAttribute('data-person-id'))")
+
+    def close_guard(t, label="Close"):
+        return js(t, r"""
+          const b = [...document.querySelectorAll('.overlay .dialog button')]
+            .find(x => x.textContent.trim() === arguments[0]);
+          if (!b) return false; b.click(); return true;
+        """, label)
+
+    # ── A: Show switch prunes the anchor (hint + › from last position) ──
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      const ids = [];
+      const seen = new Set();
+      for (const el of document.querySelectorAll('.tree-person')) {
+        const id = String(el.getAttribute('data-person-id'));
+        if (!seen.has(id)) { seen.add(id); ids.push(id); }
+      }
+      const snap = window.__MOCK_SNAP;
+      for (let i = 1; i < ids.length; i++) {          // i ≥ 1 so last-pos ≠ 0
+        const fs = snap.faces.filter(f => f.person_id === Number(ids[i]));
+        if (fs.length > 0 && fs.every(f => f.link_status === 'provisional'))
+          return {id: ids[i], idx: i};
+      }
+      return null;
+    """)
+    if not pick:
+        record("C49 step from an empty centre: hint + › from last anchored position (#194)", True,
+               "no provisional-only person past index 0 — vacuous")
+        return
+    t.find_element(By.CSS_SELECTOR,
+                   f".tree-person[data-person-id='{pick['id']}']").click()
+    time.sleep(1.0)
+    # switch to the Person tab (the anchor holds a new face — no guard)
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+     if "Person" in b.text][0].click()
+    time.sleep(1.0)
+    # Show → Accepted hides every one of the anchor's (provisional) faces
+    set_show_filter(t, "confirmed")
+    time.sleep(1.4)
+    # the §4.41 sticky-person guard may stand in front — Close it
+    guard = js(t, "return document.querySelector('.overlay .dialog h3')?.textContent.trim() ?? null")
+    if guard:
+        close_guard(t, "Close")
+        time.sleep(0.8)
+    hint_a = js(t, "return document.querySelector('.center .empty')?.textContent?.trim() ?? null")
+    pos_a = js(t, "return document.querySelector('.center-toolbar .nav-pos')?.textContent?.trim() ?? null")
+    newlist_a = step_ids(t)
+    hint_a_ok = (hint_a == "No Accepted faces to show — pick another person in the list, "
+                 "or click › to step to the next person.")
+    # nav-pos reads '–/N' while the anchor is out of the list
+    pruned_a = pos_a is not None and pos_a.startswith("–")
+    click_next(t)
+    want_a_idx = min(min(pick["idx"], len(newlist_a) - 1) + 1, len(newlist_a) - 1)
+    want_a = int(newlist_a[want_a_idx]) if newlist_a else None
+    landed_a = landed_id(t)
+    a_ok = hint_a_ok and pruned_a and want_a is not None and landed_a == want_a
+
+    # ── B: a verdict drain + guard Close (hint + › from last position) ──
+    fresh(t)
+    set_show_filter(t, "provisional")
+    pick2 = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const seen = new Set(); const ids = [];
+      for (const el of document.querySelectorAll('.tree-person')) {
+        const id = String(el.getAttribute('data-person-id'));
+        if (!seen.has(id)) { seen.add(id); ids.push(id); }
+      }
+      for (let i = 1; i < ids.length; i++) {          // i ≥ 1 so last-pos ≠ 0
+        const fs = snap.faces.filter(f => f.person_id === Number(ids[i]));
+        if (fs.length === 1 && fs[0].link_status === 'provisional')
+          return {id: ids[i], idx: i};
+      }
+      return null;
+    """)
+    b_ok = False
+    detail_b = "no single-new-face person past index 0 — vacuous"
+    if pick2:
+        t.find_element(By.CSS_SELECTOR,
+                       f".tree-person[data-person-id='{pick2['id']}']").click()
+        time.sleep(1.0)
+        [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+         if "Person" in b.text][0].click()
+        time.sleep(1.0)
+        # Description mode: the mock only clusters CONFIRMED faces, so an
+        # accuracy-mode section for a provisional-only person is empty —
+        # description sections are built straight from the visible faces.
+        js(t, r"""
+          const b = [...document.querySelectorAll('.center-toolbar .seg button')]
+            .find(x => x.textContent.trim() === 'Description');
+          if (b) b.click();
+          window.__C49seg = !!b;
+        """)
+        time.sleep(0.8)
+        # accept the anchor's single new face from the Person view (#177 ✓)
+        # — one face ⇒ exactly one section ⇒ one section-accept button
+        js(t, r"""
+          const b = document.querySelector('.face-section .sec-accept');
+          if (b) b.click();
+          window.__C49 = !!b;
+        """)
+        time.sleep(2.2)
+        guard2 = js(t, "return document.querySelector('.overlay .dialog h3')?.textContent.trim() ?? null")
+        if guard2:
+            close_guard(t, "Close")
+            time.sleep(0.8)
+        hint_b = js(t, "return document.querySelector('.center .empty')?.textContent?.trim() ?? null")
+        newlist_b = step_ids(t)
+        hint_b_ok = (hint_b == "No New faces to show — pick another person in the list, "
+                    "or click › to step to the next person.")
+        click_next(t)
+        want_b_idx = min(min(pick2["idx"], len(newlist_b) - 1) + 1, len(newlist_b) - 1)
+        want_b = int(newlist_b[want_b_idx]) if newlist_b else None
+        landed_b = landed_id(t)
+        b_ok = (js(t, "return window.__C49seg")
+                and js(t, "return window.__C49")
+                and hint_b_ok and want_b is not None and landed_b == want_b)
+        detail_b = (f"drained {pick2['id']} (idx {pick2['idx']}) → hint={hint_b!r} "
+                    f"(ok={hint_b_ok}); › landed {landed_b} want {want_b} (list {len(newlist_b)})")
+
+    # ── C: a faceless shell's own hint (the §4.41 guard never fires) ──
+    fresh(t)
+    set_show_filter(t, "all")
+    shell = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      for (const el of document.querySelectorAll('.tree-person')) {
+        const id = Number(el.getAttribute('data-person-id'));
+        const p = snap.persons.find(x => x.id === id);
+        if (p && (p.counts?.total ?? 0) === 0) return id;
+      }
+      return null;
+    """)
+    c_ok = False
+    detail_c = "no faceless shell in the tree — vacuous"
+    if shell is not None:
+        t.find_element(By.CSS_SELECTOR,
+                       f".tree-person[data-person-id='{shell}']").click()
+        time.sleep(1.0)
+        [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+         if "Person" in b.text][0].click()
+        time.sleep(1.0)
+        hint_c = js(t, "return document.querySelector('.center .empty')?.textContent?.trim() ?? null")
+        c_ok = (hint_c == HINT_SHELL)
+        detail_c = f"shell {shell} → hint={hint_c!r} (ok={c_ok})"
+
+    ok = a_ok and (b_ok or "vacuous" in detail_b) and (c_ok or "vacuous" in detail_c)
+    record("C49 step from an empty centre: hint + › from last anchored position (#194)", ok,
+           f"A show-switch: hint_ok={hint_a_ok} pruned={pruned_a} landed {landed_a} want {want_a}; "
+           f"B verdict-drain: {detail_b}; C shell: {detail_c}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -4447,6 +4792,8 @@ def main():
         c45_face_menu_add_group(t)
         c46_edit_dialog_group_list(t)
         c47_first_run_no_database(t)
+        c48_branch_rename_clash_merges(t)
+        c49_step_from_empty_state(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

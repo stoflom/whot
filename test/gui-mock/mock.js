@@ -10,7 +10,8 @@
 //   - Image commands return small SVG placeholders (no BLOB reads): layout
 //     and interaction checks only, never pixel checks.
 //   - person_face_clusters returns one cluster per description over the
-//     person's confirmed faces (sim 0.9) — no real embedding math.
+//     person's non-rejected faces (confirmed + provisional, sim 0.9) —
+//     no real embedding math (mirrors db.rs §4.9).
 //   - assign_person emulates §4.1/#165: rename-in-place when the whole
 //     scope is one person with that name, otherwise move/create; the CLAIM
 //     rule (an assignment always confirms what it touches, incl. rejected
@@ -294,19 +295,24 @@
         }
       }
     },
+    // #193 (§4.16): a branch/row clash is a SILENT MERGE — a person who
+    // sits in both the source and destination branches keeps ONE row at the
+    // destination (the source row is dropped, the destination's kept); the
+    // rest of the branch rewrites normally. person_groups is
+    // UNIQUE(person_id, path), so the rewrite must dedupe, not crash.
     rename_group: ({ oldPath, newPath }) => {
       if (SEATS.includes(oldPath))
         throw new Error("status branches are system furniture (#165)");
       validatePath(newPath || "\u0000"); // empty target is fine; reserved segments are not
       for (const p of SNAP.persons)
         if (p.groups.some((g) => g === oldPath || g.startsWith(oldPath + "|"))) {
-          p.groups = p.groups
+          p.groups = [...new Set(p.groups
             .map((g) =>
               g === oldPath ? newPath :
               g.startsWith(oldPath + "|")
                 ? newPath + (newPath ? "|" : "") + g.slice(oldPath.length + 1)
                 : g)
-            .filter(Boolean);
+            .filter(Boolean))];
           if (!p.groups.length) p.groups = [seatFor(p.id)]; // empty ⇒ seat
         }
     },
@@ -361,8 +367,15 @@
       return f.rotation;
     },
     person_face_clusters: ({ personId }) => {
+      // mirrors db.rs §4.9: every non-rejected, non-discarded face of the
+      // person clusters (provisional included) — a confirmed-only mock
+      // rendered an empty centre for a Show=New person view (a new face
+      // could never appear in accuracy mode), which C36 trips on once the
+      // dump holds a person with ≥2 new faces (its pick is no longer
+      // vacuous)
       const fs = SNAP.faces.filter(
-        (f) => f.person_id === personId && f.link_status === "confirmed");
+        (f) => f.person_id === personId && f.link_status !== "rejected"
+        && f.state !== "discarded");
       const byDesc = new Map();
       for (const f of fs) {
         const k = f.description ?? "";

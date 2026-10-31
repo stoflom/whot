@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { stagedFieldsForCard, type Stage } from "./stage";
 import {
+  emptyStateHint,
   groupByDescription,
   matchesStatusFilter,
   personTreeMembers,
@@ -131,5 +132,27 @@ describe("groupByDescription", () => {
       { description: "glasses", faceIds: [3] },
       { description: "", faceIds: [2] },
     ]);
+  });
+});
+
+describe("emptyStateHint (#194, §4.41)", () => {
+  it("a faceless shell (total 0) gets its own variant under every filter", () => {
+    const msg = "This person has no faces — pick another person in the list, or click › to step to the next person.";
+    for (const f of ["all", "provisional", "confirmed", "rejected"] as const)
+      expect(emptyStateHint(0, f)).toBe(msg);
+  });
+
+  it("the filtered variants name the active filter and point at ›", () => {
+    const tail = " pick another person in the list, or click › to step to the next person.";
+    expect(emptyStateHint(3, "provisional")).toBe(`No New faces to show —${tail}`);
+    expect(emptyStateHint(3, "confirmed")).toBe(`No Accepted faces to show —${tail}`);
+    expect(emptyStateHint(3, "rejected")).toBe(`No Rejected faces to show —${tail}`);
+    expect(emptyStateHint(3, "all")).toBe(`No faces to show —${tail}`);
+  });
+
+  it("never suggests 'set Show to All' (the §4.41 guard dialog offers it — no contradiction)", () => {
+    for (const f of ["all", "provisional", "confirmed", "rejected"] as const)
+      for (const total of [0, 5])
+        expect(emptyStateHint(total, f)).not.toContain("Show to All");
   });
 });
