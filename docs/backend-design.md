@@ -1,18 +1,12 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.6** (#167: `importer` module — child-process runner for
-`scripts/import_roll.py` + `scan_import_dir`; `Paths.root` exposed;
-#169: the scan walks recursively and early-exits on the first image,
-`IMAGE_SUFFIXES` back in exact parity with the script;
-#170: the gui-mock contract suite runs in **WebKitGTK by default** —
-the engine Tauri ships (#168's bug was WebKit-only) — with Firefox
-retained behind `WHOT_GUI_DRIVER=firefox`)
-(major.minor per `AGENTS.md`; major = new feature, minor =
-change/correction)
+**Version: 1.6** (major.minor per `AGENTS.md`; major = new feature,
+minor = change/correction)
 
-Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
-GitHub issues; the version above is bumped with every change and
-referenced in the closing comment of the issue(s) it implements.
+This document describes the **current state only** — no change
+history, no was-broken narratives. Revision history lives in the GitHub
+issues; the version above is bumped with every change and referenced in
+the closing comment of the issue(s) it implements.
 
 This document describes the **structure** of the Rust backend: module
 layout, path resolution, the transaction/derived-state machinery and the
@@ -28,10 +22,10 @@ src-tauri/src/
   main.rs   # binary entry: tauri::Builder → lib::run()
   lib.rs    # #[tauri::command] surface + AppState; thin by design
   db.rs     # ALL SQL, embeddings math, derived-state maintenance
-  importer.rs # #167: spawn/monitor/kill import_roll.py, scan_import_dir
+  importer.rs # spawn/monitor/kill import_roll.py, scan_import_dir
 src-tauri/tests/
   workflow.rs  # integration tests against a fixture DB built from schema.sql
-  importer.rs  # #167: arg building, scan, real child-process lifecycle
+  importer.rs  # arg building, scan, real child-process lifecycle
 ```
 
 - **`lib.rs`** holds one `#[tauri::command]` fn per operation; each is a
@@ -45,7 +39,7 @@ src-tauri/tests/
 - **`AppState`** carries `paths: Result<Paths, String>` — resolution
   happens once at startup; until it succeeds every command fails with
   the resolution error instead of panicking. It additionally carries the
-  `import: Mutex<ImportState>` slot (#167, §7 below).
+  `import: Mutex<ImportState>` slot (§7 below).
 
 ## 2. Paths & configuration
 
@@ -60,8 +54,8 @@ src-tauri/tests/
    `.env` keys first, then the process environment, 4 passes — same
    algorithm as the Python `load_env`s), then read `FACES_DB` (default
    `data/faces.db`) and `CONFIG_FILE` (default `config/whotrc.json`),
-   joined onto the root. `Paths` keeps the resolved `root` itself (#167:
-   the importer locates `scripts/import_roll.py` and sets the child
+   joined onto the root. `Paths` keeps the resolved `root` itself
+   (the importer locates `scripts/import_roll.py` and sets the child
    process's cwd there).
 
 GUI settings are **not** in the database: `get_settings`/`set_settings`
@@ -69,8 +63,8 @@ read and write `config/whotrc.json`
 (`{cluster_threshold, refcrop_n, face_filter, cluster_group,
 merge_name_distance, merge_suffix_aliases}` with defaults
 `0.40 / 5 / "all" / "accuracy" / 2 / []`), creating it on first write.
-A legacy `show_rejected` key is ignored (unknown field — §4.10 of
-gui-design became the 4-state `face_filter` in #99).
+A legacy `show_rejected` key is ignored (unknown field — the setting
+is the 4-state `face_filter`, gui-design §4.10).
 
 ## 3. Connection & schema gate
 
@@ -78,11 +72,11 @@ gui-design became the 4-state `face_filter` in #99).
   `check_schema`: exact match against `SCHEMA_VERSION` (currently
   `'1.7'`, equal to `database/schema.sql`'s marker row) — a mismatch is
   refused: a stale `'1.6'` marker is pointed at
-  `scripts/fix_status_groups.py` (#165, gui-design §4.35), anything else
+  `scripts/fix_status_groups.py` (gui-design §4.35), anything else
   at recreate instructions; never worked around (no
   migrations; `docs/schema-design.md` §5).
 - The derived-state machinery of `db.rs` (names, primaries, refcrops)
-  additionally owns the #165 **status seats** and the **system person
+  additionally owns the **status seats** and the **system person
   `Rejected`** — behaviour rules in gui-design §4.35; both are
   writer-maintained like the rest of the derived state (no triggers,
   schema-design §4).
@@ -113,14 +107,14 @@ text.
 
 **NULL-safety contract:** derived-state queries must tolerate absent
 derived values (`primary_face_id IS NULL` on a fresh or harvested
-person) — see `docs/schema-design.md` §5 and issue #80.
+person) — see `docs/schema-design.md` §5.
 
 ## 5. Reads & blobs
 
 - `snapshot()` is the one big read: persons (+groups, counts), faces,
   images, imports in a single query pass — the frontend re-fetches it
   wholesale after every mutation. It opens with the **stale-shell
-  sweep** (gui-design §4.27, #84): zero-face `UnknownN` persons are
+  sweep** (gui-design §4.27): zero-face `UnknownN` persons are
   deleted in the same transaction before the reads — leftovers no other
   code path revisits; named persons are never swept.
 - Image/face content lives in the DB as BLOBs and leaves base64-encoded
@@ -144,7 +138,7 @@ person) — see `docs/schema-design.md` §5 and issue #80.
 - Matching runs in bulk per call; ~10k faces × 512 dims is trivially
   fast in f32 — no index, no precomputation, by design (gui-design §2).
 
-## 7. Import runner (#167)
+## 7. Import runner
 
 Behaviour rules: gui-design §4.36. Structure:
 
@@ -171,8 +165,8 @@ Behaviour rules: gui-design §4.36. Structure:
   contract is a boolean `≥ 1 image anywhere beneath it` (the full count
   is never displayed, so a huge tree costs one hit), and the GUI treats
   `true` + no snapshot match as "not yet imported" (gui-design §4.36
-  trigger; #169 — rolls live in sub-folders, a one-level probe misread
-  them as empty).
+  trigger — rolls live in sub-folders, so the walk is recursive;
+  a one-level probe would misread them as empty).
 - **`get_import_status(since)`** returns
   `{ running, killed, exit_code, next_since, lines }` — lines are the
   buffer slice `[since..]` (the GUI polls and appends; no event
@@ -184,9 +178,9 @@ Behaviour rules: gui-design §4.36. Structure:
   **from `database/schema.sql`** (never a committed binary DB), then
   exercise the `db::` functions end-to-end: assign/reject/primary/
   refcrop/group flows and their derived-state consequences.
-- `src-tauri/tests/importer.rs` (#167) — arg building (flag order, the
+- `src-tauri/tests/importer.rs` — arg building (flag order, the
   `--create-db`+`--dry-run` refusal), `scan_import_dir` over a temp tree
-  (a level-2 image IS found — #169),
+  (a level-2 image IS found — the walk is recursive),
   and a real child-process lifecycle against a stub script (start →
   `get_import_status` drain → exit code; kill → `killed`).
 - Run with `(cd src-tauri && cargo test)`; the Tauri context embeds
@@ -195,10 +189,10 @@ Behaviour rules: gui-design §4.36. Structure:
 - Python-side behaviour shared with the scripts (corpus/numbering
   rules) is covered by the `test/` suite; each side must pass before a
   commit (AGENTS.md).
-- **GUI contract suite** (#170, `test/gui-mock/`): `gui_check.py` runs
+- **GUI contract suite** (`test/gui-mock/`): `gui_check.py` runs
   against the mocked backend in **WebKitGTK** by default — the engine
-  the Tauri app actually ships, so engine-specific rendering bugs
-  (#168) are caught by the suite instead of a human — via
+  the Tauri app actually ships, so engine-specific rendering bugs are
+  caught by the suite instead of a human — via
   `webkit_tester.py` (Selenium `Remote` → the system `WebKitWebDriver`
   binary, a `WebElement` subclass fixing WebKit's broken `getElementText`
   and its pre-dispatch occlusion check, one driver process per run — no

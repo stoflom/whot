@@ -30,7 +30,7 @@ One line each; the DDL carries the columns.
 
 - `imports` — one row per roll import; faces/images reference it
   (`first_import_id`/`last_import_id`, `detected_in_import_id`) so the
-  Rolls view can group by run (#40: UTC, same clock as the scripts).
+  Rolls view can group by run (UTC, same clock as the scripts).
 - `images` — one row per distinct **content** (see §3); decode
   dimensions, state, orientation/inversion, thumbnail/preview BLOBs.
 - `image_paths` — mutable paths as an *attribute set* of the image
@@ -44,12 +44,12 @@ One line each; the DDL carries the columns.
   `primary_face_id` (nullable — see §5) with `primary_pinned`.
 - `person_groups` — `|`-paths, one row per membership; the person tree
   is *derived* from these paths (gui-design §3), never stored. **At least
-  one row per person is invariant** (#165, gui-design §4.35): the three
+  one row per person is invariant** (gui-design §4.35): the three
   status seats (`New`/`Accepted`/`Rejected`) are system-written
   fallbacks for unfiled/rejected state, so *zero rows* is impossible —
-  `path` was already `NOT NULL`; what changed is that the "no group"
-  state itself was designed away (writer-owned, asserted by the fix
-  script, documented in the DDL).
+  `path` is `NOT NULL`; the "no group" state does not exist — the
+  seat system is writer-owned, asserted by the fix script, documented
+  in the DDL.
 - `person_refcrops` — per-appearance reference images; `pinned` rows are
   manual and survive recompute (gui-design §4.6).
 - `schema_version` — single row; the gate (§5).
@@ -88,7 +88,7 @@ mutating path re-derives them (gui-design §4.4/§4.5/§4.6/§4.7):
 No stored triggers: derivation lives in one place per writer
 (`src-tauri/src/db.rs` for the GUI, `import_roll.py`/`import_harvested.py`
 for the scripts), so the rules in gui-design §4 stay single-sourced in
-code review. The #165 group invariant (§2) is writer-owned the same way:
+code review. The group invariant (§2) is writer-owned the same way:
 a stored trigger enforcing "≥ 1 row per person" would abort the writers'
 replace-a-group sequences (delete-then-insert inside one transaction)
 mid-flight — both writers seat instead, and the fix script asserts.
@@ -108,11 +108,10 @@ mid-flight — both writers seat instead, and the fix script asserts.
   `scripts/import_harvested.py` (`FACES_SCHEMA_VERSION`);
   `scripts/annotation_snapshot.py` checks it too (`SCHEMA_VERSION`) for
   restore targets.
-- **v1.6 → v1.7 (#165)** changed no column — the upgrade is semantic
+- **v1.6 → v1.7** changed no column — the upgrade is semantic
   (status seats, system person `Rejected`, writer-owned group
   invariant), so it ships as `scripts/fix_status_groups.py`: a one-off,
-  backed-up, verified **in-place data fix** (the #122 live-upgrade
-  precedent), not a migration framework — the app itself never migrates
+  backed-up, verified **in-place data fix**, not a migration framework — the app itself never migrates
   (AGENTS.md). The gate forces it: a v1.6 database is refused by a v1.7
   build until fixed. Fresh databases come from the DDL as always.
 - Drop & recreate loses manual annotations by design — that is what
@@ -123,7 +122,7 @@ mid-flight — both writers seat instead, and the fix script asserts.
   primary — freshly imported `UnknownN`s, harvested persons before GUI
   confirmation). Any expression derived from it must be NULL-safe
   (`IS NULL` / `COALESCE`), never bare `= (SELECT …)` in a boolean
-  context that is later read as an integer (issue #80).
+  context that is later read as an integer.
 
 ## 6. Embeddings & coordinates (storage side)
 
@@ -133,15 +132,15 @@ mid-flight — both writers seat instead, and the fix script asserts.
   in-place rewrite). L2-normalisation makes cosine similarity a plain
   dot product — computed in Rust in bulk (backend-design §6).
 - Rectangle coordinates are **pixel units** in the canonical decode
-  space of `images.width/height` (`inversion` records the flip, if any;
-  design #18). The DDL's `CHECK`s pin the state/status/orientation/
+  space of `images.width/height` (`inversion` records the flip, if
+  any). The DDL's `CHECK`s pin the state/status/orientation/
   inversion vocabularies so both writers (Rust and Python) fail loudly
   rather than store a surprise value.
 - `PRAGMA journal_mode = WAL` and `PRAGMA foreign_keys = ON` are set in
   the DDL itself (connection-time enforcement in Rust: backend-design
   §3).
 
-## 7. State model — transition tables (#165)
+## 7. State model — transition tables
 
 Every mutable fact in the app hangs off three state axes; together these
 tables are the app's entire state surface — everything else in the DDL
@@ -165,7 +164,7 @@ gives the reason; every unmarked row is produced by the listed triggers.
 | images.state (1) | image_paths (1) | images.state (2) | image_paths (2) | transition triggers (1) → (2) |
 | --- | --- | --- | --- | --- |
 | — | — | `scanned` | {first path} | **roll import, ≥ 1 detection** — `INSERT INTO images` writes `state='scanned'` + the first path row (`plan_image`/`store_image`) |
-| — | — | `no-face` | {first path} | **roll import, 0 detections** (bulk/#1) — born `no-face`, first write wins |
+| — | — | `no-face` | {first path} | **roll import, 0 detections** — born `no-face`, first write wins |
 | `scanned` | P | `scanned` | P ∪ {p′} | **same content re-imported from a new path** — `INSERT OR IGNORE image_paths`, state untouched |
 | `no-face` | P | `no-face` | P ∪ {p′} | same (paths are mutable, content hash is identity — §3) |
 | ✗ `imported` | any | `imported` | — | **✗ NOT LOGICAL** — no writer passes the DDL default: every INSERT writes `scanned`/`no-face` — foreign/legacy rows only |
@@ -180,12 +179,12 @@ gives the reason; every unmarked row is produced by the listed triggers.
 | `detected` | `provisional` | `detected` | `confirmed` | **Accept** (§4.3); **Assignment/merge** (§4.1, person re-homes); **snapshot restore** applying a recorded `confirmed` |
 | `detected` | `provisional` | `detected` | `rejected` | **Reject** (§4.2 — re-homes onto person `Rejected`); **Remove person** (§4.13); **restore** of a recorded-rejected face |
 | `detected` | `confirmed` | `detected` | `rejected` | **Reject**; **Remove person**; **restore** of a recorded-rejected face |
-| `detected` | `confirmed` | `detected` | `provisional` | **Harvest claim `--overwrite`** (J5 forces `provisional`; person re-homes) |
-| `detected` | `rejected` | `detected` | `provisional` | **Harvest claim `--overwrite`** — also moves the face *out* of the reject bin (claim-like, noted on #165) |
+| `detected` | `confirmed` | `detected` | `provisional` | **Harvest claim `--overwrite`** (forces `provisional`; person re-homes) |
+| `detected` | `rejected` | `detected` | `provisional` | **Harvest claim `--overwrite`** — also moves the face *out* of the reject bin (claim-like) |
 | `detected` | `rejected` | `detected` | `confirmed` | **Assignment = the claim** (§4.35 — the only GUI exit from `rejected`); restore of a recorded-`confirmed` face over a rejected one |
 | `detected` | any | `detected` | recorded value | **Snapshot restore** (`annotation_snapshot`) — writes the recorded `link_status` + person move; recorded-rejected parks on `Rejected`; unmatched faces skipped |
 | `detected` | `confirmed` | `detected` | `confirmed` | pair unchanged — **person re-homes** on assignment/merge; description/seq/name/rotation edits (derived/display only) |
-| `detected` | `provisional` | `detected` | `provisional` | pair unchanged — **harvest claim of a provisional face** (J5 keeps it; person re-homes) |
+| `detected` | `provisional` | `detected` | `provisional` | pair unchanged — **harvest claim of a provisional face** (status kept; person re-homes) |
 | ✗ `imported`, `created`, `discarded` | any | same | — | **✗ NOT LOGICAL** — no writer ever sets `faces.state`; every INSERT passes `'detected'`; `discarded` exists only as a CHECK that eligibility filters tolerate (legacy/foreign rows) |
 | ✗ any | — (NULL) | any | — | **✗ NOT LOGICAL** — `link_status` is `NOT NULL` (DDL): a face never exists without a link state |
 
@@ -209,7 +208,7 @@ lives in the link column and in the row's existence.
 | `created`, `imported` | real P | `created`, `imported` | real P′ | **`rename_group`/move prefix rewrite** — path value changes, still a real link |
 | `created`, `imported` | any | — | — | **person deleted** — Remove person (§4.13), source emptied by assign/merge (§4.1 shell rule), sweeps (§4.27 `UnknownN`, harvest §9.8 `imported` shells, restore-end) |
 | `created` | seat `Rejected` | `created` | seat `Rejected` | **emptied by claims** — kept (never swept), invisible outside `Show → Rejected`, reused by the next reject; state unchanged |
-| ✗ `created`, `imported` | ∅ (no rows) | — | — | **✗ NOT LOGICAL** — group invariant: ≥ 1 `person_groups` row since #165 (pre-#165 legal; migrated by `fix_status_groups.py`) |
+| ✗ `created`, `imported` | ∅ (no rows) | — | — | **✗ NOT LOGICAL** — group invariant: ≥ 1 `person_groups` row (writer-enforced; pre-seating databases are migrated by `fix_status_groups.py`) |
 | ✗ — | a path on nobody | — | — | **✗ NOT LOGICAL** — orphan group row (FK `person_id → persons`) |
 | ✗ `imported` | seat `Rejected` | — | — | **✗ NOT LOGICAL** — the system person is always `'created'`: harvest never mints the reserved name (`taken_cf` guard), restore/fix insert `'created'` |
 | ✗ (row deleted) | any path | — | — | **✗ NOT LOGICAL** — group rows die with the person (`ON DELETE CASCADE`) |

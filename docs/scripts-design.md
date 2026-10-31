@@ -1,36 +1,17 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 6.0** (major.minor per `AGENTS.md`; major = new feature, minor =
-change/correction) — v2.0: §10 CLI console contract (#79); v2.1: §9.4
-group-path correction + §9.5 primary backfill (#80); v3.0: §8.6 path-map
-file + coverage warnings (#83/#85), §9.8 idempotent re-runs (#82); v4.0:
-§9.3 per-face claim model replacing greedy IoU matching (#87); v4.1:
-§8.6 coverage attribution — source tags, subtree breakdown, in-scope
-threshold, `!` exclude directive (#86); v4.2: §9.2 decode-space rationale
-correction — the decoders **apply** the EXIF orientation, so the canonical
-space is the displayed image (gui-design §4.29, #89); v4.3: §10.3 one full
-path per item — the `[i/N]` line carries it, the verdict lines never
-repeat it (#94); v5.0: §8.7 `--resume` — a rerun reopens the earlier
-staging DB and reuses its recorded hashes, so already-hashed full paths
-are never read again (#104); v5.1: §9.2 normalised boxes scale by the
-decode dims — the source-stated stDim no longer scales them (#115);
-§9.3 default `--min-overlap` 0.60 → 0.50 (#116); §9.6 below-threshold
-counter is per staging face — multi-source inflation note (#117);
-§9.7 CLI line updated; v5.2: §8.2 staging v1.2 — `images.rotation`, the
-harvested EXIF display rotation (H3 extended), §9.2 the rotation-aware
-box transform — RAW-space boxes map into the displayed space, and the
-angle lands on `faces.db` `images.rotation` (gui-design §4.31, #118);
-§9.4 faceless same-named persons are shells — the name is reused,
-no `X N` generation (#128). v6.0: §9.4 groupless harvested persons are
-**seated** (the gui-design §4.35 status seats, #165), and
-`scripts/fix_status_groups.py` upgrades a v1.6 `faces.db` in place (#165).
+**Version: 6.0** (major.minor per `AGENTS.md`; major = new feature,
+minor = change/correction)
 
-Split out of `docs/gui-design.md` (which covered these scripts as §8/§9 up
-to v3.15) so each design document stays focused. **Section numbers §8/§9
-are unchanged** — code, tests and comments cite them as they always have.
-Revision history lives in the GitHub issues; the version above is bumped
-with every change and referenced in the closing comment of the issue(s)
-it implements.
+This document describes the **current state only** — no change
+history, no was-broken narratives. Revision history lives in the GitHub
+issues; the version above is bumped with every change and referenced in
+the closing comment of the issue(s) it implements.
+
+Split out of `docs/gui-design.md` so each design document stays
+focused. **Section numbers §8/§9** — code, tests and comments
+cite them.
+
 
 Covered here:
 
@@ -45,19 +26,18 @@ Not covered here (see their own documents):
   `docs/gui-design.md` §4 (esp. §4.12), usage in `README.md`.
 - `scripts/annotation_snapshot.py` — annotation export/restore across a
   drop & recreate; usage in `README.md`.
-- `scripts/fix_status_groups.py` — one-off #165 data fix: upgrades a
+- `scripts/fix_status_groups.py` — data fix: upgrades a
   v1.6 `faces.db` in place to the status-group layout (spec:
   gui-design §4.35, gate: schema-design §5).
 - CLI console conventions shared by **all** scripts (startup header,
-  status updates, `-q/--quiet`) — §10 below (issue #79).
+  status updates, `-q/--quiet`) — §10 below.
 
 ---
 
-## 8. Legacy harvest — staging database (v2.0)
+## 8. Legacy harvest — staging database
 
-`scripts/harvest_legacy.py` is one self-contained script that replaces the
-legacy duo under `scripts/legacy/` (`import_common.py`, `import_harvest.py`
-and the old review DB they were written against). It captures what the
+`scripts/harvest_legacy.py` is one self-contained script (the earlier
+importers are archived under `scripts/legacy/`). It captures what the
 archive already knows about **faces and persons** and writes it into a
 **staging database it creates itself**. Importing that staging DB into
 `faces.db` is the job of a *separate, later* script (§8.5) — the harvester
@@ -97,7 +77,7 @@ The three source families (each enabled by canonical name):
   absent resolution gets no hash, never a guessed one; `--no-hash` skips
   hashing entirely (e.g. a quick first pass over the archive). The tree
   walk that feeds digiKam's size-based resolution (§8.3) stats files only.
-  v5.2 (#118): the same certain-resolution gate also reads the file's
+  The same certain-resolution gate also reads the file's
   **EXIF Orientation tag** (header metadata only — pixels are still never
   decoded) and stores the display rotation in `images.rotation` (CW,
   0/90/180/270; flip orientations 2/4/5/7 have no rotation expression and
@@ -134,24 +114,24 @@ after import).
   the path was obtained: `source` (the source states it) or `name-size`
   (uniquely resolved against the scanned tree — digiKam's album-less
   images, §8.3). `content_hash` is the BLAKE3 of the file, set **only when
-  the image was certainly resolved and read for hashing** (H3); v1.2 adds
+  the image was certainly resolved and read for hashing** (H3);
   `rotation` — the file's EXIF display rotation (CW 0/90/180/270), set
-  under the same gate (H3 v5.2); `name`/`file_size`/`source_ref` keep the
+  under the same gate (H3); `name`/`file_size`/`source_ref` keep the
   source's own identifiers for the importer's matching.
 - `faces(id, image_id, person_id, x, y, w, h, unit, img_w, img_h,
   source_id, source_ref, picked, harvest_run_id)` — corner-origin boxes as
   the source states them: `unit` ∈ `normalized|pixels` plus the source's
   image dimensions (`img_w/img_h`) when given. Normalised→pixel conversion
   is deferred to the importer, because only it will know the canonical
-  decode dimensions (`faces.db` `images.width/height`, design #18).
+  decode dimensions (`faces.db` `images.width/height`).
   Lightroom's pixel rounding is banker's `round()` — contract, not choice,
   because the legacy keys were built on it. `UNIQUE(image_id, person_id,
   x, y, w, h, source_id)` dedupes digiKam's duplicate `Images` rows.
-- **v1.1 correction (§9):** rectangle-less capture is gone. Only faces
-  *with geometry* are harvested — the import (§9) attaches persons by
-  rectangle overlap, so presence rows (MPRI display names, digiKam/catset
-  tag→image hits, the former `image_persons` table and the
-  `sidecars-mpri` source) can never be used and are no longer recorded.
+- **Rectangle-only capture (§9):** only faces *with geometry* are
+  harvested — the import (§9) attaches persons by
+  rectangle overlap, so presence-only rows (MPRI display names,
+  digiKam/catset tag→image hits — the legacy `image_persons` table
+  and `sidecars-mpri` source) are never recorded.
   Tag/catset paths still contribute `person_groups` (group info, §9.4).
 - `schema_version(version, updated_at)` — single row `'1.2'`, exact-match
   check like `faces.db`; no migrations (AGENTS.md).
@@ -190,7 +170,7 @@ DB with `--resume` (§8.7).
 Merged into `faces.db` by `scripts/import_harvested.py` — full spec in
 §9.
 
-### 8.6 Path map & coverage reporting (v3.0, #83/#85)
+### 8.6 Path map & coverage reporting
 
 Legacy sources state paths that no longer exist on disk (`D:/LIVE/…`,
 old NAS roots). A **path-map file** rewrites such prefixes onto the
@@ -218,13 +198,13 @@ with its local roots.
 exceeds **20%** — harvest: `lr_root_unmapped + dk_faces_resolved_unknown`
 of all rows; import: `hash-missing + image-not-in-db` of `staging_faces`
 — the run ends with a prominent, `stderr`, **never `-q`-suppressed**
-warning block (#83): the share in percent plus the **top unmapped
+warning block: the share in percent plus the **top unmapped
 catalog roots / unresolved digiKam albums with one example path each**
 (harvest) or the full stated path per unverifiable image, one line per
-*image*, not per face (#85). Unusable share and percentages also appear
+*image*, not per face. Unusable share and percentages also appear
 in every final summary, quiet or not.
 
-**Coverage attribution (v4.1, #86)** — a deliberately scoped run must
+**Coverage attribution** — a deliberately scoped run must
 not read as a catastrophe:
 
 1. **Source tags** — every warning entry and every harvested
@@ -243,7 +223,7 @@ not read as a catastrophe:
    signal). The **20% threshold counts only in-scope unusable rows**;
    out-of-scope rows are reported as informational context (`… of which
    out of scope`). When no index exists (digiKam-faces disabled) the
-   split is omitted and the old all-rows behaviour applies — stated in
+   split is omitted and the whole unusable set counts — stated in
    the warning.
 4. **`!` exclude directive** — a path-map line starting with `!` marks a
    catalog prefix as deliberately ignored:
@@ -252,7 +232,7 @@ not read as a catastrophe:
    unmapped/missing accounting, and never rescued at import time. Same
    prefix rules as rewrites (longest-first, case-insensitive).
 
-### 8.7 Resume — reuse recorded hashes (v5.0, #104)
+### 8.7 Resume — reuse recorded hashes
 
 A harvest over a big archive is dominated by the BLAKE3 reads of image
 bytes (H3). Re-running after fixing a `--path-map`/`--lr-root` — or after
@@ -318,24 +298,22 @@ Harvested rectangles are converted into the canonical decode space of
 `faces.db` before any overlap is computed: normalised boxes are multiplied
 by `images.width/height` — the **decode** dims: `import_roll.py` stores
 what the decoder returned, and cv2/rawpy **apply** the EXIF orientation,
-so the canonical space is the *displayed* image (v4.2 corrected the former
-"cv2/rawpy decode without EXIF rotation" claim — gui-design §4.29); pixel
+so the canonical space is the *displayed* image (gui-design §4.29);
+pixel
 boxes (digiKam, Lightroom) are already in that same displayed space. If a
 target image ever carries `inversion != 'none'`, the box is mapped through
-the inverse flip (`lr`: `x' = W−(x+w)`; `tb`: `y' = H−(y+h)`) — kept for
-forward compatibility with design #18.
+the inverse flip (`lr`: `x' = W−(x+w)`; `tb`: `y' = H−(y+h)`) — kept
+for the inversion case.
 
-**v5.1 (#115):** the source-stated `img_w/img_h` (stDim) **no longer scales
-normalised boxes**. A normalised rectangle is a fraction of the photo —
-scale-invariant — so scaling by the decode dims places it in the canonical
-space; stDim is kept in the staging record (H4 source-as-stated) but is a
-dead input to the match. The old stDim preference mis-scaled boxes whenever
-the file on disk was a differently-sized export of the same photo (same
-hash, J2 — the sidecar still states the original RAW dims): 22 faces in the
-2026-10-22 run.
+**stDim does not scale normalised boxes.** A normalised rectangle is a
+fraction of the photo — scale-invariant — so scaling by the decode dims
+places it in the canonical space; the source-stated `img_w/img_h` (stDim)
+is kept in the staging record (H4 source-as-stated) but is a dead input to
+the match (a differently-sized export of the same photo states the original
+RAW dims, same hash J2 — scaling by it would mis-place the box).
 
-**v5.2 (#118):** the transposed case is now mappable. The harvest reads
-the file's EXIF display rotation under the H3 gate (§8.2 v1.2);
+**The transposed case is mappable.** The harvest reads the file's EXIF
+display rotation under the H3 gate;
 `convert_box` takes it as `rotation` and maps the box from **RAW (file)
 space into the displayed space** before any inversion: normalised boxes
 scale by the RAW dims — the db's decode dims with 90/270° swapped — and
@@ -347,17 +325,16 @@ then the corner-origin rectangle is rotated:
 | 180    | `(x, y, w, h) → (W−x−w, H−y−h, w, h)` |
 | 270 CW | `(x, y, w, h) → (y, W−x−w, h, w)` |
 
-The same math is implemented once for the GUI (`src/rotation.ts`, #122).
+The same math is implemented once for the GUI (`src/rotation.ts`).
 The angle is also **landed on the matched `faces.db` image** —
 `UPDATE images SET rotation=… WHERE rotation=0` — first write wins, so a
 rotation the user already set in the GUI is never overridden. The
 hash-match that gates the import (J2) guarantees the file whose EXIF was
 read is byte-identical to the one the db image displays.
 
-### 9.3 Matching — the per-face claim model (v4.0, #87)
+### 9.3 Matching — the per-face claim model
 
-`overlap = |A∩B| / |A∪B| ≥ --min-overlap` (default **0.50**, configurable;
-v5.1 #116 — lowered from 0.60: the 0.50–0.60 near-miss band of the
+`overlap = |A∩B| / |A∪B| ≥ --min-overlap` (default **0.50**, configurable — the 0.50–0.60 near-miss band of the
 2026-10-22 run was dominated by cross-tool rectangle disagreement on the
 *same* face — legacy tools draw looser/tighter boxes than insightface —
 and every assigned link stays `provisional` (J5), so a more permissive
@@ -385,41 +362,36 @@ by **person-agreement**:
    (every claimant with person, group, source, IoU and `picked`) and
    **leave the whot face untouched**. No contest is recorded in the DB
    (user decision): the log is the arbiter; the user re-assigns by hand
-   (#88) if they want.
+   if they want.
 
 Consequences: several rectangles on one whot face are simply several
 claims, deduped by agreement (rule 2) — a loose rectangle can add a
 claim but can never override agreement or capture a neighbour silently;
 whot's own overlapping duplicate detections each decide for themselves
-(the duplication pre-exists, the import creates none); staging faces
-below threshold everywhere are `below-threshold` log lines as before.
+(the duplication pre-exists, the import creates none); staging faces below threshold everywhere are `below-threshold` log
+lines.
 Only staging persons that **win at least one face** are created in the
 copy — a contest-only claimant stays log-only, the whot data is left
-as-is (#87).
+as-is.
 
 ### 9.4 Person resolution
 
 Per staging person with at least one accepted assignment:
 
-- **v2.1 correction (#80):** staging paths are *keyword/tag paths* — by
-  construction (§8) their **last segment is the person's own name**.
+- **Staging paths are keyword/tag paths** — by construction (§8) their **last segment is the person's own name**.
   They are translated to `faces.db` **group paths, which name the groups
   *above* the person, never the person itself** (gui-design §3/§4.1):
   1. strip the leading `People`/`Person` root segment (case-insensitive),
      then
   2. drop the **trailing segment when it equals the staging person's
-     name** (the legacy leaf). An empty remainder means *no user group* —
-     #165's group invariant applies: the person is **seated** instead
+     name** (the legacy leaf). An empty remainder means *no user group*
+     — the group invariant applies: the person is **seated** instead
      (gui-design §4.35: `provisional` faces ⇒ `New`, else `Accepted`),
      never left without a `person_groups` row.
 
   `People|Family|Winnie Pelser` → `Family`; `People|Winnie Pelser` →
   seated (§4.35). A trailing segment that does *not* equal the person's name
   is kept as-is (defensive: paths are capture, §8 H4 — never guessed).
-  Before v2.1 the trailing name was kept (`Family|Winnie Pelser`), which
-  rendered in the tree as a branch named after the person, containing
-  only that person (a twig above a same-named leaf) — and made the
-  reuse rule below never match an existing GUI person.
 - Reuse an existing `faces.db` person **only** when its name matches *and*
   its group set matches the harvested set exactly (post-§9.4-correction
   sets — so a harvested `Winnie Pelser` with `People|Family|Winnie
@@ -427,8 +399,7 @@ Per staging person with at least one accepted assignment:
   never guesses identity; otherwise it creates a new person
   (`state='imported'`) and the user merges later via the GUI's assign
   semantics (§4.1).
-- **v5.2 (#128): a faceless same-named person is a shell — the name is
-  reusable.** When no name+group match exists, but a same-named
+- **A faceless same-named person is a shell — the name is reusable.** When no name+group match exists, but a same-named
   (case-insensitive) person exists with **zero faces** (a faceless group
   import, or a person the GUI left empty), the harvested faces are
   linked to that person instead of minting an `X N` generation. The
@@ -439,7 +410,7 @@ Per staging person with at least one accepted assignment:
   precedence as rule 1). A person whose faces are all *discarded* is
   **not** faceless — discarded faces are recoverable rows, and linking
   into a discarded cluster would resurrect identity by guesswork.
-- **v4.0 (#87): agreement is case-insensitive.** Person-name and
+- **Agreement is case-insensitive.** Person-name and
   group-set comparisons `casefold`: `Winnie Pelser` = `winnie pelser` =
   `WINNIE PELSER`; `family|Smith` = `Family|Smith`. Only the *stored*
   spelling must be chosen, by fixed precedence — never synthesised:
@@ -455,13 +426,13 @@ Per staging person with at least one accepted assignment:
   `faces.db persons.name` UNIQUE and `=` are case-sensitive (SQLite
   BINARY), so `winnie pelser` and `Winnie Pelser` can legitimately
   coexist in whot today; a case-variant pair left by earlier runs is
-  cleaned up by the user via the GUI (#88), not by this script.
+  cleaned up by the user via the GUI, not by this script.
   The §9.8 own-generation recognition (`<name> N` + `state='imported'`)
   compares the same case-insensitively.
 - On a name collision the new person gets the smallest free seq suffix:
   `Winnie Pelser 2`, `Winnie Pelser 3`, …
 
-### 9.5 UnknownN cluster merge (v4.0 follow-on to §9.3)
+### 9.5 UnknownN cluster merge (follow-on to §9.3)
 
 Per-face claims decide first (§9.3); the cluster rule is a **post-pass**
 over the decisions, keeping the GUI group-assign semantics (§4.1):
@@ -486,7 +457,7 @@ and delete `person_refcrops` rows that reference a moved face under its
 old person. No refcrop recompute runs — provisional faces are not refcrop
 material (§4.6); the GUI recomputes on the next mutation.
 
-**Primary backfill (v2.1, #80):** after the plan executes, the machine
+**Primary backfill:** after the plan executes, the machine
 rule of §4.5 (same statement as `import_roll.py`'s
 `assign_missing_primaries`: highest-confidence, non-discarded,
 non-rejected face, `primary_pinned=0`) fills every still-empty
@@ -505,14 +476,13 @@ summary plus a human-readable log are written next to the target copy.
 No `imports` row is created — this is recovery, not an import; the log
 files are the provenance.
 
-**Reading `below-threshold` (#117):** the counter counts **staging faces**,
+**Reading `below-threshold`:** the counter counts **staging faces**,
 not physical faces. The harvest records the same physical face once **per
 source** (darktable sidecar, Lightroom sidecar, Lightroom catalog, digiKam),
-and the same file can appear as several staging image rows (e.g. an old vs
-a current mount path — the #113 duplicate-row mechanism). A single detected
+and the same file can appear as several staging image rows (e.g. an old vs a current mount path — the duplicate-row mechanism). A single detected
 face claimed by three legacy rectangles therefore yields up to **two**
 below-threshold rows even when the match itself succeeded. In the
-2026-10-22 run 2 045 rows sat below the old 0.60 gate while the true
+2026-10-22 run 2 045 rows sat below a 0.60 gate while the true
 unique-face loss was a fraction of that — treat the counter as a triage
 hint, never as lost-person evidence.
 
@@ -526,7 +496,7 @@ scripts/import_harvested.py STAGING.db [--faces-db data/faces.db]
 `--faces-db` defaults to `FACES_DB` from `.env`. `--dry-run` runs the full
 pipeline read-only (no copy, no writes anywhere; report to stdout).
 
-## 10. CLI console contract — header, status, quiet (v2.0, issue #79)
+## 10. CLI console contract — header, status, quiet
 
 Every script must *show it is alive*: a header immediately on startup,
 regular status output while it works, and a final summary — with a
@@ -548,23 +518,23 @@ regular status output while it works, and a final summary — with a
 ### 10.2 Header
 
 A `=`×64 banner, the script name, optional key parameters (mode, input
-paths, thresholds) and the UTC start time (#40 convention), closed by the
+paths, thresholds) and the UTC start time, closed by the
 same banner. Printed **even with `-q`**.
 
 ### 10.3 Status updates
 
 - Phase lines (`scanning …`, `found N files`, `[i/N] file`, `staging:
   …`) while work proceeds — suppressed by `-q`. The per-item line
-  (`[i/N] file`) always carries the **full path** — never a basename
-  (#90) — and carries it **once** (#94): the verdict lines that follow
+  (`[i/N] file`) always carries the **full path** — never a
+  basename — and carries it **once**: the verdict lines that follow
   (`no faces`, `imported: …`, `already in database — skipping`,
   `FAILED: …`) print the verdict only and never repeat that path.
   A diagnostic that does *not* follow a progress line — the closing
   failure list, standalone per-file warnings — keeps the full path, so
   it stands alone under `-q` or a split redirect. Applies to every
-  script's output (audited #94: `harvest_legacy`, `import_harvested`
-  and `annotation_snapshot` already print full paths and never repeat
-  one after its progress line).
+  script's output: `harvest_legacy`, `import_harvested` and
+  `annotation_snapshot` print full paths and never repeat one after
+  its progress line.
 - **Heartbeat**: while a script is inside a long operation that prints
   nothing by itself (model load, corpus build, big walks, `VACUUM`),
   a background ticker prints `… <phase> — <N>s` at most every **10 s**,
@@ -606,7 +576,7 @@ A module-level default instance keeps the existing `log()` helpers in
 `harvest_legacy.py` / `import_harvested.py` working unchanged for
 library callers (tests); `main()` swaps in the configured instance.
 
-### 9.8 Idempotent re-runs (v3.0, #82)
+### 9.8 Idempotent re-runs
 
 Re-running the importer over data it already merged must **converge**,
 not snowball (`X 2` → `X 3`, …). Three rules:
@@ -622,9 +592,8 @@ not snowball (`X 2` → `X 3`, …). Three rules:
    is already attached to the resolved target person is dropped from
    the plan (`already-there` counter): no relabel, no `seq` churn, no
    derived-name rewrite. Faces a previous run moved stay exactly as
-   that run left them. (Under §9.3 v4.0 this falls out naturally: a
-   face already linked to the resolved target is rule-2 agreement with
-   nothing to do.)
+   that run left them. (Under §9.3 this falls out naturally: a face already linked to the
+   resolved target is rule-2 agreement with nothing to do.)
 3. **Importer-shell sweep** — after the plan executes, persons with
    `state='imported'` and **zero faces** (emptied by a later re-run,
    or left by an interrupted one) are deleted. Named/user persons
