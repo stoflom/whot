@@ -156,6 +156,11 @@ Checks (contract refs: docs/gui-design.md):
       verdict drain) the empty pane names the active filter and points
       at › (faceless shells get their own hint), and › continues from
       the LAST anchored position (clamped) — not the list start
+  C50 merge-confirmation chips are selectable (#196, §4.28): clicking
+      a source chip prefills the "Merge into" input (same resolution
+      as the typeahead), styles it selected and drops it from the
+      moving set (summary math matches typing); the other chip moves
+      the target; Esc leaves the data untouched
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -4738,6 +4743,127 @@ def c49_step_from_empty_state(t):
            f"B verdict-drain: {detail_b}; C shell: {detail_c}")
 
 
+def c50_merge_chips_pick_target(t):
+    """#196 (§4.28): the merge-confirmation chips are selectable. Enter
+    through the person context menu over a two-person selection
+    (`Merge 2 persons into…`), so the dialog carries two source chips.
+    Clicking a chip prefills the "Merge into" input with that person's
+    name (the same resolution as the typeahead), styles it selected,
+    drops it from the moving set (the summary math must match typing),
+    and clicking the other chip moves the target. Esc leaves the data
+    untouched."""
+    fresh(t)
+    pick = js(t, r"""
+      const rows = [...document.querySelectorAll('.tree-person')].map(n => {
+        const name = n.querySelector('.tree-name')?.textContent.trim() ?? '';
+        const total = Number(n.querySelector('.tree-count.total')?.textContent ?? 0);
+        return {name, total};
+      }).filter(r => r.name && !/^unknown/i.test(r.name)
+                    && !/^(new|accepted|rejected)$/i.test(r.name) && r.total > 0);
+      if (rows.length < 2) return null;
+      rows.sort((a, b) => b.total - a.total);
+      return {a: rows[0], b: rows[1]};
+    """)
+    if pick is None:
+        record("C50 merge chips: click a chip to pick the target (#196)", True,
+               "need two visible named persons with faces — vacuous")
+        return
+    nodes = t.find_elements(By.CSS_SELECTOR, ".tree-person")
+    row_a = next(e for e in nodes
+                 if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["a"]["name"])
+    row_b = next(e for e in nodes
+                 if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["b"]["name"])
+    row_a.click()
+    time.sleep(0.5)
+    AC(t.driver).key_down(Keys.CONTROL).click(row_b).key_up(Keys.CONTROL).perform()
+    time.sleep(0.5)
+    AC(t.driver).context_click(row_b).perform()
+    time.sleep(0.6)
+    items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+             if "Merge" in b.text and "into" in b.text]
+    if not items:
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        record("C50 merge chips: click a chip to pick the target (#196)", False,
+               "no 'Merge … into…' menu item on the 2-person selection")
+        return
+    items[0].click()
+    time.sleep(0.8)
+
+    chips = t.find_elements(By.CSS_SELECTOR, ".merge-chips button.ev-chip")
+    chips_ok = len(chips) == 2
+    chip_a = next((c for c in chips
+                   if c.text.strip().startswith(pick["a"]["name"])), None)
+    chip_b = next((c for c in chips
+                   if c.text.strip().startswith(pick["b"]["name"])), None)
+    chips_ok = chips_ok and chip_a is not None and chip_b is not None
+
+    # click chip A → it becomes the target
+    if chips_ok:
+        chip_a.click()
+    time.sleep(0.6)
+    st = js(t, r"""
+      const inp = document.querySelector('.overlay .dialog .typeahead input');
+      const chips = [...document.querySelectorAll('.merge-chips button.ev-chip')];
+      const picked = chips.filter(c => c.classList.contains('merge-chip-picked'));
+      const sum = document.querySelector('.overlay .dialog p.dim')?.textContent ?? '';
+      const merge = [...document.querySelectorAll('.overlay .dialog button.bad')]
+        .find(b => /merge/i.test(b.textContent));
+      return {
+        name: inp?.value ?? null,
+        pickedText: picked.map(c => c.textContent.trim()),
+        summary: sum,
+        mergeEnabled: merge ? merge.disabled === false : null,
+        pickedBg: picked.length
+          ? getComputedStyle(picked[0]).backgroundColor : null,
+        plainBg: chips.length > 1
+          ? getComputedStyle(chips.find(c => !c.classList.contains('merge-chip-picked'))).backgroundColor : null,
+      };
+    """)
+    a_ok = (st["name"] == pick["a"]["name"]
+            and st["pickedText"] == [pick["a"]["name"] + " · " + str(pick["a"]["total"]) + "f"]
+            and st["summary"].count(pick["a"]["name"]) >= 1
+            and str(pick["b"]["total"]) in st["summary"]
+            and "1 person" in st["summary"]
+            and st["mergeEnabled"] is True
+            and st["pickedBg"] and st["plainBg"] and st["pickedBg"] != st["plainBg"])
+
+    # click chip B → the target moves
+    if chips_ok:
+        chip_b.click()
+    time.sleep(0.6)
+    st2 = js(t, r"""
+      const inp = document.querySelector('.overlay .dialog .typeahead input');
+      const chips = [...document.querySelectorAll('.merge-chips button.ev-chip')];
+      return {
+        name: inp?.value ?? null,
+        picked: chips.filter(c => c.classList.contains('merge-chip-picked')).map(c => c.textContent.trim()),
+      };
+    """)
+    b_ok = (st2["name"] == pick["b"]["name"]
+            and st2["picked"] == [pick["b"]["name"] + " · " + str(pick["b"]["total"]) + "f"])
+
+    # Esc → dialog closes, nothing merged
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.8)
+    rep = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const a = snap.persons.find(p => p.name === arguments[0]);
+      const b = snap.persons.find(p => p.name === arguments[1]);
+      return {
+        dialogGone: !document.querySelector('.overlay .dialog'),
+        aCount: a ? a.counts.total : null,
+        bCount: b ? b.counts.total : null,
+      };
+    """, pick["a"]["name"], pick["b"]["name"])
+    c_ok = (rep["dialogGone"] and rep["aCount"] == pick["a"]["total"]
+            and rep["bCount"] == pick["b"]["total"])
+
+    record("C50 merge chips: click a chip to pick the target (#196)",
+           chips_ok and a_ok and b_ok and c_ok,
+           f"chips(2)={chips_ok}; A→target ok={a_ok} {st}; B→target ok={b_ok}; "
+           f"esc-untouched ok={c_ok} {rep}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -4794,6 +4920,7 @@ def main():
         c47_first_run_no_database(t)
         c48_branch_rename_clash_merges(t)
         c49_step_from_empty_state(t)
+        c50_merge_chips_pick_target(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

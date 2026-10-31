@@ -70,11 +70,21 @@ export default function MergeIntoDialog({ sources, defaultTarget, persons, onCon
           <br />
           No undo — faces themselves are never deleted (§4.13).
         </p>
+        {/* #196 (§4.28): the chips are selectable — clicking one
+            prefills the target input (the same name resolution as the
+            typeahead); the resolved target's chip is selected and
+            leaves the moving set */}
         <div className="merge-chips">
-          {moving.map((p) => (
-            <span className="ev-chip" key={p.id} title={`${p.groups.join(", ") || "(no group)"} — ${p.counts.total} face(s)`}>
+          {sources.map((p) => (
+            <button
+              type="button"
+              className={`ev-chip${p.id === target?.id ? " merge-chip-picked" : ""}`}
+              key={p.id}
+              title={`${p.groups.join(", ") || "(no group)"} — ${p.counts.total} face(s)`}
+              onClick={() => setName(p.name)}
+            >
               {p.name} · {p.counts.total}f
-            </span>
+            </button>
           ))}
         </div>
         <label>

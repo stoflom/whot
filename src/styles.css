@@ -1144,7 +1144,22 @@ button.merge-open { font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
 }
 
 .merge-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
-.merge-chips .ev-chip { border-style: solid; color: var(--text); }
+/* #196 (§4.28): merge-target chips are buttons — pick one to prefill
+   the "Merge into" input; the resolved target stays selected */
+.merge-chips .ev-chip {
+  border-style: solid;
+  color: var(--text);
+  background: none;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+.merge-chips .ev-chip:hover { border-color: var(--accent); }
+.merge-chips .ev-chip.merge-chip-picked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 
 .merge-foot {
   display: flex;

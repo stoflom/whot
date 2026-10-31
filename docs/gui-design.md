@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.87** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.88** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1097,7 +1097,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     one shared dialog spelling `N person(s), M face(s) → <target>`,
     sources emptied and deleted, **no undo** (faces themselves are never
     deleted; §4.13). Branch drops stay dialog-free — moving
-    between groups is reversible.
+    between groups is reversible. The chip row above the dialog's
+    **Merge into** input is **selectable** — each source person is a
+    chip *button* (hover + selected styling, distinct from the passive
+    chip look): clicking a chip prefills the input with that person's
+    name and takes the **same target resolution** as the typeahead (the
+    summary line and the face math are identical to typing it), the
+    resolved target's chip carries the **selected state**, and clicking
+    another chip or typing another name moves the target. The row
+    always lists **every** source — the target's chip stays, selected,
+    and is no longer counted as a source.
 
     **Post-merge focus**: after a successful merge the centre pane
     opens the **merged target** person — the selection moves there, showing
