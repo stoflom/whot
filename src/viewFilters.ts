@@ -17,6 +17,29 @@ export function matchesStatusFilter(status: string, filter: FaceFilter): boolean
   return filter === "all" ? status !== "rejected" : status === filter;
 }
 
+/** #194 (§4.41) — the empty-state guidance: the anchored person holds no
+    face under the current Show filter, so the bare "nothing to show"
+    becomes a line that names the active filter and points at ‹ ›. A
+    faceless shell (total 0 — the state the §4.41 guard never triggers)
+    gets its own variant. The filtered variants deliberately do NOT
+    suggest "set Show to All": the §4.41 guard dialog already offers
+    Show All, and the two must not contradict. `totalFaces` is the
+    person's RAW face count (the §4.10 badge number), not the filtered
+    one — the filtered count is 0 by construction here. */
+export function emptyStateHint(totalFaces: number, filter: FaceFilter): string {
+  if (totalFaces === 0)
+    return "This person has no faces — pick another person in the list, or click › to step to the next person.";
+  const label =
+    filter === "provisional"
+      ? "New "
+      : filter === "confirmed"
+        ? "Accepted "
+        : filter === "rejected"
+          ? "Rejected "
+          : "";
+  return `No ${label}faces to show — pick another person in the list, or click › to step to the next person.`;
+}
+
 /** #152 (§4.10, rewritten by #165): the left-pane tree's person
     presence. Under 'all' — everything except rejected — a person is
     listed when it holds ≥ 1 non-rejected face, and faceless shells stay

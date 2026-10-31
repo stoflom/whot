@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.86** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.87** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -684,6 +684,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       empty ⇒ every person in the subtree **falls to their status seat**
       (§4.35 — group invariant: never zero rows). A branch cannot be
       moved inside itself (`new == old` or `new` prefixed by `old`).
+      **A clash with an existing branch is a merge, never an error**
+      (#193): when a person is a member of both the source branch and the
+      destination path (the `person_groups` key `(person_id, path)`), the
+      rewrite must not surface the unique-constraint failure — the
+      conflicting source rows are dropped (the person keeps the single
+      destination row) and the remaining source rows are rewritten. The
+      net effect: every source member now holds the destination group,
+      the source group is removed from them, and the source branch is
+      gone once emptied — the source is absorbed by the destination.
+      A branch that is **entirely** absorbed still counts as a successful
+      rename (the emptiness check is taken against the branch's rows
+      BEFORE the rewrite, so an all-clashing branch does not read as
+      “no persons in that group”).
     - `delete_group(path)` — deletes the `person_groups` rows of the whole
       subtree, then seats those persons by state (§4.35; structure below
       the branch is not preserved — re-group by move/rename).
@@ -1018,8 +1031,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     implicit selection whenever there is no explicit one. **←/→**
     stepping honours it too (#76): with no selected person the first
     step starts from the person under the cursor (tree rows expose
-    `data-person-id`), falling back to the list's start/end when the
-    cursor is over no tree row.
+    `data-person-id`); when the cursor is over no person row (e.g. it is
+    over the ‹ › buttons themselves) the step bases on the **last
+    anchored person's position** in the current step list, clamped to the
+    list's bounds (#194) — so stepping from an anchor that has just left
+    the list (a verdict drained it, §4.10 pruned it under Show → New)
+    continues where the user left off instead of jumping to the list's
+    start/end and losing the place; only when no person was ever anchored
+    does the step fall back to the list's start/end.
 26. **Copyable errors** (#81) ⇒ every error surfaced by the app — the
     fatal `loadError` screen and the runtime error toast — must be
     cleanly copyable for filing issues:
@@ -1807,6 +1826,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      (accepted/rejected; under All *No faces to show*) — with
      **Show All** (sets Show → All) and **Close** (dismissed for that
      person+filter pair until either changes).
+   - **The empty state says what to do next** (#194): when the anchored
+     person holds **no face under the current Show filter**, the centre
+     pane's empty state is guidance, not a bare *nothing to show* — it
+     names the active filter and points at the ‹ › controls:
+     - the person has faces but none under Show →
+       New/Accepted/Rejected: *No **{New/Accepted/Rejected}** faces to
+       show — pick another person in the list, or click **›** to step to
+       the next person.* The message does **not** suggest switching Show
+       to All — the §4.41 guard dialog above already offers **Show All**,
+       and the two must not contradict each other;
+     - the person has no faces at all (a faceless shell, which the
+       guard never triggers): *This person has no faces — pick another
+       person in the list, or click **›** to step to the next person.*
+     Without an anchored person (and everywhere the pane has no person
+     context — Rolls, image detail) the bare *nothing to show* stays.
    - **Focus follows the verdict** (#189): every successful **Accept /
      Reject** moves the anchor to the **acted-on person** — the owner
      of the cursor-as-target face (§4.25) — so Person mode always

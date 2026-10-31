@@ -1392,6 +1392,12 @@ const BRANCH_OF: &str = "(path = ?1 OR (substr(path, 1, length(?1) + 1) = ?1 || 
 /// or any sub-branch). `new_path` empty ⇒ the whole subtree drops to
 /// Ungrouped (rows deleted). A branch cannot be moved inside itself.
 /// Membership only — faces, names, statuses, primaries untouched.
+/// #193 (§4.16): a clash with an existing branch is a MERGE, never an
+/// error — a person in both the source (branch or sub-branch) and the
+/// destination path would duplicate their `(person_id, path)` key under
+/// the rewrite; the clashing source rows are dropped (the person keeps
+/// the single destination row), the rest rewrite, and the source branch
+/// is absorbed by the destination (gone once emptied).
 pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()> {
     let old = normalize_group_path(old_path);
     let new = normalize_group_path(new_path);
@@ -1407,25 +1413,52 @@ pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()>
     }
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
-    let n = if new.is_empty() {
+    // The emptiness check runs BEFORE the rewrite (#193): an all-clashing
+    // branch loses every row in the merge and rewrites none — still a
+    // successful rename, never “no persons in that group”.
+    let before: i64 = tx.query_row(
+        &format!("SELECT COUNT(*) FROM person_groups WHERE {BRANCH_OF}"),
+        params![old],
+        |r| r.get(0),
+    )?;
+    if before == 0 {
+        bail!("no persons in that group");
+    }
+    if new.is_empty() {
         // §4.35: every person doomed by this rewrite gets its derived seat
         // BEFORE the branch rows drop (never zero rows, no trigger)
         seat_branch_doomed(&tx, &old)?;
         tx.execute(
             &format!("DELETE FROM person_groups WHERE {BRANCH_OF}"),
             params![old],
-        )?
+        )?;
     } else {
+        // #193: drop the clashing source rows first — the person keeps the
+        // single destination row — then rewrite the rest (the destination
+        // rows are never in the old branch: `new` is neither `old` nor
+        // inside/outside a prefix of it, so the EXISTS is stable while the
+        // DELETE runs)
+        tx.execute(
+            &format!(
+                "DELETE FROM person_groups
+                 WHERE {BRANCH_OF}
+                   AND EXISTS (
+                     SELECT 1 FROM person_groups k
+                     WHERE k.person_id = person_groups.person_id
+                       AND k.path = CASE
+                         WHEN person_groups.path = ?1 THEN ?2
+                         ELSE ?2 || substr(person_groups.path, length(?1) + 1) END
+                   )"
+            ),
+            params![old, new],
+        )?;
         tx.execute(
             &format!(
                 "UPDATE person_groups SET path = ?2 || substr(path, length(?1) + 1)
                   WHERE {BRANCH_OF}"
             ),
             params![old, new],
-        )?
-    };
-    if n == 0 {
-        bail!("no persons in that group");
+        )?;
     }
     tx.commit()?;
     Ok(())

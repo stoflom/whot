@@ -903,6 +903,63 @@ fn group_management() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// design v3.87 §4.16 (#193) — rename/move CLASH = merge: a person in
+/// both the source (branch or sub-branch) and the destination path must
+/// not raise the unique-constraint failure — the clashing source row is
+/// dropped (the person keeps the single destination row), the rest
+/// rewrite, and the source branch is absorbed (gone once emptied). An
+/// entirely-clashing branch still succeeds.
+#[test]
+fn rename_group_clash_merges_193() {
+    let p = fixture_paths("groupclash193");
+    // fixture ids: Unknown1=1 (faces 1,2,6), Unknown2=2 (face 3),
+    // Unknown3=3 (faces 4,5)
+    db::assign_person(&p, &[1, 2, 6], "Alice", "family").unwrap();
+    db::assign_person(&p, &[3], "Bob", "friends").unwrap();
+    db::assign_person(&p, &[4, 5], "Carol", "family").unwrap();
+    // Carol in BOTH branches: the branch-level clash is set
+    db::move_persons_between_groups(&p, &[3], "", "friends").unwrap();
+
+    let groups_of = |name: &str| -> Vec<String> {
+        let s = db::snapshot(&p).unwrap();
+        s.persons.iter().find(|x| x.name == name).unwrap().groups.clone()
+    };
+    assert_eq!(
+        groups_of("Carol"),
+        vec!["family".to_string(), "friends".to_string()]
+    );
+
+    // 1) the clash is a merge, not a unique-constraint error
+    db::rename_group(&p, "family", "friends").unwrap();
+    assert_eq!(groups_of("Alice"), vec!["friends".to_string()], "non-clashing rows rewrite");
+    assert_eq!(groups_of("Carol"), vec!["friends".to_string()], "clash drops the source row, keeps the destination");
+    assert_eq!(groups_of("Bob"), vec!["friends".to_string()], "others untouched");
+    assert!(db::rename_group(&p, "family", "x").is_err(), "the source branch is gone once emptied");
+
+    // 2) sub-branch clash: Carol holds old|test AND friends|test, Dora
+    //    holds old|test only
+    db::assign_person(&p, &[4], "Dora", "old|test").unwrap();
+    db::move_persons_between_groups(&p, &[3], "", "old|test").unwrap();
+    db::move_persons_between_groups(&p, &[3], "", "friends|test").unwrap();
+    db::rename_group(&p, "old", "friends").unwrap();
+    assert_eq!(groups_of("Dora"), vec!["friends|test".to_string()], "sub-branch row rewrites");
+    assert_eq!(
+        groups_of("Carol"),
+        vec!["friends".to_string(), "friends|test".to_string()],
+        "the clashing sub-branch row is dropped, the destination kept"
+    );
+
+    // 3) entire absorption: the branch's only row clashes — still success
+    db::move_persons_between_groups(&p, &[3], "", "solo").unwrap();
+    db::rename_group(&p, "solo", "friends").unwrap();
+    assert_eq!(
+        groups_of("Carol"),
+        vec!["friends".to_string(), "friends|test".to_string()]
+    );
+    assert!(db::rename_group(&p, "solo", "x").is_err(), "the absorbed branch is gone");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #165 / §4.35 — reserved person name, the system person's guards, the
 /// claim rule and the seat derivation in one pass.
 #[test]
