@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead from "./PathTypeahead";
@@ -50,7 +50,9 @@ const SCOPES: { id: StageScope; label: string }[] = [
   { id: "selection", label: "Selection" },
 ];
 
-const MIXED_HINT = "multiple values — type to set all";
+// #199 (§4.24): mixed-scope placeholder — placeholder only, the value
+// stays '' (a literal `various` value would be staged and committed)
+const MIXED_HINT = "various — type to set all";
 
 export default function EditDialog({
   defaultScope,
@@ -86,14 +88,24 @@ export default function EditDialog({
   const knownName = name.trim();
   const known = knownName ? persons.find((p) => p.name.trim() === knownName) ?? null : null;
 
-  // switching scope re-bases the fields on that scope's values (§4.24)
+  // #197 (§4.24): a scope switch (or a snapshot refresh re-basing the
+  // prefills) keeps every field the user already TOUCHED in this dialog
+  // session — only untouched fields re-base on the new scope's prefill.
+  // The latest touched flags live in a ref: they must not be a dep
+  // (a touch would re-fire the re-base) but the effect needs them fresh.
+  const touchedRef = useRef(touched);
+  useEffect(() => {
+    touchedRef.current = touched;
+  }, [touched]);
   useEffect(() => {
     const b = prefills[scope] ?? {};
-    setName(b.name ?? "");
-    setGroup(b.group ?? "");
-    setDesc(b.desc ?? "");
-    setTouched({ name: false, group: false, desc: false });
-    setGroupOps([]); // #181: the list staging is per-scope
+    const t = touchedRef.current;
+    if (!t.name) setName(b.name ?? "");
+    if (!t.group) setGroup(b.group ?? "");
+    if (!t.desc) setDesc(b.desc ?? "");
+    // #181: the list staging is per name — it survives only while the
+    // name field (its owner) survives the re-base
+    if (!t.name) setGroupOps([]);
   }, [scope, prefills]);
 
   const ph = (f: "name" | "group" | "desc") =>

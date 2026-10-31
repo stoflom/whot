@@ -161,6 +161,13 @@ Checks (contract refs: docs/gui-design.md):
       as the typeahead), styles it selected and drops it from the
       moving set (summary math matches typing); the other chip moves
       the target; Esc leaves the data untouched
+  C51 a scope switch keeps every field the user already touched in the
+      Edit dialog session (#197, §4.24) — the typed description
+      survives Card → Selection, the untouched name re-bases, and the
+      desc placeholder becomes the mixed-scope hint
+  C52 the Edit prefill is what the card shows (#199, §4.24): a
+      description staged via Apply prefills the reopened dialog (the
+      append loop) instead of the committed value
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -4864,6 +4871,210 @@ def c50_merge_chips_pick_target(t):
            f"esc-untouched ok={c_ok} {rep}")
 
 
+def c51_scope_switch_keeps_typed_fields(t):
+    """#197 (§4.24): a scope switch keeps every field the user already
+    touched in this dialog session; untouched fields re-base on the new
+    scope's prefill. Open the dialog from a card (scope Card), type a
+    description, switch to a 2-face Selection spanning two descriptions:
+    the typed description survives, the untouched name re-bases (same
+    person → same value, never cleared), and the desc placeholder
+    becomes the mixed-scope hint."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const SEATS = ['New', 'Accepted', 'Rejected'];
+      const byId = new Map(snap.persons.map(p => [p.id, p]));
+      const byPid = new Map();
+      for (const f of snap.faces) {
+        if (f.link_status !== 'provisional' || f.person_id == null) continue;
+        const p = byId.get(f.person_id);
+        if (!p || /^unknown/i.test(p.name) || p.name === 'Rejected') continue;
+        if (!p.groups.some(g => !SEATS.includes(g))) continue;
+        if (!byPid.has(p.id)) byPid.set(p.id, []);
+        byPid.get(p.id).push(f);
+      }
+      for (const [pid, faces] of byPid) {
+        // f1 with a non-empty desc (the typed value must differ from
+        // every prefill it could re-base onto), f2 a different one
+        const f1 = faces.find(f => (f.description ?? '') !== '') ?? faces[0];
+        const d1 = f1.description ?? '';
+        const f2 = faces.find(f => f.id !== f1.id && (f.description ?? '') !== d1);
+        if (!f2) continue;
+        const p = byId.get(pid);
+        return {fid1: f1.id, fid2: f2.id, pid,
+                name: p.name, d1, d2: f2.description ?? ''};
+      }
+      return null;
+    """)
+    if pick is None:
+        record("C51 scope switch keeps typed fields (#197)", True,
+               "need a filed person with 2 faces of 2 different descs — vacuous")
+        return
+
+    def set_input(sel, v):
+        js(t, r"""
+          const el = document.querySelector(arguments[0]);
+          if (!el) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[1]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+          return true;
+        """, sel, v)
+        time.sleep(0.4)
+
+    row = next((e for e in t.find_elements(By.CSS_SELECTOR, ".tree-person")
+                if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["name"]), None)
+    if row is None:
+        record("C51 scope switch keeps typed fields (#197)", False, "person row not in the tree")
+        return
+    row.click()
+    time.sleep(0.8)
+    c1 = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['fid1']}']")
+    c2 = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['fid2']}']")
+    c1.click()
+    time.sleep(0.5)
+    AC(t.driver).key_down(Keys.CONTROL).click(c2).key_up(Keys.CONTROL).perform()
+    time.sleep(0.5)
+    opened = js(t, r"""
+      const c = document.querySelector(`.face-card[data-face-id='${arguments[0]}']`);
+      if (!c) return false;
+      const b = [...c.querySelectorAll('button')].find(x => x.textContent.trim() === 'Edit…');
+      if (!b) return false;
+      b.scrollIntoView({block: 'center'});
+      b.click();
+      return true;
+    """, pick["fid1"])
+    time.sleep(0.6)
+    st1 = js(t, r"""
+      return {
+        opened: !!document.querySelector('.edit-dialog'),
+        desc: document.querySelector('.edit-dialog .input-desc')?.value ?? null,
+        name: document.querySelector('.edit-dialog .typeahead input')?.value ?? null,
+      };
+    """)
+    if not opened:
+        record("C51 scope switch keeps typed fields (#197)", False, "dialog did not open")
+        return
+
+    set_input(".edit-dialog .input-desc", "zz-retained")
+    js(t, r"""
+      const b = [...document.querySelectorAll('.scope-seg button')]
+        .find(x => x.textContent.trim().startsWith('Selection'));
+      if (b) b.click();
+    """)
+    time.sleep(0.6)
+    st2 = js(t, r"""
+      const desc = document.querySelector('.edit-dialog .input-desc');
+      const sel = [...document.querySelectorAll('.scope-seg button')]
+        .find(x => x.textContent.trim().startsWith('Selection'));
+      return {
+        desc: desc?.value ?? null,
+        descPh: desc?.placeholder ?? null,
+        name: document.querySelector('.edit-dialog .typeahead input')?.value ?? null,
+        selActive: sel ? sel.className.includes('active') : null,
+      };
+    """)
+    ok = (st1["desc"] == pick["d1"] and st1["name"] == pick["name"]
+          and st2["desc"] == "zz-retained"
+          and st2["name"] == pick["name"]
+          and st2["descPh"] == "various — type to set all"
+          and st2["selActive"] is True)
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.4)
+    record("C51 scope switch keeps typed fields (#197)", ok,
+           f"open desc={st1['desc']!r} name={st1['name']!r}; after switch: "
+           f"desc={st2['desc']!r} ph={st2['descPh']!r} name={st2['name']!r} "
+           f"active={st2['selActive']}")
+
+
+def c52_staged_desc_prefills_reopened_dialog(t):
+    """#199 (§4.24): the prefill is what the card SHOWS — the staged
+    overlay over the committed value. Stage a description via Apply,
+    reopen the Edit dialog on the same card: the field opens with the
+    STAGED value (the append loop), not the committed one."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const SEATS = ['New', 'Accepted', 'Rejected'];
+      const byId = new Map(snap.persons.map(p => [p.id, p]));
+      for (const f of snap.faces) {
+        if (f.link_status !== 'provisional' || f.person_id == null) continue;
+        const p = byId.get(f.person_id);
+        if (!p || /^unknown/i.test(p.name) || p.name === 'Rejected') continue;
+        if (!p.groups.some(g => !SEATS.includes(g))) continue;
+        return {fid: f.id, pid: p.id, name: p.name, d1: f.description ?? ''};
+      }
+      return null;
+    """)
+    if pick is None:
+        record("C52 staged desc prefills the reopened dialog (#199)", True,
+               "need a provisional face of a filed person — vacuous")
+        return
+    row = next((e for e in t.find_elements(By.CSS_SELECTOR, ".tree-person")
+                if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["name"]), None)
+    if row is None:
+        record("C52 staged desc prefills the reopened dialog (#199)", False, "person row not in the tree")
+        return
+    row.click()
+    time.sleep(0.8)
+
+    def open_dialog(fid):
+        return js(t, r"""
+          const c = document.querySelector(`.face-card[data-face-id='${arguments[0]}']`);
+          if (!c) return false;
+          const b = [...c.querySelectorAll('button')].find(x => x.textContent.trim() === 'Edit…');
+          if (!b) return false;
+          b.scrollIntoView({block: 'center'});
+          b.click();
+          return true;
+        """, fid)
+
+    def set_desc(v):
+        js(t, r"""
+          const el = document.querySelector('.edit-dialog .input-desc');
+          if (!el) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(el, arguments[0]);
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+          return true;
+        """, v)
+        time.sleep(0.4)
+
+    t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['fid']}']").click()
+    time.sleep(0.5)
+    if not open_dialog(pick["fid"]):
+        record("C52 staged desc prefills the reopened dialog (#199)", False, "dialog did not open")
+        return
+    time.sleep(0.6)
+    d0 = js(t, "return document.querySelector('.edit-dialog .input-desc')?.value ?? null")
+    set_desc("zz-staged")
+    applied = js(t, r"""
+      const b = [...document.querySelectorAll('.edit-dialog .dialog-actions button')]
+        .find(x => x.textContent.trim() === 'Apply');
+      if (!b) return false;
+      b.click();
+      return true;
+    """)
+    time.sleep(0.8)
+    closed = not js(t, "return !!document.querySelector('.edit-dialog')")
+    if not (applied and closed):
+        record("C52 staged desc prefills the reopened dialog (#199)", False,
+               f"Apply failed (applied={applied} closed={closed})")
+        return
+    if not open_dialog(pick["fid"]):
+        record("C52 staged desc prefills the reopened dialog (#199)", False, "reopen failed")
+        return
+    time.sleep(0.6)
+    d1 = js(t, "return document.querySelector('.edit-dialog .input-desc')?.value ?? null")
+    ok = (d0 == pick["d1"] and d1 == "zz-staged")
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.4)
+    record("C52 staged desc prefills the reopened dialog (#199)", ok,
+           f"first open desc={d0!r} (committed {pick['d1']!r}); reopened desc={d1!r} (want 'zz-staged')")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -4921,6 +5132,8 @@ def main():
         c48_branch_rename_clash_merges(t)
         c49_step_from_empty_state(t)
         c50_merge_chips_pick_target(t)
+        c51_scope_switch_keeps_typed_fields(t)
+        c52_staged_desc_prefills_reopened_dialog(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

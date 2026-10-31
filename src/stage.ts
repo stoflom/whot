@@ -85,6 +85,39 @@ export function stagedFieldsForCard(
 
 /** header label overlay: any overlap stages the whole heading (§4.24,
     #123 — same later-ops-win merge) */
+/** #199 (§4.24): the dialog prefill for a set of faces — the staged
+    overlay (later ops win, the same merge the labels show) over the
+    committed value, per field; a field the faces disagree on is mixed
+    (NO value — an empty untouched field stays out of the stage, and
+    typing then sets them all) */
+export function prefillForFaces(
+  ids: number[],
+  committed: (id: number) => { name: string; group: string; desc: string },
+  set: Stage[],
+): Prefill {
+  if (ids.length === 0) return {};
+  const names = new Set<string>();
+  const groups = new Set<string>();
+  const descs = new Set<string>();
+  for (const id of ids) {
+    const c = committed(id);
+    const staged = stagedFieldsForCard(set, id);
+    names.add(staged.name ?? c.name);
+    groups.add(staged.group ?? c.group);
+    descs.add(staged.desc ?? c.desc);
+  }
+  const mixed: Prefill["mixed"] = [];
+  if (names.size > 1) mixed.push("name");
+  if (groups.size > 1) mixed.push("group");
+  if (descs.size > 1) mixed.push("desc");
+  return {
+    ...(names.size === 1 ? { name: [...names][0] } : {}),
+    ...(groups.size === 1 ? { group: [...groups][0] } : {}),
+    ...(descs.size === 1 ? { desc: [...descs][0] } : {}),
+    ...(mixed.length ? { mixed } : {}),
+  };
+}
+
 export function stagedFieldsForSection(
   set: Stage[],
   sectionIds: number[],

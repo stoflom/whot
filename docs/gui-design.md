@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.88** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.89** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -894,7 +894,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - **One shared dialog**: three labelled fields — name, group,
       description — each carrying the §4.21 suggestions (a picked name
       mirrors its group unless one was typed), plus a scope selector
-      `Card | Group | Selection` with a live face count (H3). Opening
+      `Card | Group | Selection` with a live face count (H3).
+      **Prefills are what the cards show**: the live pending set's
+      staged overlay (the same later-ops-wins merge the labels use)
+      over the committed values — the Apply → re-Edit loop appends to
+      what was just staged instead of re-typing it, and a value staged
+      by any earlier Apply (even from another scope covering the same
+      faces) is what the field opens with. When a field genuinely
+      disagrees across the scope's faces the input stays **empty** with
+      the placeholder `various — type to set all` (placeholder only —
+      `various` must never become a staged value; an empty untouched
+      field stays out of the stage). Opening
       it follows the selection rules: on an object **inside** the
       current selection the selection is kept; **outside**, the
       selection becomes that card (header → that cluster). The
@@ -904,7 +914,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       selector switches scope explicitly and **Apply binds the stage to
       the chosen scope's faceIds**; Accept commits those staged ops and
       then accepts the **chosen scope** (the staged set supplies the
-      edits, never the acceptance scope).
+      edits, never the acceptance scope). A scope switch **keeps every
+      field the user already touched in this dialog session** — only
+      untouched fields re-base on the new scope's prefill (the group
+      mirroring the scope's person); a snapshot refresh re-basing the
+      prefills obeys the same retention rule, so in-progress typing is
+      never silently discarded.
     - **Buttons**: `Apply` = stage + close (screen preview), `Accept` =
       commit the staged ops, then accept the chosen scope (the shortcut
       — “Accept is what makes my changes permanent”), `Reject` = the

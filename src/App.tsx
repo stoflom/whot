@@ -39,6 +39,7 @@ import {
   stageSummarySet,
   stagedFieldsForCard,
   upsertStage,
+  prefillForFaces,
   type Prefill,
   type Stage,
   type StageScope,
@@ -887,32 +888,25 @@ export default function App() {
   // the latest-value ref (it only fires on events), so the memoised
   // grid handlers and faceMenu can share it without ordering traps
   const prefillFor = useCallback(
-    (ids: number[]): Prefill => {
-      if (ids.length === 0) return {};
-      const names = new Set<string>();
-      const groups = new Set<string>();
-      const descs = new Set<string>();
-      for (const id of ids) {
-        const f = facesById.get(id);
-        const p = f?.person_id != null ? personsById.get(f.person_id) : undefined;
-        // #165/§4.35: the system person's reserved name/seat never
-        // prefills — a claim needs a typed name (untouched = no stage)
-        const system = p?.name === "Rejected";
-        names.add(system ? "" : p?.name ?? "");
-        groups.add(system ? "" : p?.groups[0] ?? "");
-        descs.add(f?.description ?? "");
-      }
-      const mixed: Prefill["mixed"] = [];
-      if (names.size > 1) mixed.push("name");
-      if (groups.size > 1) mixed.push("group");
-      if (descs.size > 1) mixed.push("desc");
-      return {
-        ...(names.size === 1 ? { name: [...names][0] } : {}),
-        ...(groups.size === 1 ? { group: [...groups][0] } : {}),
-        ...(descs.size === 1 ? { desc: [...descs][0] } : {}),
-        ...(mixed.length ? { mixed } : {}),
-      };
-    },
+    (ids: number[]): Prefill =>
+      // #199 (§4.24): the prefill is what the card SHOWS — the staged
+      // overlay (later ops win) over the committed value
+      prefillForFaces(
+        ids,
+        (id) => {
+          const f = facesById.get(id);
+          const p = f?.person_id != null ? personsById.get(f.person_id) : undefined;
+          // #165/§4.35: the system person's reserved name/seat never
+          // prefills — a claim needs a typed name (untouched = no stage)
+          const system = p?.name === "Rejected";
+          return {
+            name: system ? "" : p?.name ?? "",
+            group: system ? "" : p?.groups[0] ?? "",
+            desc: f?.description ?? "",
+          };
+        },
+        pendingRef.current,
+      ),
     [facesById, personsById]
   );
 

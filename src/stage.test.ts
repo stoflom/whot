@@ -12,6 +12,7 @@ import {
   stagedFieldsForCard,
   stagedFieldsForSection,
   upsertStage,
+  prefillForFaces,
   type Stage,
 } from "./stage";
 
@@ -73,6 +74,72 @@ describe("the pending set (#123)", () => {
     expect(stageSummarySet([a, b]))
       .toBe("name “Alice” · 2 face(s)  /  description “beard” · 2 face(s) — 3 face(s) staged");
     expect(stageSummarySet([])).toBe("");
+  });
+});
+
+describe("prefillForFaces (#199 — the prefill is what the cards show)", () => {
+  const committed = (id: number) => {
+    const map: Record<number, { name: string; group: string; desc: string }> = {
+      1: { name: "Alice", group: "Family", desc: "beard" },
+      2: { name: "Alice", group: "Family", desc: "glasses" },
+      3: { name: "Bob", group: "Friends", desc: "" },
+    };
+    return map[id];
+  };
+
+  it("uniform committed values prefill as-is (no pending set)", () => {
+    expect(prefillForFaces([1], committed, [])).toEqual({
+      name: "Alice",
+      group: "Family",
+      desc: "beard",
+    });
+    expect(prefillForFaces([], committed, [])).toEqual({});
+  });
+
+  it("the staged overlay wins over the committed value (the Apply → re-Edit loop)", () => {
+    const set: Stage[] = [{ faceIds: [1], desc: "beard|glasses" }];
+    const p = prefillForFaces([1], committed, set);
+    expect(p.desc).toBe("beard|glasses");
+    expect(p.name).toBe("Alice");
+    expect(p.group).toBe("Family");
+    expect(p.mixed).toBeUndefined();
+  });
+
+  it("a staged group of '' (ungrouped) overlays the committed group", () => {
+    const set: Stage[] = [{ faceIds: [1], group: "" }];
+    expect(prefillForFaces([1], committed, set).group).toBe("");
+  });
+
+  it("later ops win when two stages cover the same face", () => {
+    const set: Stage[] = [
+      { faceIds: [1], desc: "one" },
+      { faceIds: [1], desc: "one|two" },
+    ];
+    expect(prefillForFaces([1], committed, set).desc).toBe("one|two");
+  });
+
+  it("mixed faces ⇒ NO value for that field, just the mixed flag (never a literal)", () => {
+    const p = prefillForFaces([1, 2], committed, []);
+    expect(p.desc).toBeUndefined();
+    expect(p.mixed).toEqual(["desc"]);
+    expect(p.name).toBe("Alice");
+  });
+
+  it("a staged overlay can REMOVE a disagreement (uniform after staging)", () => {
+    const set: Stage[] = [{ faceIds: [1, 2], desc: "same" }];
+    expect(prefillForFaces([1, 2], committed, set)).toEqual({
+      name: "Alice",
+      group: "Family",
+      desc: "same",
+    });
+  });
+
+  it("disagreeing persons ⇒ mixed name + group together", () => {
+    const p = prefillForFaces([1, 3], committed, []);
+    expect(p.name).toBeUndefined();
+    expect(p.group).toBeUndefined();
+    expect(p.desc).toBeUndefined();
+    expect(p.mixed).toEqual(["name", "group", "desc"]);
   });
 });
 
