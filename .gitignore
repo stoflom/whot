@@ -39,3 +39,8 @@ config/pathmap*.txt
 
 # local config backups (machine-specific; *.txt does not catch the .bak suffix)
 *.bak-*
+
+# local icon design sources (the asset actually used lives in public/whot.svg)
+docs/whot-sc.svg
+docs/whot_image*.jpg
+docs/whot_image*.svg
