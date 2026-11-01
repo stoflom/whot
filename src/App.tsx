@@ -748,7 +748,23 @@ export default function App() {
       } else {
         setSelPersons(new Set([id]));
         setPersonId(id);
-        setMode("person");
+        if (mode === "review") {
+          // #200 reopened (gui-design v3.93, §4.40): Review is sticky —
+          // a tree select re-anchors the review instead of yanking into
+          // Person mode: the clicked person becomes the review focus
+          // (the step index points at them; the split already closed
+          // above — the attention shifted) and the grid scrolls to
+          // their section, so the toolbar index and the visible place
+          // never disagree; stepping and verdicts then continue from
+          // there. The Rolls/Person tab clicks remain the only exit.
+          requestAnimationFrame(() => {
+            document
+              .querySelector(`.face-section[data-section-key="rev-${id}"]`)
+              ?.scrollIntoView({ block: "start" });
+          });
+        } else {
+          setMode("person");
+        }
         setImageId(null);
       }
     });
@@ -869,16 +885,19 @@ export default function App() {
     changeFaceFilter("provisional");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, snap]);
-  // #203 (§4.40): Review keeps its scroll — the review grid's place is
-  // saved while Review is on screen and restored when Review is
-  // re-entered, so the toolbar index and the visible place never disagree
+  // #203 + reopened (gui-design v3.93, §4.40): Review keeps its scroll
+  // — the review grid's place is saved while the grid is on screen (the
+  // onScroll gate: not while the full image is open, whose container
+  // scroll is the focus view's own) and restored whenever the grid
+  // RETURNS — a mode re-entry or the full image closing — so the
+  // toolbar index and the visible place never disagree
   const centerScrollRef = useRef<HTMLDivElement>(null);
   const reviewScrollRef = useRef(0);
   useLayoutEffect(() => {
-    if (mode !== "review") return;
+    if (mode !== "review" || splitImageId != null) return;
     const el = centerScrollRef.current;
     if (el) el.scrollTop = reviewScrollRef.current;
-  }, [mode]);
+  }, [mode, splitImageId]);
   // #188/§4.40 — the position guard, on ENTRY only (a mode transition;
   // the mount has no anchor): an anchored person without a new face
   // advances to the next person in the step list that has one (forward,
@@ -1558,9 +1577,13 @@ export default function App() {
         setInfo("assign a person to bring it back");
         return;
       }
-      // #188/§4.40: the lock is the mode — no any-view widening; with a
-      // split open the plain path keeps its pre-#175 reach
-      if (mode !== "review" || splitImageId != null) {
+      // #188/§4.40 + reopened (gui-design v3.93): the lock is the mode —
+      // no any-view widening; the plain path applies only OUTSIDE Review
+      // (a focus/rolls split is then its own context). A split open IN
+      // Review is a zoom of the review: the verdict keeps the review
+      // path (mark + advance plan), and a drained person's advance
+      // closes the split and focuses the next face to review (§4.30)
+      if (mode !== "review") {
         const ok = await mutate(() => api.acceptFaces(ids), true);
         if (ok) focusActed(ids); // #189/§4.41: focus follows the verdict
         return;
@@ -2555,8 +2578,11 @@ export default function App() {
             className="center-scroll"
             ref={centerScrollRef}
             onScroll={(e) => {
-              // #203: only Review's place is remembered
-              if (mode === "review")
+              // #203 + reopened (gui-design v3.93): only the review
+              // GRID's place is remembered — while the full image is
+              // open the container's scroll is the focus view's own
+              // and must never overwrite the grid's saved place
+              if (mode === "review" && splitImageId == null)
                 reviewScrollRef.current = e.currentTarget.scrollTop;
             }}
           >
