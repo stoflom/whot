@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.92** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.93** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -255,6 +255,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   regular grid is hidden while the mode is active. Closable via ×/Esc;
   selection and current view survive; single-click selection is
   unaffected (the two clicks of a double-click cancel each other out).
+  Closing the split returns the grid **at its saved scroll place**
+  (§4.40) — the centre is exactly where it was before the
+  double-click, and the container's scroll while the image is open
+  belongs to the focus view, never to the grid's saved place.
   **Lifecycle** (§4.15): the mode ends when a person is
   selected — tree row or stepping (always — the attention has shifted,
   §4.15) — when a card/rectangle selection moves to a different image,
@@ -1273,9 +1277,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       the selection — the plan comes from the pre-accept sections
       (`acceptAdvancePlan`), which stay valid afterwards because
       accepting never changes another section's members.
-    - **Person mode and focus mode: context never moves by itself**
-      — same selection rules, same dialog, same stage/commit;
-      only the advance disappears, and the right panel stays extra.
+    - **Person mode and focus mode outside Review: context never
+      moves by itself** — same selection rules, same dialog, same
+      stage/commit; only the advance disappears, and the right panel
+      stays extra. A full image opened **from Review** keeps the review
+      path: a verdict made there (✓ accept, ✗ reject) marks the
+      person-exhausted fall-through like any review verdict — a
+      drained person advances, the split closes, and the next face to
+      review is focused (§4.40 reach: the focus split is a zoom of the
+      review, not a different context).
     - **Bottom bar**: `Apply · Accept · Undo° · Edit… ·
       Reject · clear` — every action scoped to the selection with no
       confirmation dialog; selection actions grey out at N = 0 and
@@ -1818,15 +1828,30 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      guards (*No new faces*, *Please select a person…*) cover any
      resulting empty state, so nothing else fires on exit.
    - **Review is sticky**: neither stepping (‹ › / ← → — the anchor
-     advances to the next reviewable person, the mode does not) nor
-     the §4.30 person-exhausted fall-through ever leaves Review; only
-     the tab clicks above exit it. The review grid also keeps its
-     **scroll position** across any leave-and-return — the centre
+     advances to the next reviewable person, the mode does not), a
+     **person-tree selection**, nor the §4.30 person-exhausted
+     fall-through ever leaves Review; only the tab clicks above exit
+     it. A tree select in Review **re-anchors the review**: the
+     clicked person becomes the review focus — the step index points
+     at them, the full image closes (the attention shifted, §4.15),
+     and the centre grid scrolls to that person's section, so the
+     index and the visible place never disagree — and the review then
+     continues from there (stepping and verdicts run from the new
+     anchor).
+   - **The grid keeps its scroll place** across any leave-and-return
+     — a mode switch **and** opening/closing the full image: the place
+     is saved while the grid is on screen (the container's scroll while
+     the full image is open is the focus view's own and never overwrites
+     it) and restored whenever the grid returns, so the centre
      toolbar's index and the visible place never disagree.
    - **Reach**: the §4.30 exhaust machinery is mode-gated — verdicts
-     made in Review mark and hand over; verdicts in Person/focus/rolls
-     never advance, and §4.30's accept keeps its plain path while a
-     split is open.
+     made in Review mark and hand over, **including verdicts made in
+     the full image while Review is active** (the split is a zoom of
+     the review — §4.30's accept keeps the review path there, and a
+     drained person's advance closes the split and focuses the next
+     face to review); verdicts in Person/focus/rolls mode never
+     advance (the plain path applies only to a split open outside
+     Review).
    - **Actions**: no verdict or assignment rule is mode-dependent.
 
 41. **Person mode: sticky person, guard dialogs, counts, status
