@@ -68,7 +68,9 @@ export default function MergeIntoDialog({ sources, defaultTarget, persons, onCon
           their status. Source persons are emptied and deleted once their last face moves;
           {faceless > 0 && ` ${faceless} faceless source(s) are left as-is;`}
           <br />
-          No undo — faces themselves are never deleted (§4.13).
+          {/* §4.13: faces move between persons, never deleted — the
+              line stays reference-free (§4.43) */}
+          No undo — faces themselves are never deleted.
         </p>
         {/* #196 (§4.28): the chips are selectable — clicking one
             prefills the target input (the same name resolution as the

@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.90** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.91** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1905,6 +1905,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      **✓ Accept** and **✗ Reject** (semantics unchanged, §4.30).
    - No other behaviour moves: the A/R shortcuts, the dialogs and the
      §4.30 flow stay as they are.
+
+43. **No design/issue references in user-facing strings** ⇒ every
+   rendered string — tooltips (`title=`), toasts/info messages, dialog
+   labels and placeholders, context-menu hints, empty-state hints —
+   says WHAT and WHY in **product language**; it never carries
+   design-doc section numbers (`§4.x`) or issue numbers (`#NNN`),
+   which the user has no way to resolve. Those references live in the
+   adjacent **code comment**: the doc→app→test trail runs through
+   code, docs and issues, not through the UI. gui-mock asserts the
+   absence across tooltips, toasts, hints and labels (C54).
 
 ## 5. Related documents
 

@@ -45,13 +45,15 @@ export default function RuleBar({
           <span>selected</span>
         </>
       )}
+      {/* #101/§4.24 (Apply/scoped edit) + §4.30 (accept flow) — the
+          titles stay reference-free (§4.43) */}
       <button
         disabled={none && !stageLive}
         onClick={onApply}
         title={
           stageLive
-            ? "Re-scope the staged preview to the whole selection (#101, §4.24)"
-            : "Edit name/group/description — dialog, scope Selection; Apply stages a preview (#101, §4.24)"
+            ? "Re-scope the staged preview to the whole selection"
+            : "Edit name/group/description — dialog, scope Selection; Apply stages a preview"
         }
       >
         Apply
@@ -63,9 +65,9 @@ export default function RuleBar({
         title={
           stageLive
             ? none
-              ? "Commit the staged preview — with nothing selected it accepts the staged faces (#166, §4.30)"
-              : `Commit the staged preview, then accept the ${count} selected face(s) — advances in Review (#166, §4.30)`
-            : `Accept the ${count} selected face(s) — advances in Review (shortcut: A) (#101, §4.30)`
+              ? "Commit the staged preview — with nothing selected it accepts the staged faces"
+              : `Commit the staged preview, then accept the ${count} selected face(s) — advances in Review`
+            : `Accept the ${count} selected face(s) — advances in Review (shortcut: A)`
         }
       >
         ✓ Accept
@@ -73,7 +75,7 @@ export default function RuleBar({
       {stageText && (
         <span
           className="stage-strip"
-          title="staged preview — Accept commits it, Undo or Esc reverts it (#101, §4.24)"
+          title="staged preview — Accept commits it, Undo or Esc reverts it"
         >
           staged: {stageText}
         </span>
@@ -81,14 +83,14 @@ export default function RuleBar({
       <button
         disabled={!stageLive}
         onClick={onUndo}
-        title="Undo the staged preview — nothing was written yet; Esc does the same (#101, F1)"
+        title="Undo the staged preview — nothing was written yet; Esc does the same (shortcut: F1)"
       >
         Undo
       </button>
       <button
         disabled={none}
         onClick={onAssign}
-        title="Open the Edit dialog over the selection — assign a person, set name/group/description (#101, §4.24)"
+        title="Open the Edit dialog over the selection — assign a person, set name/group/description"
       >
         Edit…
       </button>

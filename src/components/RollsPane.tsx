@@ -261,8 +261,10 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
   return (
     <div className="rolls-pane">
       <div className="roll-filter">
+        {/* #162 (root commit) + #167 (import-pane route) — the title
+            stays reference-free (§4.43) */}
         <label
-          title="Root the path tree at this path (#162) — Enter commits: a folder with images under it becomes the root, an image file opens full-image, a not-yet-imported directory opens the import pane (#167), anything else is refused"
+          title="Root the path tree at this path — Enter commits: a folder with images under it becomes the root, an image file opens full-image, a not-yet-imported directory opens the import pane, anything else is refused"
         >
           path
         </label>

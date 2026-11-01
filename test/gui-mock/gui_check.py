@@ -171,6 +171,11 @@ Checks (contract refs: docs/gui-design.md):
   C53 the top bar shows the whot mark (public/whot.svg, loaded) beside
       the title, and the page declares the same svg as the favicon
       (#198, §4.9)
+  C54 no design/issue references in rendered UI strings — no §4.x or
+      #NNN in any title/placeholder/label or visible text across the
+      fresh All view, the person context menu, the group dialog, the
+      merge-into confirmation, the merge-similar dialog, the Edit
+      dialog, a no-op toast and the Rolls pane (#195, §4.43)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -5104,6 +5109,135 @@ def c53_header_logo_and_favicon(t):
            str(st))
 
 
+def c54_no_refs_in_ui_strings(t):
+    """#195 (§4.43): user-facing strings carry no design/issue
+    references. Walk every rendered title/placeholder/label attribute
+    and every visible text node in the states that hold such strings —
+    the fresh All view (top-bar tooltips, rule bar, cards), the person
+    context menu (labels + hints), the group dialog, the merge-into
+    confirmation, the merge-similar dialog, the Edit dialog, a no-op
+    toast and the Rolls pane — and fail on any §4.x or #NNN."""
+    scan_js = r"""
+      const bad = /§\s*\d|#\d{1,3}\b/;
+      const out = [];
+      const cls = (el) => typeof el.className === 'string' && el.className
+        ? '.' + el.className.trim().split(/\s+/).join('.') : '';
+      const walk = (el) => {
+        for (const a of ['title', 'placeholder', 'alt', 'aria-label']) {
+          const v = el.getAttribute && el.getAttribute(a);
+          if (v && bad.test(v))
+            out.push(`${el.tagName.toLowerCase()}${cls(el)}[${a}] = ${v}`);
+        }
+        for (const n of el.childNodes) {
+          if (n.nodeType === 3) {
+            const v = n.nodeValue.trim();
+            if (v && bad.test(v))
+              out.push(`text of ${el.tagName.toLowerCase()}${cls(el)}: ${v}`);
+          }
+        }
+        for (const c of el.children) walk(c);
+      };
+      walk(document.body);
+      return [...new Set(out)];
+    """
+    offenders = []
+
+    def scan(where):
+        hits = js(t, scan_js)
+        if hits:
+            offenders.append(f"{where}: " + " | ".join(hits[:4]))
+
+    def close_overlay():
+        # Esc closes dialogs; the overlay click is the belt to its braces
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.4)
+        js(t, r"""
+          const ov = document.querySelector('.overlay');
+          if (ov) ov.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+        """)
+        time.sleep(0.4)
+
+    fresh(t)
+    time.sleep(0.5)
+    scan("All view")
+
+    # the person context menu, then its 'Move to group…' dialog
+    pick = js(t, r"""
+      return [...document.querySelectorAll('.tree-person')].map(n => ({
+        name: n.querySelector('.tree-name')?.textContent.trim() ?? '',
+        total: Number(n.querySelector('.tree-count.total')?.textContent ?? 0),
+      })).filter(r => r.name && !/^unknown/i.test(r.name)
+                    && !/^(new|accepted|rejected)$/i.test(r.name) && r.total > 0)
+        .slice(0, 2).map(r => r.name);
+    """)
+    def row(name):
+        return next((e for e in t.find_elements(By.CSS_SELECTOR, ".tree-person")
+                     if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == name), None)
+
+    if len(pick) >= 1 and row(pick[0]) is not None:
+        row(pick[0]).click()
+        time.sleep(0.5)
+        AC(t.driver).context_click(row(pick[0])).perform()
+        time.sleep(0.5)
+        scan("person context menu")
+        items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+                 if b.text.strip().startswith("Move to group")]
+        if items:
+            items[0].click()
+            time.sleep(0.6)
+            scan("group dialog")
+            close_overlay()
+        else:
+            close_overlay()
+
+    # the merge-into confirmation over a two-person selection
+    if len(pick) == 2 and row(pick[0]) and row(pick[1]):
+        row(pick[0]).click()
+        time.sleep(0.4)
+        AC(t.driver).key_down(Keys.CONTROL).click(row(pick[1])).key_up(Keys.CONTROL).perform()
+        time.sleep(0.4)
+        AC(t.driver).context_click(row(pick[1])).perform()
+        time.sleep(0.5)
+        items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+                 if "Merge" in b.text and "into" in b.text]
+        if items:
+            items[0].click()
+            time.sleep(0.6)
+            scan("merge-into dialog")
+        close_overlay()
+
+    # the merge-similar dialog
+    btn = t.find_elements(By.CSS_SELECTOR, ".merge-open")
+    if btn:
+        btn[0].click()
+        time.sleep(0.8)
+        scan("merge-similar dialog")
+        close_overlay()
+
+    # the Edit dialog, then a no-op toast from its Apply
+    edits = t.find_elements(By.CSS_SELECTOR, ".face-card .card-edit")
+    if edits:
+        edits[0].click()
+        time.sleep(0.6)
+        scan("edit dialog")
+        applies = [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+                   if b.text.strip() == "Apply"]
+        if applies:
+            applies[0].click()
+            time.sleep(0.8)
+            scan("no-op toast")
+        close_overlay()
+
+    # the Rolls pane (root label title)
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")
+    time.sleep(1.0)
+    scan("rolls pane")
+
+    ok = not offenders
+    record("C54 no §/# references in UI strings (#195, §4.43)", ok,
+           "; ".join(offenders) if offenders else "clean across 9 states")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -5164,6 +5298,7 @@ def main():
         c51_scope_switch_keeps_typed_fields(t)
         c52_staged_desc_prefills_reopened_dialog(t)
         c53_header_logo_and_favicon(t)
+        c54_no_refs_in_ui_strings(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

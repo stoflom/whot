@@ -147,7 +147,9 @@ export default function MergeSimilarDialog({
         </p>
 
         <div className="merge-opts">
-          <label title="Max edit distance (1–3); persisted in whotrc.json (#88)">
+          {/* #88: the similarity knobs — distance persists in whotrc;
+              the titles stay reference-free (§4.43) */}
+          <label title="Max edit distance (1–3); persisted in whotrc.json">
             distance
             <select value={dist} onChange={(e) => saveDistance(Number(e.target.value))}>
               <option value={1}>1</option>
@@ -157,7 +159,7 @@ export default function MergeSimilarDialog({
           </label>
           <label
             className="merge-aliases"
-            title="Generational-suffix equivalence groups, off when empty — e.g. J,Jr,Junior means the Jr/Junior suffix is ignored before comparing (#88)"
+            title="Generational-suffix equivalence groups, off when empty — e.g. J,Jr,Junior means the Jr/Junior suffix is ignored before comparing"
           >
             suffix aliases
             <input
@@ -319,13 +321,16 @@ export default function MergeSimilarDialog({
               : `${sel.size} person(s) · ${faceCount} face(s) selected`}
           </span>
           <span className="merge-spacer" />
+          {/* §4.16 (apply/replace group), §4.1 (rename-merge), §4.28
+              (merge into one target) — the titles stay reference-free
+              (§4.43) */}
           <PathTypeahead
             className="input-group"
             value={group}
             onChange={setGroup}
             options={pathOptions}
             placeholder="group path (empty = ungrouped)"
-            title="Apply one group path to every selected person (§4.16) — reversible, faces untouched"
+            title="Apply one group path to every selected person — reversible, faces untouched"
             onSubmit={() => {
               if (sel.size > 0) {
                 onApplyGroup([...sel], group);
@@ -339,14 +344,14 @@ export default function MergeSimilarDialog({
               onApplyGroup([...sel], group);
               setGroup("");
             }}
-            title="Replace the group path of every selected person (§4.16) — reversible"
+            title="Replace the group path of every selected person — reversible"
           >
             apply group
           </button>
           <button
             disabled={sel.size === 0}
             onClick={() => onRename([...sel])}
-            title="Rename/merge all selected persons to one name — opens the Edit dialog with their faces (§4.1)"
+            title="Rename/merge all selected persons to one name — opens the Edit dialog with their faces"
           >
             rename to…
           </button>
@@ -354,7 +359,7 @@ export default function MergeSimilarDialog({
             className="bad"
             disabled={sel.size === 0 || faceCount === 0}
             onClick={() => onMergeInto([...sel])}
-            title="Merge the selection into ONE target person (picked in the confirmation) — required, no undo (§4.28)"
+            title="Merge the selection into ONE target person (picked in the confirmation) — required, no undo"
           >
             Merge into…
           </button>

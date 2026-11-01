@@ -182,24 +182,28 @@ const SectionView = memo(
             >
               {descVal || "description"}
             </span>
+            {/* #177/§4.42: accept/reject the whole group — stages
+                commit first on accept; titles stay reference-free
+                (§4.43). #101/§4.24: Edit… opens the dialog at scope
+                Group */}
             <button
               className="sec-accept"
               onClick={() => onAcceptGroup(section.faceIds)}
-              title={`Accept all ${section.faceIds.length} face(s) of this group as-is — stages commit first (#177, §4.42)`}
+              title={`Accept all ${section.faceIds.length} face(s) of this group as-is — stages commit first`}
             >
               ✓
             </button>
             <button
               className="sec-reject"
               onClick={() => onRejectGroup(section.faceIds)}
-              title={`Reject all ${section.faceIds.length} face(s) of this group (#177, §4.42)`}
+              title={`Reject all ${section.faceIds.length} face(s) of this group`}
             >
               ✗
             </button>
             <button
               className="ghost"
               onClick={() => onEditGroup(section.faceIds)}
-              title="Edit name/group/description — dialog, scope Group (#101, §4.24)"
+              title="Edit name/group/description — dialog, scope Group"
             >
               Edit…
             </button>

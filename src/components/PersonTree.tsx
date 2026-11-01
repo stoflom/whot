@@ -208,8 +208,10 @@ function PersonRow({
     onRenameCancel();
   };
   const cls = `tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}${dropTarget ? " merge-target" : ""}`;
+  // #165: the system person Rejected — its tooltip states the way back
+  // in product language, reference-free (§4.43)
   const title = system
-    ? "Rejected — the system person for rejected faces (#165); assignment is its only way out"
+    ? "Rejected — the system person for rejected faces; assignment is its only way out"
     : `${person.groups.join(", ") || "(no group)"} — double-click to rename`;
   const inner = (
     <>
@@ -650,10 +652,12 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
           />
+          {/* §4.28 + #88: the merge-similar dialog — the title stays
+              reference-free (§4.43) */}
           <button
             className="ghost merge-open"
             onClick={onOpenMerge}
-            title="Merge Similar Persons — find and combine near-identical names (§4.28, #88)"
+            title="Merge Similar Persons — find and combine near-identical names"
           >
             ⧉ merge similar
           </button>
@@ -716,13 +720,14 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
                     disabled: systemInMenu,
                   },
                   {
-                    // #88 (§4.28): shared confirmation dialog, target via typeahead
+                    // #88 (§4.28): shared confirmation dialog, target via
+                    // typeahead; the hint column carries shortcuts/group
+                    // info only — no section numbers there (§4.43)
                     label:
                       menuTargets.length > 1
                         ? `Merge ${menuTargets.length} persons into…`
                         : "Merge into…",
                     onClick: () => onMergeInto(menuTargets),
-                    hint: "§4.28",
                     disabled: systemInMenu,
                   },
                   // #88 (§4.28): rename-merge over all their faces (§4.1);
@@ -800,6 +805,8 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           onClose={() => setBranchMenu(null)}
         />
       )}
+      {/* #165/§4.35 (status seats) + §4.16 (add vs replace) — the
+          dialog bodies stay reference-free (§4.43) */}
       {groupDialog && (
         <GroupDialog
           options={pathOptions}
@@ -817,12 +824,12 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
           body={
             groupDialog.kind === "rename-branch"
               ? "The whole branch — including sub-branches — follows to the new path. " +
-                "Empty = everybody falls to their status seat (#165, §4.35)."
+                "Empty = everybody falls to their status seat."
             : groupDialog.kind === "add-group"
               ? "Adds this path as ANOTHER group — every current group of the person(s) " +
-                "is kept (a person can belong to several, §4.16); a status seat, if any, " +
-                "is dropped instead (#165, §4.35). Faces and names are untouched."
-            : "Replaces each person's group path (empty = their status seat, §4.35). " +
+                "is kept (a person can belong to several); a status seat, if any, " +
+                "is dropped instead. Faces and names are untouched."
+            : "Replaces each person's group path (empty = their status seat). " +
               "Faces and names are untouched."
           }
           defaultPath={
@@ -860,8 +867,10 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
         <ConfirmDialog
           title={`Delete group '${confirmDeleteGroup.path}'`}
           body={
+            // #165/§4.35: absorbed persons fall to their status seat —
+            // the body stays reference-free (§4.43)
             `${confirmDeleteGroup.count} person(s) — including any sub-branches — ` +
-            "fall to their status seat (#165, §4.35). Faces, names and statuses are untouched."
+            "fall to their status seat. Faces, names and statuses are untouched."
           }
           confirmLabel="delete group"
           danger

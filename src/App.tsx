@@ -2065,7 +2065,7 @@ export default function App() {
         const target = snap.persons.find((p) => p.id === targetId);
         if (target && /^unknown/i.test(target.name)) {
           setError(
-            "cannot merge into an UnknownN cluster — it is an importer placeholder, not a person (§4.28)",
+            "cannot merge into an UnknownN cluster — it is an importer placeholder, not a person",
           );
           return;
         }
@@ -2123,9 +2123,12 @@ export default function App() {
       if (!snap) return;
       const target = personsById.get(targetId);
       if (!target) return;
+      // §4.28: an UnknownN cluster is an importer placeholder, not a
+      // person — refused here and server-side; the message stays
+      // reference-free (§4.43)
       if (/^unknown/i.test(target.name)) {
         setError(
-          "cannot merge into an UnknownN cluster — it is an importer placeholder, not a person (§4.28)",
+          "cannot merge into an UnknownN cluster — it is an importer placeholder, not a person",
         );
         return;
       }
@@ -2210,9 +2213,11 @@ export default function App() {
                 >
                   Retry
                 </button>
+                {/* #185: the folder picker pre-checks --create-db in the
+                    import pane — the title stays reference-free (§4.43) */}
                 <button
                   className="ok"
-                  title="pick a roll folder — the import pane opens with --create-db pre-checked (#185)"
+                  title="pick a roll folder — the import pane opens with --create-db pre-checked"
                   onClick={() =>
                     void openFolderDialog({ directory: true }).then((d) => {
                       if (typeof d === "string" && d) setFirstRunDir(d);
@@ -2304,7 +2309,7 @@ export default function App() {
             }
             title={
               personId == null
-                ? "no person anchored yet — pick one in the tree (#176)"
+                ? "no person anchored yet — pick one in the tree"
                 : undefined
             }
           >
@@ -2321,12 +2326,15 @@ export default function App() {
           )}
           {/* #158 (§3, v3.57): the Show filter lives in the top bar — it is
               a global control applied across all panes (#99, §4.10) and not
-              something the Person view (or any single pane) owns. */}
+              something the Person view (or any single pane) owns. #175:
+              rejected faces are reachable only via Show → Rejected
+              (#165/§4.10); #175/§4.40: locked to New while Review runs —
+              the titles stay reference-free (§4.43) */}
           <label
             title={
               mode === "review"
-                ? "Locked to New while Review is active (#175/§4.40) — leave Review via the Rolls or Person tab"
-                : "All = everything except rejected; rejected faces appear only under Show → Rejected (#165, §4.10); switching it drops hidden faces from the selection"
+                ? "Locked to New while Review is active — leave Review via the Rolls or Person tab"
+                : "All = everything except rejected; rejected faces appear only under Show → Rejected; switching it drops hidden faces from the selection"
             }
           >
             show
@@ -2345,13 +2353,14 @@ export default function App() {
           </label>
           {/* #188 (§4.40): the padlock is a pure INDICATOR — 🔒 exactly
               while Review mode is active (Show pinned New + disabled);
-              never clickable, no engage/release */}
+              never clickable, no engage/release. #175: its tooltips stay
+              reference-free (§4.43) */}
           <span
             className={`lock-btn${mode === "review" ? " locked" : ""}`}
             title={
               mode === "review"
-                ? "Show is locked to New while Review is active (#175/§4.40) — leave via the Rolls or Person tab"
-                : "Show is unlocked outside Review (#175/§4.40)"
+                ? "Show is locked to New while Review is active — leave via the Rolls or Person tab"
+                : "Show is unlocked outside Review"
             }
           >
             {mode === "review" ? "🔒" : "🔓"}
@@ -2483,13 +2492,14 @@ export default function App() {
             {/* #99/#100: the cluster-group seg hugs the right side of the
                 person view — the Show filter is a global control and lives
                 in the top bar (#158, v3.57); #163: person view ONLY —
-                cluster_group shapes that view's sections alone, so Review
-                and Rolls must not show it */}
+                cluster_group shapes that view's sections alone (§4.9), so
+                Review and Rolls must not show it; its title stays
+                reference-free (§4.43) */}
             {mode === "person" && (
             <span className="toolbar-right">
             <span
               className="seg"
-              title="Person view: how faces form sections — Accuracy = similarity clusters within each description (§4.9); Description = one section per description (threshold ignored)"
+              title="Person view: how faces form sections — Accuracy = similarity clusters within each description; Description = one section per description (threshold ignored)"
             >
               <button
                 className={clusterGroup === "description" ? "active" : ""}
@@ -2774,6 +2784,8 @@ export default function App() {
           onCancel={() => setFaceMerge(null)}
         />
       )}
+      {/* #165/§4.35 (status seats) + §4.16 (add vs replace) — the
+          body stays reference-free (§4.43) */}
       {faceAddGroup && (
         <GroupDialog
           options={pathOptions}
@@ -2782,7 +2794,7 @@ export default function App() {
               ? `Add a group to ${faceAddGroup.ids.length} persons`
               : `Add a group to '${personsById.get(faceAddGroup.ids[0])?.name ?? "?"}'`
           }
-          body="Adds this path as ANOTHER group — every current group of the person(s) is kept (a person can belong to several, §4.16); a status seat, if any, is dropped instead (#165, §4.35). Faces and names are untouched."
+          body="Adds this path as ANOTHER group — every current group of the person(s) is kept (a person can belong to several); a status seat, if any, is dropped instead. Faces and names are untouched."
           defaultPath=""
           submitLabel="add group"
           onSubmit={(path) => {
@@ -2825,10 +2837,11 @@ export default function App() {
               if (r.groupOps.length > 0) {
                 // Apply leaves the list edits LOCAL — they preview in
                 // the list itself and commit with Accept (#181)
-                setInfo("group changes commit with Accept (#181)");
+                setInfo("group changes commit with Accept");
                 return;
               }
-              setInfo("nothing to apply — change a field first (#103)");
+              // #103: a no-op Apply says so — reference-free (§4.43)
+              setInfo("nothing to apply — change a field first");
               return;
             }
             if (r.kind === "apply") {
@@ -2885,8 +2898,10 @@ export default function App() {
         <ConfirmDialog
           title="Unapplied changes"
           body={
+            // #123: the context switch drops staged edits either way —
+            // the body stays reference-free (§4.43)
             `Staged: ${stageSummarySet(pending)} — accept writes it to the ` +
-            "database, discard drops it; the context switches either way (#123)"
+            "database, discard drops it; the context switches either way"
           }
           confirmLabel="accept"
           cancelLabel="discard"
@@ -2949,11 +2964,14 @@ export default function App() {
               : "Remove person"
           }
           body={
+            // #165/§4.13: removal rejects the faces and joins them to
+            // the system person; they can be claimed again — the body
+            // stays reference-free (§4.43)
             `All faces of ${confirmRemove.length > 1 ? "these persons" : "this person"} ` +
             `become rejected and join the system person Rejected; ` +
             `${confirmRemove.length > 1 ? "the persons are" : "the person is"} deleted — ` +
             "the faces stay in the database and can be claimed again by " +
-            "assigning them a person (#165, §4.13). This cannot be undone."
+            "assigning them a person. This cannot be undone."
           }
           confirmLabel="remove"
           danger
