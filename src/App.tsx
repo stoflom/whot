@@ -2258,6 +2258,8 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
+        {/* #198 (§4.9): the whot mark beside the title */}
+        <img className="topbar-logo" src="/whot.svg" alt="" />
         <h1>WhoT <span className="dim">Face Manager</span></h1>
         <nav>
           <button

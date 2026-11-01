@@ -168,6 +168,9 @@ Checks (contract refs: docs/gui-design.md):
   C52 the Edit prefill is what the card shows (#199, §4.24): a
       description staged via Apply prefills the reopened dialog (the
       append loop) instead of the committed value
+  C53 the top bar shows the whot mark (public/whot.svg, loaded) beside
+      the title, and the page declares the same svg as the favicon
+      (#198, §4.9)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -5075,6 +5078,32 @@ def c52_staged_desc_prefills_reopened_dialog(t):
            f"first open desc={d0!r} (committed {pick['d1']!r}); reopened desc={d1!r} (want 'zz-staged')")
 
 
+def c53_header_logo_and_favicon(t):
+    """#198 (§4.9): the top bar shows the whot mark (public/whot.svg,
+    22px, actually loaded) beside the title, and the page declares the
+    same svg as the favicon."""
+    fresh(t)
+    st = js(t, r"""
+      const link = document.querySelector('link[rel="icon"]');
+      const img = document.querySelector('.topbar-logo');
+      const h1 = document.querySelector('.topbar h1');
+      return {
+        faviconHref: link?.getAttribute('href') ?? null,
+        faviconType: link?.getAttribute('type') ?? null,
+        imgSrc: img ? (img.currentSrc || img.src) : null,
+        imgLoaded: img ? img.complete && img.naturalWidth > 0 : null,
+        imgBeforeTitle: img && h1 ? (img.compareDocumentPosition(h1) & 4) === 4 : null,
+      };
+    """)
+    ok = (st["faviconHref"] == "/whot.svg"
+          and st["faviconType"] == "image/svg+xml"
+          and (st["imgSrc"] or "").endswith("whot.svg")
+          and st["imgLoaded"] is True
+          and st["imgBeforeTitle"] is True)
+    record("C53 header whot mark + svg favicon (#198)", ok,
+           str(st))
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -5134,6 +5163,7 @@ def main():
         c50_merge_chips_pick_target(t)
         c51_scope_switch_keeps_typed_fields(t)
         c52_staged_desc_prefills_reopened_dialog(t)
+        c53_header_logo_and_favicon(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

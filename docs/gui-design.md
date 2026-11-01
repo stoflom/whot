@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.89** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.90** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -206,7 +206,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     The root lives for the session (it survives tab switches; not
     persisted to whotrc) and the Show filter keeps pruning under it
     (§4.10). The native picker is stubbed in the GUI-mock harness.
-- **Status filter + cluster group** (§4.10/§4.9): `Show
+- **Status filter + cluster group** (§4.10/§4.9): the top bar's far
+  left carries the **whot mark** — the `public/whot.svg` logo (22px) beside
+  the `WhoT Face Manager` title. The same svg is the **favicon**
+  (`<link rel="icon" type="image/svg+xml" href="/whot.svg">` in
+  index.html) and the **source of the bundle icon set**: every file
+  under `src-tauri/icons/` (window/taskbar/dock icon, `.ico`, `.icns`,
+  store logos) is generated from it via `npx tauri icon public/whot.svg`.
+  The svg embeds a 594×594 raster, so the 32px variant is recognisable
+  but slightly soft.
+  `Show
   [All | New | Accepted | Rejected]` — the face-status filter applied by
   every view (default All; **New** is the `provisional` status, spelled
   the way the face-card badge spells it) — lives in the **top bar**.

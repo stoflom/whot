@@ -103,6 +103,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
   border-bottom: 1px solid var(--border);
   flex: none;
 }
+.topbar-logo { width: 22px; height: 22px; border-radius: 4px; flex: none; }
 .topbar h1 { font-size: 1.05rem; margin: 0; font-weight: 600; white-space: nowrap; }
 .topbar nav { display: flex; gap: 0.4rem; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 0.75rem; }
