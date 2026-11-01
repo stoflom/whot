@@ -66,7 +66,9 @@ export default function FaceMergeDialog({
             </>
           )}
           <br />
-          No undo — faces themselves are never deleted (§4.13).
+          {/* §4.13 (#165): faces move between persons, never deleted —
+              the line stays reference-free (§4.43) */}
+          No undo — faces themselves are never deleted.
         </p>
         <div className="merge-chips">
           {sources.map((s) => (
@@ -78,8 +80,10 @@ export default function FaceMergeDialog({
               {s.name} · {s.count}f
             </span>
           ))}
+          {/* #165/§4.13: unowned legacy rows can no longer be created —
+              the chip title stays reference-free (§4.43) */}
           {plan.unowned.length > 0 && (
-            <span className="ev-chip" title="unowned faces (legacy rows — none since #165, §4.13)">
+            <span className="ev-chip" title="unowned faces (legacy rows — no new ones can appear)">
               unowned · {plan.unowned.length}f
             </span>
           )}

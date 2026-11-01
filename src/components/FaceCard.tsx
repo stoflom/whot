@@ -215,10 +215,12 @@ function FaceCard({
         >
           {Math.round(face.confidence * 100)}%
         </span>
+        {/* #101/§4.24: the card's Edit opens the shared dialog at scope
+            Card — the title stays reference-free (§4.43) */}
         <button
           className="ghost card-edit"
           onClick={() => onEdit(face.id)}
-          title="Edit name/group/description — dialog, scope Card (#101, §4.24)"
+          title="Edit name/group/description — dialog, scope Card"
         >
           Edit…
         </button>
@@ -261,8 +263,8 @@ function FaceCard({
               "Accept this card as-is" +
               scopeLabel +
               (face.link_status === "rejected"
-                ? " — a rejected face needs an assignment (§4.2/§4.35)"
-                : " — live stages commit first, then accept (#177)")
+                ? " — a rejected face needs an assignment"
+                : " — live stages commit first, then accept")
             }
             onClick={() => onAccept(face.id)}
           >

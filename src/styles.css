@@ -103,6 +103,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
   border-bottom: 1px solid var(--border);
   flex: none;
 }
+.topbar-logo { width: 22px; height: 22px; border-radius: 4px; flex: none; }
 .topbar h1 { font-size: 1.05rem; margin: 0; font-weight: 600; white-space: nowrap; }
 .topbar nav { display: flex; gap: 0.4rem; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 0.75rem; }
@@ -128,13 +129,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 }
 /* #176 (§4.41): the Show select speaks the status colours (its options
    and its closed value), the tree's status branches too */
-.topbar-right select.st-provisional { color: var(--bad); }
+.topbar-right select.st-provisional { color: var(--warn); }
 .topbar-right select.st-confirmed { color: var(--ok); }
 .topbar-right select.st-rejected { color: var(--dim); }
-.topbar-right select option[value="provisional"] { color: var(--bad); }
+.topbar-right select option[value="provisional"] { color: var(--warn); }
 .topbar-right select option[value="confirmed"] { color: var(--ok); }
 .topbar-right select option[value="rejected"] { color: var(--dim); }
-.tree-node.status-new .tree-node-name { color: var(--bad); }
+.tree-node.status-new .tree-node-name { color: var(--warn); }
 .tree-node.status-accepted .tree-node-name { color: var(--ok); }
 .tree-node.status-rejected .tree-node-name { color: var(--dim); }
 /* #176 (§4.41): the anchored person's live counts in the top bar */
@@ -336,7 +337,7 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 }
 .face-badge.primary { left: 6px; color: var(--warn); }
 .face-badge.status { right: 6px; }
-.face-badge.status.status-provisional { color: var(--bad); }
+.face-badge.status.status-provisional { color: var(--warn); }
 .face-badge.status.status-confirmed { color: var(--ok); }
 .face-badge.status.status-rejected { color: var(--dim); }
 
@@ -375,7 +376,8 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 /* #176 (§4.41): one status colour scheme — New = red, Accepted =
    green, Rejected = gray, All/default = normal text (status TEXT
    everywhere; the §4.11 overlay palette is a separate mechanism) */
-.c-prov { color: var(--bad); }
+/* #202 (§4.41): New = orange — red is the reject language (✗) */
+.c-prov { color: var(--warn); }
 .c-conf { color: var(--ok); }
 .c-rej { color: var(--dim); }
 

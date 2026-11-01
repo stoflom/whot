@@ -174,10 +174,12 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
           <span>?</span>
         )}
       </div>
+      {/* #165/§4.35 — the system person Rejected: not renameable, its
+          group list not editable; the strings stay reference-free (§4.43) */}
       {system ? (
         <div className="dp-field">
           <span>Name</span>
-          <span className="dim">Rejected — the system person (#165), not renameable</span>
+          <span className="dim">Rejected — the system person, not renameable</span>
         </div>
       ) : (
         <Editable
@@ -192,7 +194,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
       {system ? (
         <div className="dp-field">
           <span>Groups</span>
-          <span className="dim">Rejected — the system seat (#165), not editable</span>
+          <span className="dim">Rejected — the system seat, not editable</span>
         </div>
       ) : (
         // #172 (§4.38) — the group LIST replaces the single field: every
@@ -242,19 +244,21 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
           onMouseDown={(e) => e.preventDefault()}
           title={
             ops.length > 0
-              ? "Commit the pending name/note and the staged group changes — same as Enter (§4.38)"
-              : "Commit any pending name/note change — same as Enter (§4.38)"
+              ? "Commit the pending name/note and the staged group changes — same as Enter"
+              : "Commit any pending name/note change — same as Enter"
           }
           onClick={() => commit(ops)}
         >
           Update person
         </button>
       )}
+      {/* #165/§4.35: the system person cannot be removed — the title
+          says so in product language (§4.43) */}
       <button
         className="bad dp-remove"
         title={
           system
-            ? "The system person cannot be removed (#165, §4.35)"
+            ? "The system person cannot be removed"
             : "Reject all this person's faces onto the Rejected system person and remove them (no undo)"
         }
         disabled={system}

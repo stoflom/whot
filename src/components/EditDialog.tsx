@@ -136,14 +136,17 @@ export default function EditDialog({
           <button className="secondary" onClick={onCancel}>
             cancel
           </button>
+          {/* #165/§4.35 + §4.2: rejected faces come back only via an
+              assignment; Reject moves the scope onto the system person
+              Rejected — the titles stay reference-free (§4.43) */}
           <button
             className="warn"
             onClick={() => onReject(scope)}
             disabled={rejected[scope]}
             title={
               rejected[scope]
-                ? "already rejected — an assignment is the way back (#165, §4.35)"
-                : "reject the scope now (moves the faces onto the Rejected system person, §4.2)"
+                ? "already rejected — an assignment is the way back"
+                : "reject the scope now (moves the faces onto the Rejected system person)"
             }
           >
             Reject
@@ -153,7 +156,9 @@ export default function EditDialog({
             Accept
           </button>
         </div>
-        <div className="scope-seg" title="Which faces the action covers — the selection unless you choose otherwise (#101, §4.24)">
+        {/* #101/§4.24: which faces the action covers — the tooltip
+            stays reference-free (§4.43) */}
+        <div className="scope-seg" title="Which faces the action covers — the selection unless you choose otherwise">
           {SCOPES.map((s) => (
             <button
               key={s.id}

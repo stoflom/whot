@@ -1,7 +1,7 @@
 {
   "name": "whotapp",
   "private": true,
-  "version": "3.89.0",
+  "version": "3.92.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,11 +24,14 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.2",
-    "eslint": "^10.12.0",
+    "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.71.2",
+    "typescript-eslint": "^8.72.1",
     "vite": "^8.0.16",
     "vitest": "^5.0.5"
+  },
+  "overrides": {
+    "minimatch": "^11.0.3"
   }
 }

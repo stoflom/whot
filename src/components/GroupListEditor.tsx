@@ -69,6 +69,8 @@ export default function GroupListEditor({
         {display.map((g) => {
           const seat = isSeat(g);
           const staged = ops.some((o) => o.to === g);
+          // #165/§4.35 (seat rows) + §4.16 (inline re-home) + §4.38
+          // (staged add): the row/add titles stay reference-free (§4.43)
           return (
             <li key={g} className={`dp-group-row${staged ? " staged" : ""}`}>
               {editing?.path === g ? (
@@ -86,7 +88,7 @@ export default function GroupListEditor({
               ) : seat ? (
                 <span
                   className="dp-group-path seat"
-                  title="status seat (§4.35) — system-written, never removed"
+                  title="status seat — system-written, never removed"
                 >
                   {g}
                 </span>
@@ -94,7 +96,7 @@ export default function GroupListEditor({
                 <button
                   type="button"
                   className="dp-group-path"
-                  title="click to edit — re-homes just this membership (§4.16)"
+                  title="click to edit — re-homes just this membership"
                   onClick={() => setEditing({ path: g, value: g })}
                 >
                   {g}
@@ -106,7 +108,7 @@ export default function GroupListEditor({
                 disabled={seat}
                 title={
                   seat
-                    ? "status seat (§4.35) — never removed"
+                    ? "status seat — never removed"
                     : "remove this membership (staged — commit with Update person)"
                 }
                 onClick={() => {
@@ -127,7 +129,7 @@ export default function GroupListEditor({
           onChange={setAddPath}
           options={options}
           placeholder="e.g. family|lombards"
-          title="Add a group membership — staged, Enter commits the staged set (§4.38)"
+          title="Add a group membership — staged, Enter commits the staged set"
           onSubmit={() => stageAddPath(true)}
         />
         <button

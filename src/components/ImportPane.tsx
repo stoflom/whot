@@ -179,7 +179,7 @@ export default function ImportPane({ dir, onClose, onImported, initial }: Props)
           // #186: hidden while a usable database exists — the script
           // refuses an existing non-empty one, so the checkbox could
           // only fail; offered (pre-checked, #185) in the first-run flow
-          <label title="create the database from database/schema.sql — only offered while no usable database exists (#186)">
+          <label title="create the database from database/schema.sql — only offered while no usable database exists">
             <input type="checkbox" checked={opts.createDb} onChange={() => toggle("createDb")} /> --create-db
           </label>
         )}

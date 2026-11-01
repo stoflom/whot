@@ -5,12 +5,24 @@ Face database and review GUI for photo rolls. Faces detected at import
 is used to review, name, accept, reject and annotate them. Image files are
 BLAKE3 hashed for identification, file paths are regarded as mutable.
 
-This is still in very early stage. Future functionality will include:
-  i) Script to export data to Lap asset management
+Whot is intended as a standalone face-management tool in its own right,
+independent from any asset management or contact management tool. The face detection
+[InsightFace](https://github.com/deepinsight/insightface) is not tightly coupled and only used
+via a python script (import_roll.py) on import of a film roll. In principle any other tool could
+be used by changing the import_roll.pyscript. However, the embeddings of the tool is 
+imported in the database for face recognition, and this aspect is therefore dependent
+on the face recognition tool and model. If another tool is used the embeddings will need to be updated.
+
+The output is also not coupled to a specific asset management tool and again the philosphy is that
+the data from the faces database can be exported to any other tool via a script or direct integration.
+
+NOTE:
+This project is still in very early stage. Future functionality will include:
+  i) Script to export data to Lap asset management (available for testing)
   ii) Script to export person tag group hierarchy to darktable sidecars.
 
 Recovering person/face knowledge from digiKam, Lightroom and darktable
-sidecars is available today — see [Legacy recovery](#legacy-recovery-harvest--import).
+sidecars is available today for testing — see [Legacy recovery](#legacy-recovery-harvest--import).
 
 ## Components
 
@@ -28,9 +40,8 @@ sidecars is available today — see [Legacy recovery](#legacy-recovery-harvest--
 
 ## Setup
 
-- Python venv with `insightface` at `<INSIGHTFACE_PATH>/insight_env` — with
-  the shipped `.env` that means `../insightface/insight_env` relative to the
-  repo root; the buffalo_l model is downloaded on first run.
+- For face detection: Python venv with `insightface` at `<INSIGHTFACE_PATH>/insight_env`,
+Refer [InsightFace](https://github.com/deepinsight/insightface/blob/master/python-package/README.md).
 - Node 22+, Rust (Tauri prerequisites: webkit2gtk-4.1, gtk3).
 - Paths (data, config, insightface, input directories) live in `.env` —
   copy the committed `env.sample` template and adjust. `${VAR}` references
