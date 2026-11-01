@@ -176,6 +176,15 @@ Checks (contract refs: docs/gui-design.md):
       fresh All view, the person context menu, the group dialog, the
       merge-into confirmation, the merge-similar dialog, the Edit
       dialog, a no-op toast and the Rolls pane (#195, §4.43)
+  C55 Review is sticky — › steps the anchor INSIDE Review: the Review
+      tab stays active, the lock stays engaged and Show stays disabled
+      after a step (#200, §4.40)
+  C56 New = orange — the top-bar count chip, the Show option and the
+      card badge render --warn, never the reject red (#202, §4.41)
+  C57 a film-roll crop click in the focus split moves the right pane
+      to that face's person, split and tab untouched (#201, §4.37)
+  C58 Review keeps its scroll — leave to Person and return: the centre
+      is back at the saved place, not the top (#203, §4.40)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -5238,6 +5247,182 @@ def c54_no_refs_in_ui_strings(t):
            "; ".join(offenders) if offenders else "clean across 9 states")
 
 
+def c55_review_sticky_on_step(t):
+    """#200 (§4.40): Review is sticky — › advances the anchor INSIDE
+    Review: the Review tab stays active, the lock stays engaged and the
+    Show select stays disabled after a step (the Rolls/Person tab
+    clicks are the only exit)."""
+    fresh(t)
+    nav = t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+    nav[0].click()  # Review (idempotent — fresh already lands there)
+    time.sleep(1.0)
+
+    def state():
+        return js(t, r"""
+          const active = document.querySelector('.topbar nav button.active');
+          const sel = document.querySelector('.topbar-right select');
+          return {
+            tab: (active?.textContent ?? '').trim().split(/\s+/)[0] ?? '',
+            showDisabled: !!sel?.disabled,
+            locked: !!document.querySelector('.lock-btn.locked'),
+            pos: document.querySelector('.nav-pos')?.textContent.trim() ?? '',
+          };
+        """)
+
+    before = state()
+    if before["tab"] != "Review":
+        record("C55 review sticky: › steps inside Review (#200, §4.40)",
+               False, f"could not enter Review: {before}")
+        return
+    nxt = [b for b in t.find_elements(By.CSS_SELECTOR,
+                                      ".center-toolbar .toolbar-left button")
+           if b.text.strip() == "›"]
+    if nxt and not nxt[0].get_attribute("disabled"):
+        nxt[0].click()
+        time.sleep(0.8)
+    after = state()
+    ok = (after["tab"] == "Review"
+          and after["showDisabled"] is True
+          and after["locked"] is True)
+    record("C55 review sticky: › steps inside Review (#200, §4.40)", ok,
+           f"before={before} after={after}")
+
+
+def c56_new_is_orange(t):
+    """#202 (§4.41): New = orange — the top-bar count chip, the Show
+    option and the face-card badge render --warn; red (--bad) stays the
+    reject language."""
+    fresh(t)
+    st = js(t, r"""
+      const cs = getComputedStyle(document.documentElement);
+      const norm = (c) => (c ?? '').replace(/\s/g, '');
+      const hex2rgb = (h) => {
+        const m = /^#([0-9a-f]{6})$/i.exec(h.trim());
+        if (!m) return h.trim();
+        const n = parseInt(m[1], 16);
+        return `rgb(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255})`;
+      };
+      const col = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? norm(getComputedStyle(el).color) : null;
+      };
+      return {
+        warnRGB: hex2rgb(cs.getPropertyValue('--warn')),
+        badRGB: hex2rgb(cs.getPropertyValue('--bad')),
+        chip: col('.status-counts .c-prov'),
+        option: col('option[value="provisional"]'),
+        badge: col('.face-badge.status-provisional'),
+        rejectRed: col('.ctx-item.danger'),
+      };
+    """)
+
+    def orange(v):
+        return v is not None and v == st["warnRGB"] and v != st["badRGB"]
+
+    ok = (orange(st["chip"]) and orange(st["option"])
+          and (st["badge"] is None or orange(st["badge"])))
+    record("C56 New = orange, red stays reject (#202, §4.41)", ok, str(st))
+
+
+def c57_split_crop_click_follows_person(t):
+    """#201 (§4.37): a film-roll crop click in the focus split moves
+    the right pane to that face's person — the same plain-anchor rule
+    as the overlay rects (#171). The split and the active tab stay
+    put."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const byId = new Map(snap.faces.map(f => [f.id, f]));
+      const pname = (pid) => snap.persons.find(p => p.id === pid)?.name ?? null;
+      const cards = [...document.querySelectorAll('.face-card')]
+        .map(c => Number(c.dataset.faceId));
+      for (const cid of cards) {
+        const f = byId.get(cid);
+        if (!f || f.person_id == null) continue;
+        const other = snap.faces.find(x =>
+          x.image_id === f.image_id && x.id !== f.id &&
+          x.person_id != null && x.person_id !== f.person_id &&
+          x.link_status !== 'rejected');
+        if (other) return {cardId: cid, cardName: pname(f.person_id),
+                           otherFace: other.id, otherName: pname(other.person_id)};
+      }
+      return null;
+    """)
+    if pick is None:
+        record("C57 split crop click follows the person (#201, §4.37)", True,
+               "need a card whose image holds two persons' faces — vacuous")
+        return
+    # pre-click, then double-click (WebKit dblclick window — see C32)
+    card = t.find_element(By.CSS_SELECTOR,
+                          f".face-card[data-face-id='{pick['cardId']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()
+    time.sleep(0.6)
+    card = t.find_element(By.CSS_SELECTOR,
+                          f".face-card[data-face-id='{pick['cardId']}']")
+    AC(t.driver).double_click(card).perform()
+    time.sleep(0.8)
+    if not js(t, "return !!document.querySelector('.focus-pane')"):
+        record("C57 split crop click follows the person (#201, §4.37)", False,
+               "focus split did not open")
+        return
+    # click the OTHER person's crop in the film roll below the image
+    crop = t.find_element(
+        By.CSS_SELECTOR,
+        f".film-roll .face-card[data-face-id='{pick['otherFace']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", crop)
+    time.sleep(0.3)
+    crop.click()
+    time.sleep(0.7)
+    st = js(t, r"""
+      const sel = document.querySelector('.tree-person.selected .tree-name');
+      return {
+        focus: !!document.querySelector('.focus-pane'),
+        anchor: sel ? sel.textContent.trim() : null,
+        cropSelected: !!document.querySelector(
+          `.film-roll .face-card[data-face-id='${arguments[0]}']`)?.classList.contains('selected'),
+      };
+    """, pick["otherFace"])
+    ok = (st["focus"] is True and st["anchor"] == pick["otherName"]
+          and st["cropSelected"] is True)
+    record("C57 split crop click follows the person (#201, §4.37)", ok,
+           f"want={pick['otherName']!r} {st}")
+
+
+def c58_review_keeps_scroll(t):
+    """#203 (§4.40): Review keeps its scroll — scroll the review grid,
+    leave to Person, return to Review: the centre is back at the saved
+    place, not at the top (the toolbar index and the visible place must
+    never disagree)."""
+    fresh(t)
+    nav = t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+    nav[0].click()  # Review
+    time.sleep(1.2)
+    target = js(t, r"""
+      const el = document.querySelector('.center-scroll');
+      if (!el) return null;
+      const top = Math.min(1500, Math.max(0, el.scrollHeight - el.clientHeight - 10));
+      if (top <= 0) return 0;
+      el.scrollTop = top;
+      return el.scrollTop;
+    """)
+    time.sleep(0.6)
+    if not target:
+        record("C58 review keeps its scroll across modes (#203, §4.40)", True,
+               f"review grid not scrollable (target={target}) — vacuous")
+        return
+    nav[2].click()  # Person
+    time.sleep(0.8)
+    nav[0].click()  # back to Review
+    time.sleep(1.2)
+    back = js(t, "return document.querySelector('.center-scroll')?.scrollTop ?? null")
+    ok = back is not None and abs(back - target) <= 2
+    record("C58 review keeps its scroll across modes (#203, §4.40)", ok,
+           f"saved={target} restored={back}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -5299,6 +5484,10 @@ def main():
         c52_staged_desc_prefills_reopened_dialog(t)
         c53_header_logo_and_favicon(t)
         c54_no_refs_in_ui_strings(t)
+        c55_review_sticky_on_step(t)
+        c56_new_is_orange(t)
+        c57_split_crop_click_follows_person(t)
+        c58_review_keeps_scroll(t)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

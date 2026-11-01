@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.91** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.92** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1300,7 +1300,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       under the current face filter), the context advances to the
       **next person of the review step list — exactly what “›”
       (`stepPerson(1)`) does** — instead of leaving a black centre
-      panel. The verdict also **focuses its acted-on person**
+      panel. The fall-through keeps the user **in Review** (§4.40:
+      stepping never leaves the mode). The verdict also **focuses its acted-on person**
       (post-success, §4.41): with the anchor on the acted person the
       mark comparison below is unchanged and this hand-over fires, while
       a grid-only verdict (no anchor ⇒ no mark) simply gains the anchor
@@ -1651,9 +1652,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      (a thumbnail opened without a face context — there
      is no person to follow; the pane shows whatever it showed, incl. its
      empty state when none is anchored).
-   - **On rectangle click**: clicking a rect in either full-image surface
-     switches the right pane to **the clicked face's person**, *in
-     addition to* the §4.11 selection toggle. The view never changes:
+   - **On rectangle/crop click**: clicking a rect in either
+     full-image surface — or a face card in the focus split's film
+     roll below the image — switches the right pane to
+     **the clicked face's person**, *in addition to* the §4.11
+     selection toggle. The view never changes:
      the split/rolls detail stays open, no tab switch, no person-view
      navigation (a plain `setPersonId` — deliberately NOT the §4.15
      tree-row select, which yanks the centre pane), and the selection is
@@ -1814,6 +1817,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      forced follow-up mode): the tab click *is* the exit. The §4.41
      guards (*No new faces*, *Please select a person…*) cover any
      resulting empty state, so nothing else fires on exit.
+   - **Review is sticky**: neither stepping (‹ › / ← → — the anchor
+     advances to the next reviewable person, the mode does not) nor
+     the §4.30 person-exhausted fall-through ever leaves Review; only
+     the tab clicks above exit it. The review grid also keeps its
+     **scroll position** across any leave-and-return — the centre
+     toolbar's index and the visible place never disagree.
    - **Reach**: the §4.30 exhaust machinery is mode-gated — verdicts
      made in Review mark and hand over; verdicts in Person/focus/rolls
      never advance, and §4.30's accept keeps its plain path while a
@@ -1877,7 +1886,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      the colours below; the tooltip reads `totals in the database` —
      never one person's faces. A person's own counts stay in the tree
      badges and the right pane.
-   - **One status colour scheme**: **New = red, Accepted =
+   - **One status colour scheme**: **New = orange (the reject
+     language is red — ✗ buttons and reject actions), Accepted =
      green, Rejected = gray, All/default = normal text** — everywhere
      status TEXT appears: the tree's status branches and group branch
      labels, the Show select (its options **and** its closed value),

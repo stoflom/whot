@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -522,10 +523,23 @@ export default function App() {
     [splitImageId, facesById]
   );
 
+  // #201 (§4.37) — a crop click in the focus split follows the same
+  // plain-anchor rule as the overlay rects (#171): the right pane moves
+  // to the clicked face's person; a NULL person_id leaves it as it was
+  const followCrop = useCallback(
+    (id: number) => {
+      if (splitImageId == null) return;
+      const f = facesById.get(id);
+      if (f && f.person_id != null) setPersonId(f.person_id);
+    },
+    [splitImageId, facesById]
+  );
+
   const toggle = useCallback(
     (id: number) => {
       anchorRef.current = id; // #69: the toggled card becomes the range anchor
       closeSplitForFaces([id]);
+      followCrop(id); // #201 (§4.37): the right pane follows the crop
       const n = new Set(selRef.current);
       if (n.has(id)) n.delete(id);
       else {
@@ -534,7 +548,7 @@ export default function App() {
       }
       changeSel(n);
     },
-    [closeSplitForFaces, changeSel]
+    [closeSplitForFaces, followCrop, changeSel]
   );
   const toggleMany = useCallback(
     (ids: number[], on: boolean) => {
@@ -855,6 +869,16 @@ export default function App() {
     changeFaceFilter("provisional");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, snap]);
+  // #203 (§4.40): Review keeps its scroll — the review grid's place is
+  // saved while Review is on screen and restored when Review is
+  // re-entered, so the toolbar index and the visible place never disagree
+  const centerScrollRef = useRef<HTMLDivElement>(null);
+  const reviewScrollRef = useRef(0);
+  useLayoutEffect(() => {
+    if (mode !== "review") return;
+    const el = centerScrollRef.current;
+    if (el) el.scrollTop = reviewScrollRef.current;
+  }, [mode]);
   // #188/§4.40 — the position guard, on ENTRY only (a mode transition;
   // the mount has no anchor): an anchored person without a new face
   // advances to the next person in the step list that has one (forward,
@@ -1226,10 +1250,11 @@ export default function App() {
     (id: number) => {
       anchorRef.current = id;
       closeSplitForFaces([id]);
+      followCrop(id); // #201 (§4.37): the right pane follows the crop
       lastSelRef.current = id;
       changeSel(new Set([id]));
     },
-    [closeSplitForFaces, changeSel]
+    [closeSplitForFaces, followCrop, changeSel]
   );
   // shift-click: the contiguous range anchor…clicked card; the anchor
   // stays put so repeated shift-clicks re-anchor the same start, the
@@ -1618,7 +1643,10 @@ export default function App() {
       return;
     }
     setPersonId(nextId);
-    setMode("person");
+    // #200 (§4.40): the fall-through advances INSIDE Review — the mode
+    // never changes here (the old setMode("person") yanked the user out
+    // of the review workflow)
+    if (mode !== "review") setMode("person");
     setImageId(null);
     // §4.15/#175: the advance ends an open full image/focus — the
     // person on screen is no longer the one shown (stepping closes it too)
@@ -1836,11 +1864,14 @@ export default function App() {
       confirmContext(() => {
         if (splitImageId != null) setSplitImageId(null);
         setPersonId(id);
-        setMode("person");
+        // #200 (§4.40): Review is sticky — stepping advances the anchor
+        // INSIDE Review; the mode switch runs only from another mode
+        // (the Rolls/Person tab clicks are the only Review exit)
+        if (mode !== "review") setMode("person");
         setImageId(null);
       });
     },
-    [stepIdx, stepIds, splitImageId, confirmContext]
+    [stepIdx, stepIds, splitImageId, confirmContext, mode]
   );
   // #194 (§4.41) — the empty state says what to do next: the anchored
   // person holds no face under the current Show filter, so the bare
@@ -2520,7 +2551,15 @@ export default function App() {
           )}
           {/* #100: the bar is the pane's real header — only the area below
               it scrolls, so no section content can ever pass above it */}
-          <div className="center-scroll">
+          <div
+            className="center-scroll"
+            ref={centerScrollRef}
+            onScroll={(e) => {
+              // #203: only Review's place is remembered
+              if (mode === "review")
+                reviewScrollRef.current = e.currentTarget.scrollTop;
+            }}
+          >
           <div className={splitRow ? "center-focus" : undefined}>
             {splitRow ? (
               // #55 (§4.19) — full-image focus mode: the annotated image
