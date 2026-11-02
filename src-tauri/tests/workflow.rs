@@ -1089,3 +1089,129 @@ fn has_schema_probes_usable_database_185() {
     assert!(!db::has_schema(&p), "an empty file is not a usable database");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+// ------------------------------------------- session 1 performance (#207–#216)
+
+/// #209 — batch image rotation: one call rotates every image and
+/// cascades to the crops exactly like the single command (§4.32); a
+/// repeated id rotates once; a missing image rolls the whole batch back
+/// (the old per-image loop applied the prefix before failing).
+#[test]
+fn rotate_images_batch_cascades_209() {
+    let p = fixture_paths("rotbatch");
+    db::rotate_images(&p, &[1, 2], 90).unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let rot_img = |id: i64| s.images.iter().find(|i| i.id == id).unwrap().rotation;
+    let rot_face = |id: i64| s.faces.iter().find(|f| f.id == id).unwrap().rotation;
+    assert_eq!((rot_img(1), rot_img(2), rot_img(3)), (90, 90, 0));
+    assert_eq!(
+        (rot_face(1), rot_face(2), rot_face(6), rot_face(3), rot_face(4)),
+        (90, 90, 90, 90, 0),
+        "each crop follows its image (§4.32 cascade)"
+    );
+    // a repeated id rotates once; negative deltas normalise
+    db::rotate_images(&p, &[1, 1], -90).unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.images.iter().find(|i| i.id == 1).unwrap().rotation, 0);
+    assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().rotation, 0);
+    // a missing image aborts the whole batch — no prefix applied
+    assert!(db::rotate_images(&p, &[2, 999], 90).is_err());
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(
+        s.images.iter().find(|i| i.id == 2).unwrap().rotation, 90,
+        "the failed batch rolled back"
+    );
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #209 — batch description write: call order decides the shared new
+/// group's seqs exactly as the sequential single calls did (§4.4/§4.7);
+/// re-stating the same description never renumbers.
+#[test]
+fn set_face_descriptions_batch_seqs_in_call_order_209() {
+    let p = fixture_paths("descbatch");
+    db::set_face_descriptions(&p, &[1, 2], "smiling").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let f = |id: i64| s.faces.iter().find(|x| x.id == id).unwrap();
+    assert_eq!((f(1).description.as_deref(), f(1).seq), (Some("smiling"), 1));
+    assert_eq!((f(2).description.as_deref(), f(2).seq), (Some("smiling"), 2));
+    assert_eq!(f(1).name, "Unknown1-smiling-1");
+    assert_eq!(f(2).name, "Unknown1-smiling-2");
+    assert_eq!((f(6).description.as_deref(), f(6).name.as_str()), (None, "Unknown1-3"));
+    // no-op repeat: the same tags never renumber
+    db::set_face_descriptions(&p, &[1, 2], "smiling").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let g = |id: i64| s.faces.iter().find(|x| x.id == id).unwrap().seq;
+    assert_eq!((g(1), g(2)), (1, 2));
+    // another person's group numbers independently
+    db::set_face_descriptions(&p, &[3], "beard").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let f3 = s.faces.iter().find(|x| x.id == 3).unwrap();
+    assert_eq!(
+        (f3.description.as_deref(), f3.seq, f3.name.as_str()),
+        (Some("beard"), 1, "Unknown2-beard-1")
+    );
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #208 — the change stamp: moves only on real writes (from ANY
+/// connection; zero-row writes never move it) and travels with the
+/// snapshot, so the GUI can skip no-op focus reloads.
+#[test]
+fn data_version_tracks_real_changes_only_208() {
+    let p = fixture_paths("dver");
+    let v0 = db::data_version(&p).unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.version, v0, "no write between the two reads");
+    assert_eq!(db::data_version(&p).unwrap(), v0, "idle stays put");
+    db::set_link_status(&p, &[1], "confirmed").unwrap();
+    let v1 = db::data_version(&p).unwrap();
+    assert_ne!(v1, v0, "a real write bumps the stamp");
+    assert_eq!(
+        db::snapshot(&p).unwrap().version, v1,
+        "the next snapshot reports it"
+    );
+    // zero-row writes (the §4.27 sweep's steady state) never bump
+    {
+        let con = rusqlite::Connection::open(&p.db).unwrap();
+        con.execute("DELETE FROM persons WHERE name = 'NoSuch'", []).unwrap();
+    }
+    assert_eq!(db::data_version(&p).unwrap(), v1);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #211 — the cluster cache: identical inputs hit (no recompute), any
+/// change to the clustering inputs recomputes, and the threshold is part
+/// of the cache key.
+#[test]
+fn cluster_cache_hits_until_inputs_change_211() {
+    let p = fixture_paths("clcache");
+    // pin the primary first: backfill would otherwise move it on the
+    // first verdict and change the primary flag of the input rows
+    db::set_primary_face(&p, 1, 1).unwrap();
+    let a = db::person_face_clusters(&p, 1, 0.5).unwrap();
+    assert_eq!(db::cluster_cache_hits(&p, 1, 0.5), 0, "first call computes");
+    let b = db::person_face_clusters(&p, 1, 0.5).unwrap();
+    assert_eq!(db::cluster_cache_hits(&p, 1, 0.5), 1, "second call hits");
+    assert_eq!(format!("{a:?}"), format!("{b:?}"), "the cached result is identical");
+    // provisional→confirmed feeds no clustering input — the re-read hits
+    db::set_link_status(&p, &[2], "confirmed").unwrap();
+    let _ = db::person_face_clusters(&p, 1, 0.5).unwrap();
+    assert_eq!(db::cluster_cache_hits(&p, 1, 0.5), 2, "no input changed");
+    // a reject drops the face from the input rows — recompute
+    db::set_link_status(&p, &[1], "rejected").unwrap();
+    let c = db::person_face_clusters(&p, 1, 0.5).unwrap();
+    assert_eq!(db::cluster_cache_hits(&p, 1, 0.5), 0, "changed inputs recompute");
+    let ids: Vec<i64> = c
+        .iter()
+        .flat_map(|g| g.clusters.iter().flatten())
+        .map(|f| f.face_id)
+        .collect();
+    assert!(!ids.contains(&1), "the rejected face is gone: {ids:?}");
+    // the threshold is part of the key
+    let _ = db::person_face_clusters(&p, 1, 0.6).unwrap();
+    assert_eq!(db::cluster_cache_hits(&p, 1, 0.5), 0, "the 0.5 entry is untouched");
+    let _ = db::person_face_clusters(&p, 1, 0.6).unwrap();
+    assert_eq!(db::cluster_cache_hits(&p, 1, 0.6), 1);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
