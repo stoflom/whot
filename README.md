@@ -396,9 +396,11 @@ whot/
       MergeIntoDialog.tsx                      # dialogs (Edit, Group,
       MergeSimilarDialog.tsx                   # Confirm, MergeInto,
       FaceMergeDialog.tsx                      # MergeSimilar, FaceMerge);
+      FirstRun.tsx                             # the #185/§4.36 first-run screen
       NameTypeahead.tsx  PathTypeahead.tsx     # typeaheads + suggestions
       SuggestInput.tsx  SettingsPopover.tsx    # (Name/Path/Suggest); settings
     viewFilters.ts  reviewFlow.ts  stage.ts  faceDrop.ts  stepFlow.ts   # pure logic
+    sections.ts  paneState.ts  clickPair.ts  menus.ts          # §4.44 pure App extractions (v3.94)
     groupList.ts  imageSelect.ts  nameCluster.ts  autoText.ts          # helpers
     rotation.ts  hooks.ts                                              # helpers
     overlays.tsx                   # one overlay registry (Esc/keys)
@@ -458,4 +460,4 @@ WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox
 - `docs/scripts-design.md` — Python tooling: §8 harvest, §9 harvest import
 - `docs/schema-design.md` — `faces.db` DDL design: identities, version gate, drop & recreate
 - `docs/backend-design.md` — Rust backend architecture (`lib.rs`/`db.rs`)
-- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C49`)
+- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C61`, C17 retired, + `R1`–`R2`)
