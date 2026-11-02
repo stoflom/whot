@@ -1,4 +1,10 @@
-import { memo, useMemo, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
 import { stagedFieldsForSection, type Stage } from "../stage";
@@ -61,6 +67,12 @@ interface GridProps extends GridShared {
       "nothing to show" when provided (App computes it for the person
       context only; grid-level, so it never reaches a section) */
   emptyHint?: string;
+  /** #214: incremental mount — when set, only the first `mountLimit`
+      sections render and `onNeedMore` grows the prefix from the
+      sentinel past its end; unset renders everything (the film roll,
+      the image detail, the person view) */
+  mountLimit?: number;
+  onNeedMore?: () => void;
 }
 
 /** #109: a stable identity for "which staged fields preview on this
@@ -291,19 +303,42 @@ const SectionView = memo(
     a.descTargetId === b.descTargetId,
 );
 
-export default function FaceGrid({
+function FaceGrid({
   sections,
   sel,
   faceDropTarget,
   emptyHint,
+  mountLimit,
+  onNeedMore,
   ...shared
 }: GridProps) {
+  // #214: the mounted prefix (unset = everything)
+  const shown = mountLimit == null ? sections : sections.slice(0, mountLimit);
+  const more = mountLimit != null && sections.length > mountLimit;
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // #214: grow toward the viewport edge — the sentinel sits just past
+  // the last mounted section (the App owns the limit so its depth
+  // survives grid unmounts; see gridMount.ts for the reveal rule)
+  useEffect(() => {
+    if (!more) return;
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onNeedMore?.();
+      },
+      // grow ahead of the viewport so scrolling never waits on a frame
+      { rootMargin: "800px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [more, onNeedMore]);
   if (sections.length === 0) {
     return <div className="empty">{emptyHint ?? "nothing to show"}</div>;
   }
   return (
     <div className="face-sections">
-      {sections.map((s) => {
+      {shown.map((s) => {
         // #109: the per-section selection identity — computed per render
         // (cheap: one `sel.has` per face), consumed only by the comparator
         const selSig = s.faceIds.filter((id) => sel.has(id)).join(",");
@@ -324,6 +359,12 @@ export default function FaceGrid({
           />
         );
       })}
+      {more && <div ref={sentinelRef} className="grid-grow-sentinel" />}
     </div>
   );
 }
+
+// #215: memoised — with App's handler/grid identities stable, an App
+// re-render that changes none of the grid's own props (menu open, info
+// toast, drag state) skips the whole section map
+export default memo(FaceGrid);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
 import { rotStyle } from "../rotation";
@@ -294,7 +294,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
   );
 }
 
-export default function DetailPane(props: Props) {
+function DetailPane(props: Props) {
   const { person, snapshot, faceFilter } = props;
   if (person) {
     return <PersonView {...props} person={person} />;
@@ -326,3 +326,7 @@ export default function DetailPane(props: Props) {
     </div>
   );
 }
+
+// #215: memoised — App keeps the handler identities stable, so a
+// re-render that changes none of this pane's own props skips it
+export default memo(DetailPane);

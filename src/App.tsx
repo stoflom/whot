@@ -17,6 +17,8 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
+import { personDataSig } from "./personSig";
+import { mountLimitFor, growLimit, GRID_MOUNT_INITIAL } from "./gridMount";
 import { renameGroupFor as renameGroup, type GroupOp } from "./groupList";
 import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
@@ -106,13 +108,13 @@ export default function App() {
   // changes (a different thumb set)
   const [imgSel, setImgSel] = useState<ImageSel>(emptyImageSel());
   useEffect(() => setImgSel(emptyImageSel()), [rollBranch]);
-  const changeRollRoot = (p: string) => {
+  const changeRollRoot = useCallback((p: string) => {
     setRollRoot(p);
     setRollBranch((prev) =>
       p === "/" || prev === p || prev.startsWith(`${p}/`) ? prev : p
     );
     setImgSel(emptyImageSel());
-  };
+  }, []);
   // #167 (§4.36): the import pane's directory — session state in the
   // DetailPane's right-pane slot (survives tab switches); null = closed
   const [importDir, setImportDir] = useState<string | null>(null);
@@ -137,6 +139,24 @@ export default function App() {
   // layout effect (deterministic, post-commit; rAF is frame-starved
   // in occluded/automated WebKit and must not gate user-visible work)
   const [reanchor, setReanchor] = useState<{ pid: number } | null>(null);
+  // #214 (§4.40/§4.30 reveal): the centre grid's incremental mount —
+  // the review grid renders a PREFIX of sections and grows toward the
+  // viewport edge / reveal targets (gridMount.ts). App-owned (like
+  // reviewScrollRef) so the depth survives grid unmounts: the §4.40
+  // scroll restore then lands on heights the user already scrolled
+  // through. Person/rolls views render everything — their card counts
+  // are bounded and the in-view card contracts (gui-mock C12/C13) hold
+  // by construction.
+  const [mountLimit, setMountLimit] = useState(GRID_MOUNT_INITIAL);
+  const growMount = useCallback(
+    () => setMountLimit((n) => growLimit(n)),
+    []
+  );
+  // #214: the accept-&-next reveal target (§4.30) — grown into the
+  // mounted prefix first, then scrolled into view by the layout effect
+  // below (post-commit; replaces the frame-dependent double-rAF, which
+  // could never reach an unmounted card)
+  const [revealFace, setRevealFace] = useState<number | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // the centre shows the HIERARCHY (no image open, no focus split) —
   // the detail views need the full width again (§4.39)
@@ -278,7 +298,12 @@ export default function App() {
   // visibility, tree presence/counts (#28 generalised) and the review set
   const faceFilter = (snap?.settings.face_filter ?? "all") as FaceFilter;
   const clusterGroup = snap?.settings.cluster_group ?? "accuracy";
-  const faceVisible = (f: Face) => matchesStatusFilter(f.link_status, faceFilter);
+  const clusterThreshold = snap?.settings.cluster_threshold ?? 0.4;
+  // #215: a stable identity — the memo(pane) handlers below carry it
+  const faceVisible = useCallback(
+    (f: Face) => matchesStatusFilter(f.link_status, faceFilter),
+    [faceFilter]
+  );
   // #127/#128 → #152, #165 (§4.10): the face-status filter decides the
   // tree's person presence — All now means everything EXCEPT rejected:
   // persons holding ≥ 1 non-rejected face stay (plus the faceless
@@ -315,32 +340,48 @@ export default function App() {
   );
   const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
 
+  // #213: one person-data signature per snapshot — the cluster and
+  // refcrop effects below key on IT instead of the snapshot identity, so
+  // a verdict on an unrelated person (or any unrelated mutation) no
+  // longer re-fetches the anchored person's refcrop images or recomputes
+  // their clusters. `refcropEpoch` covers what the snapshot cannot see:
+  // pin changes (add/remove_refcrop write person_refcrops only).
+  const [refcropEpoch, setRefcropEpoch] = useState(0);
+  const personSig = useMemo(
+    () => personDataSig(displayPerson, snap?.faces ?? [], snap?.settings ?? null),
+    [displayPerson, snap]
+  );
+
   // similarity clusters for the person view (Accuracy mode only —
-  // Description mode needs no IPC at all, #99)
+  // Description mode needs no IPC at all, #99). #213: recomputed only
+  // when this person's clustering inputs move (the #211 backend cache
+  // catches the repeated reads)
   useEffect(() => {
     if (
       mode === "person" &&
       personId != null &&
-      snap &&
-      snap.settings.cluster_group === "accuracy"
+      personSig &&
+      clusterGroup === "accuracy"
     ) {
       api
-        .personFaceClusters(personId, snap.settings.cluster_threshold)
+        .personFaceClusters(personId, clusterThreshold)
         .then(setClusters)
         .catch((e) => setError(String(e)));
     } else {
       setClusters(null);
     }
-  }, [mode, personId, snap]);
+  }, [mode, personId, personSig, clusterGroup, clusterThreshold]);
 
-  // refcrops for the detail pane
+  // refcrops for the detail pane. #213: keyed on the person-data
+  // signature + the pin epoch (pin changes are invisible to the
+  // snapshot, so doRefcrop/paneRemoveRefcrop bump the epoch)
   useEffect(() => {
-    if (personId == null) {
+    if (personId == null || !personSig) {
       setRefcrops([]);
       return;
     }
     api.getRefcrops(personId).then(setRefcrops).catch(() => setRefcrops([]));
-  }, [personId, snap]);
+  }, [personId, personSig, refcropEpoch]);
 
   // #25 — Esc closes the double-click image split
   // #138: which overlays are open is ONE registry count, not a list of
@@ -410,8 +451,10 @@ export default function App() {
   );
   // #174 (§4.39): rotate a whole thumbnail scope — one batched command
   // (#209), one refresh
-  const rotateImages = (ids: number[], delta: number) =>
-    mutate(() => api.rotateImages(ids, delta));
+  const rotateImages = useCallback(
+    (ids: number[], delta: number) => mutate(() => api.rotateImages(ids, delta)),
+    [mutate]
+  );
   const rotateFace = useCallback(
     (faceId: number, delta: number) => mutate(() => api.rotateFace(faceId, delta)),
     [mutate]
@@ -645,7 +688,12 @@ export default function App() {
   const doRefcrop = useCallback(
     (id: number) => {
       const f = facesById.get(id);
-      if (f && f.person_id != null) mutate(() => api.addRefcrop(f.person_id!, id));
+      if (f && f.person_id != null)
+        // #213: pin changes are invisible to the snapshot signature —
+        // bump the epoch so the strip refetches
+        void mutate(() => api.addRefcrop(f.person_id!, id)).then((ok) => {
+          if (ok) setRefcropEpoch((n) => n + 1);
+        });
     },
     [facesById, mutate]
   );
@@ -655,7 +703,9 @@ export default function App() {
   // #62 — a tree select shifts the attention to that person, so the full
   // image closes whether the person appears in it or not (§4.15); #52's
   // person-relevance check is gone on purpose
-  const handleTreeSelect = (id: number, e?: ReactMouseEvent) => {
+  // #215: stable identity (the memo(PersonTree) rule) — changes only
+  // with the context it actually reads, never per selection toggle
+  const handleTreeSelect = useCallback((id: number, e?: ReactMouseEvent) => {
     // #123: a tree select shifts attention to another person — with a
     // live pending set that is a context change (drop-or-accept)
     confirmContext(() => {
@@ -696,10 +746,10 @@ export default function App() {
         setImageId(null);
       }
     });
-  };
-  const doRemovePersons = (ids: number[]) => {
+  }, [confirmContext, splitImageId, stepIds, personId, mode]);
+  const doRemovePersons = useCallback((ids: number[]) => {
     if (ids.length > 0) setConfirmRemove(ids);
-  };
+  }, []);
 
   // renameGroup — the #153/#178/#165 rule now lives in
   // groupList.renameGroupFor (§4.44: pure, co-tested; imported above as
@@ -731,11 +781,87 @@ export default function App() {
     },
     [snap, personsById, mutate, doAssign]
   );
-  const renameOrMerge = (id: number, n: string) => {
-    // §4.38/#172: a rename-merge re-anchors the pane on the surviving
-    // person (the merge target) — the origin shell is deleted
-    void renameMerge(id, n).then((t) => t != null && setPersonId(t));
-  };
+  const renameOrMerge = useCallback(
+    (id: number, n: string) => {
+      // §4.38/#172: a rename-merge re-anchors the pane on the surviving
+      // person (the merge target) — the origin shell is deleted
+      void renameMerge(id, n).then((t) => t != null && setPersonId(t));
+    },
+    [renameMerge]
+  );
+
+  // #215: the remaining stable pane handlers (the memo(pane) identity
+  // rule — see gridHandlers below)
+  const reviewTab = useCallback(
+    () =>
+      confirmContext(() => {
+        setMode("review");
+        setImageId(null);
+        setSplitImageId(null); // #55 (§4.19): explicit navigation ends focus mode
+      }),
+    [confirmContext]
+  );
+  const renameGroupCmd = useCallback(
+    (oldPath: string, newPath: string) => mutate(() => api.renameGroup(oldPath, newPath)),
+    [mutate]
+  );
+  const deleteGroupCmd = useCallback(
+    (path: string) => mutate(() => api.deleteGroup(path)),
+    [mutate]
+  );
+  const movePersonsCmd = useCallback(
+    (ids: number[], path: string, src?: string) => {
+      // #157 (v3.59): a tree D&D drop carries the dragged placement's
+      // branch path — re-home THAT membership (remove the dragged-from
+      // row when the person has it, file into the target; other
+      // memberships kept). Same branch → no-op: the person already
+      // renders under the target. Without src (dialog paths) the §4.16
+      // replace-all keeps its meaning.
+      if (src != null) {
+        if (src === path) return;
+        void mutate(() => api.movePersonsBetweenGroups(ids, src, path));
+        return;
+      }
+      void mutate(() => api.movePersonsToGroup(ids, path));
+    },
+    [mutate]
+  );
+  const openMergeDialog = useCallback(() => setMergeOpen(true), []);
+  const selectPendingFaces = useCallback(
+    (id: number) => {
+      if (!snap) return;
+      const ids = snap.faces
+        .filter((f) => f.person_id === id && f.link_status === "provisional")
+        .map((f) => f.id);
+      toggleMany(ids, true);
+    },
+    [snap, toggleMany]
+  );
+  const paneNote = useCallback(
+    (id: number, n: string) => mutate(() => api.setPersonNote(id, n)),
+    [mutate]
+  );
+  const paneRemovePerson = useCallback(
+    (id: number) => doRemovePersons([id]),
+    [doRemovePersons]
+  );
+  const paneOpenPrimary = useCallback(
+    (fid: number) => {
+      const f = facesById.get(fid);
+      if (f) confirmContext(() => setSplitImageId(f.image_id));
+    },
+    [facesById, confirmContext]
+  );
+  const paneRemoveRefcrop = useCallback(
+    (fid: number) => {
+      if (personId == null) return;
+      // #213: pin changes are invisible to the snapshot signature
+      void mutate(() => api.removeRefcrop(personId, fid)).then((ok) => {
+        if (ok) setRefcropEpoch((n) => n + 1);
+      });
+    },
+    [personId, mutate]
+  );
 
   // #172/#173 (§4.38) — the person pane's Update person commit: the
   // pending name FIRST (the rename-merge helper, which may re-anchor),
@@ -816,13 +942,40 @@ export default function App() {
   // #200 reopened (gui-design v3.93, §4.40): the tree re-anchor scroll —
   // layout effect (post-commit, pre-paint, no frame dependency); the
   // optional chain: a tree person without a review section (no face
-  // under the review status) re-anchors without a scroll target
+  // under the review status) re-anchors without a scroll target.
+  // #214: grown into the mounted prefix first (the effect re-runs on the
+  // growth), then scrolled — one-shot, cleared after the attempt
   useLayoutEffect(() => {
     if (reanchor == null || mode !== "review") return;
+    const key = `rev-${reanchor.pid}`;
+    const idx = sectionsRef.current.findIndex((s) => s.key === key);
+    if (idx >= 0 && idx >= mountLimit) {
+      setMountLimit(mountLimitFor(sectionsRef.current.length, idx, mountLimit));
+      return;
+    }
+    setReanchor(null);
     document
-      .querySelector(`.face-section[data-section-key="rev-${reanchor.pid}"]`)
+      .querySelector(`.face-section[data-section-key="${key}"]`)
       ?.scrollIntoView({ block: "start" });
-  }, [reanchor, mode]);
+  }, [reanchor, mode, mountLimit]);
+  // #214: the accept-&-next reveal (§4.30) — the same grow-then-scroll
+  // pattern as the re-anchor above; one-shot
+  useLayoutEffect(() => {
+    if (revealFace == null) return;
+    const idx = sectionsRef.current.findIndex((s) => s.faceIds.includes(revealFace));
+    if (idx < 0) {
+      setRevealFace(null); // gone — nothing to reveal
+      return;
+    }
+    if (idx >= mountLimit) {
+      setMountLimit(mountLimitFor(sectionsRef.current.length, idx, mountLimit));
+      return;
+    }
+    document
+      .querySelector(`[data-face-id="${revealFace}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+    setRevealFace(null);
+  }, [revealFace, mountLimit]);
   // #188/§4.40 — the position guard, on ENTRY only (a mode transition;
   // the mount has no anchor): an anchored person without a new face
   // advances to the next person in the step list that has one (forward,
@@ -983,54 +1136,67 @@ export default function App() {
   }, [snap, rollBranch, faceFilter]);
   // thumb clicks — §4.23's anchor pattern over the branch's display
   // order (face selection untouched); the pane drops stale ids itself
-  const thumbClick = (id: number, mods: { ctrl: boolean; shift: boolean }) =>
-    setImgSel((s) => clickImage(s, branchThumbs.images.map((x) => x.id), id, mods));
+  const thumbClick = useCallback(
+    (id: number, mods: { ctrl: boolean; shift: boolean }) =>
+      setImgSel((s) => clickImage(s, branchThumbs.images.map((x) => x.id), id, mods)),
+    [branchThumbs]
+  );
   // the thumbnail double-click / path-filter file entry: the #142 view-
   // context change behind the #123 drop-or-accept dialog
-  const openThumb = (id: number) =>
-    confirmContext(() => {
-      setMode("rolls");
-      setImageId(id);
-    });
+  const openThumb = useCallback(
+    (id: number) =>
+      confirmContext(() => {
+        setMode("rolls");
+        setImageId(id);
+      }),
+    [confirmContext]
+  );
 
-  const imageAreaMenu = (e: ReactMouseEvent, imageId: number) => {
-    if (!snap) return;
-    const faces = snap.faces.filter(
-      (f) => f.image_id === imageId && faceVisible(f)
-    );
-    openMenu(e, imageAreaMenuGroups({
-      imageId,
-      faces,
-      openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
-      rotateImage: rotateImg,
-      changeSel,
-    }));
-  };
+  const imageAreaMenu = useCallback(
+    (e: ReactMouseEvent, imageId: number) => {
+      if (!snap) return;
+      const faces = snap.faces.filter(
+        (f) => f.image_id === imageId && faceVisible(f)
+      );
+      openMenu(e, imageAreaMenuGroups({
+        imageId,
+        faces,
+        openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
+        rotateImage: rotateImg,
+        changeSel,
+      }));
+    },
+    [snap, faceVisible, openMenu, rotateImg, changeSel]
+  );
 
-  const imageMenu = (image: ImageRow, e: ReactMouseEvent) => {
-    if (!snap) return;
-    const inBranch = new Set(branchThumbs.images.map((x) => x.id));
-    const faces = snap.faces.filter(
-      (f) => f.image_id === image.id && faceVisible(f)
-    );
-    openMenu(e, thumbMenuGroups({
-      image,
-      imgSel,
-      inBranch,
-      faces,
-      sel,
-      openImageInView: (id) =>
-        confirmContext(() => {
-          setMode("rolls");
-          setImageId(id);
-        }),
-      openFocused: (id) => confirmContext(() => setSplitImageId(id)),
-      rotateImages,
-      openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
-      doAccept,
-      changeSel,
-    }));
-  };
+  const imageMenu = useCallback(
+    (image: ImageRow, e: ReactMouseEvent) => {
+      if (!snap) return;
+      const inBranch = new Set(branchThumbs.images.map((x) => x.id));
+      const faces = snap.faces.filter(
+        (f) => f.image_id === image.id && faceVisible(f)
+      );
+      openMenu(e, thumbMenuGroups({
+        image,
+        imgSel,
+        inBranch,
+        faces,
+        sel,
+        openImageInView: (id) =>
+          confirmContext(() => {
+            setMode("rolls");
+            setImageId(id);
+          }),
+        openFocused: (id) => confirmContext(() => setSplitImageId(id)),
+        rotateImages,
+        openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
+        doAccept,
+        changeSel,
+      }));
+    },
+    [snap, branchThumbs, imgSel, sel, faceVisible, openMenu, confirmContext,
+     rotateImages, doAccept, changeSel]
+  );
 
   // ------------------------------------------------------------ sections
 
@@ -1212,6 +1378,13 @@ export default function App() {
   );
   sectionsRef.current = sections;
   sectionsForImageRef.current = sectionsForImage;
+  // #215: the focus film-roll sections — memoised per split image (the
+  // inline sectionsForImage(splitRow.id) built a fresh array identity on
+  // every App render, defeating memo(FaceGrid))
+  const splitSections = useMemo(
+    () => (splitImageId != null ? sectionsForImage(splitImageId) : []),
+    [sectionsForImage, splitImageId]
+  );
 
   // #96 (§4.30) — Review mode: accept advances the context; person and
   // focus mode route to the plain accept (context only ever moves by the
@@ -1265,14 +1438,11 @@ export default function App() {
       setSel(new Set(plan?.faceIds ?? []));
       const first = plan?.faceIds[0];
       if (first != null) {
-        // double-rAF: the refreshed snapshot must have painted first
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => {
-            document
-              .querySelector(`[data-face-id="${first}"]`)
-              ?.scrollIntoView({ block: "nearest" });
-          })
-        );
+        // #214: post-commit reveal — the layout effect below grows the
+        // mounted prefix to the target section first, then scrolls
+        // (replaces the frame-dependent double-rAF, which could never
+        // reach an unmounted card)
+        setRevealFace(first);
       }
     },
     [snap, mode, sections, mutate, markExhaust, facesById, personId, focusActed, focusActedUnlessNoop]
@@ -1597,16 +1767,27 @@ export default function App() {
         hit?.getAttribute("data-face-id") ?? hit?.getAttribute("data-overlay-face");
       sync(raw == null || Number.isNaN(parseInt(raw, 10)) ? null : parseInt(raw, 10));
     };
+    // #215: at most one recompute per frame — elementFromPoint plus the
+    // querySelectorAll pair must not run per raw mousemove/scroll event
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        recompute();
+      });
+    };
     const move = (e: MouseEvent) => {
       mouseRef.current = { x: e.clientX, y: e.clientY };
-      recompute();
+      schedule();
     };
     window.addEventListener("mousemove", move);
     // scrolling moves cards under a stationary pointer (mouseenter-equivalent)
-    window.addEventListener("scroll", recompute, { capture: true, passive: true });
+    window.addEventListener("scroll", schedule, { capture: true, passive: true });
     return () => {
       window.removeEventListener("mousemove", move);
-      window.removeEventListener("scroll", recompute, { capture: true } as EventListenerOptions);
+      window.removeEventListener("scroll", schedule, { capture: true } as EventListenerOptions);
+      cancelAnimationFrame(raf);
       sync(null);
     };
   }, []);
@@ -1742,7 +1923,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepPerson, acceptAndNext, commitPending, overlayCount, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, mode, mergeOpen, mergeInto, contextConfirm]);
 
-  const pendingCount = snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0;
+  const pendingCount = useMemo(
+    () => snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0,
+    [snap]
+  );
 
   // #179 (§4.41): the top bar's DB-wide status totals — an overview of
   // the whole database, independent of mode/filter/selection; one pass
@@ -2064,40 +2248,21 @@ export default function App() {
             reviewCount={pendingCount}
             filter={filter}
             onFilter={setFilter}
-            onReview={() =>
-              confirmContext(() => {
-                setMode("review");
-                setImageId(null);
-                setSplitImageId(null); // #55 (§4.19)
-              })
-            }
+            onReview={reviewTab}
             onSelect={handleTreeSelect}
             selectedIds={selPersons}
             onRemovePersons={doRemovePersons}
             onRename={renameOrMerge}
             // #50 (§4.16) — group management: membership only, faces untouched
-            onRenameGroup={(oldPath, newPath) => mutate(() => api.renameGroup(oldPath, newPath))}
-            onDeleteGroup={(path) => mutate(() => api.deleteGroup(path))}
-            onMovePersons={(ids, path, src) => {
-              // #157 (v3.59): a tree D&D drop carries the dragged
-              // placement's branch path — re-home THAT membership (remove
-              // the dragged-from row when the person has it, file into
-              // the target; other memberships kept). Same branch → no-op:
-              // the person already renders under the target. Without src
-              // (dialog paths) the §4.16 replace-all keeps its meaning.
-              if (src != null) {
-                if (src === path) return;
-                void mutate(() => api.movePersonsBetweenGroups(ids, src, path));
-                return;
-              }
-              void mutate(() => api.movePersonsToGroup(ids, path));
-            }}
+            onRenameGroup={renameGroupCmd}
+            onDeleteGroup={deleteGroupCmd}
+            onMovePersons={movePersonsCmd}
             // #164 (§4.18): 'Add group…' on person rows — ADD a membership
             // (from='' deletes nothing, INSERT OR IGNORE files them; every
             // current group is kept); #184 shares it with the face menu
             onAddGroup={addPersonsToGroup}
             onError={setError}
-            onOpenMerge={() => setMergeOpen(true)}
+            onOpenMerge={openMergeDialog}
             onMergeInto={openMergeInto}
             // #135 (rule 34): face drags from the centre pane — merge
             // into the dropped person (validation + dialog in App)
@@ -2106,12 +2271,7 @@ export default function App() {
             faceDragRef={faceDragRef}
             onDropFaces={onFacesDropped}
             onRenameSelection={renamePersons}
-            onSelectPending={(id) => {
-              const ids = snap.faces
-                .filter((f) => f.person_id === id && f.link_status === "provisional")
-                .map((f) => f.id);
-              toggleMany(ids, true);
-            }}
+            onSelectPending={selectPendingFaces}
           />
         </aside>
         <div
@@ -2257,7 +2417,7 @@ export default function App() {
                 </div>
                 <div className="film-roll">
                   <FaceGrid
-                    sections={sectionsForImage(splitRow.id)}
+                    sections={splitSections} // #215: memoised per split image
                     sel={sel}
                     stage={pending}
                     faceDropTarget={faceDropTarget}
@@ -2289,7 +2449,7 @@ export default function App() {
               onOpenImage={openThumb}
               // #167 (§4.36): a not-yet-imported directory opens the
               // import pane in the right pane
-              onImportDir={(p) => setImportDir(p)}
+              onImportDir={setImportDir}
             />
           ) : mode === "rolls" && imageId != null && imgRow ? (
             <div className="image-detail">
@@ -2327,6 +2487,11 @@ export default function App() {
               stage={pending}
               faceDropTarget={faceDropTarget}
               emptyHint={emptyHint} // #194: guidance instead of bare "nothing to show"
+              // #214: incremental mount — review mode only (the
+              // thousands-of-cards surface; person/rolls stay fully
+              // mounted so the in-view card contracts hold)
+              mountLimit={mode === "review" ? mountLimit : undefined}
+              onNeedMore={growMount}
               {...gridHandlers}
               primaryFaceId={mode === "person" ? selectedPerson?.primary_face_id ?? null : null}
             />
@@ -2387,21 +2552,16 @@ export default function App() {
             snapshot={snap}
             faceFilter={faceFilter}
             onName={renameOrMerge}
-            onNote={(id, n) => mutate(() => api.setPersonNote(id, n))}
+            onNote={paneNote}
             // #172/#173 (§4.38): the pane's ordered commit — pending
             // name (rename-merge + re-anchor), note, staged group ops
             onUpdate={updatePerson}
-            onRemovePerson={(id) => doRemovePersons([id])}
+            onRemovePerson={paneRemovePerson}
             // #145: the detail-pane avatar opens the primary face's full
             // image in focus mode — the same confirmContext path as the
             // card double-click / "Open full image" menu entries
-            onOpenPrimary={(fid) => {
-              const f = facesById.get(fid);
-              if (f) confirmContext(() => setSplitImageId(f.image_id));
-            }}
-            onRemoveRefcrop={(fid) =>
-              personId != null && mutate(() => api.removeRefcrop(personId, fid))
-            }
+            onOpenPrimary={paneOpenPrimary}
+            onRemoveRefcrop={paneRemoveRefcrop}
           />
           )}
         </aside>

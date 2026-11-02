@@ -1,4 +1,4 @@
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { memo, type MouseEvent as ReactMouseEvent } from "react";
 import type { ImageRow } from "../api";
 import { useImageThumbImg } from "../hooks";
 import { rotStyle } from "../rotation";
@@ -46,7 +46,7 @@ function Thumb({ image, selected, onClick, onOpen, onContextMenu }: {
   );
 }
 
-export default function RollsThumbs({ branch, images, hasSubBranches, sel, onClickImage, onOpenImage, onContextMenuImage }: Props) {
+function RollsThumbs({ branch, images, hasSubBranches, sel, onClickImage, onOpenImage, onContextMenuImage }: Props) {
   if (images.length > 0) {
     return (
       <div className="rolls-thumbs">
@@ -81,3 +81,7 @@ export default function RollsThumbs({ branch, images, hasSubBranches, sel, onCli
     </div>
   );
 }
+
+// #215: memoised — App keeps the handler identities stable, so a
+// re-render that changes none of this pane's own props skips it
+export default memo(RollsThumbs);

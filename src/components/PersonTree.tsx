@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useDeferredValue,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
@@ -283,7 +291,7 @@ function PersonRow({
   );
 }
 
-export default function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onAddGroup, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces }: Props) {
+function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onAddGroup, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces }: Props) {
   // #135: a face drag ending without a drop (Esc, drop outside) must
   // clear the merge-target highlight — the drag state itself lives in
   // App, only the highlight is ours
@@ -333,7 +341,10 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
   const tree = useMemo(() => buildTree(persons), [persons]);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const f = filter.trim().toLowerCase();
+  // #215: the filter input stays crisp — the (heavier) row filtering
+  // trails a frame behind the keystrokes instead of blocking them
+  const deferredFilter = useDeferredValue(filter);
+  const f = deferredFilter.trim().toLowerCase();
 
   const matches = (p: Person) =>
     f === "" ||
@@ -885,3 +896,7 @@ export default function PersonTree({ persons, selectedId, reviewCount, filter, o
     </div>
   );
 }
+
+// #215: memoised — App keeps the handler identities stable, so a
+// re-render that changes none of this pane's own props skips it
+export default memo(PersonTree);

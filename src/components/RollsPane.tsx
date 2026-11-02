@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { scanImportDir, type Face, type ImageRow } from "../api";
 import { listedImages, type FaceFilter } from "../viewFilters";
@@ -162,7 +162,7 @@ function BranchView({ node, path, openSet, selected, onToggle, listed, faceTotal
   );
 }
 
-export default function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, selected, onSelect, onImportDir }: Props) {
+function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, selected, onSelect, onImportDir }: Props) {
   const tree = useMemo(() => buildTree(images, root), [images, root]);
   // relative branch path (the tree's keys) → absolute directory path
   // (#174: the selection state lives in App, keyed absolutely)
@@ -312,3 +312,7 @@ export default function RollsPane({ images, faces, faceFilter, root, onRootChang
     </div>
   );
 }
+
+// #215: memoised — App keeps the handler identities stable, so a
+// re-render that changes none of this pane's own props skips it
+export default memo(RollsPane);
