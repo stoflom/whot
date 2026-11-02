@@ -185,6 +185,14 @@ Checks (contract refs: docs/gui-design.md):
       to that face's person, split and tab untouched (#201, §4.37)
   C58 Review keeps its scroll — leave to Person and return: the centre
       is back at the saved place, not the top (#203, §4.40)
+  C59 a tree select re-anchors Review — the tab stays Review, the lock
+      and the disabled Show stay engaged, the grid lands on the clicked
+      person's section and › continues from there (#200 reopened, §4.40)
+  C60 closing the focus split returns the centre grid to its saved
+      scroll place, not the top (#203 reopened, §4.40)
+  C61 a verdict made on a full-view film-roll card is a review verdict:
+      a drained person advances (fall-through + hand-over), the split
+      closes and the Review tab stays active (§4.40 reach / §4.30)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -616,6 +624,51 @@ def _show_select_js():
         "[...document.querySelectorAll('select')]"
         ".find(x => [...x.options].some(o => o.value === arguments[0]))"
     )
+
+
+# #205: the drag checks' subject pickers may only choose faces the
+# CURRENT centre view actually renders. Both checks run the person view
+# (below), where the visible set is matchesStatusFilter (§4.10) over
+# the live Show value AND non-discarded (the #99 description/cluster
+# branches; mock.js person_face_clusters mirrors db.rs: non-rejected,
+# non-discarded) — `vis` mirrors that predicate exactly.
+_VIS_JS = (
+    "const ff = " + _show_select_js() + "?.value ?? 'all';\n"
+    "const vis = f => (ff === 'all' ? f.link_status !== 'rejected'"
+    " : f.link_status === ff)\n"
+    "                 && f.state !== 'discarded';\n"
+)
+
+
+def go_person_mode(t):
+    """§4.40 Review is sticky — a tree click only re-anchors, so the
+       drag checks leave Review through the Person tab (third nav
+       button). The caller must anchor a person first: without one the
+       tab opens the pick-person dialog instead. Idempotent."""
+    js(t, "[...document.querySelectorAll('.topbar nav button')][2].click();")
+
+
+def person_grid_ready(t, pid, want_ids, timeout=15):
+    """True once the Person tab is active, that person is the tree
+       anchor, and every wanted face card renders — the person-mode
+       clusters arrive over IPC, so this polls. #205: the subject checks
+       wait on the ACTUAL render; the review grid's cards must never
+       satisfy this."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        ready = js(t, r"""
+          const active = document.querySelector('.topbar nav .active')?.textContent.trim() ?? '';
+          const anchor = document.querySelector('.tree-person.selected')
+            ?.getAttribute('data-person-id') ?? null;
+          return active.startsWith('Person') && anchor === arguments[0]
+            ? [...document.querySelectorAll('.face-card')]
+                .map(c => c.getAttribute('data-face-id'))
+            : null;
+        """, str(pid))
+        if ready is not None and all(str(i) in ready for i in want_ids):
+            return True
+        time.sleep(0.3)
+    return False
 
 
 def set_show_filter(t, value):
@@ -1263,44 +1316,66 @@ def drag_face(t, src_sel, dst_sel):
 def c12_face_drag_merges_into_person(t):
     fresh(t)
     set_show_filter(t, "all")
-    pick = js(t, r"""
-      const rows = [...document.querySelectorAll('.tree-person')].map(n => {
-        const name = n.querySelector('.tree-name')?.textContent.trim() ?? '';
-        const total = Number(n.querySelector('.tree-count.total')?.textContent ?? 0);
-        return {name, total};
-      }).filter(r => r.name && !/^unknown/i.test(r.name) && r.total > 0);
-      if (rows.length < 2) return null;
+    # #205: status-aware subjects — only faces the CURRENT centre view
+    # renders may back the drag (a fully reviewed dump hides most faces
+    # from the review grouping). The check runs the PERSON view below:
+    # a tree click alone only re-anchors Review (§4.40 sticky), the
+    # Person tab is the way out — so candidates must hold >= 2 faces
+    # the person view renders under the live Show value.
+    cands = js(t, _VIS_JS + r"""
+      const snap = window.__MOCK_SNAP;
+      const rows = [...document.querySelectorAll('.tree-person')].map(n => ({
+        name: n.querySelector('.tree-name')?.textContent.trim() ?? '',
+        total: Number(n.querySelector('.tree-count.total')?.textContent ?? 0),
+      })).filter(r => r.name && !/^unknown/i.test(r.name) && r.total > 0);
+      if (rows.length < 2) return [];
       rows.sort((a, b) => b.total - a.total);
-      return {source: rows[1].name, target: rows[0].name,
-              targetBefore: rows[0].total, sourceBefore: rows[1].total};
-    """)
+      const out = [];
+      for (const r of rows) {
+        const p = snap.persons.find(x => x.name === r.name);
+        if (!p) continue;
+        const fs = snap.faces.filter(f => f.person_id === p.id && vis(f));
+        if (fs.length < 2) continue;
+        const tgt = rows.find(x => x.name !== r.name);
+        const tp = snap.persons.find(x => x.name === tgt.name);
+        if (!tp) continue;
+        out.push({pid: p.id, source: p.name, sourceBefore: r.total,
+                  target: tp.name, targetPid: tp.id, targetBefore: tgt.total,
+                  want: fs.slice(0, 2).map(f => f.id)});
+        if (out.length >= 3) break;
+      }
+      return out;
+    """, "all")
+    if not cands:
+        record("C12 face-drag merge (#135)", True,
+               "need two named persons with >= 2 renderable faces — vacuous")
+        return
+    pick = None
+    for cand in cands:
+        row = t.find_element(By.CSS_SELECTOR,
+                             f".tree-person[data-person-id='{cand['pid']}']")
+        js(t, "arguments[0].scrollIntoView({block: 'center'})", row)
+        time.sleep(0.3)
+        row.click()  # anchors the person (in Review: re-anchor only)
+        time.sleep(0.8)
+        go_person_mode(t)  # §4.40: the Person tab is the only way out
+        if person_grid_ready(t, cand["pid"], cand["want"]):
+            pick = cand
+            break
     if pick is None:
         record("C12 face-drag merge (#135)", True,
-               "need two visible named persons with faces — vacuous")
+               "no candidate rendered its cards in the person view — vacuous")
         return
-    nodes = t.find_elements(By.CSS_SELECTOR, ".tree-person")
-    src = next(e for e in nodes
-               if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["source"])
-    js(t, "arguments[0].scrollIntoView({block: 'center'})", src)
+    fid1, fid2 = str(pick["want"][0]), str(pick["want"][1])
+    t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid1}']").click()
     time.sleep(0.4)
-    src.click()  # centre pane = the source person's faces
-    time.sleep(1.0)
-    cards = t.find_elements(By.CSS_SELECTOR, ".face-card")
-    if len(cards) < 2:
-        record("C12 face-drag merge (#135)", True, "source person has < 2 cards — vacuous")
-        return
-    fid1 = cards[0].get_attribute("data-face-id")
-    fid2 = cards[1].get_attribute("data-face-id")
-    cards[0].click()
-    time.sleep(0.4)
-    AC(t.driver).key_down(Keys.CONTROL).click(cards[1]).key_up(Keys.CONTROL).perform()
+    AC(t.driver).key_down(Keys.CONTROL).click(
+        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid2}']")
+    ).key_up(Keys.CONTROL).perform()
     time.sleep(0.6)
     # tag the target row for a reliable selector
-    js(t, r"""
-      const n = [...document.querySelectorAll('.tree-person')]
-        .find(x => x.querySelector('.tree-name')?.textContent.trim() === arguments[0]);
-      n?.setAttribute('data-gc', '1');
-    """, pick["target"])
+    js(t, "document.querySelector(arguments[0])?.setAttribute('data-gc', '1')",
+       f".tree-person[data-person-id='{pick['targetPid']}']")
     drag = drag_face(t, f".face-card[data-face-id='{fid1}']", ".tree-person[data-gc='1']")
     time.sleep(0.8)
     if drag != "dropped":
@@ -1388,36 +1463,62 @@ def c14_drag_sources(t):
 def c13_face_drag_copies_description(t):
     fresh(t)
     set_show_filter(t, "all")
-    pick = js(t, r"""
+    # #205: status-aware subjects — the drag needs cards the CURRENT
+    # centre view renders. The check runs the PERSON view below (a tree
+    # click alone only re-anchors Review — §4.40 sticky; the Person tab
+    # is the way out), so only persons whose RENDERABLE faces hold a
+    # described/empty pair qualify.
+    cands = js(t, _VIS_JS + r"""
       const snap = window.__MOCK_SNAP;
-      for (const p of snap.persons) {
-        if (/^unknown/i.test(p.name)) continue;
-        const fs = snap.faces.filter(f => f.person_id === p.id);
+      const rows = [...document.querySelectorAll('.tree-person')].map((n, i) => ({
+        idx: i,
+        name: n.querySelector('.tree-name')?.textContent.trim() ?? '',
+      })).filter(r => r.name && !/^unknown/i.test(r.name));
+      const out = [];
+      for (const r of rows) {
+        const p = snap.persons.find(x => x.name === r.name);
+        if (!p) continue;
+        const fs = snap.faces.filter(f => f.person_id === p.id && vis(f));
+        if (fs.length < 2) continue;
         const withDesc = fs.filter(f => (f.description ?? '').trim() !== '');
-        if (withDesc.length < 1 || fs.length < 2) continue;
+        if (withDesc.length < 1) continue;
         const tg = withDesc[0];
         const rest = fs.filter(f => f.id !== tg.id);
         const s = rest.find(f => (f.description ?? '') !== tg.description) ?? rest[0];
         const o = rest.find(f => f.id !== s.id) ?? null;
         const e = rest.find(f => (f.description ?? '').trim() === '') ?? null;
-        const rowIdx = [...document.querySelectorAll('.tree-person')]
-          .findIndex(n => n.querySelector('.tree-name')?.textContent.trim() === p.name);
-        if (rowIdx < 0) continue;
-        return {person: p.name, rowIdx,
-                target: tg.id, targetDesc: tg.description,
-                source: s.id, sourceDesc: s.description ?? null,
-                other: o ? o.id : null, empty: e ? e.id : null};
+        out.push({person: p.name, pid: p.id, rowIdx: r.idx,
+                  target: tg.id, targetDesc: tg.description,
+                  source: s.id, sourceDesc: s.description ?? null,
+                  other: o ? o.id : null, empty: e ? e.id : null});
+        if (out.length >= 3) break;
       }
-      return null;
-    """)
+      return out;
+    """, "all")
+    if not cands:
+        record("C13 face-drag description copy (#136)", True,
+               "need a person with a described face + another renderable face — vacuous")
+        return
+    pick = None
+    for cand in cands:
+        js(t, "document.querySelectorAll('.tree-person')[arguments[0]].scrollIntoView({block: 'center'})",
+           cand["rowIdx"])
+        time.sleep(0.3)
+        js(t, "document.querySelectorAll('.tree-person')[arguments[0]].click()", cand["rowIdx"])
+        time.sleep(0.8)
+        go_person_mode(t)  # §4.40: the Person tab is the only way out
+        want = [cand["source"], cand["target"]]
+        if cand["other"] is not None:
+            want.append(cand["other"])
+        if cand["empty"] is not None:
+            want.append(cand["empty"])
+        if person_grid_ready(t, cand["pid"], want):
+            pick = cand
+            break
     if pick is None:
         record("C13 face-drag description copy (#136)", True,
-               "need a person with a described face + another face — vacuous")
+               "no candidate rendered its cards in the person view — vacuous")
         return
-    js(t, "document.querySelectorAll('.tree-person')[arguments[0]].scrollIntoView({block: 'center'})", pick["rowIdx"])
-    time.sleep(0.4)
-    js(t, "document.querySelectorAll('.tree-person')[arguments[0]].click()", pick["rowIdx"])
-    time.sleep(1.0)
     # 1) empty-description card is NOT a target: refused, nothing changes
     if pick["empty"]:
         drag = drag_face(t, f".face-card[data-face-id='{pick['source']}']",
