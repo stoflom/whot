@@ -6,6 +6,8 @@
 // with the staged ops applied IN ORDER; the commit (App) replays the
 // ops in the same order against the surviving person.
 
+import type { Person } from "./api";
+
 export interface GroupOp {
   from: string;
   to: string;
@@ -20,6 +22,17 @@ const RESERVED = ["Ungrouped", "New", "Accepted", "Rejected", "Unknown"];
 export const SEATS = ["New", "Accepted", "Rejected"];
 
 export const isSeat = (path: string) => SEATS.includes(path);
+
+/** #153 (+ #165/§4.35, #178/§4.1) — the group argument for every
+    rename-style person assign: a filed person keeps their group path,
+    the system person's seat never prefills a group field, and a STATUS
+    SEAT is never passed either (assign_person validates the path up
+    front) — "" derives the seat by state instead. Pure; the section
+    derivations (sections.ts) use it for the rule bar defaults. */
+export function renameGroupFor(p: Person | undefined): string {
+  const g = p && p.name !== "Rejected" ? p.groups[0] ?? "" : "";
+  return isSeat(g) ? "" : g;
+}
 
 /** the backend's validate_group_path, client-side (refuse before staging) */
 export function validPath(path: string): boolean {

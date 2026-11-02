@@ -18,13 +18,12 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
-import { isSeat, type GroupOp } from "./groupList";
+import { renameGroupFor as renameGroup, type GroupOp } from "./groupList";
 import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
   emptyStateHint,
-  groupByDescription,
   listedImages,
   matchesStatusFilter,
   personTreeMembers,
@@ -57,6 +56,10 @@ import ImportPane from "./components/ImportPane";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
 import { byFilename, clickImage, emptyImageSel, imageScope, type ImageSel } from "./imageSelect";
+// §4.44 (gui-design v3.94): the centre-pane section derivations are the
+// pure, co-tested buildSections/sectionsForImageOf; App owns only the
+// identities (see the #98 rules there)
+import { buildSections, sectionsForImage as sectionsForImageOf } from "./sections";
 
 type Mode = "review" | "rolls" | "person";
 
@@ -777,25 +780,9 @@ export default function App() {
     if (ids.length > 0) setConfirmRemove(ids);
   };
 
-  // group argument for rename-style assigns: keep the person's current
-  // path (#153) — the old UnknownN force-to-empty (#38/F7) is obsolete
-  // now that the importer seeds no 'Unknown' row; a grouped UnknownN
-  // keeps their group through a rename, an ungrouped one stays Ungrouped
-  // (pure — stable ref)
-  const renameGroup = useCallback(
-    // #165/§4.35: the system person's seat never prefills a group field;
-    // #178 (§4.1 — #153 revised): a STATUS SEAT is never passed either —
-    // assign_person validates the path up front (#165), so a seated
-    // person's `New` tripped 'reserved group name' before the branch
-    // that would have ignored it. "" derives the seat by state instead
-    // (the claim confirms the faces ⇒ Accepted), while a REAL group
-    // path keeps flowing (#153 — a filed person keeps their path)
-    (p: Person | undefined) => {
-      const g = p && p.name !== "Rejected" ? p.groups[0] ?? "" : "";
-      return isSeat(g) ? "" : g;
-    },
-    []
-  );
+  // renameGroup — the #153/#178/#165 rule now lives in
+  // groupList.renameGroupFor (§4.44: pure, co-tested; imported above as
+  // `renameGroup`, so every call site keeps its meaning)
 
   // rename-merge (v1.9/v1.11): EVERY GUI rename (tree, context menu,
   // detail pane) routes through assign over all the person's faces — a
@@ -821,7 +808,7 @@ export default function App() {
       const ok = await doAssign(ids, name, renameGroup(p));
       return ok ? (taken?.id ?? id) : null;
     },
-    [snap, personsById, mutate, doAssign, renameGroup]
+    [snap, personsById, mutate, doAssign]
   );
   const renameOrMerge = (id: number, n: string) => {
     // §4.38/#172: a rename-merge re-anchors the pane on the surviving
@@ -1414,162 +1401,36 @@ export default function App() {
       confirmContext, mutate]);
 
   // one section per person over an image's faces — the Rolls image
-  // detail and the #55 focus-mode film roll share it
+  // detail and the #55 focus-mode film roll share it (§4.44: the rule
+  // is the pure sectionsForImage; this is the identity-stable wrapper)
   const sectionsForImage = useCallback(
-    (imgId: number): Section[] => {
-      if (!snap) return [];
-      const byPerson = new Map<number | null, Face[]>();
-      for (const f of snap.faces.filter(
-        (x) => x.image_id === imgId && matchesStatusFilter(x.link_status, faceFilter)
-      )) {
-        const arr = byPerson.get(f.person_id) ?? [];
-        arr.push(f);
-        byPerson.set(f.person_id, arr);
-      }
-      return [...byPerson.entries()].map(([pid, fl]) => {
-        const p = pid != null ? personsById.get(pid) : undefined;
-        return {
-          key: `img-${pid}`,
-          title: p?.name ?? "unassigned",
-          faceIds: fl.map((f) => f.id),
-          ruleDefaultName: p?.name,
-          // #153: the rename keeps the person's current group path
-          ruleDefaultGroup: renameGroup(p),
-        };
-      });
-    },
-    [snap, personsById, renameGroup, faceFilter]
+    (imgId: number): Section[] =>
+      sectionsForImageOf(snap, personsById, imgId, faceFilter),
+    [snap, personsById, faceFilter]
   );
 
   // #98 (§4.31): memoised — computed once per snapshot/view/person/focus
   // change (sectionsForImage is a stable useCallback, so the memo holds),
-  // never per render
-  const sections: Section[] = useMemo(() => {
-    if (!snap) return [];
-    if (imageId != null) {
-      return sectionsForImage(imageId);
-    }
-    if (mode === "person" && personId != null) {
-      const out: Section[] = [];
-      const pname = selectedPerson?.name ?? "";
-      const rg = renameGroup(selectedPerson ?? undefined);
-      if (clusterGroup === "description") {
-        // #99 Description mode: one section per distinct description over
-        // the visible faces — no similarity split, no clusters IPC.
-        // #155: the §4.24 staged preview drives the grouping too — a face
-        // with a staged description is grouped under the description it
-        // will land in on Accept (Apply = screen preview), instead of
-        // showing the staged label under the old committed section.
-        const visible = snap.faces.filter(
-          (f) =>
-            f.person_id === personId &&
-            f.state !== "discarded" &&
-            f.link_status !== "rejected" &&
-            matchesStatusFilter(f.link_status, faceFilter)
-        );
-        groupByDescription(
-          visible.map((f) => ({
-            id: f.id,
-            // F2 keeps rejected-touching ops out of the pending set, and
-            // rejected faces never reach this branch
-            description:
-              stagedFieldsForCard(pending, f.id).desc ??
-              f.description ??
-              ""
-          }))
-        ).forEach((g) => {
-          out.push({
-            key: `pd-${personId}-${g.description}`,
-            title: g.description || "(no description)",
-            description: g.description || undefined,
-            faceIds: g.faceIds,
-            ruleDefaultName: pname,
-            // #153: the rename keeps the person's current group path
-            ruleDefaultGroup: rg,
-          });
-        });
-      } else {
-        const groups = clusters ?? [];
-        const multi = groups.length > 1;
-        let n = 0;
-        groups.forEach((g, gi) => {
-          g.clusters.forEach((cl, ci) => {
-            // #99: the filter may empty a cluster — drop it and recompute
-            // the similarity claim over the faces that survive
-            const ids = cl
-              .map((c) => c.face_id)
-              .filter((id) => {
-                const f = facesById.get(id);
-                return f != null && matchesStatusFilter(f.link_status, faceFilter);
-              });
-            if (ids.length === 0) return;
-            n += 1;
-            const kept = new Set(ids);
-            const minSim = Math.min(
-              ...cl.filter((c) => kept.has(c.face_id)).map((c) => c.sim)
-            );
-            // appearance prefix only when the person has more than one (§4.9)
-            const prefix = multi && g.description ? `${g.description} — ` : "";
-            out.push({
-              key: `cl-${gi}-${ci}`,
-              title:
-                n === 1
-                  ? `${prefix}Group 1 — closest to primary`
-                  : `${prefix}Group ${n}`,
-              subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
-              faceIds: ids,
-              ruleDefaultName: pname,
-              // #101: the heading's description label shows the
-              // appearance (display only — the title stays cluster-derived,
-              // F6)
-              description: g.description || undefined,
-              // #153: the rename keeps the person's current group path
-              ruleDefaultGroup: rg,
-            });
-          });
-        });
-      }
-      if (matchesStatusFilter("rejected", faceFilter)) {
-        const rej = snap.faces.filter(
-          (f) => f.person_id === personId && f.link_status === "rejected"
-        );
-        if (rej.length > 0)
-          out.push({ key: "rejected", title: "Rejected", faceIds: rej.map((f) => f.id) });
-      }
-      return out;
-    }
-    // review: the pending set under All/Provisional (#99), or the status
-    // picked in the filter — grouped by importer person, UnknownN first
-    const reviewStatus =
-      faceFilter === "confirmed" || faceFilter === "rejected" ? faceFilter : "provisional";
-    const byPerson = new Map<number | null, Face[]>();
-    for (const f of snap.faces.filter((x) => x.link_status === reviewStatus)) {
-      const arr = byPerson.get(f.person_id) ?? [];
-      arr.push(f);
-      byPerson.set(f.person_id, arr);
-    }
-    const order = [...snap.persons].sort((a, b) => {
-      const au = a.name.startsWith("Unknown");
-      const bu = b.name.startsWith("Unknown");
-      if (au !== bu) return au ? -1 : 1;
-      return a.id - b.id;
-    });
-    return order
-      .filter((p) => byPerson.has(p.id))
-      .map((p) => ({
-        key: `rev-${p.id}`,
-        title: p.name,
-        subtitle: p.counts.total > byPerson.get(p.id)!.length ? `${p.counts.total} faces total` : undefined,
-        faceIds: byPerson.get(p.id)!.map((f) => f.id),
-        // #165/§4.35: the system person's reserved name never prefills —
-        // committing a claim needs a typed name
-        ruleDefaultName: p.name === "Rejected" ? "" : p.name,
-        // #153: the rename keeps the person's current group path
-        ruleDefaultGroup: renameGroup(p),
-      }));
-  }, [snap, mode, imageId, personId, selectedPerson, clusters,
-      sectionsForImage, renameGroup, facesById, faceFilter, clusterGroup,
-      pending]); // #155: staged (§4.24) descriptions drive the regroup
+  // never per render. §4.44: the grouping rules are the pure
+  // buildSections (sections.ts, co-tested); App owns only the identities.
+  const sections: Section[] = useMemo(
+    () =>
+      buildSections({
+        snap,
+        mode,
+        imageId,
+        personId,
+        selectedPerson,
+        clusters,
+        facesById,
+        faceFilter,
+        clusterGroup,
+        pending,
+        sectionsForImage,
+      }),
+    [snap, mode, imageId, personId, selectedPerson, clusters, facesById,
+     faceFilter, clusterGroup, pending, sectionsForImage] // #155: staged (§4.24) descriptions drive the regroup
+  );
   sectionsRef.current = sections;
   sectionsForImageRef.current = sectionsForImage;
 
