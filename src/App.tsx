@@ -169,6 +169,12 @@ export default function App() {
   const sectionsRef = useRef<Section[]>([]);
   const sectionsForImageRef = useRef<(imgId: number) => Section[]>(() => []);
   const [splitImageId, setSplitImageId] = useState<number | null>(null);
+  // #200 reopened (gui-design v3.93, §4.40): the pending review
+  // re-anchor scroll — a tree select during Review re-anchors the
+  // review, and the grid scrolls to that person's section through a
+  // layout effect (deterministic, post-commit; rAF is frame-starved
+  // in occluded/automated WebKit and must not gate user-visible work)
+  const [reanchor, setReanchor] = useState<{ pid: number } | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // #34 — pane sizes (session state); defaults match the stylesheet
   // (#55: the image-split size is gone — the focus mode takes the pane)
@@ -754,14 +760,12 @@ export default function App() {
           // Person mode: the clicked person becomes the review focus
           // (the step index points at them; the split already closed
           // above — the attention shifted) and the grid scrolls to
-          // their section, so the toolbar index and the visible place
+          // their section (the re-anchor layout effect — declared after
+          // the scroll-restore, so the section wins when the full image
+          // just closed), so the toolbar index and the visible place
           // never disagree; stepping and verdicts then continue from
           // there. The Rolls/Person tab clicks remain the only exit.
-          requestAnimationFrame(() => {
-            document
-              .querySelector(`.face-section[data-section-key="rev-${id}"]`)
-              ?.scrollIntoView({ block: "start" });
-          });
+          setReanchor({ pid: id });
         } else {
           setMode("person");
         }
@@ -898,6 +902,16 @@ export default function App() {
     const el = centerScrollRef.current;
     if (el) el.scrollTop = reviewScrollRef.current;
   }, [mode, splitImageId]);
+  // #200 reopened (gui-design v3.93, §4.40): the tree re-anchor scroll —
+  // layout effect (post-commit, pre-paint, no frame dependency); the
+  // optional chain: a tree person without a review section (no face
+  // under the review status) re-anchors without a scroll target
+  useLayoutEffect(() => {
+    if (reanchor == null || mode !== "review") return;
+    document
+      .querySelector(`.face-section[data-section-key="rev-${reanchor.pid}"]`)
+      ?.scrollIntoView({ block: "start" });
+  }, [reanchor, mode]);
   // #188/§4.40 — the position guard, on ENTRY only (a mode transition;
   // the mount has no anchor): an anchored person without a new face
   // advances to the next person in the step list that has one (forward,
@@ -1621,7 +1635,7 @@ export default function App() {
         );
       }
     },
-    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, personId, focusActed, focusActedUnlessNoop]
+    [snap, mode, sections, mutate, markExhaust, facesById, personId, focusActed, focusActedUnlessNoop]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
