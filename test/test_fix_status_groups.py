@@ -31,6 +31,10 @@ def make_v16(path: Path) -> None:
     (owned + unowned), a stale primary and a stale pin at a rejected face."""
     con = sqlite3.connect(path)
     con.executescript(SCHEMA.read_text())
+    # the v1.6/1.7 layout carried two derived columns the v1.8 schema
+    # drops (#210: crop/filename derive at read) — restore them here
+    con.execute("ALTER TABLE person_refcrops ADD COLUMN filename TEXT NOT NULL DEFAULT ''")
+    con.execute("ALTER TABLE person_refcrops ADD COLUMN crop BLOB")
     con.execute("UPDATE schema_version SET version = '1.6'")
     con.execute(
         "INSERT INTO images(id, content_hash, width, height, primary_path, state, created_at)"

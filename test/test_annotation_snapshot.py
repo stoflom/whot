@@ -71,9 +71,8 @@ def apply_user_work(db: Path) -> None:
                 "name = 'Alice-glasses-2' WHERE id = 2")
     con.execute("UPDATE faces SET link_status = 'rejected' WHERE id IN (3, 4)")
     con.execute(
-        "INSERT INTO person_refcrops(person_id, face_id, description, pinned, seq, "
-        "filename, crop) VALUES (1, 2, 'glasses', 1, 1, 'Alice-glasses-2-1.jpg', ?)",
-        (b"crop",))
+        "INSERT INTO person_refcrops(person_id, face_id, description, pinned, seq) "
+        "VALUES (1, 2, 'glasses', 1, 1)")
     con.commit()
     con.close()
 
@@ -94,7 +93,7 @@ class RoundTripTest(unittest.TestCase):
     def test_export_reports_schema_and_decisions(self):
         data = ansi.do_export(self.old)
         self.assertEqual(data["format"], 1)
-        self.assertEqual(data["source_schema"], "1.7")
+        self.assertEqual(data["source_schema"], "1.8")
         self.assertEqual([p["name"] for p in data["persons"]], ["Alice"])
         self.assertEqual(data["persons"][0]["groups"], ["family|test"])
         self.assertEqual(data["persons"][0]["note"], "mom")
@@ -229,8 +228,10 @@ class RoundTripTest(unittest.TestCase):
             (bob[0],)).fetchone()
         self.assertEqual(prim, (1, 0), "machine primary = highest-confidence face")
         rc = con.execute(
-            "SELECT face_id, description, seq, pinned, filename FROM person_refcrops "
-            "WHERE person_id = ? ORDER BY seq", (bob[0],)).fetchall()
+            "SELECT pr.face_id, pr.description, pr.seq, pr.pinned,"
+            " f.name || '-' || pr.seq || '.jpg' FROM person_refcrops pr"
+            " JOIN faces f ON f.id = pr.face_id"
+            " WHERE pr.person_id = ? ORDER BY pr.seq", (bob[0],)).fetchall()
         self.assertEqual(len(rc), 1, "only the non-primary confirmed face qualifies")
         self.assertEqual(rc[0][0], 4, "face 4 is Bob's non-primary confirmed face")
         self.assertEqual(rc[0][1], "")

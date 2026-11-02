@@ -538,8 +538,8 @@ class ScenarioTests(Fixture):
         con.execute("UPDATE persons SET primary_face_id=1, primary_pinned=1"
                     " WHERE id=7")
         con.execute("INSERT INTO person_refcrops(person_id, face_id,"
-                    " description, seq, filename, crop)"
-                    " VALUES (7, 1, '', 1, 'x.jpg', x'00')")
+                    " description, seq)"
+                    " VALUES (7, 1, '', 1)")
         con.execute("UPDATE persons SET primary_face_id=4, primary_pinned=1"
                     " WHERE id=9")
         con.commit()
@@ -559,8 +559,8 @@ class ScenarioTests(Fixture):
         self.con.commit()                     # the plan reads staging ro
         con = sqlite3.connect(self.faces_db)
         con.execute("INSERT INTO person_refcrops(person_id, face_id,"
-                    " description, seq, filename, crop)"
-                    " VALUES (9, 4, '', 1, 'y.jpg', x'00')")
+                    " description, seq)"
+                    " VALUES (9, 4, '', 1)")
         con.commit()
         con.close()
         self.run_plan(overwrite=True)

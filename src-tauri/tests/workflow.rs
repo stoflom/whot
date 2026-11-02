@@ -487,10 +487,12 @@ fn clusters_partitioned_by_appearance() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// §4.27 (#84) — snapshot sweeps zero-face UnknownN leftovers (pre-v1.9
-/// runs / external writers); named empty persons are legitimate and stay.
+/// §4.27 (#84) + #208 — the stale-shell sweep RIDES the writers (a
+/// zero-face UnknownN is deleted by the next write, not the next
+/// snapshot) and the read path is pure: a snapshot never writes. Named
+/// empty persons are legitimate and never swept.
 #[test]
-fn snapshot_sweeps_stale_unknown_shells() {
+fn writers_sweep_stale_unknown_shells_208() {
     let p = fixture_paths("sweep");
     {
         let con = rusqlite::Connection::open(&p.db).unwrap();
@@ -508,16 +510,22 @@ fn snapshot_sweeps_stale_unknown_shells() {
             .unwrap();
         assert_eq!(n, 5, "seeded two zero-face persons");
     }
+    // the read path is pure: the stamp does not move and nothing is swept
+    let v0 = db::data_version(&p).unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(db::data_version(&p).unwrap(), v0, "a snapshot must not write (#208)");
+    assert!(s.persons.iter().any(|x| x.name == "Unknown80"),
+            "the read path no longer sweeps: {:?}",
+            s.persons.iter().map(|x| &x.name).collect::<Vec<_>>());
+    // the next writer sweeps (§4.27)
+    db::set_link_status(&p, &[1], "confirmed").unwrap();
     let s = db::snapshot(&p).unwrap();
     assert!(s.persons.iter().all(|x| x.name != "Unknown80"),
-            "zero-face UnknownN must be swept: {:?}",
+            "zero-face UnknownN must be swept by the write: {:?}",
             s.persons.iter().map(|x| &x.name).collect::<Vec<_>>());
     assert!(s.persons.iter().any(|x| x.name == "Keeper"),
             "a zero-face NAMED person must never be swept");
-    // idempotent: a second snapshot changes nothing
-    let s2 = db::snapshot(&p).unwrap();
-    assert_eq!(s.persons.len(), s2.persons.len());
-    // and it actually deleted the row (not just hid it)
+    // …and it actually deleted the row (not just hid it)
     {
         let con = rusqlite::Connection::open(&p.db).unwrap();
         let n = con
@@ -526,7 +534,53 @@ fn snapshot_sweeps_stale_unknown_shells() {
             })
             .unwrap();
         assert_eq!(n, 0, "the sweep must DELETE, not filter");
+        // a leftover from an EXTERNAL writer is swept by the next write too
+        con.execute(
+            "INSERT INTO persons(id, name, state, created_at) VALUES (82, 'Unknown82', 'created', ?)",
+            params![NOW],
+        ).unwrap();
     }
+    db::assign_person(&p, &[3], "Zed", "").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    assert!(s.persons.iter().all(|x| x.name != "Unknown82"),
+            "assign/merge sweeps too (§4.27)");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #210 — refcrop rows are metadata: the crop and the filename derive at
+/// read from the face (`faces.preview`; `faces.name + "-" + seq +
+/// ".jpg"`); a rename moves the filename without touching the rows, and
+/// a recompute whose rows come out identical writes nothing.
+#[test]
+fn refcrops_derive_crop_and_filename_210() {
+    let p = fixture_paths("rcderive");
+    db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap();
+    db::add_refcrop(&p, 1, 2).unwrap(); // manual pin on face 2 (seq 1)
+    let rc = db::get_refcrops(&p, 1).unwrap();
+    let r2 = rc.iter().find(|r| r.face_id == 2).unwrap();
+    assert_eq!(r2.filename, "Unknown1-2-1.jpg", "<face name>-<pin seq>.jpg");
+    assert!(r2.image.starts_with("data:image/jpeg;base64,"), "the crop is the face preview");
+    // #210: compare-and-skip — the same recompute over identical rows
+    // leaves the rows untouched (their identity is stable)
+    db::set_primary_face(&p, 1, 1).unwrap(); // derives the auto rows once
+    let rowids = || -> Vec<i64> {
+        let con = rusqlite::Connection::open(&p.db).unwrap();
+        let mut st = con.prepare("SELECT rowid FROM person_refcrops ORDER BY rowid").unwrap();
+        st.query_map([], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    let before = rowids();
+    assert_eq!(before.len(), 2, "the pin + one auto row (face 6)");
+    db::set_primary_face(&p, 1, 1).unwrap(); // same rows out ⇒ no write
+    assert_eq!(rowids(), before, "#210: identical rows must not be rewritten");
+    // a rename re-derives the face names — the filenames follow, the rows stay
+    db::set_person_name(&p, 1, "Alice").unwrap();
+    let rc = db::get_refcrops(&p, 1).unwrap();
+    let r2 = rc.iter().find(|r| r.face_id == 2).unwrap();
+    assert_eq!(r2.filename, "Alice-2-1.jpg", "derived at read, not rebuilt");
+    assert_eq!(rowids(), before, "the rename touched no refcrop rows");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
