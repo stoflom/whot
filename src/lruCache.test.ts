@@ -58,4 +58,17 @@ describe("LruCache (#212)", () => {
     expect(() => new LruCache(0)).toThrow();
     expect(() => new LruCache(-1)).toThrow();
   });
+
+  it("calls onEvict for each evicted entry (the #212 revoke hook)", () => {
+    const evicted: string[] = [];
+    const c = new LruCache<number, string>(2, (k, v) => evicted.push(`${k}:${v}`));
+    c.set(1, "a");
+    c.set(2, "b");
+    c.set(3, "c"); // evicts 1
+    c.set(2, "b2");
+    c.set(4, "d"); // evicts 3 (2 was refreshed)
+    expect(evicted).toEqual(["1:a", "3:c"]);
+    c.delete(2);
+    expect(evicted, "delete is the caller's own doing, not an eviction").toEqual(["1:a", "3:c"]);
+  });
 });

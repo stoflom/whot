@@ -547,10 +547,11 @@ fn writers_sweep_stale_unknown_shells_208() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// #210 — refcrop rows are metadata: the crop and the filename derive at
-/// read from the face (`faces.preview`; `faces.name + "-" + seq +
-/// ".jpg"`); a rename moves the filename without touching the rows, and
-/// a recompute whose rows come out identical writes nothing.
+/// #210/#212 — refcrop rows are metadata: the filename derives at read
+/// from the face (`faces.name + "-" + seq + ".jpg"`) and the crop pixels
+/// load through the binary image pipeline (the rows carry no image);
+/// a rename moves the filename without touching the rows, and a
+/// recompute whose rows come out identical writes nothing.
 #[test]
 fn refcrops_derive_crop_and_filename_210() {
     let p = fixture_paths("rcderive");
@@ -559,7 +560,6 @@ fn refcrops_derive_crop_and_filename_210() {
     let rc = db::get_refcrops(&p, 1).unwrap();
     let r2 = rc.iter().find(|r| r.face_id == 2).unwrap();
     assert_eq!(r2.filename, "Unknown1-2-1.jpg", "<face name>-<pin seq>.jpg");
-    assert!(r2.image.starts_with("data:image/jpeg;base64,"), "the crop is the face preview");
     // #210: compare-and-skip — the same recompute over identical rows
     // leaves the rows untouched (their identity is stable)
     db::set_primary_face(&p, 1, 1).unwrap(); // derives the auto rows once
@@ -1270,10 +1270,26 @@ fn cluster_cache_hits_until_inputs_change_211() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #212 — parse the WHOTIMG frame (mirror of src/imageBatch.ts).
+fn parse_image_batch(buf: &[u8]) -> Vec<(i64, Vec<u8>)> {
+    assert_eq!(&buf[..8], b"WHOTIMG\x01", "frame magic");
+    let count = u32::from_le_bytes(buf[8..12].try_into().unwrap()) as usize;
+    let header = 12 + count * 16;
+    let mut out = Vec::new();
+    for i in 0..count {
+        let at = 12 + i * 16;
+        let id = i64::from_le_bytes(buf[at..at + 8].try_into().unwrap());
+        let off = u32::from_le_bytes(buf[at + 8..at + 12].try_into().unwrap()) as usize;
+        let len = u32::from_le_bytes(buf[at + 12..at + 16].try_into().unwrap()) as usize;
+        out.push((id, buf[header + off..header + off + len].to_vec()));
+    }
+    out
+}
+
 /// #207/#212 — the pooled connection serves successive calls and still
 /// sees every committed write (incl. raw external connections); the
-/// batch preview fetch returns id-ordered data URLs for every face with
-/// one and skips the rest.
+/// batch preview fetch returns id-ordered raw bytes for every face with
+/// a preview and skips the rest.
 #[test]
 fn pooled_connect_and_batch_previews_207_212() {
     let p = fixture_paths("pool");
@@ -1289,14 +1305,57 @@ fn pooled_connect_and_batch_previews_207_212() {
         s2.faces.iter().find(|f| f.id == 6).unwrap().description.as_deref(),
         Some("ext")
     );
-    // #212: one call, deduped id-ordered rows for faces with a preview
-    let rows = db::face_previews(&p, &[3, 1, 2, 2, 999]).unwrap();
+    // #212: one binary batch, deduped id-ordered entries for faces with
+    // a preview (raw bytes — no base64)
+    let rows =
+        parse_image_batch(&db::image_batch_bytes(&p, "face", &[3, 1, 2, 2, 999]).unwrap());
     let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
     assert_eq!(ids, vec![1, 2, 3], "deduped, id-ordered, unknown ids skipped");
-    for (_, url) in &rows {
-        assert!(url.starts_with("data:image/jpeg;base64,"), "{url}");
+    // identical bytes to the single-image path
+    assert_eq!(rows[0].1, db::face_preview_bytes(&p, 1).unwrap().unwrap());
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #212 — the image-batch frame round-trips and each kind resolves from
+/// the right column; missing blobs are omitted and bad kinds refused.
+#[test]
+fn image_batch_framing_and_kinds_212() {
+    let p = fixture_paths("imgbatch");
+    // the frame carries exactly the single-path bytes
+    let rows = parse_image_batch(&db::image_batch_bytes(&p, "face", &[1, 2, 3, 999]).unwrap());
+    assert_eq!(
+        rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    for (id, bytes) in &rows {
+        assert_eq!(bytes, &db::face_preview_bytes(&p, *id).unwrap().unwrap());
     }
-    // identical output to the single-face path
-    assert_eq!(rows[0].1, db::face_preview(&p, 1).unwrap());
+    // images: the seed has no thumbnails/previews until we write some
+    assert!(parse_image_batch(&db::image_batch_bytes(&p, "thumb", &[1, 2]).unwrap()).is_empty());
+    {
+        let con = Connection::open(&p.db).unwrap();
+        con.execute(
+            "UPDATE images SET thumbnail = x'0102', preview = x'030405' WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        parse_image_batch(&db::image_batch_bytes(&p, "thumb", &[1, 2]).unwrap()),
+        vec![(1, vec![1, 2])],
+        "thumb reads images.thumbnail; missing omitted"
+    );
+    assert_eq!(
+        parse_image_batch(&db::image_batch_bytes(&p, "preview", &[1, 2]).unwrap()),
+        vec![(1, vec![3, 4, 5])]
+    );
+    assert_eq!(
+        db::image_thumb_bytes(&p, 1).unwrap().unwrap(),
+        vec![1, 2],
+        "the single-image path agrees"
+    );
+    // unknown kinds refuse; empty input frames empty
+    assert!(db::image_batch_bytes(&p, "bogus", &[1]).is_err());
+    assert!(parse_image_batch(&db::image_batch_bytes(&p, "face", &[]).unwrap()).is_empty());
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
