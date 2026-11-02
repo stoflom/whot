@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.93** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.94** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1950,6 +1950,25 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    adjacent **code comment**: the doc→app→test trail runs through
    code, docs and issues, not through the UI. gui-mock asserts the
    absence across tooltips, toasts, hints and labels (C54).
+
+44. **Frontend decomposition: pure derivations leave App** (gui-design
+  v3.94) ⇒ the centre pane's section derivations — the image detail
+  grouping (§4.24), the person view (both cluster-group modes, §4.9),
+  the rejected section (§4.35) and the review grouping (§4.30) — are
+  PURE data mappings over the snapshot (no state ownership, no DOM
+  access, no IPC): they live in a dedicated module with a co-located
+  test suite as the single normative implementation. App composes them
+  but owns none of their rules; behavioural corrections to the
+  §4.9/§4.24/§4.30 grouping are implemented and regression-tested
+  there. The extracted function takes the screen state App already
+  owns (snapshot, mode, open image, anchored person, clusters, show
+  filter, cluster group, pending set, the rename-helper) and returns
+  the same `Section[]` shape the grid consumes. The #98 identity rule
+  is untouched: section/callback stability stays App-owned via
+  `sectionsRef`, and every further App extraction (keyboard layer,
+  menus, hooks) MUST preserve the latest-value ref pattern — an
+  extraction that churns the memoised grid identities is wrong even
+  when its behaviour looks right.
 
 ## 5. Related documents
 
