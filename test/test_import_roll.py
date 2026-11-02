@@ -625,3 +625,81 @@ class EnsurePersonTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------- #90/#217 create-db
+
+class CreateDatabaseTest(unittest.TestCase):
+    """--create-db (#90, #217): a usable database is never clobbered; a
+    schema-less placeholder counts as absent and is built on whatever its
+    size — including the WAL-initialised file the app's failed first load
+    leaves behind (the bug that made first-run imports refuse with
+    'database already exists')."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="whot-createdb-"))
+        self.db = self.dir / "faces.db"
+        self.ui = ir.cli_console.Console(quiet=True)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def build(self):
+        with redirect_stderr(io.StringIO()):
+            return ir.create_database(self.db, self.ui)
+
+    def test_wal_placeholder_is_replaced_217(self):
+        # exactly what db::connect leaves behind on a failed first load:
+        # journal_mode = WAL writes a header BEFORE the schema gate refuses
+        # the file — 4096 bytes, not the 0-byte stray the old guard tolerated
+        con = sqlite3.connect(self.db)
+        con.execute("PRAGMA journal_mode = WAL")
+        con.close()
+        self.assertGreater(self.db.stat().st_size, 0, "the #217 placeholder is non-empty")
+        self.assertTrue(self.build(), "a schema-less placeholder counts as absent")
+        con = sqlite3.connect(self.db)
+        self.assertEqual(
+            con.execute("SELECT version FROM schema_version").fetchone()[0],
+            ir.SCHEMA_VERSION)
+        con.close()
+
+    def test_zero_byte_stray_is_replaced(self):
+        self.db.touch()
+        self.assertTrue(self.build())
+        con = sqlite3.connect(self.db)
+        self.assertEqual(
+            con.execute("SELECT version FROM schema_version").fetchone()[0],
+            ir.SCHEMA_VERSION)
+        con.close()
+
+    def test_existing_database_is_kept(self):
+        self.assertTrue(self.build())
+        con = sqlite3.connect(self.db)
+        con.execute("INSERT INTO imports(path, started_at) VALUES ('/x', 'now')")
+        con.commit()
+        con.close()
+        before = self.db.read_bytes()
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertFalse(ir.create_database(self.db, self.ui))
+        self.assertIn("already exists", err.getvalue())
+        self.assertEqual(self.db.read_bytes(), before, "nothing written")
+
+    def test_foreign_database_and_unreadable_bytes_are_kept(self):
+        # a non-whot SQLite database is data too
+        con = sqlite3.connect(self.db)
+        con.execute("CREATE TABLE notes(x)")
+        con.commit()
+        con.close()
+        self.assertFalse(self.build())
+        # unreadable bytes are never clobbered
+        other = self.dir / "garbage.db"
+        junk = b"\x00\x01 not a database"
+        other.write_bytes(junk)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertFalse(ir.create_database(other, self.ui))
+        self.assertIn("cannot read the existing file", err.getvalue())
+        self.assertIn("refusing to overwrite it", err.getvalue())
+        self.assertEqual(other.read_bytes(), junk)
