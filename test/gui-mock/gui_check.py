@@ -263,6 +263,41 @@ def dblclick(t, el):
         "bubbles: true, cancelable: true, view: window}))", el)
 
 
+# #214 — the review grid mounts its sections incrementally (the App's
+# mount prefix). A check may address any card the snapshot holds, but
+# only the mounted prefix is in the DOM: before an element wait for a
+# grid subject, scroll-reach it the real way (toward the sentinel — the
+# prefix grows geometrically), so checks never need to know about the
+# mount. Absence assertions use find_elements and are untouched.
+_GRID_MARKERS = (".face-card[", ".face-section[")
+
+
+def _grid_grow(t, value, cycles=14):
+    try:
+        for _ in range(cycles):
+            if t.driver.find_elements(By.CSS_SELECTOR, value):
+                return
+            t.driver.execute_script(
+                "const el = document.querySelector('.center-scroll');"
+                " if (el) el.scrollTop = el.scrollHeight;")
+            time.sleep(0.35)
+    except Exception:
+        pass
+
+
+def install_grid_grow(t):
+    """Wrap t.find_element with the #214 scroll-reach (driver-agnostic)."""
+    orig = t.find_element
+
+    def find_element(by, value, timeout=10):
+        if by == By.CSS_SELECTOR and any(m in value for m in _GRID_MARKERS):
+            _grid_grow(t, value)
+        return orig(by, value, timeout)
+
+    t.find_element = find_element
+    return t
+
+
 def fresh(t):
     """fresh page = fresh in-memory mock state; wait for the grid to render"""
     t.navigate(URL)
@@ -3703,6 +3738,9 @@ def c41_verdict_focuses_person(t):
                True, "need a person with exactly one new face — vacuous")
         return
     started = {"tab": tab(), "anchor0": js(t, "return !!document.querySelector('.tree-person.selected')")}
+    # #214: scroll-reach the section (the mount prefix may hide it —
+    # find_element grows for element queries, this one is js-based)
+    _grid_grow(t, f".face-section[data-section-key='rev-{pick['id']}']")
     sel = js(t, r"""
       const s = [...document.querySelectorAll('.face-section')].find(
         x => x.dataset.sectionKey === 'rev-' + arguments[0]);
@@ -5906,7 +5944,7 @@ def _restart_session(holder):
     # the next session's display, so take it with us
     subprocess.run(["pkill", "-f", "MiniBrows[e]r"], capture_output=True)
     time.sleep(1.5)
-    holder["t"] = Tester(headless=True)
+    holder["t"] = install_grid_grow(Tester(headless=True))
     holder["t"].start()
     holder["t"].set_window_size(1600, 1000)
 
@@ -5949,7 +5987,7 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
     URL = URL.format(port=port)
-    holder = {"t": Tester(headless=True)}
+    holder = {"t": install_grid_grow(Tester(headless=True))}
     holder["t"].start()
     holder["t"].set_window_size(1600, 1000)
     for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review):
