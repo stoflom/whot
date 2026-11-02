@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { LruCache } from "./lruCache";
 
 export interface PersonCounts {
   total: number;
@@ -210,26 +211,53 @@ export const getImportInfo = () =>
 // ---------------------------------------------------------------- image cache
 //
 // BLOBs never change once written, so a promise cache keyed by id is safe
-// for the whole session.
+// for the whole session. #212: bounded (LRU) — the data-URL strings add
+// up over a big review pass, and the categories carry very different
+// payload sizes (face crops tiny, image previews full frames), so each
+// gets its own cap.
 
-const imgCache = new Map<string, Promise<string | null>>();
+const faceCache = new LruCache<number, Promise<string | null>>(2000);
+const thumbCache = new LruCache<number, Promise<string | null>>(250);
+const previewCache = new LruCache<number, Promise<string | null>>(100);
 
-function cached(key: string, load: () => Promise<string | null>): Promise<string | null> {
-  let p = imgCache.get(key);
+function cached<K>(
+  cache: LruCache<K, Promise<string | null>>,
+  key: K,
+  load: () => Promise<string | null>,
+): Promise<string | null> {
+  let p = cache.get(key);
   if (!p) {
     p = load().catch((e) => {
-      imgCache.delete(key);
+      cache.delete(key);
       console.error(e);
       return null;
     });
-    imgCache.set(key, p);
+    cache.set(key, p);
   }
   return p;
 }
 
 export const facePreview = (id: number) =>
-  cached(`face:${id}`, async () => invoke<string>("get_face_preview", { faceId: id }));
+  cached(faceCache, id, async () => invoke<string>("get_face_preview", { faceId: id }));
 export const imageThumb = (id: number) =>
-  cached(`thumb:${id}`, () => invoke<string | null>("get_image_thumb", { imageId: id }));
+  cached(thumbCache, id, () => invoke<string | null>("get_image_thumb", { imageId: id }));
 export const imagePreview = (id: number) =>
-  cached(`preview:${id}`, () => invoke<string | null>("get_image_preview", { imageId: id }));
+  cached(previewCache, id, () => invoke<string | null>("get_image_preview", { imageId: id }));
+
+/** #212 — one batched IPC per grid population: fills the face cache for
+    every not-yet-cached id, so the cards' useFaceImage hooks resolve
+    without their own round trips. Preview-less faces are left uncached
+    (the per-card path answers for them, as before); failures leave the
+    cache untouched and the per-card path takes over. */
+export async function prefetchFacePreviews(ids: number[]): Promise<void> {
+  const want = [...new Set(ids)].filter((id) => !faceCache.has(id));
+  if (want.length === 0) return;
+  try {
+    const rows = await invoke<Array<[number, string]>>("get_face_previews", {
+      faceIds: want,
+    });
+    for (const [id, url] of rows) faceCache.set(id, Promise.resolve(url));
+  } catch (e) {
+    console.error(e);
+  }
+}

@@ -419,6 +419,10 @@
       SNAP.settings = settings;
     },
     get_face_preview: ({ faceId }) => svg((faceId * 47) % 360, String(faceId)),
+    // #212: batch preview fetch (one call per grid population) — same
+    // placeholder art as get_face_preview, [faceId, url] rows
+    get_face_previews: ({ faceIds }) =>
+      faceIds.map((id) => [id, svg((id * 47) % 360, String(id))]),
     get_image_thumb: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
     get_image_preview: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
     // #167: the import runner — scan_import_dir consults the seeded

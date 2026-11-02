@@ -9,8 +9,9 @@ use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 pub const MODEL_TAG: &str = "insightface:buffalo_l";
 /// Must match `schema_version.version` in database/schema.sql — exact
@@ -137,20 +138,82 @@ pub fn has_schema(paths: &Paths) -> bool {
     .is_ok()
 }
 
-pub fn connect(paths: &Paths) -> Result<Connection> {
-    if let Some(parent) = paths.db.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("cannot create {}", parent.display()))?;
+/// #207 — one connection per database path, opened once per process.
+/// The guard keeps the pool lock for the caller's scope (the DB surface
+/// is serialised — commands are short and the UI is serial anyway), so
+/// `connect` callers keep their `let mut con = connect(paths)?;` shape
+/// unchanged through Deref/DerefMut. `create_dir_all`, the pragmas and
+/// the compatibility gate run on first open only — per-call cost is
+/// just the gate's marker query. A database REPLACED on disk (unlink +
+/// recreate) while the app runs keeps being served by the old file —
+/// the drop-and-recreate maintenance policy implies an app restart.
+/// The #208 `data_version` probe stays a SEPARATE connection on
+/// purpose: own writes must still move the stamp.
+static POOL: Mutex<Option<HashMap<PathBuf, Connection>>> = Mutex::new(None);
+
+pub struct DbConn {
+    guard: MutexGuard<'static, Option<HashMap<PathBuf, Connection>>>,
+    key: PathBuf,
+}
+
+impl Deref for DbConn {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.guard
+            .as_ref()
+            .expect("pool map initialised in connect")
+            .get(&self.key)
+            .expect("pool entry inserted in connect")
     }
-    let con = Connection::open(&paths.db)
-        .with_context(|| format!("cannot open {}", paths.db.display()))?;
-    con.pragma_update(None, "journal_mode", "WAL")?;
-    con.pragma_update(None, "foreign_keys", "ON")?;
-    // the importer runs in a separate process — don't fail instantly on lock
-    // contention (F16); matches python sqlite3's 5s default timeout
-    con.pragma_update(None, "busy_timeout", 5000)?;
-    check_schema(&con, &paths.db)?;
-    Ok(con)
+}
+
+impl DerefMut for DbConn {
+    fn deref_mut(&mut self) -> &mut Connection {
+        self.guard
+            .as_mut()
+            .expect("pool map initialised in connect")
+            .get_mut(&self.key)
+            .expect("pool entry inserted in connect")
+    }
+}
+
+impl std::fmt::Debug for DbConn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DbConn").field("db", &self.key).finish()
+    }
+}
+
+fn pool_lock() -> Result<MutexGuard<'static, Option<HashMap<PathBuf, Connection>>>> {
+    POOL.lock().map_err(|_| anyhow!("database pool lock poisoned"))
+}
+
+pub fn connect(paths: &Paths) -> Result<DbConn> {
+    let mut guard = pool_lock()?;
+    let map = guard.get_or_insert_with(HashMap::new);
+    if !map.contains_key(&paths.db) {
+        if let Some(parent) = paths.db.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("cannot create {}", parent.display()))?;
+        }
+        let con = Connection::open(&paths.db)
+            .with_context(|| format!("cannot open {}", paths.db.display()))?;
+        con.pragma_update(None, "journal_mode", "WAL")?;
+        con.pragma_update(None, "foreign_keys", "ON")?;
+        // the importer runs in a separate process — don't fail instantly on lock
+        // contention (F16); matches python sqlite3's 5s default timeout
+        con.pragma_update(None, "busy_timeout", 5000)?;
+        // gate before caching — a broken database is never pooled
+        check_schema(&con, &paths.db)?;
+        map.insert(paths.db.clone(), con);
+    } else {
+        // the compatibility gate is one marker query and stays PER CALL:
+        // a database corrupted/restored under the running app must keep
+        // being refused (workflow.rs schema_version_compatibility_gate)
+        let con = map.get(&paths.db).unwrap();
+        check_schema(con, &paths.db)?;
+    }
+    let key = paths.db.clone();
+    Ok(DbConn { guard, key })
 }
 
 /// Compatibility gate: every connection must see the schema this build
@@ -572,6 +635,34 @@ pub fn face_preview(paths: &Paths, face_id: i64) -> Result<String> {
         .query_row("SELECT preview FROM faces WHERE id = ?", params![face_id], |r| r.get(0))?;
     let blob = blob.context("face has no preview")?;
     Ok(jpeg_data_url(&blob))
+}
+
+/// #212 — batch twin of `face_preview`: one call per grid population
+/// instead of one IPC per card. Faces without a preview are skipped
+/// (the per-card path still answers for them); the result is id-ordered.
+pub fn face_previews(paths: &Paths, face_ids: &[i64]) -> Result<Vec<(i64, String)>> {
+    let con = connect(paths)?;
+    let mut ids: Vec<i64> = face_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut out = Vec::with_capacity(ids.len());
+    // chunked so a huge selection never outgrows the SQL variable/string
+    // budget of an IN list
+    for chunk in ids.chunks(500) {
+        let list = ids_list(chunk);
+        let mut st =
+            con.prepare(&format!("SELECT id, preview FROM faces WHERE id IN ({list})"))?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, Option<Vec<u8>>>(1)?))
+        })?;
+        for row in rows {
+            let (id, blob) = row?;
+            if let Some(b) = blob {
+                out.push((id, jpeg_data_url(&b)));
+            }
+        }
+    }
+    Ok(out)
 }
 
 pub fn image_blobs(paths: &Paths, image_id: i64) -> Result<Option<(String, Option<String>)>> {

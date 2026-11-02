@@ -38,6 +38,17 @@ fn get_face_preview(state: State<AppState>, face_id: i64) -> Result<String, Stri
     db::face_preview(state.paths()?, face_id).map_err(|e| e.to_string())
 }
 
+/// #212 — one call per grid population instead of one IPC per card
+/// (rows are [faceId, dataUrl] tuples, id-ordered; preview-less faces
+/// are skipped)
+#[tauri::command]
+fn get_face_previews(
+    state: State<AppState>,
+    face_ids: Vec<i64>,
+) -> Result<Vec<(i64, String)>, String> {
+    db::face_previews(state.paths()?, &face_ids).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_image_thumb(state: State<AppState>, image_id: i64) -> Result<Option<String>, String> {
     db::image_blobs(state.paths()?, image_id)
@@ -305,6 +316,7 @@ pub fn run() {
             get_snapshot,
             get_data_version,
             get_face_preview,
+            get_face_previews,
             get_image_thumb,
             get_image_preview,
             get_refcrops,
