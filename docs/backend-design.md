@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.7** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.8** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -121,11 +121,15 @@ person) — see `docs/schema-design.md` §5.
   wholesale after every mutation. It is **pure** (#208): the stale-shell
   sweep (gui-design §4.27) rides the writers that can empty a person
   (assign/merge, reject-moves); named persons are never swept.
-- Image/face content lives in the DB as BLOBs and leaves base64-encoded
-  as data URLs (`face_preview`, `image_blobs`); the frontend caches by
-  `face_id`/`image_id` and never invalidates (content is immutable).
-  `get_refcrops` derives its crops and filenames at read from the face
-  (rows are metadata since schema v1.8, #210).
+- Image/face content lives in the DB as BLOBs and leaves as **raw
+  bytes** (#212): `get_image_batch` answers one framed `WHOTIMG`
+  container per call (`tauri::ipc::Response` → ArrayBuffer → Blob URLs
+  in the webview), the frontend coalesces each render-commit's image
+  requests into one call per kind and caches the URLs by
+  `face_id`/`image_id` (content is immutable; per-kind LRU caps revoke
+  evicted Blob URLs). `get_refcrops` derives its filenames at read from
+  the face and carries no pixels (rows are metadata since schema v1.8,
+  #210) — the detail strip loads crops through the same pipeline.
   `open_image` is the exception: it writes `images.preview` to a temp
   file and hands it to the opener plugin (gui-design §3).
 - `person_face_clusters` computes, per appearance group, single-linkage

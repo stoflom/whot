@@ -323,11 +323,13 @@ rules are `docs/gui-design.md` §4, architecture is
   first_import_id, last_import_id}], imports: [{id, path, started_at}],
   settings {cluster_threshold, refcrop_n, face_filter, cluster_group,
   merge_name_distance, merge_suffix_aliases} }`
-- `get_face_preview(face_id) → String` (base64 JPEG from `faces.preview`)
-- `get_image_thumb(image_id) → Option<String>`,
-  `get_image_preview(image_id) → Option<String>`
-- `get_refcrops(person_id) → [{seq, description, pinned, face_id, image: base64}]
-  grouped by appearance (§4.6)`
+- `get_image_batch(kind, ids) → bytes` — raw JPEG bytes (no base64) in
+  the framed `WHOTIMG` container (#212): kind = `face` (`faces.preview`),
+  `thumb` (`images.thumbnail`) or `preview` (`images.preview`); images
+  without a blob are omitted
+- `get_refcrops(person_id) → [{seq, description, pinned, face_id, filename}]
+  grouped by appearance (§4.6)` — metadata rows; the crop pixels load
+  through `get_image_batch("face", …)` (#210/#212)
 - `open_image(image_id) → ()` — write `images.preview` to a unique temp
   file and open it with the system viewer (opener plugin; §3 context menus)
 - `person_face_clusters(person_id, threshold) →
@@ -407,7 +409,7 @@ whot/
     styles.css
     *.test.ts                      # vitest unit tests (`npm test`)
   src-tauri/
-    tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde, base64
+    tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde
     src/main.rs  src/lib.rs        # lib.rs: #[tauri::command] surface
     src/db.rs                      # db.rs: queries + embeddings + refcrops
     tests/workflow.rs              # Rust integration tests (embeds dist/; fixture DB)

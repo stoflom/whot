@@ -116,6 +116,17 @@ function groupRefcrops(rcs: Refcrop[]): [string, Refcrop[]][] {
   return [...m.entries()];
 }
 
+// #212: the crop renders through the binary image pipeline — the rows
+// are metadata and derive their pixels from the face itself
+function RefcropThumb({ faceId, rotation }: { faceId: number; rotation: number }) {
+  const img = useFaceImage(faceId);
+  return img ? (
+    <img src={img} alt="" style={rotStyle(rotation)} />
+  ) : (
+    <div className="face-img-loading" />
+  );
+}
+
 function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson, onUpdate }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
   const system = person.name === "Rejected"; // #165/§4.35
@@ -277,7 +288,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
             </div>
             {rows.map((rc) => (
               <div className="refcrop" key={rc.face_id} title={rc.filename}>
-                <img src={rc.image} alt="" style={rotStyle(rotOf(rc.face_id))} />
+                <RefcropThumb faceId={rc.face_id} rotation={rotOf(rc.face_id)} />
                 <span className="refcrop-desc">
                   {rc.pinned ? "📌 " : ""}#{rc.seq}
                 </span>

@@ -5,7 +5,6 @@
 //! behaviour rules implemented in this file.
 
 use anyhow::{anyhow, bail, Context, Result};
-use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -609,64 +608,70 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
 
 // ---------------------------------------------------------------- images
 
-fn jpeg_data_url(bytes: &[u8]) -> String {
-    format!(
-        "data:image/jpeg;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
+/// #212 — raw image bytes leave over the IPC as `tauri::ipc::Response`
+/// (→ ArrayBuffer on the JS side) and render from Blob URLs: no base64
+/// (~33% smaller transfers, no giant JS strings).
+pub fn face_preview_bytes(paths: &Paths, face_id: i64) -> Result<Option<Vec<u8>>> {
+    let con = connect(paths)?;
+    Ok(con
+        .query_row("SELECT preview FROM faces WHERE id = ?", params![face_id], |r| r.get(0))?)
 }
 
-pub fn face_preview(paths: &Paths, face_id: i64) -> Result<String> {
+pub fn image_thumb_bytes(paths: &Paths, image_id: i64) -> Result<Option<Vec<u8>>> {
     let con = connect(paths)?;
-    let blob: Option<Vec<u8>> = con
-        .query_row("SELECT preview FROM faces WHERE id = ?", params![face_id], |r| r.get(0))?;
-    let blob = blob.context("face has no preview")?;
-    Ok(jpeg_data_url(&blob))
+    Ok(con
+        .query_row("SELECT thumbnail FROM images WHERE id = ?", params![image_id], |r| r.get(0))?)
 }
 
-/// #212 — batch twin of `face_preview`: one call per grid population
-/// instead of one IPC per card. Faces without a preview are skipped
-/// (the per-card path still answers for them); the result is id-ordered.
-pub fn face_previews(paths: &Paths, face_ids: &[i64]) -> Result<Vec<(i64, String)>> {
+/// #212 — the image-batch wire format (mirrored by src/imageBatch.ts
+/// and test/gui-mock/mock.js): `"WHOTIMG\x01" | u32 LE count | count ×
+/// { i64 id, u32 off, u32 len } | blobs` — ONE binary response carries
+/// many images. Rows without a blob do not appear.
+pub fn encode_image_batch(rows: &[(i64, Vec<u8>)]) -> Vec<u8> {
+    let blob_len: usize = rows.iter().map(|(_, b)| b.len()).sum();
+    let mut out = Vec::with_capacity(12 + rows.len() * 16 + blob_len);
+    out.extend_from_slice(b"WHOTIMG\x01");
+    out.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+    let mut offset = 0usize;
+    for (id, bytes) in rows {
+        out.extend_from_slice(&id.to_le_bytes());
+        out.extend_from_slice(&(offset as u32).to_le_bytes());
+        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        offset += bytes.len();
+    }
+    for (_, bytes) in rows {
+        out.extend_from_slice(bytes);
+    }
+    out
+}
+
+/// #212 — one binary batch per kind ("face" = faces.preview, "thumb" =
+/// images.thumbnail, "preview" = images.preview), id-ordered; images
+/// without a blob are omitted (the callers cache the miss).
+pub fn image_batch_bytes(paths: &Paths, kind: &str, ids: &[i64]) -> Result<Vec<u8>> {
+    let (table, col) = match kind {
+        "face" => ("faces", "preview"),
+        "thumb" => ("images", "thumbnail"),
+        "preview" => ("images", "preview"),
+        _ => bail!("unknown image kind {kind:?}"),
+    };
+    let mut sorted: Vec<i64> = ids.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
     let con = connect(paths)?;
-    let mut ids: Vec<i64> = face_ids.to_vec();
-    ids.sort_unstable();
-    ids.dedup();
-    let mut out = Vec::with_capacity(ids.len());
-    // chunked so a huge selection never outgrows the SQL variable/string
-    // budget of an IN list
-    for chunk in ids.chunks(500) {
+    let mut rows: Vec<(i64, Vec<u8>)> = Vec::with_capacity(sorted.len());
+    // chunked so a huge selection never outgrows the SQL string budget
+    for chunk in sorted.chunks(500) {
         let list = ids_list(chunk);
-        let mut st =
-            con.prepare(&format!("SELECT id, preview FROM faces WHERE id IN ({list})"))?;
-        let rows = st.query_map([], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, Option<Vec<u8>>>(1)?))
-        })?;
-        for row in rows {
-            let (id, blob) = row?;
-            if let Some(b) = blob {
-                out.push((id, jpeg_data_url(&b)));
-            }
+        let mut st = con.prepare(&format!(
+            "SELECT id, {col} FROM {table} WHERE id IN ({list}) AND {col} IS NOT NULL"
+        ))?;
+        for row in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))? {
+            rows.push(row?);
         }
     }
-    Ok(out)
-}
-
-pub fn image_blobs(paths: &Paths, image_id: i64) -> Result<Option<(String, Option<String>)>> {
-    let con = connect(paths)?;
-    let (thumb, preview): (Option<Vec<u8>>, Option<Vec<u8>>) = con
-        .query_row(
-            "SELECT thumbnail, preview FROM images WHERE id = ?",
-            params![image_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?
-        .context("image not found")?;
-    Ok(match (thumb, preview) {
-        (Some(t), Some(p)) => Some((jpeg_data_url(&t), Some(jpeg_data_url(&p)))),
-        (Some(t), None) => Some((jpeg_data_url(&t), None)),
-        _ => None,
-    })
+    rows.sort_by_key(|(id, _)| *id);
+    Ok(encode_image_batch(&rows))
 }
 
 /// Raw preview bytes (thumbnail fallback) for the full-image context menu:
@@ -2223,16 +2228,16 @@ pub struct Refcrop {
     pub description: String,
     pub pinned: bool,
     pub filename: String,
-    pub image: String,
 }
 
 pub fn get_refcrops(paths: &Paths, person_id: i64) -> Result<Vec<Refcrop>> {
     let con = connect(paths)?;
-    // #210: the crop and the filename derive at read from the face —
-    // a crop-less face is never a refcrop (§4.6 invariant)
+    // #210/#212: the rows are metadata — the filename derives from the
+    // face and the crop pixels load through the binary image pipeline
+    // (face/<face_id>); a crop-less face is never a refcrop (§4.6)
     let mut st = con.prepare(
         "SELECT r.face_id, r.seq, r.description, r.pinned,
-                f.name || '-' || r.seq || '.jpg', f.preview
+                f.name || '-' || r.seq || '.jpg'
            FROM person_refcrops r JOIN faces f ON f.id = r.face_id
           WHERE r.person_id = ? AND f.preview IS NOT NULL
           ORDER BY r.description, r.seq",
@@ -2244,19 +2249,17 @@ pub fn get_refcrops(paths: &Paths, person_id: i64) -> Result<Vec<Refcrop>> {
             r.get::<_, String>(2)?,
             r.get::<_, i64>(3)?,
             r.get::<_, String>(4)?,
-            r.get::<_, Vec<u8>>(5)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (face_id, seq, description, pinned, filename, crop) = row?;
+        let (face_id, seq, description, pinned, filename) = row?;
         out.push(Refcrop {
             face_id,
             seq,
             description,
             pinned: pinned != 0,
             filename,
-            image: jpeg_data_url(&crop),
         });
     }
     Ok(out)

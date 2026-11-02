@@ -33,34 +33,19 @@ fn get_data_version(state: State<AppState>) -> Result<i64, String> {
     db::data_version(state.paths()?).map_err(|e| e.to_string())
 }
 
+/// #212 — raw image bytes, no base64: ONE binary response per batch
+/// (tauri::ipc::Response → ArrayBuffer on the JS side) carrying the
+/// framed `WHOTIMG` container decoded by src/imageBatch.ts. Kinds:
+/// "face" (faces.preview), "thumb" (images.thumbnail), "preview"
+/// (images.preview); images without a blob simply do not appear.
 #[tauri::command]
-fn get_face_preview(state: State<AppState>, face_id: i64) -> Result<String, String> {
-    db::face_preview(state.paths()?, face_id).map_err(|e| e.to_string())
-}
-
-/// #212 — one call per grid population instead of one IPC per card
-/// (rows are [faceId, dataUrl] tuples, id-ordered; preview-less faces
-/// are skipped)
-#[tauri::command]
-fn get_face_previews(
+fn get_image_batch(
     state: State<AppState>,
-    face_ids: Vec<i64>,
-) -> Result<Vec<(i64, String)>, String> {
-    db::face_previews(state.paths()?, &face_ids).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn get_image_thumb(state: State<AppState>, image_id: i64) -> Result<Option<String>, String> {
-    db::image_blobs(state.paths()?, image_id)
-        .map(|v| v.map(|(t, _)| t))
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn get_image_preview(state: State<AppState>, image_id: i64) -> Result<Option<String>, String> {
-    db::image_blobs(state.paths()?, image_id)
-        .map(|v| v.and_then(|(_, p)| p))
-        .map_err(|e| e.to_string())
+    kind: String,
+    ids: Vec<i64>,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = db::image_batch_bytes(state.paths()?, &kind, &ids).map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]
@@ -315,10 +300,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             get_data_version,
-            get_face_preview,
-            get_face_previews,
-            get_image_thumb,
-            get_image_preview,
+            get_image_batch,
             get_refcrops,
             open_image,
             person_face_clusters,

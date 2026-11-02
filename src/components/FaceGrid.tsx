@@ -6,7 +6,6 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { Face, Person } from "../api";
-import { prefetchFacePreviews } from "../api";
 import FaceCard from "./FaceCard";
 import { stagedFieldsForSection, type Stage } from "../stage";
 
@@ -334,16 +333,6 @@ function FaceGrid({
     io.observe(el);
     return () => io.disconnect();
   }, [more, onNeedMore]);
-  // #212: one batched preview fetch per mount growth — the cards'
-  // useFaceImage hooks then resolve from the cache without their own
-  // round trips (the batch skips what the cache already holds)
-  useEffect(() => {
-    const limit =
-      mountLimit == null ? sections.length : Math.min(mountLimit, sections.length);
-    const ids: number[] = [];
-    for (let i = 0; i < limit; i++) ids.push(...sections[i].faceIds);
-    if (ids.length > 0) void prefetchFacePreviews(ids);
-  }, [sections, mountLimit]);
   if (sections.length === 0) {
     return <div className="empty">{emptyHint ?? "nothing to show"}</div>;
   }

@@ -61,15 +61,34 @@
   // races the fetch otherwise (intermittent permanent "loading…")
   let ready = Promise.resolve();
 
-  const svg = (hue, label) =>
-    "data:image/svg+xml;utf8," +
-    encodeURIComponent(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">` +
-        `<rect width="128" height="128" fill="hsl(${hue},45%,32%)"/>` +
-        `<circle cx="64" cy="52" r="30" fill="hsl(${hue},35%,55%)"/>` +
-        `<text x="64" y="118" font-size="16" text-anchor="middle" fill="#eee">${label}</text>` +
-        `</svg>`
-    );
+  // #212: a tiny valid JPEG (13×16) standing in for the DB image blobs —
+  // the checks are layout/interaction only, never pixel checks
+  const JPEG_BYTES = Uint8Array.from(
+    atob("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgDAwMDAgQDAwMEBAQFBgoGBgUFBgwICQcKDgwPDg4MDQ0PERYTDxAVEQ0NExoTFRcYGRkZDxIbHRsYHRYYGRj/2wBDAQQEBAYFBgsGBgsYEA0QGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBj/wAARCAAQAA0DASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5E8MWujy29wNTV8qhKhfwrktURBfuIFIXJxkVuWM4SzmkWRUCoN249eRXO383nXbOo4yQMGuanFubbPTxDiqasf/Z"),
+    (c) => c.charCodeAt(0),
+  );
+
+  // #212: mirror of db::encode_image_batch / src/imageBatch.ts — the
+  // WHOTIMG frame: magic | u32 count | {i64 id, u32 off, u32 len} × | blobs
+  const encodeImageBatch = (entries) => {
+    const headerLen = 8 + 4 + entries.length * 16;
+    let blobLen = 0;
+    for (const [, bytes] of entries) blobLen += bytes.length;
+    const out = new Uint8Array(headerLen + blobLen);
+    out.set([0x57, 0x48, 0x4f, 0x54, 0x49, 0x4d, 0x47, 0x01]); // "WHOTIMG\x01"
+    const head = new DataView(out.buffer);
+    head.setUint32(8, entries.length, true);
+    let off = 0;
+    entries.forEach(([id, bytes], i) => {
+      const at = 12 + i * 16;
+      head.setBigInt64(at, BigInt(id), true);
+      head.setUint32(at + 8, off, true);
+      head.setUint32(at + 12, bytes.length, true);
+      out.set(bytes, headerLen + off);
+      off += bytes.length;
+    });
+    return out;
+  };
 
   const rederiveNames = () => {
     const byPd = new Map();
@@ -418,13 +437,11 @@
     set_settings: ({ settings }) => {
       SNAP.settings = settings;
     },
-    get_face_preview: ({ faceId }) => svg((faceId * 47) % 360, String(faceId)),
-    // #212: batch preview fetch (one call per grid population) — same
-    // placeholder art as get_face_preview, [faceId, url] rows
-    get_face_previews: ({ faceIds }) =>
-      faceIds.map((id) => [id, svg((id * 47) % 360, String(id))]),
-    get_image_thumb: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
-    get_image_preview: ({ imageId }) => svg((imageId * 31) % 360, "img" + imageId),
+    // #212: binary image delivery — ONE framed batch per call (the
+    // WHOTIMG container of db::encode_image_batch / src/imageBatch.ts);
+    // a real tiny JPEG stands in for the DB blobs (never pixel-checked)
+    get_image_batch: ({ ids }) =>
+      encodeImageBatch(ids.map((id) => [id, JPEG_BYTES])),
     // #167: the import runner — scan_import_dir consults the seeded
     // window.__MOCK_ROLL_DIRS__ ({path: imageCount}) and answers the
     // #169 recursive boolean (≥ 1 anywhere ⇒ true); start_import

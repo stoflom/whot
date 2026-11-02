@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { decodeImageBatch } from "./imageBatch";
 import { LruCache } from "./lruCache";
 
 export interface PersonCounts {
@@ -87,7 +88,6 @@ export interface Refcrop {
   description: string;
   pinned: boolean;
   filename: string;
-  image: string;
 }
 export interface ClusterFace {
   face_id: number;
@@ -208,17 +208,30 @@ export const getImportStatus = (since: number) =>
 export const getImportInfo = () =>
   invoke<{ dbPath: string; dbExists: boolean }>("get_import_info");
 
-// ---------------------------------------------------------------- image cache
+// ---------------------------------------------------------------- image delivery
 //
-// BLOBs never change once written, so a promise cache keyed by id is safe
-// for the whole session. #212: bounded (LRU) — the data-URL strings add
-// up over a big review pass, and the categories carry very different
-// payload sizes (face crops tiny, image previews full frames), so each
-// gets its own cap.
+// #212 — images cross the IPC as RAW BYTES (tauri::ipc::Response →
+// ArrayBuffer) and render from Blob URLs: no base64 (~33% smaller
+// transfers, no giant JS strings) and same-origin loads, so the #122
+// canvas rotation never taints. Requests COALESCE — a mount wave (the
+// grid, a thumb row, the refcrop strip) flushes ONE get_image_batch
+// call per kind. BLOBs never change once written, so cached URLs stay
+// valid for the session; the per-kind LRU caps bound the retained Blob
+// URLs and revoke evicted ones (a revoked URL never breaks an
+// already-loaded <img> — verified on WebKitGTK).
 
-const faceCache = new LruCache<number, Promise<string | null>>(2000);
-const thumbCache = new LruCache<number, Promise<string | null>>(250);
-const previewCache = new LruCache<number, Promise<string | null>>(100);
+type ImageKind = "face" | "thumb" | "preview";
+
+const revokeUrl = (_id: number, p: Promise<string | null>) =>
+  void p.then((url) => {
+    if (url) URL.revokeObjectURL(url);
+  });
+
+const imageCaches: Record<ImageKind, LruCache<number, Promise<string | null>>> = {
+  face: new LruCache(5000, revokeUrl),
+  thumb: new LruCache(1000, revokeUrl),
+  preview: new LruCache(500, revokeUrl),
+};
 
 function cached<K>(
   cache: LruCache<K, Promise<string | null>>,
@@ -237,27 +250,63 @@ function cached<K>(
   return p;
 }
 
-export const facePreview = (id: number) =>
-  cached(faceCache, id, async () => invoke<string>("get_face_preview", { faceId: id }));
-export const imageThumb = (id: number) =>
-  cached(thumbCache, id, () => invoke<string | null>("get_image_thumb", { imageId: id }));
-export const imagePreview = (id: number) =>
-  cached(previewCache, id, () => invoke<string | null>("get_image_preview", { imageId: id }));
+interface Waiter {
+  resolve: (url: string | null) => void;
+  reject: (e: unknown) => void;
+}
 
-/** #212 — one batched IPC per grid population: fills the face cache for
-    every not-yet-cached id, so the cards' useFaceImage hooks resolve
-    without their own round trips. Preview-less faces are left uncached
-    (the per-card path answers for them, as before); failures leave the
-    cache untouched and the per-card path takes over. */
-export async function prefetchFacePreviews(ids: number[]): Promise<void> {
-  const want = [...new Set(ids)].filter((id) => !faceCache.has(id));
-  if (want.length === 0) return;
-  try {
-    const rows = await invoke<Array<[number, string]>>("get_face_previews", {
-      faceIds: want,
+// one in-flight batch per kind — every hook of a render commit queues
+// into the same map and the flush below covers them all in one IPC
+const queued = new Map<ImageKind, Map<number, Waiter>>();
+let flushQueued = false;
+
+function loadImage(kind: ImageKind, id: number): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    let waiters = queued.get(kind);
+    if (!waiters) queued.set(kind, (waiters = new Map()));
+    waiters.set(id, { resolve, reject });
+    if (flushQueued) return;
+    flushQueued = true;
+    queueMicrotask(() => {
+      flushQueued = false;
+      void flushImages();
     });
-    for (const [id, url] of rows) faceCache.set(id, Promise.resolve(url));
-  } catch (e) {
-    console.error(e);
+  });
+}
+
+async function flushImages(): Promise<void> {
+  for (const [kind, waiters] of queued) {
+    if (waiters.size === 0) continue;
+    const batch = [...waiters];
+    waiters.clear();
+    try {
+      const buf = await invoke<ArrayBuffer>("get_image_batch", {
+        kind,
+        ids: batch.map(([id]) => id),
+      });
+      const got = decodeImageBatch(buf);
+      for (const [id, waiter] of batch) {
+        const bytes = got.get(id);
+        if (!bytes || bytes.length === 0) {
+          waiter.resolve(null); // no such image — cache the miss
+          continue;
+        }
+        waiter.resolve(
+          // slice(): a fresh ArrayBuffer-backed copy (the decoded views
+          // share the IPC buffer, which BlobPart typing will not take)
+          URL.createObjectURL(new Blob([bytes.slice()], { type: "image/jpeg" })),
+        );
+      }
+    } catch (e) {
+      // cached() drops the failed entry and reports null — a later mount retries
+      for (const [, waiter] of batch) waiter.reject(e);
+    }
   }
 }
+
+export const facePreview = (id: number) =>
+  cached(imageCaches.face, id, () => loadImage("face", id));
+export const imageThumb = (id: number) =>
+  cached(imageCaches.thumb, id, () => loadImage("thumb", id));
+export const imagePreview = (id: number) =>
+  cached(imageCaches.preview, id, () => loadImage("preview", id));

@@ -35,7 +35,8 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
 
 ## Fidelity notes
 
-- Image commands return small SVG placeholders — layout and interaction
+- The binary image batch returns a tiny shared JPEG standing in for the
+  DB blobs — layout and interaction
   checks only, never pixel checks.
 - `person_face_clusters` mirrors the backend's single-linkage clustering
   (cosine similarity, distance = 1 − sim, default threshold 0.40) over the
