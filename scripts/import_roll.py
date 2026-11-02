@@ -162,14 +162,33 @@ def missing_db_message(db_path: Path) -> str | None:
 
 def create_database(db_path: Path, ui: cli_console.Console) -> bool:
     """--create-db (#90): build *db_path* from database/schema.sql, creating
-    missing parent directories. An existing **non-empty** database is kept
-    (warning on stderr, returns False ⇒ exit 1); a stray 0-byte file — what
-    sqlite3.connect() leaves behind when pointed at a missing path — counts
-    as absent and is replaced. A failed build removes its own debris."""
-    if db_path.exists() and db_path.stat().st_size > 0:
-        ui.error(f"database already exists: {db_path} — refusing to overwrite it")
-        ui.summary("--create-db: nothing to do (existing database kept)")
-        return False
+    missing parent directories. An existing **usable** database is kept
+    (warning on stderr, returns False ⇒ exit 1); a schema-less placeholder
+    counts as absent and is replaced whatever its size — the 0-byte file a
+    bare sqlite3.connect() leaves behind AND the WAL-initialised file the
+    app's failed first load leaves behind (#217: db::connect runs
+    `PRAGMA journal_mode = WAL` before the schema gate rejects the file,
+    so the placeholder is 4 KiB, not 0). Unreadable (non-SQLite) bytes are
+    kept too — never clobber foreign files. A failed build removes its own
+    debris."""
+    if db_path.exists():
+        # read-only probe: deciding must never create or initialise anything
+        try:
+            con = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
+            try:
+                placeholder = con.execute(
+                    "SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is None
+            finally:
+                con.close()
+        except sqlite3.Error:
+            ui.error(f"cannot read the existing file as a SQLite database: {db_path} "
+                     "— refusing to overwrite it")
+            ui.summary("--create-db: nothing to do (existing file kept)")
+            return False
+        if not placeholder:
+            ui.error(f"database already exists: {db_path} — refusing to overwrite it")
+            ui.summary("--create-db: nothing to do (existing database kept)")
+            return False
     db_path.parent.mkdir(parents=True, exist_ok=True)
     schema_sql = (PROJECT_ROOT / "database" / "schema.sql").read_text()
     con = sqlite3.connect(db_path)

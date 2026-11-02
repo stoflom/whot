@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.95** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.96** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1245,10 +1245,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
     **`--create-db`**: builds the database at the `.env`
     `FACES_DB` path from `database/schema.sql`, creating missing parent
-    directories. An existing **non-empty** database ⇒ warning on
-    stderr, exit 1, nothing written; a stray **0-byte** file (exactly
-    what `sqlite3.connect()` leaves behind) counts as absent and is
-    replaced. Combined with
+    directories. An existing **usable** database (any schema at all —
+    `sqlite_master` non-empty) ⇒ warning on
+    stderr, exit 1, nothing written; a **schema-less placeholder** —
+    the stray **0-byte** file `sqlite3.connect()` leaves behind, or the
+    **WAL-initialised** file the app's failed first load leaves behind
+    (#217) — counts as absent and is replaced whatever its size.
+    Unreadable non-SQLite bytes are kept as well. Combined with
     `--dry-run` ⇒ argparse error (creation is a write). `ROLL_DIR`
     becomes optional with it: omitted ⇒ create and exit 0; given ⇒
     create when needed, then continue with the import.
