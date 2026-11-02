@@ -193,7 +193,9 @@ Exit code 0 iff all C-checks and the R1 layout rule pass.
 """
 import json
 import os
+import subprocess
 import sys
+import threading
 import time
 
 # #170: driver choice — WebKitGTK (the engine Tauri ships, #168) is the
@@ -234,6 +236,23 @@ def record(check, ok, detail):
 
 def js(t, code, *args):
     return t.execute_script(code, *args)
+
+
+def dblclick(t, el):
+    """Dispatch the DOM dblclick on el directly.
+
+    The pointer-layer double_click (Selenium → X11/Xwayland → WebKit)
+    races the compositor's synthetic-event forwarding and can
+    DEADLOCK the whole automation session when the page re-renders a
+    pane in response (observed on GNOME/Xwayland: a tight
+    double-click that opens the focus split wedges the session; a JS
+    dispatch of the very DOM event the handler receives is immune).
+    The app's onDoubleClick handler gets the identical event either
+    way, so the behaviour under test is unchanged.
+    """
+    t.execute_script(
+        "arguments[0].dispatchEvent(new MouseEvent('dblclick', {"
+        "bubbles: true, cancelable: true, view: window}))", el)
 
 
 def fresh(t):
@@ -2223,7 +2242,7 @@ def c32_full_image_follows_person(t):
     card.click()
     time.sleep(0.6)
     card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['cardId']}']")
-    AC(t.driver).double_click(card).perform()
+    dblclick(t, card)
     time.sleep(0.8)
     entry = view_state()
     entry_name = right_name()
@@ -2259,7 +2278,7 @@ def c32_full_image_follows_person(t):
     card2.click()  # pre-click — same WebKit double-click-window fix as phase A
     time.sleep(0.6)
     card2 = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['cardId']}']")
-    AC(t.driver).double_click(card2).perform()  # entry anchor updates UNDER the import pane
+    dblclick(t, card2)  # entry anchor updates UNDER the import pane
     time.sleep(0.8)
     under_entry = view_state()
     rect2 = t.find_element(By.CSS_SELECTOR, f"[data-overlay-face='{pick['otherFace']}']")
@@ -2275,9 +2294,39 @@ def c32_full_image_follows_person(t):
     revealed = view_state()
     revealed_name = right_name()
 
+    ok_ab = (
+        before.get("overview") and not before.get("personPane")   # fresh = Overview
+        and entry.get("focus") and entry.get("tab", "").startswith("Review")
+        and entry_name == pick["cardName"]                          # entry anchor
+        and after_rect.get("focus")                                 # view never left
+        and after_rect.get("tab", "").startswith("Review")
+        and rect_name == pick["otherName"]                          # rect switch
+        and rect_selected                                            # toggle still works
+        and import_open.get("importPane") and not import_open.get("personPane")
+        and under_entry.get("focus") and under_entry.get("importPane")
+        and under_rect.get("importPane") and not under_rect.get("personPane")
+        and revealed.get("personPane") and not revealed.get("importPane")
+        and revealed_name == pick["otherName"]                       # anchor under the pane
+    )
+
     # ── phase C: NULL person_id leaves the anchor untouched ─────────────
     # f5 = the entry card's face (its person ≠ the current anchor),
-    # person_id nulled + name stamped so the focus-refresh is observable
+    # person_id nulled + name stamped so the focus-refresh is observable.
+    # The F12-style reload is DELIBERATELY skipped by the app while the
+    # window is hidden — and headless/occluded automation sessions are
+    # always hidden (no X11 WM on the Xwayland socket) — so this phase
+    # only runs where the window is actually visible.
+    visible = js(t, "return document.visibilityState === 'visible'")
+    if not visible:
+        record("C32 right pane follows the full image (#171/§4.37): entry, rect switch, import-pane slot, NULL guard",
+               ok_ab,
+               f"entry: {before.get('overview')}→focus={entry.get('focus')} name={entry_name!r} "
+               f"(want {pick['cardName']!r}); rect: name={rect_name!r} (want {pick['otherName']!r}) "
+               f"focus={after_rect.get('focus')} tab={after_rect.get('tab')!r} selected={rect_selected}; "
+               f"import slot: open={import_open.get('importPane')} under-entry={under_entry.get('importPane')} "
+               f"under-rect={under_rect.get('importPane')} revealed={revealed_name!r}; "
+               "null guard: skipped — window hidden, the app's F12 focus reload is visibility-gated")
+        return
     js(t, r"""
       const f = window.__MOCK_SNAP.faces.find(x => x.id === arguments[0]);
       f.person_id = null;
@@ -2301,18 +2350,7 @@ def c32_full_image_follows_person(t):
     after_null_name = right_name()
 
     ok = (
-        before.get("overview") and not before.get("personPane")   # fresh = Overview
-        and entry.get("focus") and entry.get("tab", "").startswith("Review")
-        and entry_name == pick["cardName"]                          # entry anchor
-        and after_rect.get("focus")                                 # view never left
-        and after_rect.get("tab", "").startswith("Review")
-        and rect_name == pick["otherName"]                          # rect switch
-        and rect_selected                                            # toggle still works
-        and import_open.get("importPane") and not import_open.get("personPane")
-        and under_entry.get("focus") and under_entry.get("importPane")
-        and under_rect.get("importPane") and not under_rect.get("personPane")
-        and revealed.get("personPane") and not revealed.get("importPane")
-        and revealed_name == pick["otherName"]                       # anchor under the pane
+        ok_ab
         and refreshed                                                 # mutation observable
         and after_null.get("personPane") and after_null_name == anchor_before_null
         and anchor_before_null == pick["otherName"]
@@ -2696,7 +2734,7 @@ def c34_rolls_branch_thumbnails(t):
     tgt.click()  # pre-click: absorb the selection re-render (WebKit dblclick window)
     time.sleep(0.5)
     tgt = thumb(0)
-    AC(t.driver).double_click(tgt).perform()
+    dblclick(t, tgt)
     time.sleep(1.0)
     e2 = pane_state()
     back = t.find_element(By.CSS_SELECTOR, ".image-detail-top button")
@@ -2790,7 +2828,7 @@ def c35_rolls_layout(t):
     cap = widths()
     cap_ok = abs(cap["center"] - exp_hi) <= 2 and cap["right"] >= 190
     # ── double-click: back to the left-following default ──────────────
-    AC(t.driver).double_click(div).perform()
+    dblclick(t, div)
     time.sleep(0.5)
     reset = widths()
     reset_ok = abs(reset["center"] - reset["left"]) <= 2 and reset["right"] > reset["center"]
@@ -2945,7 +2983,7 @@ def c36_review_lock(t):
     card.click()          # pre-click: absorb the selection re-render
     time.sleep(0.5)
     card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['twoFid']}']")
-    AC(t.driver).double_click(card).perform()
+    dblclick(t, card)
     time.sleep(1.0)
     focus_before = lock_state()
     fcard = t.find_element(
@@ -4023,7 +4061,7 @@ def c44_rotate_image_cascades(t):
     card.click()
     time.sleep(0.5)
     card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")
-    AC(t.driver).double_click(card).perform()
+    dblclick(t, card)
     time.sleep(1.0)
     before = rots()
 
@@ -5362,7 +5400,7 @@ def c57_split_crop_click_follows_person(t):
     time.sleep(0.6)
     card = t.find_element(By.CSS_SELECTOR,
                           f".face-card[data-face-id='{pick['cardId']}']")
-    AC(t.driver).double_click(card).perform()
+    dblclick(t, card)
     time.sleep(0.8)
     if not js(t, "return !!document.querySelector('.focus-pane')"):
         record("C57 split crop click follows the person (#201, §4.37)", False,
@@ -5406,6 +5444,11 @@ def c58_review_keeps_scroll(t):
       const top = Math.min(1500, Math.max(0, el.scrollHeight - el.clientHeight - 10));
       if (top <= 0) return 0;
       el.scrollTop = top;
+      // fire the event a real user scroll would have fired (the
+      // frame-starved automation session never fires scroll events
+      // for programmatic scrollTop writes — the app's save handler
+      // listens for them)
+      el.dispatchEvent(new Event('scroll'));
       return el.scrollTop;
     """)
     time.sleep(0.6)
@@ -5423,71 +5466,401 @@ def c58_review_keeps_scroll(t):
            f"saved={target} restored={back}")
 
 
+def c59_tree_select_reanchors_review(t):
+    """#200 reopened (gui-design v3.93, §4.40): Review is sticky — a
+    person-tree select during Review RE-ANCHORS the review (the clicked
+    person becomes the review focus: the tree selection and the step
+    index point at them, the grid scrolls to their section) instead of
+    switching into Person mode, and the review continues from there
+    (stepping walks off the new anchor). The Rolls/Person tab clicks
+    remain the only exit."""
+    fresh(t)
+    nav = t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+    nav[0].click()  # Review (idempotent — fresh already lands there)
+    time.sleep(1.2)
+
+    def navpos():
+        return js(t, r"""
+          const m = (document.querySelector('.nav-pos')?.textContent ?? '')
+            .match(/^(\d+)\/(\d+)$/);
+          return m ? {i: Number(m[1]), n: Number(m[2])} : null;
+        """)
+
+    def anchor():
+        return js(t, r"""
+          const sel = document.querySelector('.tree-person.selected');
+          return sel ? Number(sel.dataset.personId) : null;
+        """)
+
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const rows = [...document.querySelectorAll('.tree-person')]
+        .map(r => Number(r.dataset.personId));
+      // the step list = each person once, at its FIRST placement, in
+      // tree display order
+      const seen = new Set(); const order = [];
+      for (const id of rows) if (!seen.has(id)) { seen.add(id); order.push(id); }
+      const prov = (pid) => snap.faces.some(
+        f => f.person_id === pid && f.link_status === 'provisional');
+      const sel = document.querySelector('.tree-person.selected');
+      const cur = sel ? Number(sel.dataset.personId) : null;
+      // a person with a new face, not the anchor, not last in step
+      // order (stepping off it must have a next)
+      const cand = order.map((id, i) => ({id, i}))
+        .filter(x => prov(x.id) && x.id !== cur && x.i < order.length - 1);
+      return cand.length
+        ? cand[Math.floor(cand.length / 2)] : null;
+    """)
+    if pick is None:
+        record("C59 tree select re-anchors Review (#200 reopened, §4.40)", True,
+               "no candidate row — vacuous")
+        return
+    p0 = navpos()
+    a0 = anchor()
+    row = t.find_element(By.CSS_SELECTOR,
+                         f".tree-person[data-person-id='{pick['id']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", row)
+    time.sleep(0.3)
+    row.click()
+    time.sleep(1.2)
+    st = js(t, r"""
+      const active = document.querySelector('.topbar nav button.active');
+      const s = document.querySelector('.topbar-right select');
+      const sel = document.querySelector('.tree-person.selected');
+      const sec = sel
+        ? document.querySelector(`.face-section[data-section-key='rev-${sel.dataset.personId}']`)
+        : null;
+      const c = document.querySelector('.center-scroll');
+      const m = (document.querySelector('.nav-pos')?.textContent ?? '')
+        .match(/^(\d+)\/(\d+)$/);
+      return {
+        tab: (active?.textContent ?? '').trim().split(/\s+/)[0] ?? '',
+        showDisabled: !!s?.disabled,
+        locked: !!document.querySelector('.lock-btn.locked'),
+        anchor: sel ? Number(sel.dataset.personId) : null,
+        pos: m ? Number(m[1]) : null,
+        n: m ? Number(m[2]) : null,
+        sectionOffset: sec && c
+          ? Math.round(sec.getBoundingClientRect().top
+                        - c.getBoundingClientRect().top)
+          : null,
+      };
+    """)
+    reanchored = (st["tab"] == "Review" and st["showDisabled"] is True
+                  and st["locked"] is True
+                  and st["anchor"] == pick["id"]      # the click IS the focus
+                  and (p0 is None or st["n"] == p0["n"])  # p0 None: stepIdx -1 at load
+                  and st["pos"] is not None
+                  and st["sectionOffset"] is not None and abs(st["sectionOffset"]) <= 6)
+    # the review CONTINUES from there: stepping walks off the new anchor
+    # (the step index must point at it — a stale index would not land
+    # one past the displayed one)
+    t.find_element(By.CSS_SELECTOR, "body").send_keys(Keys.ARROW_RIGHT)
+    time.sleep(1.2)
+    p1 = navpos()
+    a1 = anchor()
+    cont = (p1 is not None and st["pos"] is not None
+            and p1["i"] == st["pos"] + 1
+            and a1 not in (None, pick["id"], a0))
+    ok = reanchored and cont
+    record("C59 tree select re-anchors Review (#200 reopened, §4.40)", ok,
+           f"click {pick['id']} (was {a0}, pos {p0}): "
+           f"tab={st['tab']!r} locked={st['locked']} disabled={st['showDisabled']} "
+           f"anchor={st['anchor']} pos={st['pos']}/{st['n']} "
+           f"sectionOffset={st['sectionOffset']}; "
+           f"after ›: pos {p1} anchor {a1} (want one past {st['pos']})")
+
+
+def c60_split_close_restores_grid_scroll(t):
+    """#203 reopened (gui-design v3.93, §4.40): the review grid's saved
+    place survives the full image — double-click a card (split opens),
+    scroll the focus view to a different place (the container scroll
+    while the image is open is the focus view's own and must never
+    overwrite the saved place), close the split: the grid returns at
+    the place it was when the image opened."""
+    fresh(t)
+    nav = t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+    nav[0].click()  # Review
+    time.sleep(1.2)
+    target = js(t, r"""
+      const el = document.querySelector('.center-scroll');
+      if (!el) return null;
+      const top = Math.min(1500, Math.max(0, el.scrollHeight - el.clientHeight - 10));
+      if (top <= 0) return 0;
+      el.scrollTop = top;
+      // fire the event a real user scroll would have fired (the
+      // frame-starved automation session never fires scroll events
+      // for programmatic scrollTop writes — the app's save handler
+      // listens for them)
+      el.dispatchEvent(new Event('scroll'));
+      return el.scrollTop;
+    """)
+    time.sleep(0.6)
+    if not target:
+        record("C60 split close returns the grid at its saved place (#203 reopened, §4.40)",
+               True, f"review grid not scrollable (target={target}) — vacuous")
+        return
+    # a card visible at the scrolled place — the split shows its image
+    card_id = js(t, r"""
+      const el = document.querySelector('.center-scroll');
+      const r0 = el.getBoundingClientRect();
+      for (const c of document.querySelectorAll('.face-card')) {
+        const r = c.getBoundingClientRect();
+        if (r.top >= r0.top && r.bottom <= r0.bottom) return Number(c.dataset.faceId);
+      }
+      return Number(document.querySelector('.face-card')?.dataset.faceId ?? 0);
+    """)
+    if not card_id:
+        record("C60 split close returns the grid at its saved place (#203 reopened, §4.40)",
+               False, "no face card in the grid")
+        return
+    card = t.find_element(By.CSS_SELECTOR,
+                          f".face-card[data-face-id='{card_id}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()          # pre-click: absorb the selection re-render
+    time.sleep(0.5)
+    card = t.find_element(By.CSS_SELECTOR,
+                          f".face-card[data-face-id='{card_id}']")
+    # the grid's place right before the image opens — what the close
+    # must return to. (NOT the container scroll after the swap: while
+    # the focus view's own layout settles, the browser clamps the
+    # container's scrollTop and that clamp is the focus view's, never
+    # the grid's saved place.) The test's own programmatic moves
+    # (scrollIntoView, the pre-click re-render) don't fire scroll
+    # events in the frame-starved session, so fire one now: in a real
+    # browser the saved place always tracks the visual place.
+    js(t, r"""
+      const el = document.querySelector('.center-scroll');
+      el.dispatchEvent(new Event('scroll'));
+      return el.scrollTop;
+    """)
+    pre = js(t, "return document.querySelector('.center-scroll')?.scrollTop ?? null")
+    dblclick(t, card)
+    time.sleep(1.2)
+    if not js(t, "return !!document.querySelector('.focus-pane')"):
+        record("C60 split close returns the grid at its saved place (#203 reopened, §4.40)",
+               False, "focus split did not open")
+        return
+    # best-effort: while the image is open, scroll the container to a
+    # different place if it can be scrolled (the mock's focus view is
+    # usually viewport-height — the clamp case above is the operative
+    # one there); any container scroll while the image is open is the
+    # focus view's own and must never reach the grid's saved place
+    focus_at = None
+    deadline = time.time() + 6
+    while time.time() < deadline:
+        focus_at = js(t, r"""
+          const el = document.querySelector('.center-scroll');
+          const h = el.scrollHeight - el.clientHeight;
+          if (h <= 10) return null;           // not scrollable (yet)
+          const cur = el.scrollTop;
+          el.scrollTop = h;
+          if (el.scrollTop === cur) el.scrollTop = 0;  // the other extreme
+          el.dispatchEvent(new Event('scroll'));  // (gate must ignore it)
+          return el.scrollTop;
+        """)
+        if focus_at is not None:
+            time.sleep(0.4)
+            break
+        time.sleep(0.3)
+    # close the split (× — the close (Esc) button in the focus header)
+    t.find_element(By.CSS_SELECTOR, '.focus-top button[title="close (Esc)"]').click()
+    time.sleep(1.2)
+    st = js(t, r"""
+      return {focus: !!document.querySelector('.focus-pane'),
+              top: document.querySelector('.center-scroll')?.scrollTop ?? null};
+    """)
+    ok = (st["focus"] is False and st["top"] is not None
+          and pre is not None and abs(st["top"] - pre) <= 2)
+    record("C60 split close returns the grid at its saved place (#203 reopened, §4.40)",
+           ok, f"initial={target} preOpen={pre} focusViewScrolledTo={focus_at} "
+               f"after close={st['top']} focus={st['focus']}")
+
+
+def c61_full_view_verdict_advances_review(t):
+    """Full-view verdicts are review verdicts (gui-design v3.93, §4.40
+    reach / §4.30 — the new issue logged alongside #200/#203): the
+    focus split is a zoom of the review, so a ✓ made on a film-roll
+    card keeps the review path — a person drained by the accept
+    advances (the fall-through marks it and hands over), the split
+    closes, the next face to review is focused, and the Review tab
+    stays active (the plain path — no advance, no hand-over — applies
+    only to a split open outside Review, which C36 phase 6 pins)."""
+    fresh(t)
+    nav = t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+    nav[0].click()  # Review
+    time.sleep(1.2)
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const rows = [...document.querySelectorAll('.tree-person')]
+        .map(r => Number(r.dataset.personId));
+      const seen = new Set(); const order = [];
+      for (const id of rows) if (!seen.has(id)) { seen.add(id); order.push(id); }
+      const prov = (pid) => snap.faces.some(
+        f => f.person_id === pid && f.link_status === 'provisional');
+      // a person with EXACTLY ONE provisional face (the accept drains
+      // them) and at least one reviewable successor in step order
+      for (let i = 0; i < order.length; i++) {
+        const pid = order[i];
+        const one = snap.faces.filter(
+          f => f.person_id === pid && f.link_status === 'provisional');
+        if (one.length !== 1) continue;
+        const hasAfter = order.slice(i + 1).some(prov);
+        if (hasAfter)
+          return {pid: pid, pname: snap.persons.find(p => p.id === pid)?.name ?? null,
+                  fid: one[0].id, img: one[0].image_id};
+      }
+      return null;
+    """)
+    if pick is None:
+        record("C61 full-view accept advances the review (v3.93, §4.40 reach/§4.30)",
+               True, "no single-new-face person with a successor — vacuous")
+        return
+
+    def navpos():
+        return js(t, r"""
+          const m = (document.querySelector('.nav-pos')?.textContent ?? '')
+            .match(/^(\d+)\/(\d+)$/);
+          return m ? Number(m[1]) : null;
+        """)
+
+    # open the full view on that exact face (the roll lists every face
+    # of that image; the ✓ below clicks the card in the ROLL). The
+    # anchor follows the opened face (personId ⇒ stepIdx), so the pos
+    # is read AFTER the open (at load stepIdx is -1 — "–")
+    card = t.find_element(By.CSS_SELECTOR,
+                          f".face-card[data-face-id='{pick['fid']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.click()
+    time.sleep(0.5)
+    card = t.find_element(By.CSS_SELECTOR,
+                          f".face-card[data-face-id='{pick['fid']}']")
+    dblclick(t, card)
+    time.sleep(1.2)
+    if not js(t, "return !!document.querySelector('.focus-pane')"):
+        record("C61 full-view accept advances the review (v3.93, §4.40 reach/§4.30)",
+               False, "focus split did not open")
+        return
+    pos0 = navpos()
+    # the verdict is made IN the full view: the film-roll card's ✓
+    fcard = t.find_element(By.CSS_SELECTOR,
+                           f".focus-pane .face-card[data-face-id='{pick['fid']}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", fcard)
+    time.sleep(0.3)
+    fcard.find_element(By.CSS_SELECTOR, ".card-accept").click()
+    time.sleep(2.0)
+    st = js(t, r"""
+      const active = document.querySelector('.topbar nav button.active');
+      const s = document.querySelector('.topbar-right select');
+      const sel = document.querySelector('.tree-person.selected');
+      const snap = window.__MOCK_SNAP;
+      const p = sel ? snap.persons.find(x => x.id === Number(sel.dataset.personId)) : null;
+      const m = (document.querySelector('.nav-pos')?.textContent ?? '')
+        .match(/^(\d+)\/(\d+)$/);
+      return {
+        tab: (active?.textContent ?? '').trim().split(/\s+/)[0] ?? '',
+        showDisabled: !!s?.disabled,
+        locked: !!document.querySelector('.lock-btn.locked'),
+        focus: !!document.querySelector('.focus-pane'),
+        anchor: sel ? Number(sel.dataset.personId) : null,
+        anchorName: p ? p.name : null,
+        anchorHasNew: sel ? snap.faces.some(
+          f => f.person_id === Number(sel.dataset.personId) && f.link_status === 'provisional')
+          : false,
+        pos: m ? Number(m[1]) : null,
+        faceStatus: snap.faces.find(f => f.id === Number(arguments[0]))?.link_status ?? null,
+      };
+    """, pick["fid"])
+    ok = (st["tab"] == "Review" and st["showDisabled"] is True and st["locked"] is True
+          and st["focus"] is False                  # the advance closed the split
+          and st["anchor"] is not None and st["anchor"] != pick["pid"]
+          and st["anchorHasNew"] is True            # handed over, not stranded
+          and st["pos"] is not None and pos0 is not None and st["pos"] > pos0
+          and st["faceStatus"] == "confirmed")
+    record("C61 full-view accept advances the review (v3.93, §4.40 reach/§4.30)", ok,
+           f"{pick['pname']} (fid {pick['fid']}, pos {pos0}): "
+           f"tab={st['tab']!r} locked={st['locked']} focus={st['focus']} "
+           f"anchor={st['anchor']} ({st['anchorName']!r}) pos={st['pos']} "
+           f"faceStatus={st['faceStatus']!r}")
+
+
+def _restart_session(holder):
+    """Hard-kill a wedged automation session and start a fresh one.
+
+    The XTest\u2194WebKit re-render race can deadlock the protocol: the
+    browser goes idle and the WebDriver command never returns (no
+    exception, no timeout \u2014 the socket just hangs). A check that runs
+    past its watchdog gets a fresh session; every check is independent
+    (each starts from fresh())."""
+    old = holder["t"]
+    proc = getattr(old, "_proc", None)
+    if proc is not None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    # MiniBrowser is the driver's child \u2014 an orphaned survivor wedges
+    # the next session's display, so take it with us
+    subprocess.run(["pkill", "-f", "MiniBrows[e]r"], capture_output=True)
+    time.sleep(1.5)
+    holder["t"] = Tester(headless=True)
+    holder["t"].start()
+    holder["t"].set_window_size(1600, 1000)
+
+
+def run_guarded(holder, name, fn, timeout=180):
+    """Run fn(t) under a watchdog. A wedged session (see
+    _restart_session) is detected as a timeout, the session is
+    restarted once, and the check retried in the fresh session. A
+    check that wedges twice is recorded as an environment failure
+    rather than hanging the suite. Genuine check failures raise or
+    record inside the timeout and are unaffected."""
+    for attempt in (1, 2):
+        box = {}
+
+        def body(box=box):
+            try:
+                fn(holder["t"])
+            except Exception as e:  # noqa: BLE001 \u2014 re-raised below
+                box["e"] = e
+
+        th = threading.Thread(target=body, daemon=True)
+        th.start()
+        th.join(timeout)
+        if not th.is_alive():
+            if "e" in box:
+                raise box["e"]
+            return
+        if attempt == 2:
+            record(name, False,
+                   f"session wedged twice (> {timeout}s each) \u2014 automation "
+                   "protocol deadlock (environment); check not completed")
+            _restart_session(holder)
+            return
+        print(f"  [WATCHDOG] {name}: session wedged (> {timeout}s) \u2014 "
+              "restarting and retrying", flush=True)
+        _restart_session(holder)
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
     URL = URL.format(port=port)
-    with Tester(headless=True) as t:
-        t.set_window_size(1600, 1000)
-        r1_layout(t)
-        r2_toggle_perf(t)
-        c1_enter_stages_then_commits(t)
-        c2_a_key_stages_then_commits(t)
-        c3_bar_accept_commits(t)
-        c4_noop_apply_feedback(t)
-        c5_q4_stage_model(t)
-        c6_esc_ordering(t)
-        c7_single_section_selectall(t)
-        c8_tree_counts_ignore_filter(t)
-        c9_actions_above_typeahead(t)
-        c10_noop_apply_is_info(t)
-        c11_merge_focuses_target(t)
-        c12_face_drag_merges_into_person(t)
-        c13_face_drag_copies_description(t)
-        c14_drag_sources(t)
-        c15_merge_dialog_scroll(t)
-        c16_filter_prunes_tree(t)
-        c18_rolls_path_tree(t)
-        c19_staged_desc_regroups(t)
-        c20_multi_group_renders_everywhere(t)
-        c21_show_filter_in_topbar(t)
-        c22_review_exhaust_skips_reviewed(t)
-        c23_dnd_moves_one_membership(t)
-        c24_dark_scheme_native_controls(t)
-        c25_merge_dialog_cancel_button(t)
-        c26_rolls_path_filter(t)
-        c27_center_toolbar_view_matrix(t)
-        c28_add_group_person_rows_only(t)
-        c29_show_rejected_bin_165(t)
-        c30_bar_accept_selection_over_stage(t)
-        c31_rolls_import_pane(t)
-        c32_full_image_follows_person(t)
-        c33_person_group_list_update(t)
-        c34_rolls_branch_thumbnails(t)
-        c35_rolls_layout(t)
-        c36_review_lock(t)
-        c37_person_sticky_colors(t)
-        c38_verdict_icons(t)
-        c39_rename_seated_person(t)
-        c40_db_status_totals(t)
-        c41_verdict_focuses_person(t)
-        c42_edit_label_everywhere(t)
-        c43_single_only_menu_items(t)
-        c44_rotate_image_cascades(t)
-        c45_face_menu_add_group(t)
-        c46_edit_dialog_group_list(t)
-        c47_first_run_no_database(t)
-        c48_branch_rename_clash_merges(t)
-        c49_step_from_empty_state(t)
-        c50_merge_chips_pick_target(t)
-        c51_scope_switch_keeps_typed_fields(t)
-        c52_staged_desc_prefills_reopened_dialog(t)
-        c53_header_logo_and_favicon(t)
-        c54_no_refs_in_ui_strings(t)
-        c55_review_sticky_on_step(t)
-        c56_new_is_orange(t)
-        c57_split_crop_click_follows_person(t)
-        c58_review_keeps_scroll(t)
+    holder = {"t": Tester(headless=True)}
+    holder["t"].start()
+    holder["t"].set_window_size(1600, 1000)
+    for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review):
+        run_guarded(holder, fn.__name__, fn)
+    # hard-kill the last session: a clean quit() would hang if it wedged
+    proc = getattr(holder["t"], "_proc", None)
+    if proc is not None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    subprocess.run(["pkill", "-f", "MiniBrows[e]r"], capture_output=True)
 
     failed = [r for r in results if not r["pass"]]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

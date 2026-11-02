@@ -9,7 +9,6 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
-import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -18,13 +17,12 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
-import { isSeat, type GroupOp } from "./groupList";
+import { renameGroupFor as renameGroup, type GroupOp } from "./groupList";
 import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
   emptyStateHint,
-  groupByDescription,
   listedImages,
   matchesStatusFilter,
   personTreeMembers,
@@ -54,9 +52,19 @@ import PersonTree, { orderedVisiblePersonIds } from "./components/PersonTree";
 import RollsPane from "./components/RollsPane";
 import RollsThumbs from "./components/RollsThumbs";
 import ImportPane from "./components/ImportPane";
+import FirstRun from "./components/FirstRun";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
-import { byFilename, clickImage, emptyImageSel, imageScope, type ImageSel } from "./imageSelect";
+import { byFilename, clickImage, emptyImageSel, type ImageSel } from "./imageSelect";
+import { faceMenuGroups, imageAreaMenuGroups, thumbMenuGroups } from "./menus";
+// §4.44 (gui-design v3.94): the centre-pane section derivations are the
+// pure, co-tested buildSections/sectionsForImageOf; App owns only the
+// identities (see the #98 rules there)
+import { buildSections, sectionsForImage as sectionsForImageOf } from "./sections";
+// §4.44 stage 2 (#206): the pane layout rules + the #191 click-pair
+// guard — pure/co-tested, App owns only the wiring
+import { usePaneSizes } from "./paneState";
+import { useClickPairGuard } from "./clickPair";
 
 type Mode = "review" | "rolls" | "person";
 
@@ -64,10 +72,9 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // #185 (§4.36): no USABLE database ⇒ the first-run screen (the dialog
-  // offers the import pane with --create-db) instead of the raw error;
-  // firstRunDir null = the dialog, a string = the standalone pane
+  // offers the import pane with --create-db) instead of the raw error
+  // (the screen + its local dir state live in components/FirstRun.tsx)
   const [noDb, setNoDb] = useState(false);
-  const [firstRunDir, setFirstRunDir] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("review");
   // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
   // pointer (modeless — the tree under it stays clickable) and the
@@ -82,54 +89,9 @@ export default function App() {
     if (pickPersonDialog && (personId != null || mode !== "person"))
       setPickPersonDialog(false);
   }, [pickPersonDialog, personId, mode]);
-  // #191 — WebKitGTK quirk (the engine Tauri ships): a right-click on
-  // ANY element is followed by a spurious LEFT `click` (button=0, no
-  // modifiers) on that same element — at the SAME pixel — after the
-  // `contextmenu`. The click is queued behind the contextmenu's
-  // re-render, so its lag is render-proportional (sub-100 ms on the
-  // tree/thumbs, ~1 s on the big face grid). On every selectable (tree
-  // rows, face cards, thumbs) its plain-click path replaces the
-  // multi-selection with the clicked item, silently collapsing the
-  // scope the menu/rulebar act on. Swallow the synthetic pair: button
-  // 0, no modifiers, the right-clicked element (or one of its
-  // descendants/ancestors) at the right-click's spot, within a 3 s
-  // sanity bound. A real user's mouse (and Firefox) never produce the
-  // pair — a second deliberate click lands elsewhere, and modifier
-  // clicks pass through untouched. One document-capture guard covers
-  // every element class (React 19 delegates to the root container, so
-  // capture at document wins).
-  useEffect(() => {
-    let guard: { el: Element; x: number; y: number; t: number } | null = null;
-    const onCtx = (e: MouseEvent) => {
-      guard = { el: e.target as Element, x: e.clientX, y: e.clientY, t: Date.now() };
-    };
-    const onClick = (e: MouseEvent) => {
-      if (!guard) return;
-      if (
-        Date.now() - guard.t > 3000 ||
-        e.button !== 0 ||
-        e.ctrlKey || e.metaKey || e.shiftKey || e.altKey
-      )
-        return;
-      const el = e.target as Element;
-      const sameElement =
-        el === guard.el || el.contains(guard.el) || guard.el.contains(el);
-      const sameSpot =
-        Math.abs(e.clientX - guard.x) <= 5 &&
-        Math.abs(e.clientY - guard.y) <= 5;
-      if (sameElement && sameSpot) {
-        e.stopPropagation();
-        e.preventDefault();
-        guard = null;
-      }
-    };
-    document.addEventListener("contextmenu", onCtx, true);
-    document.addEventListener("click", onClick, true);
-    return () => {
-      document.removeEventListener("contextmenu", onCtx, true);
-      document.removeEventListener("click", onClick, true);
-    };
-  }, []);
+  // #191 — the WebKitGTK right-click/left-click synthetic pair guard
+  // (the rule and its wiring live in clickPair.ts, §4.44 co-tested)
+  useClickPairGuard();
   const [imageId, setImageId] = useState<number | null>(null);
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
@@ -169,63 +131,21 @@ export default function App() {
   const sectionsRef = useRef<Section[]>([]);
   const sectionsForImageRef = useRef<(imgId: number) => Section[]>(() => []);
   const [splitImageId, setSplitImageId] = useState<number | null>(null);
+  // #200 reopened (gui-design v3.93, §4.40): the pending review
+  // re-anchor scroll — a tree select during Review re-anchors the
+  // review, and the grid scrolls to that person's section through a
+  // layout effect (deterministic, post-commit; rAF is frame-starved
+  // in occluded/automated WebKit and must not gate user-visible work)
+  const [reanchor, setReanchor] = useState<{ pid: number } | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  // #34 — pane sizes (session state); defaults match the stylesheet
-  // (#55: the image-split size is gone — the focus mode takes the pane)
-  const [paneSizes, setPaneSizes] = useState({ left: 250, right: 290 });
-  // #174 follow-up (§4.39): Rolls mode's CENTRE width while browsing —
-  // null = follow the left pane's width (the default: most of the
-  // window goes to the right pane's thumbnails, which flex to fill);
-  // an explicit px persists for the session. While it applies, the
-  // centre|right divider drags the CENTRE instead of the right pane.
-  const [rollCenter, setRollCenter] = useState<number | null>(null);
   // the centre shows the HIERARCHY (no image open, no focus split) —
   // the detail views need the full width again (§4.39)
   const rollsBrowse = mode === "rolls" && imageId == null && splitImageId == null;
-  // clamp 10%..70% of the window, never past `window − left − 200px`
-  // (the right pane keeps a usable floor)
-  const clampRollCenter = (px: number) => {
-    const w = window.innerWidth;
-    const lo = Math.round(w * 0.1);
-    const hi = Math.max(Math.min(Math.round(w * 0.7), w - paneSizes.left - 200), lo);
-    return Math.min(Math.max(px, lo), hi);
-  };
-  const rollCenterPx = clampRollCenter(rollCenter ?? paneSizes.left);
-  const dragRef = useRef<{ edge: "left" | "right"; startX: number; start: number } | null>(
-    null
-  );
-  const startDrag = (edge: "left" | "right") => (e: ReactMouseEvent) => {
-    e.preventDefault();
-    // read once at drag start — the layout class must not flip mid-drag
-    const browse = rollsBrowse;
-    dragRef.current = {
-      edge,
-      startX: e.clientX,
-      start: edge === "right" && browse ? rollCenterPx : paneSizes[edge],
-    };
-    const move = (ev: MouseEvent) => {
-      const d = dragRef.current;
-      if (!d) return;
-      const dx = ev.clientX - d.startX;
-      if (d.edge === "left") {
-        setPaneSizes((s) => ({ ...s, left: Math.min(Math.max(d.start + dx, 160), 480) }));
-        return;
-      }
-      if (browse) {
-        // #174/§4.39: divider right = centre wider (right pane flexes)
-        setRollCenter(clampRollCenter(d.start + dx));
-        return;
-      }
-      setPaneSizes((s) => ({ ...s, right: Math.min(Math.max(d.start - dx, 200), 560) }));
-    };
-    const up = () => {
-      dragRef.current = null;
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-    };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-  };
+  // #34/#174 (§4.39) — the session pane widths and the Rolls browsing
+  // centre width: the state + drag logic live in paneState.ts (§4.44
+  // co-tested clamp rule); App keeps the named handles it always had
+  const { paneSizes, setPaneSizes, rollCenterPx, setRollCenter, startDrag } =
+    usePaneSizes(rollsBrowse);
   const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   // #53 (§4.17): most recently selected card — Ctrl-G's fallback target
@@ -748,7 +668,21 @@ export default function App() {
       } else {
         setSelPersons(new Set([id]));
         setPersonId(id);
-        setMode("person");
+        if (mode === "review") {
+          // #200 reopened (gui-design v3.93, §4.40): Review is sticky —
+          // a tree select re-anchors the review instead of yanking into
+          // Person mode: the clicked person becomes the review focus
+          // (the step index points at them; the split already closed
+          // above — the attention shifted) and the grid scrolls to
+          // their section (the re-anchor layout effect — declared after
+          // the scroll-restore, so the section wins when the full image
+          // just closed), so the toolbar index and the visible place
+          // never disagree; stepping and verdicts then continue from
+          // there. The Rolls/Person tab clicks remain the only exit.
+          setReanchor({ pid: id });
+        } else {
+          setMode("person");
+        }
         setImageId(null);
       }
     });
@@ -757,25 +691,9 @@ export default function App() {
     if (ids.length > 0) setConfirmRemove(ids);
   };
 
-  // group argument for rename-style assigns: keep the person's current
-  // path (#153) — the old UnknownN force-to-empty (#38/F7) is obsolete
-  // now that the importer seeds no 'Unknown' row; a grouped UnknownN
-  // keeps their group through a rename, an ungrouped one stays Ungrouped
-  // (pure — stable ref)
-  const renameGroup = useCallback(
-    // #165/§4.35: the system person's seat never prefills a group field;
-    // #178 (§4.1 — #153 revised): a STATUS SEAT is never passed either —
-    // assign_person validates the path up front (#165), so a seated
-    // person's `New` tripped 'reserved group name' before the branch
-    // that would have ignored it. "" derives the seat by state instead
-    // (the claim confirms the faces ⇒ Accepted), while a REAL group
-    // path keeps flowing (#153 — a filed person keeps their path)
-    (p: Person | undefined) => {
-      const g = p && p.name !== "Rejected" ? p.groups[0] ?? "" : "";
-      return isSeat(g) ? "" : g;
-    },
-    []
-  );
+  // renameGroup — the #153/#178/#165 rule now lives in
+  // groupList.renameGroupFor (§4.44: pure, co-tested; imported above as
+  // `renameGroup`, so every call site keeps its meaning)
 
   // rename-merge (v1.9/v1.11): EVERY GUI rename (tree, context menu,
   // detail pane) routes through assign over all the person's faces — a
@@ -801,7 +719,7 @@ export default function App() {
       const ok = await doAssign(ids, name, renameGroup(p));
       return ok ? (taken?.id ?? id) : null;
     },
-    [snap, personsById, mutate, doAssign, renameGroup]
+    [snap, personsById, mutate, doAssign]
   );
   const renameOrMerge = (id: number, n: string) => {
     // §4.38/#172: a rename-merge re-anchors the pane on the surviving
@@ -869,16 +787,29 @@ export default function App() {
     changeFaceFilter("provisional");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, snap]);
-  // #203 (§4.40): Review keeps its scroll — the review grid's place is
-  // saved while Review is on screen and restored when Review is
-  // re-entered, so the toolbar index and the visible place never disagree
+  // #203 + reopened (gui-design v3.93, §4.40): Review keeps its scroll
+  // — the review grid's place is saved while the grid is on screen (the
+  // onScroll gate: not while the full image is open, whose container
+  // scroll is the focus view's own) and restored whenever the grid
+  // RETURNS — a mode re-entry or the full image closing — so the
+  // toolbar index and the visible place never disagree
   const centerScrollRef = useRef<HTMLDivElement>(null);
   const reviewScrollRef = useRef(0);
   useLayoutEffect(() => {
-    if (mode !== "review") return;
+    if (mode !== "review" || splitImageId != null) return;
     const el = centerScrollRef.current;
     if (el) el.scrollTop = reviewScrollRef.current;
-  }, [mode]);
+  }, [mode, splitImageId]);
+  // #200 reopened (gui-design v3.93, §4.40): the tree re-anchor scroll —
+  // layout effect (post-commit, pre-paint, no frame dependency); the
+  // optional chain: a tree person without a review section (no face
+  // under the review status) re-anchors without a scroll target
+  useLayoutEffect(() => {
+    if (reanchor == null || mode !== "review") return;
+    document
+      .querySelector(`.face-section[data-section-key="rev-${reanchor.pid}"]`)
+      ?.scrollIntoView({ block: "start" });
+  }, [reanchor, mode]);
   // #188/§4.40 — the position guard, on ENTRY only (a mode transition;
   // the mount has no anchor): an anchored person without a new face
   // advances to the next person in the step list that has one (forward,
@@ -983,107 +914,32 @@ export default function App() {
       lastSelRef.current = id;
       changeSel(new Set([id]));
     }
-    const section = sectionsRef.current.find((s) => s.faceIds.includes(id));
-    // #49: actions hit the whole selection when this card is part of it
-    const scope = actionScope(id);
-    const multi = scope.length > 1;
-    const label = (s: string) => (multi ? `${s} (${scope.length} selected)` : s);
-    // #184 (§4.18): the distinct OWNED persons of the effective scope —
-    // the Add group… entry files them all (unowned faces count nothing)
-    const groupIds = [
-      ...new Set(
-        scope.map((sid) => facesById.get(sid)?.person_id).filter((p): p is number => p != null)
-      ),
-    ];
-    openMenu(e, [
-      {
-        title: "Selection",
-        items: [
-          {
-            // an empty selection just auto-selected this card (#75)
-            label: selRef.current.has(id) || selRef.current.size === 0 ? "Deselect" : "Select",
-            hint: "Space",
-            onClick: () => toggle(id),
-          },
-          {
-            label: "Select whole section",
-            hint: "Ctrl-G", // #68: advertise the existing shortcut (#53)
-            onClick: () => section && toggleMany(section.faceIds, true),
-            disabled: !section,
-          },
-          { label: "Clear selection", onClick: () => changeSel(new Set()), disabled: selRef.current.size === 0 },
-        ],
-      },
-      {
-        title: multi ? `Face — ${scope.length} selected` : "Face",
-        items: [
-          {
-            label: label("Accept"),
-            hint: "A",
-            onClick: () => doAccept(scope),
-          },
-          {
-            label: label("Reject"),
-            hint: "R",
-            onClick: () => doReject(scope),
-            // reject stays offered while any face of the scope is not rejected
-            disabled: !scope.some((sid) => facesById.get(sid)?.link_status !== "rejected"),
-            danger: true,
-          },
-          {
-            label: "Set as primary",
-            onClick: () => doPrimary(id),
-            // single-face action (#49): greyed out for a multi-scope
-            disabled: f.person_id == null || multi,
-          },
-          {
-            label: "Add as reference",
-            onClick: () => doRefcrop(id),
-            disabled: f.link_status !== "confirmed" || f.person_id == null || multi,
-          },
-          // #122: crop display rotation — per face, independent of the
-          // full-image rotation
-          {
-            label: label("Rotate crop 90° CW"),
-            onClick: () => rotateFace(id, 90),
-            disabled: multi,
-          },
-          {
-            label: label("Rotate crop 90° CCW"),
-            onClick: () => rotateFace(id, -90),
-            disabled: multi,
-          },
-          // #184 (§4.18/#164): file every DISTINCT person of the scope —
-          // the same GroupDialog + add semantics as the tree's rows
-          {
-            label:
-              groupIds.length > 1
-                ? `Add group to ${groupIds.length} persons…`
-                : "Add group…",
-            onClick: () => setFaceAddGroup({ ids: groupIds }),
-            disabled: groupIds.length === 0,
-          },
-          // #180/§4.24: ONE label — 'Edit…' — for every dialog opener
-          { label: label("Edit…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
-          // #51: pointless while this very image is already open in the split
-          ...(f.image_id === splitImageId
-            ? []
-            : [{
-                // #123: opening focus mode is a view-context change;
-                // #171/§4.37: the right pane follows the opening face's person
-                label: "Open full image",
-                // #182/§4.14: focus mode shows one image — disabled for
-                // a multi-scope like its primary/reference/crop siblings
-                disabled: multi,
-                onClick: () =>
-                  confirmContext(() => {
-                    setSplitImageId(f.image_id);
-                    if (f.person_id != null) setPersonId(f.person_id);
-                  }),
-              }]),
-        ],
-      },
-    ]);
+    // §4.44 stage 4: the composition is the pure faceMenuGroups; this
+    // wrapper feeds it the live values (refs — the #98 identity rule)
+    openMenu(e, faceMenuGroups({
+      id,
+      face: f,
+      sel: selRef.current,
+      actionScope,
+      section: sectionsRef.current.find((s) => s.faceIds.includes(id)) ?? null,
+      facesById,
+      toggle,
+      toggleMany,
+      doAccept,
+      doReject,
+      doPrimary,
+      doRefcrop,
+      rotateFace,
+      changeSel,
+      openEdit,
+      openFullImage: (face) =>
+        confirmContext(() => {
+          setSplitImageId(face.image_id);
+          if (face.person_id != null) setPersonId(face.person_id);
+        }),
+      addFaceGroup: (ids) => setFaceAddGroup({ ids }),
+      splitImageId,
+    }));
   }, [facesById, actionScope, toggle, toggleMany, doAccept, doReject,
      doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel,
      confirmContext, rotateFace]);
@@ -1129,107 +985,38 @@ export default function App() {
     const faces = snap.faces.filter(
       (f) => f.image_id === imageId && faceVisible(f)
     );
-    openMenu(e, [
-      {
-        items: [
-          // #144: the promise used to be fire-and-forget — a rejection
-          // (no preview blob, viewer not found) never reached the user;
-          // errors surface through the standard error toast (#132)
-          { label: "Open in system viewer", onClick: () => api.openImage(imageId).catch((e) => setError(String(e))) },
-          {
-            // #122: stored display rotation (EXIF key, #118)
-            label: "Rotate 90° CW",
-            onClick: () => rotateImg(imageId, 90),
-          },
-          {
-            label: "Rotate 90° CCW",
-            onClick: () => rotateImg(imageId, -90),
-          },
-          {
-            label: "Select all faces",
-            onClick: () => changeSel(new Set(faces.map((f) => f.id))),
-            disabled: faces.length === 0,
-          },
-        ],
-      },
-    ]);
+    openMenu(e, imageAreaMenuGroups({
+      imageId,
+      faces,
+      openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
+      rotateImage: rotateImg,
+      changeSel,
+    }));
   };
 
   const imageMenu = (image: ImageRow, e: ReactMouseEvent) => {
     if (!snap) return;
-    // #174 (§4.39): the right-pane thumbnails own this menu — scope is
-    // the selection when the invoked thumb is part of it, else just
-    // that thumb (§4.14); stale ids (outside the branch) are dropped
     const inBranch = new Set(branchThumbs.images.map((x) => x.id));
-    const scope = imageScope(imgSel, inBranch, image.id);
-    const many = scope.length > 1;
     const faces = snap.faces.filter(
       (f) => f.image_id === image.id && faceVisible(f)
     );
-    const pending = faces.filter((f) => f.link_status === "provisional").map((f) => f.id);
-    openMenu(e, [
-      {
-        items: [
-          {
-            // #123 + #142: opening an image is a full view-context change
-            // (the centre pane rebinds to that image's faces) and honours
-            // the drop-or-accept dialog exactly like the focused-open
-            // entry just below — it never silently carries a staged set
-            label: "Open image",
-            // #182/§4.14: one-image-only — never silently the invoked
-            // thumb out of a multi-scope
-            disabled: many,
-            onClick: () =>
-              confirmContext(() => {
-                setMode("rolls");
-                setImageId(image.id);
-              }),
-          },
-          {
-            // #123: opening focus mode is a view-context change
-            label: "Open full image (focused)",
-            // #182/§4.14: focus mode shows one image
-            disabled: many,
-            onClick: () => confirmContext(() => setSplitImageId(image.id)),
-          },
-          // #122: stored display rotation (EXIF key, #118) — over the
-          // whole scope (#174/§4.39), one command each in order
-          {
-            label: many ? `Rotate 90° CW (${scope.length})` : "Rotate 90° CW",
-            onClick: () => rotateImages(scope, 90),
-          },
-          {
-            label: many ? `Rotate 90° CCW (${scope.length})` : "Rotate 90° CCW",
-            onClick: () => rotateImages(scope, -90),
-          },
-          {
-            // #144: rejections (no preview blob, viewer not found) reach
-            // the error toast; one temp file per image of the scope
-            label: many ? `Open in system viewer (${scope.length})` : "Open in system viewer",
-            onClick: () => {
-              for (const id of scope)
-                api.openImage(id).catch((err) => setError(String(err)));
-            },
-          },
-        ],
-      },
-      {
-        title: "Faces of this image",
-        items: [
-          {
-            label: "Select all",
-            onClick: () => changeSel(new Set(faces.map((f) => f.id))),
-            disabled: faces.length === 0,
-          },
-          { label: "Clear selection", onClick: () => changeSel(new Set()), disabled: sel.size === 0 },
-          {
-            label: "Accept all pending",
-            onClick: () => doAccept(pending),
-            disabled: pending.length === 0,
-          },
-        ],
-      },
-    ]);
+    openMenu(e, thumbMenuGroups({
+      image,
+      imgSel,
+      inBranch,
+      faces,
+      sel,
+      openImageInView: (id) =>
+        confirmContext(() => {
+          setMode("rolls");
+          setImageId(id);
+        }),
+      openFocused: (id) => confirmContext(() => setSplitImageId(id)),
+      rotateImages,
+      openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
+      doAccept,
+      changeSel,
+    }));
   };
 
   // ------------------------------------------------------------ sections
@@ -1381,162 +1168,36 @@ export default function App() {
       confirmContext, mutate]);
 
   // one section per person over an image's faces — the Rolls image
-  // detail and the #55 focus-mode film roll share it
+  // detail and the #55 focus-mode film roll share it (§4.44: the rule
+  // is the pure sectionsForImage; this is the identity-stable wrapper)
   const sectionsForImage = useCallback(
-    (imgId: number): Section[] => {
-      if (!snap) return [];
-      const byPerson = new Map<number | null, Face[]>();
-      for (const f of snap.faces.filter(
-        (x) => x.image_id === imgId && matchesStatusFilter(x.link_status, faceFilter)
-      )) {
-        const arr = byPerson.get(f.person_id) ?? [];
-        arr.push(f);
-        byPerson.set(f.person_id, arr);
-      }
-      return [...byPerson.entries()].map(([pid, fl]) => {
-        const p = pid != null ? personsById.get(pid) : undefined;
-        return {
-          key: `img-${pid}`,
-          title: p?.name ?? "unassigned",
-          faceIds: fl.map((f) => f.id),
-          ruleDefaultName: p?.name,
-          // #153: the rename keeps the person's current group path
-          ruleDefaultGroup: renameGroup(p),
-        };
-      });
-    },
-    [snap, personsById, renameGroup, faceFilter]
+    (imgId: number): Section[] =>
+      sectionsForImageOf(snap, personsById, imgId, faceFilter),
+    [snap, personsById, faceFilter]
   );
 
   // #98 (§4.31): memoised — computed once per snapshot/view/person/focus
   // change (sectionsForImage is a stable useCallback, so the memo holds),
-  // never per render
-  const sections: Section[] = useMemo(() => {
-    if (!snap) return [];
-    if (imageId != null) {
-      return sectionsForImage(imageId);
-    }
-    if (mode === "person" && personId != null) {
-      const out: Section[] = [];
-      const pname = selectedPerson?.name ?? "";
-      const rg = renameGroup(selectedPerson ?? undefined);
-      if (clusterGroup === "description") {
-        // #99 Description mode: one section per distinct description over
-        // the visible faces — no similarity split, no clusters IPC.
-        // #155: the §4.24 staged preview drives the grouping too — a face
-        // with a staged description is grouped under the description it
-        // will land in on Accept (Apply = screen preview), instead of
-        // showing the staged label under the old committed section.
-        const visible = snap.faces.filter(
-          (f) =>
-            f.person_id === personId &&
-            f.state !== "discarded" &&
-            f.link_status !== "rejected" &&
-            matchesStatusFilter(f.link_status, faceFilter)
-        );
-        groupByDescription(
-          visible.map((f) => ({
-            id: f.id,
-            // F2 keeps rejected-touching ops out of the pending set, and
-            // rejected faces never reach this branch
-            description:
-              stagedFieldsForCard(pending, f.id).desc ??
-              f.description ??
-              ""
-          }))
-        ).forEach((g) => {
-          out.push({
-            key: `pd-${personId}-${g.description}`,
-            title: g.description || "(no description)",
-            description: g.description || undefined,
-            faceIds: g.faceIds,
-            ruleDefaultName: pname,
-            // #153: the rename keeps the person's current group path
-            ruleDefaultGroup: rg,
-          });
-        });
-      } else {
-        const groups = clusters ?? [];
-        const multi = groups.length > 1;
-        let n = 0;
-        groups.forEach((g, gi) => {
-          g.clusters.forEach((cl, ci) => {
-            // #99: the filter may empty a cluster — drop it and recompute
-            // the similarity claim over the faces that survive
-            const ids = cl
-              .map((c) => c.face_id)
-              .filter((id) => {
-                const f = facesById.get(id);
-                return f != null && matchesStatusFilter(f.link_status, faceFilter);
-              });
-            if (ids.length === 0) return;
-            n += 1;
-            const kept = new Set(ids);
-            const minSim = Math.min(
-              ...cl.filter((c) => kept.has(c.face_id)).map((c) => c.sim)
-            );
-            // appearance prefix only when the person has more than one (§4.9)
-            const prefix = multi && g.description ? `${g.description} — ` : "";
-            out.push({
-              key: `cl-${gi}-${ci}`,
-              title:
-                n === 1
-                  ? `${prefix}Group 1 — closest to primary`
-                  : `${prefix}Group ${n}`,
-              subtitle: `≥ ${Math.round(minSim * 100)}% similar to primary`,
-              faceIds: ids,
-              ruleDefaultName: pname,
-              // #101: the heading's description label shows the
-              // appearance (display only — the title stays cluster-derived,
-              // F6)
-              description: g.description || undefined,
-              // #153: the rename keeps the person's current group path
-              ruleDefaultGroup: rg,
-            });
-          });
-        });
-      }
-      if (matchesStatusFilter("rejected", faceFilter)) {
-        const rej = snap.faces.filter(
-          (f) => f.person_id === personId && f.link_status === "rejected"
-        );
-        if (rej.length > 0)
-          out.push({ key: "rejected", title: "Rejected", faceIds: rej.map((f) => f.id) });
-      }
-      return out;
-    }
-    // review: the pending set under All/Provisional (#99), or the status
-    // picked in the filter — grouped by importer person, UnknownN first
-    const reviewStatus =
-      faceFilter === "confirmed" || faceFilter === "rejected" ? faceFilter : "provisional";
-    const byPerson = new Map<number | null, Face[]>();
-    for (const f of snap.faces.filter((x) => x.link_status === reviewStatus)) {
-      const arr = byPerson.get(f.person_id) ?? [];
-      arr.push(f);
-      byPerson.set(f.person_id, arr);
-    }
-    const order = [...snap.persons].sort((a, b) => {
-      const au = a.name.startsWith("Unknown");
-      const bu = b.name.startsWith("Unknown");
-      if (au !== bu) return au ? -1 : 1;
-      return a.id - b.id;
-    });
-    return order
-      .filter((p) => byPerson.has(p.id))
-      .map((p) => ({
-        key: `rev-${p.id}`,
-        title: p.name,
-        subtitle: p.counts.total > byPerson.get(p.id)!.length ? `${p.counts.total} faces total` : undefined,
-        faceIds: byPerson.get(p.id)!.map((f) => f.id),
-        // #165/§4.35: the system person's reserved name never prefills —
-        // committing a claim needs a typed name
-        ruleDefaultName: p.name === "Rejected" ? "" : p.name,
-        // #153: the rename keeps the person's current group path
-        ruleDefaultGroup: renameGroup(p),
-      }));
-  }, [snap, mode, imageId, personId, selectedPerson, clusters,
-      sectionsForImage, renameGroup, facesById, faceFilter, clusterGroup,
-      pending]); // #155: staged (§4.24) descriptions drive the regroup
+  // never per render. §4.44: the grouping rules are the pure
+  // buildSections (sections.ts, co-tested); App owns only the identities.
+  const sections: Section[] = useMemo(
+    () =>
+      buildSections({
+        snap,
+        mode,
+        imageId,
+        personId,
+        selectedPerson,
+        clusters,
+        facesById,
+        faceFilter,
+        clusterGroup,
+        pending,
+        sectionsForImage,
+      }),
+    [snap, mode, imageId, personId, selectedPerson, clusters, facesById,
+     faceFilter, clusterGroup, pending, sectionsForImage] // #155: staged (§4.24) descriptions drive the regroup
+  );
   sectionsRef.current = sections;
   sectionsForImageRef.current = sectionsForImage;
 
@@ -1558,9 +1219,13 @@ export default function App() {
         setInfo("assign a person to bring it back");
         return;
       }
-      // #188/§4.40: the lock is the mode — no any-view widening; with a
-      // split open the plain path keeps its pre-#175 reach
-      if (mode !== "review" || splitImageId != null) {
+      // #188/§4.40 + reopened (gui-design v3.93): the lock is the mode —
+      // no any-view widening; the plain path applies only OUTSIDE Review
+      // (a focus/rolls split is then its own context). A split open IN
+      // Review is a zoom of the review: the verdict keeps the review
+      // path (mark + advance plan), and a drained person's advance
+      // closes the split and focuses the next face to review (§4.30)
+      if (mode !== "review") {
         const ok = await mutate(() => api.acceptFaces(ids), true);
         if (ok) focusActed(ids); // #189/§4.41: focus follows the verdict
         return;
@@ -1598,7 +1263,7 @@ export default function App() {
         );
       }
     },
-    [snap, mode, splitImageId, sections, mutate, markExhaust, facesById, personId, focusActed, focusActedUnlessNoop]
+    [snap, mode, sections, mutate, markExhaust, facesById, personId, focusActed, focusActedUnlessNoop]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
@@ -2219,65 +1884,17 @@ export default function App() {
   }, [mutate]);
 
   if (noDb) {
-    // #185 (§4.36): no usable database — build it and import the first
-    // roll in ONE flow instead of dead-ending on the raw error
+    // #185 (§4.36): no usable database — the first-run screen owns the
+    // whole flow incl. the dialog → import-pane switch (components/
+    // FirstRun.tsx, §4.44 stage 3); App routes its outcomes onto the
+    // loadError/noDb/error states exactly as the inline branch did
     return (
-      <div className="first-run">
-        {firstRunDir == null ? (
-          <div className="overlay">
-            <div className="dialog">
-              <h3>No database yet</h3>
-              <p className="dim">
-                No usable database exists at the configured path — build it from{" "}
-                <b>database/schema.sql</b> and import your first roll.
-              </p>
-              <div className="dialog-actions">
-                <button
-                  onClick={() =>
-                    refresh()
-                      .then(() => setNoDb(false))
-                      .catch((e) => {
-                        setNoDb(false);
-                        setLoadError(String(e)); // exists-but-broken: the raw screen
-                      })
-                  }
-                >
-                  Retry
-                </button>
-                {/* #185: the folder picker pre-checks --create-db in the
-                    import pane — the title stays reference-free (§4.43) */}
-                <button
-                  className="ok"
-                  title="pick a roll folder — the import pane opens with --create-db pre-checked"
-                  onClick={() =>
-                    void openFolderDialog({ directory: true }).then((d) => {
-                      if (typeof d === "string" && d) setFirstRunDir(d);
-                    })
-                  }
-                >
-                  Open import pane
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <ImportPane
-            dir={firstRunDir}
-            // #185: one flow — creation is on, so dry-run is refused by
-            // the pane's existing combo rule
-            initial={{ createDb: true }}
-            onClose={() => setFirstRunDir(null)} // ✕ back to the dialog
-            onImported={() =>
-              refresh()
-                .then(() => {
-                  setNoDb(false);
-                  setFirstRunDir(null); // exit 0 — the app appears
-                })
-                .catch((e) => setError(String(e)))
-            }
-          />
-        )}
-      </div>
+      <FirstRun
+        refresh={refresh}
+        onUsable={() => setNoDb(false)}
+        onBroken={(m) => setLoadError(m)}
+        onError={setError}
+      />
     );
   }
   if (loadError) {
@@ -2555,8 +2172,11 @@ export default function App() {
             className="center-scroll"
             ref={centerScrollRef}
             onScroll={(e) => {
-              // #203: only Review's place is remembered
-              if (mode === "review")
+              // #203 + reopened (gui-design v3.93): only the review
+              // GRID's place is remembered — while the full image is
+              // open the container's scroll is the focus view's own
+              // and must never overwrite the grid's saved place
+              if (mode === "review" && splitImageId == null)
                 reviewScrollRef.current = e.currentTarget.scrollTop;
             }}
           >
