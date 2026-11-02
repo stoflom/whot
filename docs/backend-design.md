@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.6** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.7** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -93,11 +93,16 @@ Every mutating command follows the same shape (gui-design §4.8):
    — fail with a message string before touching anything;
 2. **mutate** the core rows in one transaction;
 3. **maintain derived state** for every affected person, still inside
-   the transaction: `refresh_person_names` (§4.7 name derivation),
+   the transaction: `refresh_person_names` (§4.7 name derivation, one
+   UPDATE, #210),
    `backfill_primary` (§4.5 machine rule when the slot is empty or
    stale), `recompute_refcrops` (§4.6 per-appearance top-N, `pinned`
-   rows keep their `seq` slots);
+   rows keep their `seq` slots, compare-and-skip — identical rows are
+   never rewritten, #210);
 4. commit; the frontend re-fetches `get_snapshot()` (no push channel).
+
+The stale-shell sweep (gui-design §4.27) rides the writers that can
+empty a person — `snapshot()` itself is a pure read (#208).
 
 Helpers: `affected_persons()` collects the person ids a mutation
 touched (before *and* after — moves have an origin and a destination),
@@ -113,13 +118,14 @@ person) — see `docs/schema-design.md` §5.
 
 - `snapshot()` is the one big read: persons (+groups, counts), faces,
   images, imports in a single query pass — the frontend re-fetches it
-  wholesale after every mutation. It opens with the **stale-shell
-  sweep** (gui-design §4.27): zero-face `UnknownN` persons are
-  deleted in the same transaction before the reads — leftovers no other
-  code path revisits; named persons are never swept.
+  wholesale after every mutation. It is **pure** (#208): the stale-shell
+  sweep (gui-design §4.27) rides the writers that can empty a person
+  (assign/merge, reject-moves); named persons are never swept.
 - Image/face content lives in the DB as BLOBs and leaves base64-encoded
   as data URLs (`face_preview`, `image_blobs`); the frontend caches by
   `face_id`/`image_id` and never invalidates (content is immutable).
+  `get_refcrops` derives its crops and filenames at read from the face
+  (rows are metadata since schema v1.8, #210).
   `open_image` is the exception: it writes `images.preview` to a temp
   file and hands it to the opener plugin (gui-design §3).
 - `person_face_clusters` computes, per appearance group, single-linkage

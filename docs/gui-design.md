@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.94** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.95** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -520,7 +520,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    inside the group (PK `(person_id, description, seq)`). Manual promotion
    of any confirmed face is possible; pinned rows carry `pinned=1`, are
    excluded from auto-selection and survive recomputation. `face_id` is
-   UNIQUE per row (a face is a refcrop of at most one person).
+   UNIQUE per row (a face is a refcrop of at most one person). The rows
+   are metadata (face, group, pin flag, seq) — the crop and the filename
+   (`<face.name>-<seq>.jpg`) derive at read from the face (#210), and a
+   rebuild whose rows come out identical writes nothing.
 7. **Face `name` derivation** ⇒ `person.name[-description]-seq`; `seq` is
    per (person, description) as in the importer, computed as `MAX(seq)+1`
    (gap-proof, so labels stay unique within a person even after faces are
@@ -1077,16 +1080,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       action** (any click or keystroke that acts). Real errors (failed
       operations, backend exceptions) keep the copyable red toast with ✕
       — the copyability rule above applies to them only.
-27. **Stale-shell sweep** ⇒ on every `get_snapshot()`, persons
-    matching `name LIKE 'Unknown%'` with **zero faces** are deleted
-    (leftovers from pre-v1.9 runs, external writers — and now also
-    `UnknownN`s emptied when the reject-move of §4.2/§4.35 took their
-    last face; no code path ever revisits them otherwise). Named persons
-    are never swept: an empty *named* person is a legitimate future
-    assignment target — and the system person `Rejected` is **never
-    swept** either (created on demand, reused by the next reject;
-    §4.35). The sweep is one statement inside the snapshot transaction,
-    cheap and idempotent.
+27. **Stale-shell sweep** ⇒ every **writer that can empty a person** —
+    the §4.1 assign/merge and the §4.2/§4.35 reject-move — deletes
+    persons matching `name LIKE 'Unknown%'` with **zero faces** in its
+    transaction (leftovers from pre-v1.9 runs and external writers are
+    swept by the next such write; `UnknownN`s emptied when the
+    reject-move of §4.2/§4.35 took their last face are swept
+    immediately). The read path is pure: `get_snapshot()` never writes
+    (#208). Named persons are never swept: an empty *named* person is a
+    legitimate future assignment target — and the system person
+    `Rejected` is **never swept** either (created on demand, reused by
+    the next reject; §4.35). The sweep is one statement, cheap and
+    idempotent.
 28. **Merge Similar Persons** ⇒ a triage workflow for same-name
     duplicates (the importer's deliberate `X 2` generations, §9.4 of
     `docs/scripts-design.md`, plus case variants and misspellings):

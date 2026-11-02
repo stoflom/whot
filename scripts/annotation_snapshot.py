@@ -18,9 +18,11 @@ Console (scripts-design §10): startup header, status updates and a final
 summary on **stderr** (stdout is the JSON data channel); -q/--quiet prints
 only the header and the final summary.
 
-Export never writes to the database (read-only connection). Restore requires
-a schema v1.7 target (schema_version gate), runs in one transaction and
-prints a summary; unmatched faces are reported, never silently dropped.
+Export never writes to the database (read-only connection) and reads any
+schema from pre-1.5 to the current one (the `source_schema` field records
+it). Restore requires a schema v1.8 target (schema_version gate), runs in
+one transaction and prints a summary; unmatched faces are reported, never
+silently dropped.
 
 Exit codes: 0 ok, 1 failure / incompatible schema. stdlib only.
 """
@@ -37,7 +39,7 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # must match database/schema.sql and scripts/import_roll.py / db.rs
-SCHEMA_VERSION = "1.7"
+SCHEMA_VERSION = "1.8"
 FORMAT = 1
 
 
@@ -137,7 +139,9 @@ def backfill_primary(con: sqlite3.Connection, pid: int) -> None:
 def recompute_refcrops(con: sqlite3.Connection, pid: int, n: int) -> int:
     """Rebuild the person's auto refcrops, mirroring db.rs recompute_refcrops:
     top-n per description group by confidence, excluding the primary face and
-    pinned faces; pinned rows keep their seq slots. Returns the row count."""
+    pinned faces; pinned rows keep their seq slots. #210 (schema v1.8): the
+    rows are metadata — the crop and the filename derive at read from the
+    face. Returns the row count."""
     con.execute("DELETE FROM person_refcrops WHERE person_id = ? AND pinned = 0", (pid,))
     primary = con.execute(
         "SELECT primary_face_id FROM persons WHERE id = ?", (pid,)).fetchone()[0]
@@ -146,8 +150,8 @@ def recompute_refcrops(con: sqlite3.Connection, pid: int, n: int) -> int:
             "SELECT description, seq FROM person_refcrops WHERE person_id = ?", (pid,)):
         pinned.setdefault(group, set()).add(seq)
     rows = con.execute(
-        "SELECT face_id, name, description, preview, rn FROM ("
-        "  SELECT f.id AS face_id, f.name, COALESCE(f.description, '') AS description,"
+        "SELECT face_id, description, preview, rn FROM ("
+        "  SELECT f.id AS face_id, COALESCE(f.description, '') AS description,"
         "         f.preview,"
         "         ROW_NUMBER() OVER (PARTITION BY COALESCE(f.description, '')"
         "                            ORDER BY f.confidence DESC, f.id) AS rn"
@@ -160,7 +164,7 @@ def recompute_refcrops(con: sqlite3.Connection, pid: int, n: int) -> int:
         (pid, primary, n)).fetchall()
     next_seq: dict[str, int] = {}
     count = 0
-    for face_id, name, group, crop, rn in rows:
+    for face_id, group, crop, rn in rows:
         if crop is None:
             continue  # a preview-less face cannot become a refcrop (#39)
         cursor = next_seq.get(group, 1)
@@ -170,9 +174,9 @@ def recompute_refcrops(con: sqlite3.Connection, pid: int, n: int) -> int:
         next_seq[group] = seq + 1
         con.execute(
             "INSERT OR REPLACE INTO person_refcrops"
-            " (person_id, face_id, description, pinned, seq, filename, crop)"
-            " VALUES (?, ?, ?, 0, ?, ?, ?)",
-            (pid, face_id, group, seq, f"{name}-{seq}.jpg", crop))
+            " (person_id, face_id, description, pinned, seq)"
+            " VALUES (?, ?, ?, 0, ?)",
+            (pid, face_id, group, seq))
         count += 1
     return count
 
@@ -459,12 +463,11 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
             seq = con.execute(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM person_refcrops "
                 "WHERE person_id = ? AND description = ?", (pid, group)).fetchone()[0]
-            face_name = con.execute("SELECT name FROM faces WHERE id = ?", (fid,)).fetchone()[0]
             con.execute(
                 "INSERT OR REPLACE INTO person_refcrops "
-                "(person_id, face_id, description, pinned, seq, filename, crop) "
-                "VALUES (?, ?, ?, 1, ?, ?, ?)",
-                (pid, fid, group, seq, f"{face_name}-{seq}.jpg", crop[0]))
+                "(person_id, face_id, description, pinned, seq) "
+                "VALUES (?, ?, ?, 1, ?)",
+                (pid, fid, group, seq))
             stats["pins"] += 1
 
         # v1.12 housekeeping (#37): the restore moves faces directly, so run

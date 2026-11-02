@@ -17,7 +17,7 @@ pub const MODEL_TAG: &str = "insightface:buffalo_l";
 /// Must match `schema_version.version` in database/schema.sql — exact
 /// match, no migrations by policy: mismatched DBs are refused up-front
 /// with recreate instructions instead of failing on the first query.
-pub const SCHEMA_VERSION: &str = "1.7";
+pub const SCHEMA_VERSION: &str = "1.8";
 const DEFAULT_THRESHOLD: f64 = 0.40;
 const DEFAULT_REFCROP_N: i64 = 5;
 
@@ -474,23 +474,10 @@ pub fn data_version(paths: &Paths) -> Result<i64> {
 
 pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
     // #208 — the stamp first, then the data (ordering rule above). The
-    // §4.27 sweep below can delete rows — a real change that surfaces as
-    // the NEXT stamp (one redundant refresh at most); its steady state is
-    // a zero-row DELETE, which never bumps anything.
+    // read path is pure: the §4.27 sweep rides the writers that can
+    // empty a person (sweep_stale_shells), so a snapshot never writes.
     let version = data_version(paths)?;
     let con = connect(paths)?;
-
-    // §4.27 (#84) — stale-shell sweep: zero-face UnknownN persons are
-    // leftovers no other code path revisits (assign_person only deletes
-    // shells it empties itself; reject-moves now empty them too, #165).
-    // Named persons are never swept — an empty named person is a
-    // legitimate future assignment target — and the system person
-    // `Rejected` never matches this GLOB (§4.35: never swept).
-    con.execute(
-        "DELETE FROM persons WHERE name GLOB 'Unknown*'
-           AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
-        [],
-    )?;
 
     // grouped queries — one pass for all face counts, one for all group paths
     // (F20: previously 2 extra queries per person)
@@ -708,21 +695,35 @@ pub fn face_name(person_name: &str, description: Option<&str>, seq: i64) -> Stri
 }
 
 /// Re-derive `faces.name` for every face of a person (after renames / moves).
+/// #210: one UPDATE — the label (§4.7) is pure SQL over the person's name
+/// and the face's own description/seq.
 fn refresh_person_names(con: &Connection, person_id: i64) -> Result<()> {
-    let person_name: String = con.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
-    let faces: Vec<(i64, Option<String>, i64)> = {
-        let mut st = con.prepare(
-            "SELECT id, description, seq FROM faces WHERE person_id = ?",
-        )?;
-        st.query_map(params![person_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<std::result::Result<_, _>>()?
-    };
-    for (id, description, seq) in faces {
-        con.execute(
-            "UPDATE faces SET name = ? WHERE id = ?",
-            params![face_name(&person_name, description.as_deref(), seq), id],
-        )?;
-    }
+    con.execute(
+        "UPDATE faces SET name = (
+               SELECT p.name FROM persons p WHERE p.id = ?1)
+              || CASE WHEN COALESCE(description, '') != ''
+                      THEN '-' || description ELSE '' END
+              || '-' || seq
+          WHERE person_id = ?1",
+        params![person_id],
+    )?;
+    Ok(())
+}
+
+/// §4.27 (#84) — the stale-shell sweep: zero-face `UnknownN` persons are
+/// leftovers no other code path revisits (assign/merge deletes the shells
+/// it empties itself; reject-moves empty them here). Named persons are
+/// never swept — an empty named person is a legitimate future assignment
+/// target — and the system person `Rejected` never matches this GLOB
+/// (§4.35: never swept). #208: the READ path is pure — the sweep rides
+/// the writers that can empty a person, so leftovers from external
+/// writers are swept at the next write instead of the next snapshot.
+fn sweep_stale_shells(con: &Connection) -> Result<()> {
+    con.execute(
+        "DELETE FROM persons WHERE name GLOB 'Unknown*'
+           AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
+        [],
+    )?;
     Ok(())
 }
 
@@ -756,16 +757,16 @@ fn backfill_primary(con: &Connection, person_id: i64) -> Result<()> {
 /// §4.6 — refcrops: one top-N group per distinct (person, description).
 /// Pinned rows (`pinned = 1`) are excluded from auto-selection, survive the
 /// rebuild, and their seq slots are skipped by that group's auto rows.
+/// #210 (schema v1.8): the rows are METADATA — the crop and the filename
+/// derive at read from the face — and the rebuild is compare-and-skip: a
+/// recompute whose rows come out identical (a rename, say) writes nothing.
 fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
-    con.execute(
-        "DELETE FROM person_refcrops WHERE person_id = ? AND pinned = 0",
-        params![person_id],
-    )?;
     // seq slots still occupied by surviving pins, per appearance group
     let mut pinned: HashMap<String, HashSet<i64>> = HashMap::new();
     {
-        let mut st =
-            con.prepare("SELECT description, seq FROM person_refcrops WHERE person_id = ?")?;
+        let mut st = con.prepare(
+            "SELECT description, seq FROM person_refcrops WHERE person_id = ? AND pinned = 1",
+        )?;
         let rows = st.query_map(params![person_id], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
         })?;
@@ -781,8 +782,9 @@ fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
         .optional()?
         .flatten();
     let mut st = con.prepare(
-        "SELECT face_id, name, description, preview, rn FROM (
-             SELECT f.id AS face_id, f.name, f.description, f.preview,
+        "SELECT face_id, description, has_preview, rn FROM (
+             SELECT f.id AS face_id, COALESCE(f.description, '') AS description,
+                    f.preview IS NOT NULL AS has_preview,
                     ROW_NUMBER() OVER (PARTITION BY COALESCE(f.description, '')
                                        ORDER BY f.confidence DESC, f.id) AS rn
                FROM faces f
@@ -798,35 +800,55 @@ fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                // #39: faces.preview is nullable — read it as Option and
-                // skip crop-less faces below instead of aborting the whole
-                // mutation transaction
-                r.get::<_, Option<Vec<u8>>>(3)?,
-                r.get::<_, i64>(4)?,
+                r.get::<_, bool>(2)?,
+                r.get::<_, i64>(3)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    // rn-order within each group; skip seq slots held by pins of that group
+    // rn-order within each group; skip seq slots held by pins of that
+    // group; a preview-less face cannot become a refcrop (#39) but keeps
+    // its rank slot, so the numbering leaves the same gaps as before
     let mut next: HashMap<String, i64> = HashMap::new();
-    for (face_id, name, description, crop, rn) in rows {
-        let crop = match crop {
-            Some(crop) => crop,
-            None => continue, // a face without a preview cannot become a refcrop
-        };
-        let group = description.filter(|d| !d.is_empty()).unwrap_or_default();
+    let mut want: Vec<(i64, String, i64)> = Vec::new(); // (face_id, group, seq)
+    for (face_id, group, has_preview, rn) in rows {
+        if !has_preview {
+            continue;
+        }
         let cursor = next.get(&group).copied().unwrap_or(1);
         let mut seq = rn.max(cursor);
         while pinned.get(&group).is_some_and(|s| s.contains(&seq)) {
             seq += 1;
         }
         next.insert(group.clone(), seq + 1);
-        let filename = format!("{name}-{seq}.jpg");
+        want.push((face_id, group, seq));
+    }
+    // #210: compare-and-skip — identical output means no write at all
+    let mut have: Vec<(i64, String, i64)> = {
+        let mut st = con.prepare(
+            "SELECT face_id, description, seq FROM person_refcrops
+              WHERE person_id = ? AND pinned = 0",
+        )?;
+        st.query_map(params![person_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    have.sort_unstable();
+    let mut same = want.clone();
+    same.sort_unstable();
+    if have == same {
+        return Ok(());
+    }
+    con.execute(
+        "DELETE FROM person_refcrops WHERE person_id = ? AND pinned = 0",
+        params![person_id],
+    )?;
+    for (face_id, group, seq) in want {
         con.execute(
             "INSERT OR REPLACE INTO person_refcrops
-               (person_id, face_id, description, pinned, seq, filename, crop)
-             VALUES (?, ?, ?, 0, ?, ?, ?)",
-            params![person_id, face_id, group, seq, filename, crop],
+               (person_id, face_id, description, pinned, seq)
+             VALUES (?, ?, ?, 0, ?)",
+            params![person_id, face_id, group, seq],
         )?;
     }
     Ok(())
@@ -1280,6 +1302,7 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
         recompute_person(&tx, *pid, &settings)?;
         reseat(&tx, *pid)?; // §4.35: seat-holders re-derive; filed/system no-op
     }
+    sweep_stale_shells(&tx)?; // §4.27: sweep rides the writers (#208)
     tx.commit()?;
     Ok(())
 }
@@ -1320,6 +1343,7 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
             reseat(&tx, pid)?;
         }
     }
+    sweep_stale_shells(&tx)?; // §4.27: sweep rides the writers (#208)
     tx.commit()?;
     Ok(())
 }
@@ -1525,8 +1549,9 @@ pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<()> 
     // rename keeps the person's rows exactly as they are (status seat or
     // real path, #153)
     refresh_person_names(&tx, person_id)?;
-    // #43: refcrop filenames embed the face name, so a rename must rebuild
-    // them — symmetric with assign_person (no-op for a faceless person)
+    // #43 + #210: refcrop filenames/crops derive at read from the face,
+    // so a rename needs no rebuild — the recompute below is a no-op
+    // (compare-and-skip) and stays for symmetry with assign_person
     recompute_person(&tx, person_id, &get_settings(paths)?)?;
     tx.commit()?;
     Ok(())
@@ -1872,18 +1897,19 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
 }
 
 /// §4.6 — manually promote a confirmed face into refcrops (survives rebuilds).
+/// #210: the row is metadata only — crop and filename derive at read.
 pub fn add_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<()> {
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
-    let (ok, name, desc, crop): (bool, String, Option<String>, Option<Vec<u8>>) = tx
+    let (ok, desc, preview): (bool, Option<String>, Option<Vec<u8>>) = tx
         .query_row(
-            "SELECT person_id = ?, name, description, preview FROM faces
+            "SELECT person_id = ?, description, preview FROM faces
               WHERE id = ? AND link_status = 'confirmed' AND state != 'discarded'",
             params![person_id, face_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
-        .unwrap_or((false, String::new(), None, None));
+        .unwrap_or((false, None, None));
     if !ok {
         bail!("face is not a confirmed face of this person");
     }
@@ -1908,7 +1934,7 @@ pub fn add_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<()> {
     match existing {
         Some(1) => {} // already pinned — no-op
         Some(_) => {
-            // upgrade an auto row to a pin in place (keeps its seq/filename/crop)
+            // upgrade an auto row to a pin in place (keeps its seq)
             tx.execute(
                 "UPDATE person_refcrops SET pinned = 1, description = ?
                   WHERE person_id = ? AND face_id = ?",
@@ -1922,12 +1948,13 @@ pub fn add_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<()> {
                 params![person_id, group],
                 |r| r.get(0),
             )?;
-            let filename = format!("{name}-{seq}.jpg");
-            let crop = crop.context("face has no preview")?;
+            // §4.6 invariant: a crop-less face cannot become a refcrop
+            // (the crop itself derives at read — schema v1.8)
+            preview.context("face has no preview")?;
             tx.execute(
-                "INSERT INTO person_refcrops (person_id, face_id, description, pinned, seq, filename, crop)
-                 VALUES (?, ?, ?, 1, ?, ?, ?)",
-                params![person_id, face_id, group, seq, filename, crop],
+                "INSERT INTO person_refcrops (person_id, face_id, description, pinned, seq)
+                 VALUES (?, ?, ?, 1, ?)",
+                params![person_id, face_id, group, seq],
             )?;
         }
     }
@@ -2201,9 +2228,14 @@ pub struct Refcrop {
 
 pub fn get_refcrops(paths: &Paths, person_id: i64) -> Result<Vec<Refcrop>> {
     let con = connect(paths)?;
+    // #210: the crop and the filename derive at read from the face —
+    // a crop-less face is never a refcrop (§4.6 invariant)
     let mut st = con.prepare(
-        "SELECT face_id, seq, description, pinned, filename, crop
-           FROM person_refcrops WHERE person_id = ? ORDER BY description, seq",
+        "SELECT r.face_id, r.seq, r.description, r.pinned,
+                f.name || '-' || r.seq || '.jpg', f.preview
+           FROM person_refcrops r JOIN faces f ON f.id = r.face_id
+          WHERE r.person_id = ? AND f.preview IS NOT NULL
+          ORDER BY r.description, r.seq",
     )?;
     let rows = st.query_map(params![person_id], |r| {
         Ok((

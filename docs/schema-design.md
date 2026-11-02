@@ -1,6 +1,6 @@
 # WhoT Database Schema Design
 
-**Version: 2.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 2.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -50,8 +50,11 @@ One line each; the DDL carries the columns.
   `path` is `NOT NULL`; the "no group" state does not exist — the
   seat system is writer-owned, asserted by the fix script, documented
   in the DDL.
-- `person_refcrops` — per-appearance reference images; `pinned` rows are
-  manual and survive recompute (gui-design §4.6).
+- `person_refcrops` — per-appearance reference faces; `pinned` rows are
+  manual and survive recompute (gui-design §4.6). Schema v1.8 (#210):
+  the row is metadata — the crop and the filename derive at read from
+  the referenced face (`faces.preview`, `faces.name || '-' || seq ||
+  '.jpg'`).
 - `schema_version` — single row; the gate (§5).
 
 ## 3. Identities
@@ -82,8 +85,9 @@ mutating path re-derives them (gui-design §4.4/§4.5/§4.6/§4.7):
 - `persons.primary_face_id` — user picks pin it (`primary_pinned=1`);
   otherwise the machine rule (highest-confidence, non-discarded,
   non-rejected face) backfills an empty slot.
-- `person_refcrops.*` — rebuilt per appearance group after any
-  accept/reject/primary/description change; `pinned=1` rows are exempt.
+- `person_refcrops` rows (membership, `seq`) — re-derived per appearance
+  group after any accept/reject/primary/description change; `pinned=1`
+  rows are exempt and identical rows are never rewritten (#210).
 
 No stored triggers: derivation lives in one place per writer
 (`src-tauri/src/db.rs` for the GUI, `import_roll.py`/`import_harvested.py`

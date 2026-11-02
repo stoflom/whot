@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 6.0** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 6.1** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -25,10 +25,15 @@ Not covered here (see their own documents):
 - `scripts/import_roll.py` — roll import; behaviour rules in
   `docs/gui-design.md` §4 (esp. §4.12), usage in `README.md`.
 - `scripts/annotation_snapshot.py` — annotation export/restore across a
-  drop & recreate; usage in `README.md`.
+  drop & recreate (export reads pre-1.5–current sources and records
+  `source_schema`; restore targets the current schema — refcrop rows
+  are metadata since v1.8, crops/filenames derive from the face, #210);
+  usage in `README.md`.
 - `scripts/fix_status_groups.py` — data fix: upgrades a
   v1.6 `faces.db` in place to the status-group layout (spec:
-  gui-design §4.35, gate: schema-design §5).
+  gui-design §4.35, gate: schema-design §5). Historical: it lands at
+  v1.7 — the current schema is reached via annotation_snapshot
+  export → recreate → restore (#210).
 - CLI console conventions shared by **all** scripts (startup header,
   status updates, `-q/--quiet`) — §10 below.
 

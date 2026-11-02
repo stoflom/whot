@@ -1,13 +1,14 @@
--- who app — faces.db schema (v1.7; behaviour rules: docs/gui-design.md §4,
+-- who app — faces.db schema (v1.8; behaviour rules: docs/gui-design.md §4,
 -- incl. §4.35: status seats New/Accepted/Rejected and the ≥1-group-row
 -- invariant). No migrations: drop and recreate. The schema_version table
 -- lets the app, the importer and the annotation tools verify they are
 -- talking to the matching schema (SCHEMA_VERSION in src-tauri/src/db.rs,
 -- scripts/import_roll.py, scripts/import_harvested.py and
 -- scripts/annotation_snapshot.py must equal the value inserted below).
--- A v1.6 database is upgraded IN PLACE by scripts/fix_status_groups.py
--- (backup first) instead of being recreated — its stored .schema stays
--- byte-identical to a fresh build of this file (#165).
+-- Annotations survive a recreate: scripts/annotation_snapshot.py
+-- export → recreate → restore (its export also reads v1.5–v1.7 sources).
+-- The historical in-place v1.6 fix (scripts/fix_status_groups.py) lands
+-- at v1.7 and stops there — v1.8 is reached the same export/restore way.
 --   sqlite3 data/faces.db < database/schema.sql
 
 PRAGMA journal_mode = WAL;
@@ -124,21 +125,23 @@ CREATE TABLE persons (
 -- system person `Rejected` always holds `Rejected`), and `Ungrouped`,
 -- `New`, `Accepted`, `Rejected` plus the retired `Unknown` are reserved
 -- path segments no user input may produce (validate_group_path).
--- A v1.6 database reaches this contract via scripts/fix_status_groups.py.
 CREATE TABLE person_groups (
   person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
   path       TEXT NOT NULL,                 -- free-form | -path, e.g. family|lombards
   PRIMARY KEY (person_id, path)
 );
 
+-- #210 (schema v1.8) / gui-design §4.6: per-appearance reference faces.
+-- The row is METADATA only — the crop and the filename derive at READ
+-- time from the referenced face (`faces.preview`;
+-- `faces.name || '-' || seq || '.jpg'`), so refcrop rebuilds copy no
+-- BLOBs and renames touch no refcrop rows.
 CREATE TABLE person_refcrops (
   person_id   INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
   face_id     INTEGER NOT NULL UNIQUE REFERENCES faces(id) ON DELETE CASCADE,
   description TEXT NOT NULL DEFAULT '',  -- appearance group: the face's description ('' = none)
   pinned      INTEGER NOT NULL DEFAULT 0, -- 1 = manual pin: excluded from auto top-N, survives recompute (§4.6)
   seq         INTEGER NOT NULL,           -- 1..n within (person, description)
-  filename    TEXT NOT NULL,                 -- face.name + "-" + seq + ".jpg"
-  crop        BLOB NOT NULL,
   PRIMARY KEY (person_id, description, seq)
 );
 
@@ -147,4 +150,4 @@ CREATE TABLE schema_version (
   version    TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-INSERT INTO schema_version(version, updated_at) VALUES ('1.7', datetime('now'));
+INSERT INTO schema_version(version, updated_at) VALUES ('1.8', datetime('now'));

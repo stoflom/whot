@@ -33,7 +33,7 @@ sidecars is available today for testing — see [Legacy recovery](#legacy-recove
 | Legacy harvest | `scripts/harvest_legacy.py` | read-only scan of sidecars/Lightroom/digiKam into a staging DB (`docs/scripts-design.md` §8) |
 | Harvest import | `scripts/import_harvested.py` | attaches harvested persons to existing faces in a **copy** of `faces.db` (`docs/scripts-design.md` §9) |
 | Annotation snapshot | `scripts/annotation_snapshot.py` | export/restore manual annotations across drop & recreate |
-| Status-group fix | `scripts/fix_status_groups.py` | data fix: upgrades a v1.6 `faces.db` in place to the v1.7 status-group layout (`docs/gui-design.md` §4.35) |
+| Status-group fix | `scripts/fix_status_groups.py` | data fix: upgrades a v1.6 `faces.db` in place to the v1.7 status-group layout (`docs/gui-design.md` §4.35) — historical; the current schema is reached via Annotation snapshot (export → recreate → restore) |
 | Staging schema | `database/harvest_schema.sql` | harvest staging DB, created by `harvest_legacy.py` |
 | GUI | repo root (Tauri 2 + React + TS, Rust backend in `src-tauri/`) | review/naming/annotation; serves images from DB BLOBs, no Python at runtime |
 | Config | `.env` (paths), `config/whotrc.json` (GUI settings, created at runtime) | |
@@ -284,7 +284,7 @@ Rejected`; rejecting always moves the face there (including via *Remove
 person*), and the only way back is an **assignment** — which un-rejects
 and moves it. There is no `Remove Unknowns` button anymore: rejecting
 empties an `UnknownN` shell directly, and the stale-shell sweep deletes
-it on the next refresh.
+it with the next change (reads never write).
 
 **Main flows**: review the pending faces — rename an `UnknownN` person
 (accepts & names it, moving it into a group path, e.g. `family|Smith`,
@@ -420,7 +420,7 @@ whot/
     import_harvested.py            # scripts-design §9: attach harvested persons (copy-only)
     legacy/                        # archived importers, superseded by harvest_legacy.py
   database/
-    schema.sql                     # faces.db DDL (v1.7)
+    schema.sql                     # faces.db DDL (v1.8)
     harvest_schema.sql             # staging DDL for harvest_legacy.py (v1.2)
   test/
     test_*.py                      # Python unit tests (import + harvest helpers)

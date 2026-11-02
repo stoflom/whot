@@ -22,9 +22,11 @@ A v1.6 database is refused by a v1.7 build until this has run; a database
 already at 1.7 is a no-op (exit 0), anything else is refused. Runs are
 backup-first: a full copy is written next to the database before the
 first write, and the upgrade itself is one transaction. The upgraded
-file's stored `.schema` stays byte-identical to a fresh
-`database/schema.sql` build (#165 — only comments and the marker row
-differ from v1.6).
+file's stored `.schema` matches a fresh `database/schema.sql` build of
+the v1.7 era (#165 — only comments and the marker row differ from
+v1.6). From v1.7 the current schema is reached the ordinary way:
+scripts/annotation_snapshot.py export → recreate → restore (#210, schema
+v1.8 retired the in-place path).
 
 Usage:
   fix_status_groups.py [db] [-q]
