@@ -1215,3 +1215,34 @@ fn cluster_cache_hits_until_inputs_change_211() {
     assert_eq!(db::cluster_cache_hits(&p, 1, 0.6), 1);
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+/// #207/#212 — the pooled connection serves successive calls and still
+/// sees every committed write (incl. raw external connections); the
+/// batch preview fetch returns id-ordered data URLs for every face with
+/// one and skips the rest.
+#[test]
+fn pooled_connect_and_batch_previews_207_212() {
+    let p = fixture_paths("pool");
+    let s1 = db::snapshot(&p).unwrap();
+    assert_eq!(s1.faces.len(), 6);
+    // an external write through a raw connection must be visible
+    {
+        let con = Connection::open(&p.db).unwrap();
+        con.execute("UPDATE faces SET description = 'ext' WHERE id = 6", []).unwrap();
+    }
+    let s2 = db::snapshot(&p).unwrap();
+    assert_eq!(
+        s2.faces.iter().find(|f| f.id == 6).unwrap().description.as_deref(),
+        Some("ext")
+    );
+    // #212: one call, deduped id-ordered rows for faces with a preview
+    let rows = db::face_previews(&p, &[3, 1, 2, 2, 999]).unwrap();
+    let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, vec![1, 2, 3], "deduped, id-ordered, unknown ids skipped");
+    for (_, url) in &rows {
+        assert!(url.starts_with("data:image/jpeg;base64,"), "{url}");
+    }
+    // identical output to the single-face path
+    assert_eq!(rows[0].1, db::face_preview(&p, 1).unwrap());
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
