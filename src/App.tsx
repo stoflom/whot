@@ -9,7 +9,6 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
-import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -53,6 +52,7 @@ import PersonTree, { orderedVisiblePersonIds } from "./components/PersonTree";
 import RollsPane from "./components/RollsPane";
 import RollsThumbs from "./components/RollsThumbs";
 import ImportPane from "./components/ImportPane";
+import FirstRun from "./components/FirstRun";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
 import { byFilename, clickImage, emptyImageSel, imageScope, type ImageSel } from "./imageSelect";
@@ -71,10 +71,9 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // #185 (§4.36): no USABLE database ⇒ the first-run screen (the dialog
-  // offers the import pane with --create-db) instead of the raw error;
-  // firstRunDir null = the dialog, a string = the standalone pane
+  // offers the import pane with --create-db) instead of the raw error
+  // (the screen + its local dir state live in components/FirstRun.tsx)
   const [noDb, setNoDb] = useState(false);
-  const [firstRunDir, setFirstRunDir] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("review");
   // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
   // pointer (modeless — the tree under it stays clickable) and the
@@ -2028,65 +2027,17 @@ export default function App() {
   }, [mutate]);
 
   if (noDb) {
-    // #185 (§4.36): no usable database — build it and import the first
-    // roll in ONE flow instead of dead-ending on the raw error
+    // #185 (§4.36): no usable database — the first-run screen owns the
+    // whole flow incl. the dialog → import-pane switch (components/
+    // FirstRun.tsx, §4.44 stage 3); App routes its outcomes onto the
+    // loadError/noDb/error states exactly as the inline branch did
     return (
-      <div className="first-run">
-        {firstRunDir == null ? (
-          <div className="overlay">
-            <div className="dialog">
-              <h3>No database yet</h3>
-              <p className="dim">
-                No usable database exists at the configured path — build it from{" "}
-                <b>database/schema.sql</b> and import your first roll.
-              </p>
-              <div className="dialog-actions">
-                <button
-                  onClick={() =>
-                    refresh()
-                      .then(() => setNoDb(false))
-                      .catch((e) => {
-                        setNoDb(false);
-                        setLoadError(String(e)); // exists-but-broken: the raw screen
-                      })
-                  }
-                >
-                  Retry
-                </button>
-                {/* #185: the folder picker pre-checks --create-db in the
-                    import pane — the title stays reference-free (§4.43) */}
-                <button
-                  className="ok"
-                  title="pick a roll folder — the import pane opens with --create-db pre-checked"
-                  onClick={() =>
-                    void openFolderDialog({ directory: true }).then((d) => {
-                      if (typeof d === "string" && d) setFirstRunDir(d);
-                    })
-                  }
-                >
-                  Open import pane
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <ImportPane
-            dir={firstRunDir}
-            // #185: one flow — creation is on, so dry-run is refused by
-            // the pane's existing combo rule
-            initial={{ createDb: true }}
-            onClose={() => setFirstRunDir(null)} // ✕ back to the dialog
-            onImported={() =>
-              refresh()
-                .then(() => {
-                  setNoDb(false);
-                  setFirstRunDir(null); // exit 0 — the app appears
-                })
-                .catch((e) => setError(String(e)))
-            }
-          />
-        )}
-      </div>
+      <FirstRun
+        refresh={refresh}
+        onUsable={() => setNoDb(false)}
+        onBroken={(m) => setLoadError(m)}
+        onError={setError}
+      />
     );
   }
   if (loadError) {
