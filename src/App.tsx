@@ -223,9 +223,21 @@ export default function App() {
     };
   }, [info]);
 
+  // #208: the snapshot carries the change stamp (read before its data),
+  // stored here so the focus reload can skip a no-op fetch
+  const snapVersionRef = useRef(0);
   const refresh = useCallback(async () => {
-    setSnap(await api.getSnapshot());
+    const s = await api.getSnapshot();
+    snapVersionRef.current = s.version;
+    setSnap(s);
   }, []);
+  // #208: reload only when the database actually moved since the last
+  // snapshot (our own mutations refresh explicitly and record the new
+  // stamp) — one tiny probe call instead of a whole-snapshot fetch
+  const refreshIfChanged = useCallback(async () => {
+    const v = await api.getDataVersion();
+    if (v !== snapVersionRef.current) await refresh();
+  }, [refresh]);
 
   useEffect(() => {
     refresh().catch(async (e) => {
@@ -243,7 +255,7 @@ export default function App() {
   // F12: pick up imports/mutations done while the window is in the background
   useEffect(() => {
     const reload = () => {
-      if (document.visibilityState !== "hidden") refresh().catch(() => {});
+      if (document.visibilityState !== "hidden") refreshIfChanged().catch(() => {});
     };
     window.addEventListener("focus", reload);
     document.addEventListener("visibilitychange", reload);
@@ -251,7 +263,7 @@ export default function App() {
       window.removeEventListener("focus", reload);
       document.removeEventListener("visibilitychange", reload);
     };
-  }, [refresh]);
+  }, [refreshIfChanged]);
 
   const facesById = useMemo(
     () => new Map((snap?.faces ?? []).map((f) => [f.id, f])),
@@ -396,12 +408,10 @@ export default function App() {
     (imageId: number, delta: number) => mutate(() => api.rotateImage(imageId, delta)),
     [mutate]
   );
-  // #174 (§4.39): rotate a whole thumbnail scope — one command per
-  // image in order, batched into ONE refresh
+  // #174 (§4.39): rotate a whole thumbnail scope — one batched command
+  // (#209), one refresh
   const rotateImages = (ids: number[], delta: number) =>
-    mutate(async () => {
-      for (const id of ids) await api.rotateImage(id, delta);
-    });
+    mutate(() => api.rotateImages(ids, delta));
   const rotateFace = useCallback(
     (faceId: number, delta: number) => mutate(() => api.rotateFace(faceId, delta)),
     [mutate]
@@ -737,12 +747,15 @@ export default function App() {
       (async () => {
         const target = await renameMerge(id, name);
         if (target == null) return false;
-        if (note.trim() !== (personsById.get(id)?.note ?? "").trim()) {
-          const ok = await mutate(() => api.setPersonNote(id, note));
-          if (!ok) return false;
-        }
-        if (ops.length > 0) {
+        // #209: the note and the list edits land in ONE mutate (one
+        // refresh per user action); a failure still aborts what follows
+        // (a failed name/note never lets the ops land on a person the
+        // merge just deleted)
+        const noteChanged =
+          note.trim() !== (personsById.get(id)?.note ?? "").trim();
+        if (noteChanged || ops.length > 0) {
           const ok = await mutate(async () => {
+            if (noteChanged) await api.setPersonNote(id, note);
             for (const op of ops)
               await api.movePersonsBetweenGroups([target], op.from, op.to);
           });
@@ -1158,10 +1171,9 @@ export default function App() {
       if (!desc) return; // double guard — the browser would not have dropped
       const ids = payload.filter((x) => x !== id); // its own desc is a no-op
       if (ids.length === 0) return;
-      // one mutate = one refresh; link_status is untouched (a text edit)
-      void mutate(async () => {
-        for (const x of ids) await api.setFaceDescription(x, desc);
-      });
+      // one mutate = one refresh; link_status is untouched (a text edit).
+      // #209: one batched command instead of one call per dragged face
+      void mutate(() => api.setFaceDescriptions(ids, desc));
     },
   }), [facesById, personsById, faceMenu, toggle, selectOnly, rangeSelect,
       toggleMany, doPrimary, doRefcrop, doReject, actionScope, openEdit,
@@ -1388,9 +1400,10 @@ export default function App() {
         }
       }
       if (st.desc != null) {
-        // sequential: each call re-assigns seq in its (person, desc)
-        // group (§4.4) — same reason as the old per-card edits
-        for (const id of ids) await api.setFaceDescription(id, st.desc);
+        // #209: one batched command — the sequential per-face seq
+        // re-assignment (§4.4, same reason as the old per-card edits)
+        // happens inside its transaction, in call order
+        await api.setFaceDescriptions(ids, st.desc);
       }
     },
     [facesById, personsById]
@@ -1445,14 +1458,22 @@ export default function App() {
               .filter((p): p is number => p != null)
           ),
         ];
-        for (const pid of owners)
-          for (const op of groupOps!)
-            await mutate(() => api.movePersonsBetweenGroups([pid], op.from, op.to));
+        // #209: ONE call per op over ALL owners (the command is
+        // per-person independent) — no refresh per call; the accept
+        // below lands exactly one refresh for the whole action. A failed
+        // op surfaces the error toast and does not abort the rest (the
+        // old per-mutate swallow-and-continue). A merge may have deleted
+        // some owners — one existing owner still applies the op for all
+        // (the old per-owner calls toasted on each deleted one).
+        for (const op of groupOps!)
+          await api
+            .movePersonsBetweenGroups(owners, op.from, op.to)
+            .catch((e) => setError(String(e)));
       }
       await acceptAndNext(ids, claimed);
       setPending([]);
     },
-    [acceptAndNext, stageOps, mutate]
+    [acceptAndNext, stageOps]
   );
 
   // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the

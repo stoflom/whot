@@ -26,6 +26,13 @@ fn get_snapshot(state: State<AppState>) -> Result<db::Snapshot, String> {
     db::snapshot(state.paths()?).map_err(|e| e.to_string())
 }
 
+/// #208 — the cheap change stamp for the GUI's focus/visibility reload
+/// skip (equal to the snapshot's `version` ⇒ nothing to reload)
+#[tauri::command]
+fn get_data_version(state: State<AppState>) -> Result<i64, String> {
+    db::data_version(state.paths()?).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_face_preview(state: State<AppState>, face_id: i64) -> Result<String, String> {
     db::face_preview(state.paths()?, face_id).map_err(|e| e.to_string())
@@ -111,6 +118,13 @@ fn rotate_image(state: State<AppState>, image_id: i64, delta: i64) -> Result<i64
     db::rotate_image(state.paths()?, image_id, delta).map_err(|e| e.to_string())
 }
 
+/// #209 — one call per user action for a multi-image rotate (the GUI's
+/// thumbnail-scope rotation), same per-image semantics as `rotate_image`
+#[tauri::command]
+fn rotate_images(state: State<AppState>, image_ids: Vec<i64>, delta: i64) -> Result<(), String> {
+    db::rotate_images(state.paths()?, &image_ids, delta).map_err(|e| e.to_string())
+}
+
 /// #122 — rotate the face crop ±90° (server state; refresh follows).
 #[tauri::command]
 fn rotate_face(state: State<AppState>, face_id: i64, delta: i64) -> Result<i64, String> {
@@ -124,6 +138,17 @@ fn set_face_description(
     description: String,
 ) -> Result<(), String> {
     db::set_face_description(state.paths()?, face_id, &description).map_err(|e| e.to_string())
+}
+
+/// #209 — one call per staged batch: the sequential per-face seq
+/// re-assignment (§4.4) happens inside its transaction, in call order
+#[tauri::command]
+fn set_face_descriptions(
+    state: State<AppState>,
+    face_ids: Vec<i64>,
+    description: String,
+) -> Result<(), String> {
+    db::set_face_descriptions(state.paths()?, &face_ids, &description).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -278,6 +303,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
+            get_data_version,
             get_face_preview,
             get_image_thumb,
             get_image_preview,
@@ -288,8 +314,10 @@ pub fn run() {
             accept_faces,
             reject_faces,
             rotate_image,
+            rotate_images,
             rotate_face,
             set_face_description,
+            set_face_descriptions,
             set_primary_face,
             set_person_name,
             set_person_group,

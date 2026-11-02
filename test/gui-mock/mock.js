@@ -30,6 +30,19 @@
     window.__MOCK_NO_DB__ = true;
   let SNAP = null;
   let nextPersonId = 1;
+  // #208: the change stamp mirrors the backend probe's semantics — it
+  // moves whenever the SNAP CONTENT changes, however that happens (a
+  // command or a check's direct mutation of __MOCK_SNAP), just as any
+  // committed external write moves the real PRAGMA data_version. FNV-1a
+  // over the serialized state: deterministic and cheap enough here.
+  const stampOf = (text) => {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h | 0;
+  };
   // #167: the import slot (mirrors importer.rs: one child at a time,
   // append-only line buffer, killed/exit markers)
   const imp = { running: false, killed: false, exit: null, lines: [], started: 0, opts: null, timers: [] };
@@ -213,8 +226,13 @@
       // the real backend (sqlite: no such table on an empty file)
       if (window.__MOCK_NO_DB__)
         throw new Error("no such table: images (sqlite)");
-      return JSON.parse(JSON.stringify(SNAP));
+      // #208: the stamp travels with the snapshot (backend parity: read
+      // before the data — one serialization serves both)
+      const text = JSON.stringify(SNAP);
+      return { version: stampOf(text), ...JSON.parse(text) };
     },
+    // #208 — the focus/visibility reload's cheap probe
+    get_data_version: () => stampOf(JSON.stringify(SNAP)),
     assign_person: assignPerson,
     accept_faces: ({ faceIds }) => {
       // #165/§4.3: plain accept never un-rejects; seat-holders re-derive
@@ -240,6 +258,11 @@
       if (!f) throw new Error("no face");
       f.description = description || null;
       rederiveNames();
+    },
+    // #209: batch twins — the backend runs each in one transaction; the
+    // mock replays its per-face handler in call order (db parity)
+    set_face_descriptions: ({ faceIds, description }) => {
+      for (const faceId of faceIds) cmd.set_face_description({ faceId, description });
     },
     set_primary_face: ({ personId, faceId }) => {
       const p = SNAP.persons.find((x) => x.id === personId);
@@ -356,6 +379,10 @@
         if (f.image_id === imageId)
           f.rotation = ((f.rotation ?? 0) + d) % 360;
       return img.rotation;
+    },
+    // #209: batch twin — one call for a whole thumbnail scope (db parity)
+    rotate_images: ({ imageIds, delta }) => {
+      for (const imageId of imageIds) cmd.rotate_image({ imageId, delta });
     },
     // #183 — same contract as db::rotate_face: the per-crop correction —
     // the image and the image's other crops never move

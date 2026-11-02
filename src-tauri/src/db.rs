@@ -4,12 +4,13 @@
 //! primary faces, refcrops) lives here. See docs/gui-design.md §4 for the
 //! behaviour rules implemented in this file.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 pub const MODEL_TAG: &str = "insightface:buffalo_l";
 /// Must match `schema_version.version` in database/schema.sql — exact
@@ -362,6 +363,9 @@ pub struct ImportRow {
 
 #[derive(Serialize)]
 pub struct Snapshot {
+    /// #208 — the change stamp read BEFORE the rows below (see
+    /// `data_version`): the GUI stores it and skips no-op reloads
+    pub version: i64,
     pub persons: Vec<Person>,
     pub faces: Vec<Face>,
     pub images: Vec<ImageRow>,
@@ -369,7 +373,48 @@ pub struct Snapshot {
     pub settings: Settings,
 }
 
+/// #208 — the change stamp behind the GUI's no-op reload skip: a
+/// persistent connection whose `PRAGMA data_version` bumps whenever ANY
+/// connection (ours or the importer's) commits a real modification — a
+/// zero-row write never bumps it. Fresh connections cannot observe
+/// changes at all (every open sees the same baseline), so the probe
+/// connections persist, one per database path (the test fixtures each
+/// bring their own; the app has exactly one). Full command-connection
+/// pooling is #207.
+static PROBE: Mutex<Option<HashMap<PathBuf, Connection>>> = Mutex::new(None);
+
+fn probe_lock(
+) -> Result<std::sync::MutexGuard<'static, Option<HashMap<PathBuf, Connection>>>> {
+    PROBE.lock().map_err(|_| anyhow!("data_version probe lock poisoned"))
+}
+
+/// Cheap "has anything changed since?" stamp for the frontend's
+/// focus/visibility reloads (F12): equal stamps ⇒ the reload can skip.
+/// Read the stamp BEFORE the snapshot data it accompanies — a write
+/// landing in between can then only cause a redundant refresh later,
+/// never a missed one (see `snapshot`).
+pub fn data_version(paths: &Paths) -> Result<i64> {
+    let mut guard = probe_lock()?;
+    let map = guard.get_or_insert_with(HashMap::new);
+    if !map.contains_key(&paths.db) {
+        let con = Connection::open(&paths.db)
+            .with_context(|| format!("cannot open {}", paths.db.display()))?;
+        // the importer may hold the write lock — same patience as `connect`
+        con.pragma_update(None, "busy_timeout", 5000)?;
+        map.insert(paths.db.clone(), con);
+    }
+    Ok(map
+        .get(&paths.db)
+        .expect("just inserted")
+        .query_row("PRAGMA data_version", [], |r| r.get(0))?)
+}
+
 pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
+    // #208 — the stamp first, then the data (ordering rule above). The
+    // §4.27 sweep below can delete rows — a real change that surfaces as
+    // the NEXT stamp (one redundant refresh at most); its steady state is
+    // a zero-row DELETE, which never bumps anything.
+    let version = data_version(paths)?;
     let con = connect(paths)?;
 
     // §4.27 (#84) — stale-shell sweep: zero-face UnknownN persons are
@@ -509,7 +554,7 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
     };
 
     let settings = get_settings(paths)?;
-    Ok(Snapshot { persons, faces, images, imports, settings })
+    Ok(Snapshot { version, persons, faces, images, imports, settings })
 }
 
 // ---------------------------------------------------------------- images
@@ -1198,10 +1243,8 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
 /// creation, so the display angles move together. The converse is not
 /// true: `rotate_face` is the per-crop correction and never touches
 /// `images.rotation` (§4.32).
-pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<i64> {
+fn rotate_image_tx(tx: &Connection, image_id: i64, delta: i64) -> Result<i64> {
     let d = ((delta % 360) + 360) % 360;
-    let mut con = connect(paths)?;
-    let tx = con.transaction()?;
     let cur: i64 = tx
         .query_row("SELECT rotation FROM images WHERE id = ?", params![image_id], |r| r.get(0))
         .context("image not found")?;
@@ -1211,8 +1254,36 @@ pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<i64> {
         "UPDATE faces SET rotation = ((rotation + ?1) % 360 + 360) % 360 WHERE image_id = ?2",
         params![d, image_id],
     )?;
+    Ok(next)
+}
+
+pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<i64> {
+    let mut con = connect(paths)?;
+    let tx = con.transaction()?;
+    let next = rotate_image_tx(&tx, image_id, delta)?;
     tx.commit()?;
     Ok(next)
+}
+
+/// #209 — batch display rotation: N images in ONE transaction behind one
+/// IPC call (the GUI rotates a whole thumbnail scope at once) — same
+/// per-image semantics as `rotate_image`, incl. the crop cascade. A
+/// repeated id rotates once; a missing image rolls the whole batch back
+/// (the old per-image loop applied the prefix before failing).
+pub fn rotate_images(paths: &Paths, image_ids: &[i64], delta: i64) -> Result<()> {
+    let mut ids: Vec<i64> = image_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        bail!("no images selected");
+    }
+    let mut con = connect(paths)?;
+    let tx = con.transaction()?;
+    for id in ids {
+        rotate_image_tx(&tx, id, delta)?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 /// #122/#183 — face-crop display rotation (server state): the per-crop
@@ -1230,6 +1301,49 @@ pub fn rotate_face(paths: &Paths, face_id: i64, delta: i64) -> Result<i64> {
     Ok(next)
 }
 
+/// The per-face core of `set_face_description` inside the caller's
+/// transaction: records the normalised description, re-assigns seq within
+/// the NEW (person, description) group and re-derives the label. Returns
+/// the owning person when the face actually moved groups (the caller
+/// re-derives their state once per person, not per face — #209).
+fn set_face_description_tx(
+    tx: &Connection,
+    face_id: i64,
+    desc: &Option<String>,
+) -> Result<Option<i64>> {
+    let (person_id, old_desc): (Option<i64>, Option<String>) = tx.query_row(
+        "SELECT person_id, description FROM faces WHERE id = ?",
+        params![face_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if desc == &old_desc {
+        return Ok(None);
+    }
+    let Some(person_id) = person_id else {
+        // unowned face (removed person, §4.13): just record the tags
+        tx.execute("UPDATE faces SET description = ? WHERE id = ?", params![desc, face_id])?;
+        return Ok(None);
+    };
+    // next free seq of the new group, counting the OTHER faces only (§4.7)
+    let seq: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
+          WHERE person_id = ? AND id != ? AND COALESCE(description, '') = COALESCE(?, '')",
+        params![person_id, face_id, desc],
+        |r| r.get(0),
+    )?;
+    tx.execute(
+        "UPDATE faces SET description = ?, seq = ? WHERE id = ?",
+        params![desc, seq, face_id],
+    )?;
+    let person_name: String =
+        tx.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
+    tx.execute(
+        "UPDATE faces SET name = ? WHERE id = ?",
+        params![face_name(&person_name, desc.as_deref(), seq), face_id],
+    )?;
+    Ok(Some(person_id))
+}
+
 /// §4.4 — set face description (normalised): re-assign seq within the NEW
 /// (person, description) group, re-derive the label, and rebuild the
 /// person's refcrops — the face has changed appearance group (§4.6).
@@ -1237,37 +1351,32 @@ pub fn set_face_description(paths: &Paths, face_id: i64, raw: &str) -> Result<()
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
-    let desc = normalize_description(raw);
-    let (person_id, old_desc): (Option<i64>, Option<String>) = tx.query_row(
-        "SELECT person_id, description FROM faces WHERE id = ?",
-        params![face_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    if desc != old_desc {
-        let Some(person_id) = person_id else {
-            // unowned face (removed person, §4.13): just record the tags
-            tx.execute("UPDATE faces SET description = ? WHERE id = ?", params![desc, face_id])?;
-            tx.commit()?;
-            return Ok(());
-        };
-        // next free seq of the new group, counting the OTHER faces only (§4.7)
-        let seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
-              WHERE person_id = ? AND id != ? AND COALESCE(description, '') = COALESCE(?, '')",
-            params![person_id, face_id, desc],
-            |r| r.get(0),
-        )?;
-        tx.execute(
-            "UPDATE faces SET description = ?, seq = ? WHERE id = ?",
-            params![desc, seq, face_id],
-        )?;
-        let person_name: String =
-            tx.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
-        tx.execute(
-            "UPDATE faces SET name = ? WHERE id = ?",
-            params![face_name(&person_name, desc.as_deref(), seq), face_id],
-        )?;
+    if let Some(person_id) = set_face_description_tx(&tx, face_id, &normalize_description(raw))? {
         recompute_person(&tx, person_id, &settings)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// #209 — batch description write behind one IPC call: one transaction,
+/// faces processed in CALL ORDER (each takes the next seq of the shared
+/// new group exactly as the sequential single calls did), and each
+/// owner's derived state recomputed once at the end instead of per face.
+pub fn set_face_descriptions(paths: &Paths, face_ids: &[i64], raw: &str) -> Result<()> {
+    let mut con = connect(paths)?;
+    let settings = get_settings(paths)?;
+    let tx = con.transaction()?;
+    let desc = normalize_description(raw);
+    let mut touched: Vec<i64> = Vec::new();
+    for face_id in face_ids {
+        if let Some(pid) = set_face_description_tx(&tx, *face_id, &desc)? {
+            if !touched.contains(&pid) {
+                touched.push(pid);
+            }
+        }
+    }
+    for pid in touched {
+        recompute_person(&tx, pid, &settings)?;
     }
     tx.commit()?;
     Ok(())
@@ -1796,9 +1905,54 @@ pub struct AppearanceGroup {
     pub clusters: Vec<Vec<ClusterFace>>,
 }
 
+/// #211 — display-side cluster cache. Key: (db path, person, threshold
+/// bits); value: (fingerprint of the input rows, clusters, hits served
+/// since the last compute). The fingerprint covers exactly the rows the
+/// clustering consumes (membership, id, confidence, primary flag,
+/// description — the vectors are immutable per face), so any input
+/// change misses and recomputes, while a change that feeds nothing here
+/// (e.g. a provisional→confirmed verdict) hits. Bounded crudely by
+/// clearing — the GUI only ever asks for the anchored person's clusters;
+/// the map is a per-process working set, not a store.
+struct ClusterCache {
+    map: HashMap<(PathBuf, i64, u64), (String, Vec<AppearanceGroup>, usize)>,
+}
+const CLUSTER_CACHE_MAX: usize = 256;
+static CLUSTER_CACHE: Mutex<Option<ClusterCache>> = Mutex::new(None);
+
+fn cluster_lock() -> Result<std::sync::MutexGuard<'static, Option<ClusterCache>>> {
+    CLUSTER_CACHE.lock().map_err(|_| anyhow!("cluster cache lock poisoned"))
+}
+
+/// The cluster inputs as one string — any difference means a possibly
+/// different result, so it doubles as the cache's validity stamp.
+fn cluster_fingerprint(rows: &[(i64, f64, bool, String)]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(rows.len() * 40);
+    for (id, conf, primary, desc) in rows {
+        let _ = write!(out, "{id}:{:016x}:{}:{desc};", conf.to_bits(), *primary as u8);
+    }
+    out
+}
+
+/// #211 — introspection for the tests: how often the cached clusters for
+/// (person, threshold) have been served since the last (re)compute.
+#[doc(hidden)]
+pub fn cluster_cache_hits(paths: &Paths, person_id: i64, threshold: f64) -> usize {
+    let Ok(guard) = CLUSTER_CACHE.lock() else { return 0 };
+    let Some(cache) = guard.as_ref() else { return 0 };
+    cache
+        .map
+        .get(&(paths.db.clone(), person_id, threshold.to_bits()))
+        .map(|(_, _, hits)| *hits)
+        .unwrap_or(0)
+}
+
 /// §4.9 — display-side grouping of one person's faces: partitioned by
 /// appearance (distinct description), then single-linkage around the
 /// primary face *within* each appearance. Rejected/discarded excluded.
+/// #211: results are cached per (person, threshold) behind the input
+/// fingerprint above.
 pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Result<Vec<AppearanceGroup>> {
     let con = connect(paths)?;
     let faces: Vec<(i64, f64, bool, String)> = {
@@ -1825,6 +1979,20 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
     };
     if faces.is_empty() {
         return Ok(Vec::new());
+    }
+    // #211 — cache hit? (the fingerprint is derived from the rows just
+    // read, so this costs one string build, not another query pass)
+    let key = (paths.db.clone(), person_id, threshold.to_bits());
+    let fp = cluster_fingerprint(&faces);
+    {
+        let mut guard = cluster_lock()?;
+        let cache = guard.get_or_insert_with(|| ClusterCache { map: HashMap::new() });
+        if let Some((old, out, hits)) = cache.map.get_mut(&key) {
+            if *old == fp {
+                *hits += 1;
+                return Ok(out.clone());
+            }
+        }
     }
     let primary = faces.iter().find(|(_, _, p, _)| *p).map(|(id, _, _, _)| *id)
         .or_else(|| {
@@ -1901,7 +2069,7 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
         sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    Ok(grouped
+    let out: Vec<AppearanceGroup> = grouped
         .into_iter()
         .map(|(description, clusters)| AppearanceGroup {
             description,
@@ -1917,7 +2085,16 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
                 })
                 .collect(),
         })
-        .collect())
+        .collect();
+    // #211: remember the result under its input fingerprint
+    if let Ok(mut guard) = cluster_lock() {
+        let cache = guard.get_or_insert_with(|| ClusterCache { map: HashMap::new() });
+        if cache.map.len() >= CLUSTER_CACHE_MAX {
+            cache.map.clear();
+        }
+        cache.map.insert(key, (fp, out.clone(), 0));
+    }
+    Ok(out)
 }
 
 #[derive(Serialize, Clone, Debug)]

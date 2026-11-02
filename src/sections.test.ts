@@ -72,6 +72,7 @@ const EMPTY_IMAGE: ImageRow = {
 
 function snap(persons: Person[], faces: Face[]): Snapshot {
   return {
+    version: 0,
     persons,
     faces,
     images: [EMPTY_IMAGE],
@@ -429,7 +430,7 @@ describe("view branch priority", () => {
       ],
     );
     resetFixtures(s.persons, s.faces);
-    let imgCalls: number[] = [];
+    const imgCalls: number[] = [];
     const out = build({
       snap: s,
       mode: "person",

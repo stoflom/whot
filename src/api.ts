@@ -71,6 +71,9 @@ export interface Settings {
   merge_suffix_aliases: string[][];
 }
 export interface Snapshot {
+  /** #208 — change stamp, read before the rows: equal on a probe ⇒
+      nothing changed and the focus reload can skip */
+  version: number;
   persons: Person[];
   faces: Face[];
   images: ImageRow[];
@@ -98,6 +101,8 @@ export interface AppearanceGroup {
 // ---------------------------------------------------------------- commands
 
 export const getSnapshot = () => invoke<Snapshot>("get_snapshot");
+/** #208 — the cheap change stamp for the focus/visibility reload skip */
+export const getDataVersion = () => invoke<number>("get_data_version");
 export const assignPerson = (faceIds: number[], name: string, group: string) =>
   invoke("assign_person", { faceIds, name, group });
 export const acceptFaces = (faceIds: number[]) =>
@@ -107,11 +112,19 @@ export const rejectFaces = (faceIds: number[]) =>
 /** #122: rotate the full image ±90° (server state) */
 export const rotateImage = (imageId: number, delta: number) =>
   invoke("rotate_image", { imageId, delta });
+/** #209: batch twin of rotateImage — one call per user action */
+export const rotateImages = (imageIds: number[], delta: number) =>
+  invoke("rotate_images", { imageIds, delta });
 /** #122: rotate the face crop ±90° (server state) */
 export const rotateFace = (faceId: number, delta: number) =>
   invoke("rotate_face", { faceId, delta });
 export const setFaceDescription = (faceId: number, description: string) =>
   invoke("set_face_description", { faceId, description });
+/** #209: batch twin of setFaceDescription — one call per staged batch;
+    the sequential per-face seq re-assignment (§4.4) happens inside its
+    transaction, in call order */
+export const setFaceDescriptions = (faceIds: number[], description: string) =>
+  invoke("set_face_descriptions", { faceIds, description });
 export const setPrimaryFace = (personId: number, faceId: number) =>
   invoke("set_primary_face", { personId, faceId });
 export const setPersonName = (personId: number, name: string) =>
