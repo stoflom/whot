@@ -55,7 +55,8 @@ import ImportPane from "./components/ImportPane";
 import FirstRun from "./components/FirstRun";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
-import { byFilename, clickImage, emptyImageSel, imageScope, type ImageSel } from "./imageSelect";
+import { byFilename, clickImage, emptyImageSel, type ImageSel } from "./imageSelect";
+import { faceMenuGroups, imageAreaMenuGroups, thumbMenuGroups } from "./menus";
 // §4.44 (gui-design v3.94): the centre-pane section derivations are the
 // pure, co-tested buildSections/sectionsForImageOf; App owns only the
 // identities (see the #98 rules there)
@@ -913,107 +914,32 @@ export default function App() {
       lastSelRef.current = id;
       changeSel(new Set([id]));
     }
-    const section = sectionsRef.current.find((s) => s.faceIds.includes(id));
-    // #49: actions hit the whole selection when this card is part of it
-    const scope = actionScope(id);
-    const multi = scope.length > 1;
-    const label = (s: string) => (multi ? `${s} (${scope.length} selected)` : s);
-    // #184 (§4.18): the distinct OWNED persons of the effective scope —
-    // the Add group… entry files them all (unowned faces count nothing)
-    const groupIds = [
-      ...new Set(
-        scope.map((sid) => facesById.get(sid)?.person_id).filter((p): p is number => p != null)
-      ),
-    ];
-    openMenu(e, [
-      {
-        title: "Selection",
-        items: [
-          {
-            // an empty selection just auto-selected this card (#75)
-            label: selRef.current.has(id) || selRef.current.size === 0 ? "Deselect" : "Select",
-            hint: "Space",
-            onClick: () => toggle(id),
-          },
-          {
-            label: "Select whole section",
-            hint: "Ctrl-G", // #68: advertise the existing shortcut (#53)
-            onClick: () => section && toggleMany(section.faceIds, true),
-            disabled: !section,
-          },
-          { label: "Clear selection", onClick: () => changeSel(new Set()), disabled: selRef.current.size === 0 },
-        ],
-      },
-      {
-        title: multi ? `Face — ${scope.length} selected` : "Face",
-        items: [
-          {
-            label: label("Accept"),
-            hint: "A",
-            onClick: () => doAccept(scope),
-          },
-          {
-            label: label("Reject"),
-            hint: "R",
-            onClick: () => doReject(scope),
-            // reject stays offered while any face of the scope is not rejected
-            disabled: !scope.some((sid) => facesById.get(sid)?.link_status !== "rejected"),
-            danger: true,
-          },
-          {
-            label: "Set as primary",
-            onClick: () => doPrimary(id),
-            // single-face action (#49): greyed out for a multi-scope
-            disabled: f.person_id == null || multi,
-          },
-          {
-            label: "Add as reference",
-            onClick: () => doRefcrop(id),
-            disabled: f.link_status !== "confirmed" || f.person_id == null || multi,
-          },
-          // #122: crop display rotation — per face, independent of the
-          // full-image rotation
-          {
-            label: label("Rotate crop 90° CW"),
-            onClick: () => rotateFace(id, 90),
-            disabled: multi,
-          },
-          {
-            label: label("Rotate crop 90° CCW"),
-            onClick: () => rotateFace(id, -90),
-            disabled: multi,
-          },
-          // #184 (§4.18/#164): file every DISTINCT person of the scope —
-          // the same GroupDialog + add semantics as the tree's rows
-          {
-            label:
-              groupIds.length > 1
-                ? `Add group to ${groupIds.length} persons…`
-                : "Add group…",
-            onClick: () => setFaceAddGroup({ ids: groupIds }),
-            disabled: groupIds.length === 0,
-          },
-          // #180/§4.24: ONE label — 'Edit…' — for every dialog opener
-          { label: label("Edit…"), onClick: () => openEdit(scope.length > 1 ? "selection" : "card", { card: id }) },
-          // #51: pointless while this very image is already open in the split
-          ...(f.image_id === splitImageId
-            ? []
-            : [{
-                // #123: opening focus mode is a view-context change;
-                // #171/§4.37: the right pane follows the opening face's person
-                label: "Open full image",
-                // #182/§4.14: focus mode shows one image — disabled for
-                // a multi-scope like its primary/reference/crop siblings
-                disabled: multi,
-                onClick: () =>
-                  confirmContext(() => {
-                    setSplitImageId(f.image_id);
-                    if (f.person_id != null) setPersonId(f.person_id);
-                  }),
-              }]),
-        ],
-      },
-    ]);
+    // §4.44 stage 4: the composition is the pure faceMenuGroups; this
+    // wrapper feeds it the live values (refs — the #98 identity rule)
+    openMenu(e, faceMenuGroups({
+      id,
+      face: f,
+      sel: selRef.current,
+      actionScope,
+      section: sectionsRef.current.find((s) => s.faceIds.includes(id)) ?? null,
+      facesById,
+      toggle,
+      toggleMany,
+      doAccept,
+      doReject,
+      doPrimary,
+      doRefcrop,
+      rotateFace,
+      changeSel,
+      openEdit,
+      openFullImage: (face) =>
+        confirmContext(() => {
+          setSplitImageId(face.image_id);
+          if (face.person_id != null) setPersonId(face.person_id);
+        }),
+      addFaceGroup: (ids) => setFaceAddGroup({ ids }),
+      splitImageId,
+    }));
   }, [facesById, actionScope, toggle, toggleMany, doAccept, doReject,
      doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel,
      confirmContext, rotateFace]);
@@ -1059,107 +985,38 @@ export default function App() {
     const faces = snap.faces.filter(
       (f) => f.image_id === imageId && faceVisible(f)
     );
-    openMenu(e, [
-      {
-        items: [
-          // #144: the promise used to be fire-and-forget — a rejection
-          // (no preview blob, viewer not found) never reached the user;
-          // errors surface through the standard error toast (#132)
-          { label: "Open in system viewer", onClick: () => api.openImage(imageId).catch((e) => setError(String(e))) },
-          {
-            // #122: stored display rotation (EXIF key, #118)
-            label: "Rotate 90° CW",
-            onClick: () => rotateImg(imageId, 90),
-          },
-          {
-            label: "Rotate 90° CCW",
-            onClick: () => rotateImg(imageId, -90),
-          },
-          {
-            label: "Select all faces",
-            onClick: () => changeSel(new Set(faces.map((f) => f.id))),
-            disabled: faces.length === 0,
-          },
-        ],
-      },
-    ]);
+    openMenu(e, imageAreaMenuGroups({
+      imageId,
+      faces,
+      openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
+      rotateImage: rotateImg,
+      changeSel,
+    }));
   };
 
   const imageMenu = (image: ImageRow, e: ReactMouseEvent) => {
     if (!snap) return;
-    // #174 (§4.39): the right-pane thumbnails own this menu — scope is
-    // the selection when the invoked thumb is part of it, else just
-    // that thumb (§4.14); stale ids (outside the branch) are dropped
     const inBranch = new Set(branchThumbs.images.map((x) => x.id));
-    const scope = imageScope(imgSel, inBranch, image.id);
-    const many = scope.length > 1;
     const faces = snap.faces.filter(
       (f) => f.image_id === image.id && faceVisible(f)
     );
-    const pending = faces.filter((f) => f.link_status === "provisional").map((f) => f.id);
-    openMenu(e, [
-      {
-        items: [
-          {
-            // #123 + #142: opening an image is a full view-context change
-            // (the centre pane rebinds to that image's faces) and honours
-            // the drop-or-accept dialog exactly like the focused-open
-            // entry just below — it never silently carries a staged set
-            label: "Open image",
-            // #182/§4.14: one-image-only — never silently the invoked
-            // thumb out of a multi-scope
-            disabled: many,
-            onClick: () =>
-              confirmContext(() => {
-                setMode("rolls");
-                setImageId(image.id);
-              }),
-          },
-          {
-            // #123: opening focus mode is a view-context change
-            label: "Open full image (focused)",
-            // #182/§4.14: focus mode shows one image
-            disabled: many,
-            onClick: () => confirmContext(() => setSplitImageId(image.id)),
-          },
-          // #122: stored display rotation (EXIF key, #118) — over the
-          // whole scope (#174/§4.39), one command each in order
-          {
-            label: many ? `Rotate 90° CW (${scope.length})` : "Rotate 90° CW",
-            onClick: () => rotateImages(scope, 90),
-          },
-          {
-            label: many ? `Rotate 90° CCW (${scope.length})` : "Rotate 90° CCW",
-            onClick: () => rotateImages(scope, -90),
-          },
-          {
-            // #144: rejections (no preview blob, viewer not found) reach
-            // the error toast; one temp file per image of the scope
-            label: many ? `Open in system viewer (${scope.length})` : "Open in system viewer",
-            onClick: () => {
-              for (const id of scope)
-                api.openImage(id).catch((err) => setError(String(err)));
-            },
-          },
-        ],
-      },
-      {
-        title: "Faces of this image",
-        items: [
-          {
-            label: "Select all",
-            onClick: () => changeSel(new Set(faces.map((f) => f.id))),
-            disabled: faces.length === 0,
-          },
-          { label: "Clear selection", onClick: () => changeSel(new Set()), disabled: sel.size === 0 },
-          {
-            label: "Accept all pending",
-            onClick: () => doAccept(pending),
-            disabled: pending.length === 0,
-          },
-        ],
-      },
-    ]);
+    openMenu(e, thumbMenuGroups({
+      image,
+      imgSel,
+      inBranch,
+      faces,
+      sel,
+      openImageInView: (id) =>
+        confirmContext(() => {
+          setMode("rolls");
+          setImageId(id);
+        }),
+      openFocused: (id) => confirmContext(() => setSplitImageId(id)),
+      rotateImages,
+      openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
+      doAccept,
+      changeSel,
+    }));
   };
 
   // ------------------------------------------------------------ sections

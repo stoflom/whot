@@ -59,7 +59,7 @@ export function clickImage(
 /** the menu/keyboard scope (§4.14): the selection when the invoked
     thumb is part of it, otherwise just that thumb — ids outside the
     current branch's list are dropped (§4.39) */
-export function imageScope(sel: ImageSel, inBranch: Set<number>, id: number): number[] {
+export function imageScope(sel: ImageSel, inBranch: ReadonlySet<number>, id: number): number[] {
   if (inBranch.has(id) && sel.sel.has(id) && sel.sel.size > 0) {
     return [...sel.sel].filter((x) => inBranch.has(x));
   }
