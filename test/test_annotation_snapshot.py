@@ -170,6 +170,28 @@ class RoundTripTest(unittest.TestCase):
         con.close()
         self.assertEqual(pin, ("glasses", 1))
 
+    def test_export_reads_v17_source(self):
+        """The documented upgrade path (#210): export must read a v1.7
+        source — rows carrying the derived filename/crop columns — as
+        readily as the current schema, while restore targets the
+        recreated v1.8 side."""
+        con = sqlite3.connect(self.old)
+        con.executescript(
+            "ALTER TABLE person_refcrops ADD COLUMN filename TEXT NOT NULL DEFAULT '';"
+            "ALTER TABLE person_refcrops ADD COLUMN crop BLOB;")
+        con.execute(
+            "UPDATE person_refcrops SET filename = 'Alice-glasses-2-1.jpg', "
+            "crop = x'63726f70'")
+        con.execute("UPDATE schema_version SET version = '1.7'")
+        con.commit()
+        con.close()
+        data = ansi.do_export(self.old)
+        self.assertEqual(data["source_schema"], "1.7")
+        self.assertEqual(data["pins"][0]["group"], "glasses")
+        stats = ansi.do_restore(data, self.new)
+        self.assertEqual(stats["unmatched_faces"], 0)
+        self.assertEqual(stats["pins"], 1, "the pin round-trips through the upgrade")
+
     def test_restore_refuses_wrong_schema(self):
         con = sqlite3.connect(self.new)
         con.execute("UPDATE schema_version SET version = '1.4'")

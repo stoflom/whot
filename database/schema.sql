@@ -7,8 +7,14 @@
 -- scripts/annotation_snapshot.py must equal the value inserted below).
 -- Annotations survive a recreate: scripts/annotation_snapshot.py
 -- export → recreate → restore (its export also reads v1.5–v1.7 sources).
+-- A v1.7 database reaches v1.8 IN PLACE — the two derived refcrop
+-- columns drop and the marker moves up (no data moves; backup first):
+--   VACUUM INTO 'faces.db.pre-v1.8-<ts>.db';
+--   ALTER TABLE person_refcrops DROP COLUMN filename;
+--   ALTER TABLE person_refcrops DROP COLUMN crop;
+--   UPDATE schema_version SET version = '1.8';
 -- The historical in-place v1.6 fix (scripts/fix_status_groups.py) lands
--- at v1.7 and stops there — v1.8 is reached the same export/restore way.
+-- at v1.7 and stops there; from there take either step above.
 --   sqlite3 data/faces.db < database/schema.sql
 
 PRAGMA journal_mode = WAL;
@@ -135,13 +141,17 @@ CREATE TABLE person_groups (
 -- The row is METADATA only — the crop and the filename derive at READ
 -- time from the referenced face (`faces.preview`;
 -- `faces.name || '-' || seq || '.jpg'`), so refcrop rebuilds copy no
--- BLOBs and renames touch no refcrop rows.
+-- BLOBs and renames touch no refcrop rows. `seq` is 1..n within
+-- (person, description). NOTE: the `seq` line carries no trailing
+-- comment — SQLite's ALTER TABLE … DROP COLUMN rebuilds the stored DDL
+-- without it, and a fresh build here must stay byte-identical to a
+-- migrated v1.7 database (#165's standard).
 CREATE TABLE person_refcrops (
   person_id   INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
   face_id     INTEGER NOT NULL UNIQUE REFERENCES faces(id) ON DELETE CASCADE,
   description TEXT NOT NULL DEFAULT '',  -- appearance group: the face's description ('' = none)
   pinned      INTEGER NOT NULL DEFAULT 0, -- 1 = manual pin: excluded from auto top-N, survives recompute (§4.6)
-  seq         INTEGER NOT NULL,           -- 1..n within (person, description)
+  seq         INTEGER NOT NULL,
   PRIMARY KEY (person_id, description, seq)
 );
 
