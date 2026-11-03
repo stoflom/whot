@@ -21,6 +21,8 @@
 //     group input seats by state: provisional ⇒ New, else Accepted).
 //
 // window.__MOCK_SNAP exposes the live in-memory snapshot to test scripts.
+// window.__MOCK_CALLS__ counts every invoked command (fresh per page
+// load) — the #219 one-IPC-per-action regression (C62) reads it.
 
 (() => {
   // #185 (§4.36): the no-usable-database case must exist BEFORE the
@@ -526,10 +528,16 @@
     };
   }
 
+  // #219 acceptance — invocation counter for regression tests: C63
+  // asserts a verdict applies its delta locally instead of re-fetching
+  // the snapshot. Fresh per page load (the suite's clean-slate model).
+  window.__MOCK_CALLS__ = {};
   window.__TAURI_INTERNALS__ = {
     invoke: (command, args) =>
       ready
         .then(() => {
+          window.__MOCK_CALLS__[command] =
+            (window.__MOCK_CALLS__[command] ?? 0) + 1;
           const fn = cmd[command];
           if (!fn) throw new Error("mock: unknown command " + command);
           return fn(args ?? {});

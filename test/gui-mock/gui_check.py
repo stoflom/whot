@@ -193,6 +193,9 @@ Checks (contract refs: docs/gui-design.md):
   C61 a verdict made on a full-view film-roll card is a review verdict:
       a drained person advances (fall-through + hand-over), the split
       closes and the Review tab stays active (§4.40 reach / §4.30)
+  C62 a verdict costs exactly ONE ipc data transfer (#219): the mutation
+      delta lands locally — the mock's invocation counter sees the
+      accept_faces call but NO further get_snapshot re-fetch
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -5989,6 +5992,43 @@ def run_guarded(holder, name, fn, timeout=180):
         _restart_session(holder)
 
 
+def c62_one_ipc_transfer_per_action(t):
+    """#219 acceptance: exactly one IPC data transfer per user action.
+
+    The mock counts every invoke (window.__MOCK_CALLS__, fresh per page
+    load). A Review accept must land its delta locally (accept_faces's
+    response IS the one transfer) — the pre-#219 path followed it with a
+    full get_snapshot re-fetch (plus commitPending's duplicate)."""
+    fresh(t)
+    nav = t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
+    nav[0].click()  # Review
+    time.sleep(1.2)
+    fid = first_card_id(t)
+    if fid is None:
+        record("C62 one IPC transfer per user action (#219)",
+               True, "no face cards rendered — vacuous")
+        return
+    before = js(t, "return {...window.__MOCK_CALLS__}") or {}
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card.find_element(By.CSS_SELECTOR, ".card-accept").click()
+    time.sleep(2.0)
+    after = js(t, "return {...window.__MOCK_CALLS__}") or {}
+    st = js(t, """
+      const snap = window.__MOCK_SNAP;
+      return snap.faces.find(f => f.id === Number(arguments[0]))?.link_status ?? null;
+    """, fid)
+    snaps_before = before.get("get_snapshot", 0)
+    snaps_after = after.get("get_snapshot", 0)
+    accepts = after.get("accept_faces", 0) - before.get("accept_faces", 0)
+    ok = (st == "confirmed" and accepts >= 1 and snaps_after == snaps_before)
+    record("C62 one IPC transfer per user action (#219)", ok,
+           f"face {fid} -> {st!r}; accept_faces +{accepts}, "
+           f"get_snapshot {snaps_before} -> {snaps_after} "
+           f"(a verdict re-fetched the whole DB if these differ)")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -5996,7 +6036,7 @@ def main():
     holder = {"t": install_grid_grow(Tester(headless=True))}
     holder["t"].start()
     holder["t"].set_window_size(1600, 1000)
-    for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review):
+    for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review, c62_one_ipc_transfer_per_action):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)
