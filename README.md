@@ -326,7 +326,11 @@ rules are `docs/gui-design.md` §4, architecture is
 - `get_image_batch(kind, ids) → bytes` — raw JPEG bytes (no base64) in
   the framed `WHOTIMG` container (#212): kind = `face` (`faces.preview`),
   `thumb` (`images.thumbnail`) or `preview` (`images.preview`); images
-  without a blob are omitted
+  without a blob are omitted. #227: a batch never carries more than
+  32 MiB of blob payload (single oversized images always served whole);
+  deferred ids come back through a follow-up request (the frontend
+  re-requests anything a truncated batch left out, and only a single-id
+  miss is cached as "no blob")
 - `get_refcrops(person_id) → [{seq, description, pinned, face_id, filename}]
   grouped by appearance (§4.6)` — metadata rows; the crop pixels load
   through `get_image_batch("face", …)` (#210/#212)

@@ -623,10 +623,10 @@ pub fn image_thumb_bytes(paths: &Paths, image_id: i64) -> Result<Option<Vec<u8>>
         .query_row("SELECT thumbnail FROM images WHERE id = ?", params![image_id], |r| r.get(0))?)
 }
 
-/// #212 — the image-batch wire format (mirrored by src/imageBatch.ts
+/// #212/#227 — the image-batch wire format (mirrored by src/imageBatch.ts
 /// and test/gui-mock/mock.js): `"WHOTIMG\x01" | u32 LE count | count ×
 /// { i64 id, u32 off, u32 len } | blobs` — ONE binary response carries
-/// many images. Rows without a blob do not appear.
+/// many images. Rows without a blob simply do not appear.
 pub fn encode_image_batch(rows: &[(i64, Vec<u8>)]) -> Vec<u8> {
     let blob_len: usize = rows.iter().map(|(_, b)| b.len()).sum();
     let mut out = Vec::with_capacity(12 + rows.len() * 16 + blob_len);
@@ -645,10 +645,39 @@ pub fn encode_image_batch(rows: &[(i64, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
+/// #227 — the byte cap on one batch's blob payload. A `preview` batch
+/// (full-image bytes; the frontend coalesces up to 500 ids) must not
+/// balloon the response to 50–100 MB and 2–3× in transient copies. A
+/// single oversized image is always served alone; the rest of the batch
+/// is deferred and the frontend re-requests it (see splitImageBatch in
+/// src/api.ts). The wire format is unchanged — truncation is detected by
+/// the frontend as "requested ids that carry no frame entry".
+pub const IMAGE_BATCH_MAX_BYTES: usize = 32 * 1024 * 1024;
+
 /// #212 — one binary batch per kind ("face" = faces.preview, "thumb" =
 /// images.thumbnail, "preview" = images.preview), id-ordered; images
 /// without a blob are omitted (the callers cache the miss).
+///
+/// #227 — built in two passes so the blob bytes are never held twice:
+/// a lengths-only first pass (`length(col)` reads the header, not the
+/// blob) resolves the exact frame size and applies the byte cap, then
+/// the second pass streams each blob straight into the response buffer
+/// (the per-row rusqlite `Vec<u8>` is the only temp copy, dropped as
+/// soon as it is appended). Serving stays a strict id-prefix: the
+/// frontend re-requests deferred ids and only a SINGLE-id response may
+/// cache a genuine miss.
 pub fn image_batch_bytes(paths: &Paths, kind: &str, ids: &[i64]) -> Result<Vec<u8>> {
+    image_batch_bytes_capped(paths, kind, ids, IMAGE_BATCH_MAX_BYTES)
+}
+
+/// #227 — the cap-aware implementation; the cap is a parameter so the
+/// tests exercise truncation without allocating 32 MiB blobs.
+pub fn image_batch_bytes_capped(
+    paths: &Paths,
+    kind: &str,
+    ids: &[i64],
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
     let (table, col) = match kind {
         "face" => ("faces", "preview"),
         "thumb" => ("images", "thumbnail"),
@@ -659,19 +688,58 @@ pub fn image_batch_bytes(paths: &Paths, kind: &str, ids: &[i64]) -> Result<Vec<u
     sorted.sort_unstable();
     sorted.dedup();
     let con = connect(paths)?;
-    let mut rows: Vec<(i64, Vec<u8>)> = Vec::with_capacity(sorted.len());
-    // chunked so a huge selection never outgrows the SQL string budget
-    for chunk in sorted.chunks(500) {
+    // pass 1 — lengths only, grouped so a huge selection never outgrows
+    // the SQL string budget; a cap hit defers the rest (strict prefix)
+    let mut served: Vec<(i64, u32)> = Vec::new();
+    let mut total = 0usize;
+    'lengths: for chunk in sorted.chunks(500) {
         let list = ids_list(chunk);
         let mut st = con.prepare(&format!(
-            "SELECT id, {col} FROM {table} WHERE id IN ({list}) AND {col} IS NOT NULL"
+            "SELECT id, length({col}) FROM {table} WHERE id IN ({list}) AND {col} IS NOT NULL ORDER BY id"
         ))?;
-        for row in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))? {
-            rows.push(row?);
+        let rows: Vec<(i64, i64)> = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        for (id, len) in rows {
+            let len = len as usize;
+            // a single oversized image is served alone, never dropped
+            if served.is_empty() && len > max_bytes {
+                served.push((id, len as u32));
+                total = len;
+                break 'lengths;
+            }
+            if total + len > max_bytes {
+                break 'lengths;
+            }
+            served.push((id, len as u32));
+            total += len;
         }
     }
-    rows.sort_by_key(|(id, _)| *id);
-    Ok(encode_image_batch(&rows))
+    // exact-size frame: header first, then the blob area the second
+    // pass streams into
+    let mut out = Vec::with_capacity(12 + served.len() * 16 + total);
+    out.extend_from_slice(b"WHOTIMG\x01");
+    out.extend_from_slice(&(served.len() as u32).to_le_bytes());
+    let mut offset = 0u32;
+    for (id, len) in &served {
+        out.extend_from_slice(&id.to_le_bytes());
+        out.extend_from_slice(&offset.to_le_bytes());
+        out.extend_from_slice(&len.to_le_bytes());
+        offset += *len;
+    }
+    // pass 2 — stream the blobs straight into the response buffer
+    let served_ids: Vec<i64> = served.iter().map(|(id, _)| *id).collect();
+    for chunk in served_ids.chunks(500) {
+        let list = ids_list(chunk);
+        let mut st = con.prepare(&format!(
+            "SELECT {col} FROM {table} WHERE id IN ({list}) AND {col} IS NOT NULL ORDER BY id"
+        ))?;
+        for row in st.query_map([], |r| r.get::<_, Vec<u8>>(0))? {
+            let blob = row?;
+            out.extend_from_slice(&blob);
+        }
+    }
+    Ok(out)
 }
 
 /// Raw preview bytes (thumbnail fallback) for the full-image context menu:

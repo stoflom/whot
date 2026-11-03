@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.8** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.9** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -33,6 +33,11 @@ src-tauri/tests/
   map the error to `String` (Tauri's error channel). No SQL, no logic.
   The full command list with signatures is in `README.md` — the code
   (`generate_handler![]` list) and the README must agree.
+  #218: every DB-backed / heavy command is declared `async fn` so Tauri
+  runs it on the async runtime's thread pool instead of the UI main
+  thread (argument shapes and TS-side `invoke` calls are unchanged; the
+  runner-mutex/config-file exceptions are guarded by the
+  `commands_run_off_the_main_thread_218` workflow test).
 - **`db.rs`** owns every query and every rule implementation. If a
   behaviour question arises, `db.rs` + gui-design §4 are the answer;
   nothing may embed SQL elsewhere (`main.rs` included).

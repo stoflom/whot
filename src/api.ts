@@ -260,18 +260,50 @@ interface Waiter {
 const queued = new Map<ImageKind, Map<number, Waiter>>();
 let flushQueued = false;
 
+function scheduleFlush(): void {
+  if (flushQueued) return;
+  flushQueued = true;
+  queueMicrotask(() => {
+    flushQueued = false;
+    void flushImages();
+  });
+}
+
 function loadImage(kind: ImageKind, id: number): Promise<string | null> {
   return new Promise((resolve, reject) => {
     let waiters = queued.get(kind);
     if (!waiters) queued.set(kind, (waiters = new Map()));
     waiters.set(id, { resolve, reject });
-    if (flushQueued) return;
-    flushQueued = true;
-    queueMicrotask(() => {
-      flushQueued = false;
-      void flushImages();
-    });
+    scheduleFlush();
   });
+}
+
+/**
+ * #227 — which of a batch's requested ids did the response serve, and
+ * what must happen to the rest?
+ *
+ * The backend never exceeds a per-response byte cap (`IMAGE_BATCH_MAX_BYTES`,
+ * db.rs): a single oversized image is always served alone, the rest of
+ * the batch is deferred. The wire format carries no truncation flag, so
+ * truncation is distinguished from a genuine miss by construction:
+ * - a cap hit always serves ≥ 1 entry (truncation ⇒ served > 0), and
+ * - a single-id request can never be truncated by the cap, so its miss
+ *   is genuinely "no blob".
+ *
+ * Returns the ids to resolve with `null` (genuine misses — the callers
+ * cache them) and the ids to re-request (deferred by the cap). The
+ * deferred set strictly shrinks per round (a deferred multi-id re-request
+ * serves ≥ 1 entry), so the loop below terminates.
+ */
+export function splitImageBatch(
+  requested: number[],
+  served: number[],
+): { missing: number[]; deferred: number[] } {
+  const asked = new Set(requested);
+  const got = new Set(served);
+  const missing = [...asked].filter((id) => !got.has(id));
+  const truncatable = served.length > 0 && requested.length > 1;
+  return truncatable ? { missing: [], deferred: missing } : { missing, deferred: [] };
 }
 
 async function flushImages(): Promise<void> {
@@ -285,7 +317,29 @@ async function flushImages(): Promise<void> {
         ids: batch.map(([id]) => id),
       });
       const got = decodeImageBatch(buf);
+      const served = [...got.entries()].filter(([, b]) => b.length > 0).map(([id]) => id);
+      // deferred first: the same waiter objects go back into the queue
+      // (a later flush call may have queued a concurrent request — keep it)
+      const { missing, deferred } = splitImageBatch(
+        batch.map(([id]) => id),
+        served,
+      );
+      if (deferred.length > 0) {
+        let again = queued.get(kind);
+        if (!again) queued.set(kind, (again = new Map()));
+        for (const id of deferred) {
+          const waiter = batch.find(([wid]) => wid === id)![1];
+          if (!again.has(id)) again.set(id, waiter);
+        }
+        scheduleFlush();
+      }
+      const missingSet = new Set(missing);
       for (const [id, waiter] of batch) {
+        if (deferred.includes(id)) continue; // stays queued for the next round
+        if (missingSet.has(id)) {
+          waiter.resolve(null); // no such image — cache the miss
+          continue;
+        }
         const bytes = got.get(id);
         if (!bytes || bytes.length === 0) {
           waiter.resolve(null); // no such image — cache the miss

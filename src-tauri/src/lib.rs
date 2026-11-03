@@ -1,5 +1,15 @@
 //! WhoT Face Manager — Tauri command surface (README.md "Tauri commands";
 //! architecture: docs/backend-design.md, behaviour rules: docs/gui-design.md §4).
+//!
+//! #218 — every DB-backed / heavy command is declared `async fn`: Tauri
+//! then runs it on the async runtime's thread pool instead of the UI
+//! main thread, so a long snapshot, image batch, cluster computation or
+//! fs probe never freezes the renderer. The command surface, argument
+//! shapes and TS-side `invoke` calls are unchanged. The runtime
+//! stays correct because the DB layer serialises behind the `db::POOL`
+//! mutex (#207). The honest-possible sync exceptions (runner mutex,
+//! config file only) are guarded by the
+//! `commands_run_off_the_main_thread_218` workflow test.
 
 pub mod db;
 pub mod importer;
@@ -22,15 +32,14 @@ impl AppState {
 }
 
 #[tauri::command]
-fn get_snapshot(state: State<AppState>) -> Result<db::Snapshot, String> {
+async fn get_snapshot(state: State<'_, AppState>) -> Result<db::Snapshot, String> {
     db::snapshot(state.paths()?).map_err(|e| e.to_string())
 }
 
 /// #208 — the cheap change stamp for the GUI's focus/visibility reload
 /// skip (equal to the snapshot's `version` ⇒ nothing to reload)
 #[tauri::command]
-fn get_data_version(state: State<AppState>) -> Result<i64, String> {
-    db::data_version(state.paths()?).map_err(|e| e.to_string())
+fn get_data_version(state: State<AppState>) -> Result<i64, String> {    db::data_version(state.paths()?).map_err(|e| e.to_string())
 }
 
 /// #212 — raw image bytes, no base64: ONE binary response per batch
@@ -39,8 +48,8 @@ fn get_data_version(state: State<AppState>) -> Result<i64, String> {
 /// "face" (faces.preview), "thumb" (images.thumbnail), "preview"
 /// (images.preview); images without a blob simply do not appear.
 #[tauri::command]
-fn get_image_batch(
-    state: State<AppState>,
+async fn get_image_batch(
+    state: State<'_, AppState>,
     kind: String,
     ids: Vec<i64>,
 ) -> Result<tauri::ipc::Response, String> {
@@ -49,14 +58,14 @@ fn get_image_batch(
 }
 
 #[tauri::command]
-fn get_refcrops(state: State<AppState>, person_id: i64) -> Result<Vec<db::Refcrop>, String> {
+async fn get_refcrops(state: State<'_, AppState>, person_id: i64) -> Result<Vec<db::Refcrop>, String> {
     db::get_refcrops(state.paths()?, person_id).map_err(|e| e.to_string())
 }
 
 /// Full-image context menu (#33): write the BLOB to a temp file and open
 /// it with the system viewer — the webkit default menu entries don't work.
 #[tauri::command]
-fn open_image(state: State<AppState>, image_id: i64) -> Result<(), String> {
+async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<(), String> {
     let paths = state.paths()?;
     let bytes = db::image_preview_bytes(paths, image_id)
         .map_err(|e| e.to_string())?
@@ -80,8 +89,8 @@ fn open_image(state: State<AppState>, image_id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn person_face_clusters(
-    state: State<AppState>,
+async fn person_face_clusters(
+    state: State<'_, AppState>,
     person_id: i64,
     threshold: f64,
 ) -> Result<Vec<db::AppearanceGroup>, String> {
@@ -89,8 +98,8 @@ fn person_face_clusters(
 }
 
 #[tauri::command]
-fn assign_person(
-    state: State<AppState>,
+async fn assign_person(
+    state: State<'_, AppState>,
     face_ids: Vec<i64>,
     name: String,
     group: String,
@@ -99,37 +108,37 @@ fn assign_person(
 }
 
 #[tauri::command]
-fn accept_faces(state: State<AppState>, face_ids: Vec<i64>) -> Result<(), String> {
+async fn accept_faces(state: State<'_, AppState>, face_ids: Vec<i64>) -> Result<(), String> {
     db::set_link_status(state.paths()?, &face_ids, "confirmed").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn reject_faces(state: State<AppState>, face_ids: Vec<i64>) -> Result<(), String> {
+async fn reject_faces(state: State<'_, AppState>, face_ids: Vec<i64>) -> Result<(), String> {
     db::set_link_status(state.paths()?, &face_ids, "rejected").map_err(|e| e.to_string())
 }
 
 /// #122 — rotate the full image ±90° (server state; refresh follows).
 #[tauri::command]
-fn rotate_image(state: State<AppState>, image_id: i64, delta: i64) -> Result<i64, String> {
+async fn rotate_image(state: State<'_, AppState>, image_id: i64, delta: i64) -> Result<i64, String> {
     db::rotate_image(state.paths()?, image_id, delta).map_err(|e| e.to_string())
 }
 
 /// #209 — one call per user action for a multi-image rotate (the GUI's
 /// thumbnail-scope rotation), same per-image semantics as `rotate_image`
 #[tauri::command]
-fn rotate_images(state: State<AppState>, image_ids: Vec<i64>, delta: i64) -> Result<(), String> {
+async fn rotate_images(state: State<'_, AppState>, image_ids: Vec<i64>, delta: i64) -> Result<(), String> {
     db::rotate_images(state.paths()?, &image_ids, delta).map_err(|e| e.to_string())
 }
 
 /// #122 — rotate the face crop ±90° (server state; refresh follows).
 #[tauri::command]
-fn rotate_face(state: State<AppState>, face_id: i64, delta: i64) -> Result<i64, String> {
+async fn rotate_face(state: State<'_, AppState>, face_id: i64, delta: i64) -> Result<i64, String> {
     db::rotate_face(state.paths()?, face_id, delta).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn set_face_description(
-    state: State<AppState>,
+async fn set_face_description(
+    state: State<'_, AppState>,
     face_id: i64,
     description: String,
 ) -> Result<(), String> {
@@ -139,8 +148,8 @@ fn set_face_description(
 /// #209 — one call per staged batch: the sequential per-face seq
 /// re-assignment (§4.4) happens inside its transaction, in call order
 #[tauri::command]
-fn set_face_descriptions(
-    state: State<AppState>,
+async fn set_face_descriptions(
+    state: State<'_, AppState>,
     face_ids: Vec<i64>,
     description: String,
 ) -> Result<(), String> {
@@ -148,8 +157,8 @@ fn set_face_descriptions(
 }
 
 #[tauri::command]
-fn set_primary_face(
-    state: State<AppState>,
+async fn set_primary_face(
+    state: State<'_, AppState>,
     person_id: i64,
     face_id: i64,
 ) -> Result<(), String> {
@@ -157,17 +166,17 @@ fn set_primary_face(
 }
 
 #[tauri::command]
-fn set_person_name(state: State<AppState>, person_id: i64, name: String) -> Result<(), String> {
+async fn set_person_name(state: State<'_, AppState>, person_id: i64, name: String) -> Result<(), String> {
     db::set_person_name(state.paths()?, person_id, &name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn set_person_group(state: State<AppState>, person_id: i64, group: String) -> Result<(), String> {
+async fn set_person_group(state: State<'_, AppState>, person_id: i64, group: String) -> Result<(), String> {
     db::set_person_group(state.paths()?, person_id, &group).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn set_person_note(state: State<AppState>, person_id: i64, note: String) -> Result<(), String> {
+async fn set_person_note(state: State<'_, AppState>, person_id: i64, note: String) -> Result<(), String> {
     db::set_person_note(state.paths()?, person_id, &note).map_err(|e| e.to_string())
 }
 
@@ -175,8 +184,8 @@ fn set_person_note(state: State<AppState>, person_id: i64, note: String) -> Resu
 /// the system person `Rejected`, delete the row.
 /// §4.16 (#50) — move persons to a group (membership only).
 #[tauri::command]
-fn move_persons_to_group(
-    state: State<AppState>,
+async fn move_persons_to_group(
+    state: State<'_, AppState>,
     person_ids: Vec<i64>,
     group: String,
 ) -> Result<(), String> {
@@ -187,8 +196,8 @@ fn move_persons_to_group(
 /// person (remove the dragged-from row if present, file them into the
 /// target branch); other memberships are kept.
 #[tauri::command]
-fn move_persons_between_groups(
-    state: State<AppState>,
+async fn move_persons_between_groups(
+    state: State<'_, AppState>,
     person_ids: Vec<i64>,
     from_group: String,
     to_group: String,
@@ -199,28 +208,28 @@ fn move_persons_between_groups(
 
 /// §4.16 (#50) — rename/move a group branch (path-prefix rewrite).
 #[tauri::command]
-fn rename_group(state: State<AppState>, old_path: String, new_path: String) -> Result<(), String> {
+async fn rename_group(state: State<'_, AppState>, old_path: String, new_path: String) -> Result<(), String> {
     db::rename_group(state.paths()?, &old_path, &new_path).map_err(|e| e.to_string())
 }
 
 /// §4.16 (#50) — delete a group branch (members fall to Ungrouped).
 #[tauri::command]
-fn delete_group(state: State<AppState>, path: String) -> Result<(), String> {
+async fn delete_group(state: State<'_, AppState>, path: String) -> Result<(), String> {
     db::delete_group(state.paths()?, &path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn remove_persons(state: State<AppState>, person_ids: Vec<i64>) -> Result<(), String> {
+async fn remove_persons(state: State<'_, AppState>, person_ids: Vec<i64>) -> Result<(), String> {
     db::remove_persons(state.paths()?, &person_ids).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn add_refcrop(state: State<AppState>, person_id: i64, face_id: i64) -> Result<(), String> {
+async fn add_refcrop(state: State<'_, AppState>, person_id: i64, face_id: i64) -> Result<(), String> {
     db::add_refcrop(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn remove_refcrop(state: State<AppState>, person_id: i64, face_id: i64) -> Result<(), String> {
+async fn remove_refcrop(state: State<'_, AppState>, person_id: i64, face_id: i64) -> Result<(), String> {
     db::remove_refcrop(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
 }
 
@@ -239,7 +248,7 @@ fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), String
 /// IMAGE_SUFFIXES parity); `true` + no snapshot match = "not yet
 /// imported" ⇒ the import pane opens
 #[tauri::command]
-fn scan_import_dir(state: State<AppState>, path: String) -> Result<bool, String> {
+async fn scan_import_dir(state: State<'_, AppState>, path: String) -> Result<bool, String> {
     // join semantics: an absolute path (the native picker) replaces the
     // root, a relative one is resolved against it
     Ok(importer::scan_import_dir(&state.paths()?.root.join(path)))
@@ -279,7 +288,7 @@ struct ImportInfo {
 }
 
 #[tauri::command]
-fn get_import_info(state: State<AppState>) -> Result<ImportInfo, String> {
+async fn get_import_info(state: State<'_, AppState>) -> Result<ImportInfo, String> {
     let paths = state.paths()?;
     Ok(ImportInfo {
         db_path: paths.db.display().to_string(),
