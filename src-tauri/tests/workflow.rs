@@ -1100,7 +1100,7 @@ fn rename_keeps_id_and_never_seats_the_caller_178() {
 fn rotate_image_cascades_to_crops_183() {
     let p = fixture_paths("rot183");
     // image 1 holds faces 1, 2, 6; image 3 holds 4, 5
-    assert_eq!(db::rotate_image(&p, 1, 90).unwrap(), 90);
+    assert_eq!(db::rotate_image(&p, 1, 90).unwrap().images.unwrap()[0].rotation, 90);
     let s = db::snapshot(&p).unwrap();
     assert_eq!(s.images.iter().find(|x| x.id == 1).unwrap().rotation, 90);
     for f in s.faces.iter().filter(|f| f.image_id == 1) {
@@ -1113,14 +1113,14 @@ fn rotate_image_cascades_to_crops_183() {
     );
 
     // the converse: a crop rotation never touches the image
-    assert_eq!(db::rotate_face(&p, 1, -90).unwrap(), 0);
+    assert_eq!(db::rotate_face(&p, 1, -90).unwrap().faces.unwrap()[0].rotation, 0);
     let s = db::snapshot(&p).unwrap();
     assert_eq!(s.images.iter().find(|x| x.id == 1).unwrap().rotation, 90);
     assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().rotation, 0);
     assert_eq!(s.faces.iter().find(|f| f.id == 2).unwrap().rotation, 90);
 
     // a second image rotation adds to the crop's own correction
-    assert_eq!(db::rotate_image(&p, 1, 90).unwrap(), 180);
+    assert_eq!(db::rotate_image(&p, 1, 90).unwrap().images.unwrap()[0].rotation, 180);
     let s = db::snapshot(&p).unwrap();
     assert_eq!(s.images.iter().find(|x| x.id == 1).unwrap().rotation, 180);
     assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().rotation, 90); // 0 + 90
@@ -1503,4 +1503,95 @@ fn commands_run_off_the_main_thread_218() {
             "allowlist entry {name} is no longer a command — drop it from the list"
         );
     }
+}
+
+// ---------------------------------------------------------------- #219 delta protocol
+
+/// #219 — a mutation's `Delta` carries ONLY the touched rows (the owner
+/// person + the accepted face), the post-write stamp, and no images/
+/// removed — so the GUI applies a diff instead of a full re-fetch.
+#[test]
+fn delta_carries_only_touched_rows_219() {
+    let p = fixture_paths("delta219");
+    // accept face 1 (owner: person 1, faces 1/2/6)
+    let d = db::set_link_status(&p, &[1], "confirmed").unwrap();
+    assert!(!d.drifted);
+    assert_eq!(d.version, db::data_version(&p).unwrap(), "stamp is post-write");
+    // only the touched face moved
+    let faces = d.faces.as_ref().unwrap();
+    assert_eq!(faces.iter().map(|f| f.id).collect::<Vec<_>>(), vec![1]);
+    assert_eq!(faces[0].link_status, "confirmed");
+    // only the owner person re-derived; untouched persons absent
+    let persons = d.persons.as_ref().unwrap();
+    let ids: Vec<i64> = persons.iter().map(|x| x.id).collect();
+    assert!(ids.contains(&1), "owner person 1 in the delta: {ids:?}");
+    assert!(!ids.contains(&2), "person 2 untouched");
+    assert!(!ids.contains(&3), "person 3 untouched");
+    // the owner's counts re-derived in the person row
+    let p1 = persons.iter().find(|x| x.id == 1).unwrap();
+    assert_eq!(p1.counts.total, 3);
+    assert_eq!(p1.counts.confirmed, 1);
+    // no images touched, nothing removed
+    assert!(d.images.is_none());
+    assert!(d.removed.is_empty());
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #219 — `remove_persons` reports the dropped ids in `removed` and
+/// carries the re-homed faces + the `Rejected` person in the delta.
+#[test]
+fn delta_remove_persons_reports_removed_219() {
+    let p = fixture_paths("delta219rm");
+    // remove person 2 (face 3 re-homes onto `Rejected`)
+    let d = db::remove_persons(&p, &[2]).unwrap();
+    assert!(!d.drifted);
+    assert_eq!(d.version, db::data_version(&p).unwrap());
+    assert_eq!(d.removed, vec![2], "the deleted person id is reported");
+    // the re-homed face is in the delta (now rejected, on `Rejected`)
+    let faces = d.faces.as_ref().unwrap();
+    let f3 = faces.iter().find(|f| f.id == 3).unwrap();
+    assert_eq!(f3.link_status, "rejected");
+    // the `Rejected` person row is present (the re-home target)
+    let persons = d.persons.as_ref().unwrap();
+    assert!(persons.iter().any(|x| x.name == "Rejected"), "Rejected in the delta");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #219 — `assign_person` re-derives the target's face names (all their
+/// faces re-fetched via person_face_ids) and reports no removals when a
+/// cluster is renamed in place.
+#[test]
+fn delta_assign_rederives_names_219() {
+    let p = fixture_paths("delta219assign");
+    // rename Unknown3 (faces 4,5) in place to Carol
+    let d = db::assign_person(&p, &[4, 5], "Carol", "family").unwrap();
+    assert!(!d.drifted);
+    assert_eq!(d.version, db::data_version(&p).unwrap());
+    // the target person (renamed in place) is in the delta
+    let persons = d.persons.as_ref().unwrap();
+    assert!(persons.iter().any(|x| x.name == "Carol"));
+    // all its faces re-named (person_face_ids = [target])
+    let faces = d.faces.as_ref().unwrap();
+    let f4 = faces.iter().find(|f| f.id == 4).unwrap();
+    assert!(f4.name.starts_with("Carol-"), "name re-derived: {}", f4.name);
+    // rename-in-place keeps the person — nothing removed
+    assert!(d.removed.is_empty());
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #219 — drift detection: `delta_after` flags a stale pre-write stamp
+/// (v2 > v1 + 1 means an external write interleaved). The GUI then falls
+/// back to a full refresh instead of applying an incomplete delta.
+#[test]
+fn delta_drift_flags_stale_prewrite_219() {
+    let p = fixture_paths("delta219drift");
+    let con = db::connect(&p).unwrap();
+    let v_now = db::data_version(&p).unwrap();
+    // a stale pre-read (external write moved the stamp by > 1) ⇒ drift
+    let d = db::delta_after(&p, &*con, v_now - 5, &[], &[], &[], &[], Vec::new()).unwrap();
+    assert!(d.drifted, "v2 > v1 + 1 ⇒ drift");
+    // a fresh pre-read (no external write) ⇒ no drift
+    let d2 = db::delta_after(&p, &*con, v_now, &[], &[], &[], &[], Vec::new()).unwrap();
+    assert!(!d2.drifted, "no external write ⇒ no drift");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
