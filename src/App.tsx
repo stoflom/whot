@@ -9,7 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
-import type { AppearanceGroup, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
+import type { AppearanceGroup, Delta, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import GroupDialog from "./components/GroupDialog";
@@ -69,6 +69,12 @@ import { usePaneSizes } from "./paneState";
 import { useClickPairGuard } from "./clickPair";
 
 type Mode = "review" | "rolls" | "person";
+
+/** #219 — a mutation's result is a `Delta` (apply locally) vs `void`
+    (config-only / non-DB command → full refresh). */
+function isDelta(x: unknown): x is Delta {
+  return typeof x === "object" && x != null && "version" in x && "drifted" in x;
+}
 
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -251,6 +257,40 @@ export default function App() {
     snapVersionRef.current = s.version;
     setSnap(s);
   }, []);
+  // #219: apply a mutation's delta locally — only the touched rows move,
+  // no full snapshot re-fetch. The moved persons/faces/images upsert by
+  // id; removed persons drop out. `drifted` falls back to a full refresh.
+  const applyDelta = useCallback(
+    (delta: Delta) => {
+      if (delta.drifted) {
+        void refresh().catch(() => {});
+        return;
+      }
+      snapVersionRef.current = delta.version;
+      setSnap((s) => {
+        if (!s) return s;
+        const next: Snapshot = { ...s };
+        if (delta.persons != null || delta.removed.length > 0) {
+          const byId = new Map(next.persons.map((p) => [p.id, p]));
+          for (const p of delta.persons ?? []) byId.set(p.id, p);
+          for (const id of delta.removed) byId.delete(id);
+          next.persons = [...byId.values()];
+        }
+        if (delta.faces != null) {
+          const byId = new Map(next.faces.map((f) => [f.id, f]));
+          for (const f of delta.faces) byId.set(f.id, f);
+          next.faces = [...byId.values()];
+        }
+        if (delta.images != null) {
+          const byId = new Map(next.images.map((im) => [im.id, im]));
+          for (const im of delta.images) byId.set(im.id, im);
+          next.images = [...byId.values()];
+        }
+        return next;
+      });
+    },
+    [refresh]
+  );
   // #208: reload only when the database actually moved since the last
   // snapshot (our own mutations refresh explicitly and record the new
   // stamp) — one tiny probe call instead of a whole-snapshot fetch
@@ -425,13 +465,23 @@ export default function App() {
   // #133: resolves to whether the operation AND the refresh succeeded —
   // callers may act only on success (errors are still surfaced as the
   // error toast, never thrown)
+  // #219: a mutating command returns a `Delta` — apply it locally
+  // instead of a full re-fetch (a `void` result, e.g. set_settings, and
+  // a drifted delta fall back to the full refresh).
   const mutate = useCallback(
     async (fn: () => Promise<unknown>, clearSel = false): Promise<boolean> => {
       setBusy(true);
       setError(null);
       try {
-        await fn();
-        await refresh();
+        const result = await fn();
+        const deltas = (Array.isArray(result) ? result : [result]).filter(isDelta);
+        if (deltas.some((d) => d.drifted)) {
+          await refresh(); // an external write interleaved — full refresh
+        } else if (deltas.length > 0) {
+          for (const d of deltas) applyDelta(d);
+        } else {
+          await refresh(); // non-delta command (settings) / void result
+        }
         if (clearSel) setSel(new Set());
         return true;
       } catch (e) {
@@ -441,7 +491,7 @@ export default function App() {
         setBusy(false);
       }
     },
-    [refresh]
+    [refresh, applyDelta]
   );
 
   // #122: rotations are server state — command, then refresh
@@ -881,9 +931,11 @@ export default function App() {
           note.trim() !== (personsById.get(id)?.note ?? "").trim();
         if (noteChanged || ops.length > 0) {
           const ok = await mutate(async () => {
-            if (noteChanged) await api.setPersonNote(id, note);
+            const ds: Delta[] = [];
+            if (noteChanged) ds.push(await api.setPersonNote(id, note));
             for (const op of ops)
-              await api.movePersonsBetweenGroups([target], op.from, op.to);
+              ds.push(await api.movePersonsBetweenGroups([target], op.from, op.to));
+            return ds;
           });
           if (!ok) return false;
         }
@@ -1542,16 +1594,17 @@ export default function App() {
   // while staged asks escape-or-accept (Q4). The dialog-opening half
   // (prefillFor/openEdit) lives above faceMenu, which needs it too.
   const stageOps = useCallback(
-    async (st: Stage): Promise<void> => {
+    async (st: Stage): Promise<Delta[]> => {
       const ids = st.faceIds;
+      const deltas: Delta[] = [];
       if (st.name != null) {
         // #77 routing kept: the name path carries the group (create /
         // UnknownN rename); an explicit group also lands when the target
         // person pre-existed (F2: assign_person never touches its group)
         const name = st.name.trim();
         const target = [...personsById.values()].find((p) => p.name === name);
-        await api.assignPerson(ids, name, st.group ?? "");
-        if (st.group != null && target) await api.setPersonGroup(target.id, st.group);
+        deltas.push(await api.assignPerson(ids, name, st.group ?? ""));
+        if (st.group != null && target) deltas.push(await api.setPersonGroup(target.id, st.group));
       } else if (st.group != null) {
         // group-only: set_person_group never validates names — filing an
         // UnknownN cluster into a group without naming it stays possible
@@ -1566,15 +1619,16 @@ export default function App() {
           // #165: no writer ever leaves a face unowned — defensive only
           setInfo("nothing to group — these faces have no person");
         } else {
-          for (const pid of pids) await api.setPersonGroup(pid, st.group);
+          for (const pid of pids) deltas.push(await api.setPersonGroup(pid, st.group));
         }
       }
       if (st.desc != null) {
         // #209: one batched command — the sequential per-face seq
         // re-assignment (§4.4, same reason as the old per-card edits)
         // happens inside its transaction, in call order
-        await api.setFaceDescriptions(ids, st.desc);
+        deltas.push(await api.setFaceDescriptions(ids, st.desc));
       }
+      return deltas;
     },
     [facesById, personsById]
   );
@@ -1596,10 +1650,18 @@ export default function App() {
       // failure silently discarded every not-yet-applied op (§4.24
       // 'Accept commits every op'; Q3 text is never dropped silently)
       const union = [...new Set(all.flatMap((o) => o.faceIds))];
+      // #219: collect the staged ops' deltas — they carry the fresh
+      // face→owner mapping (the claim/merge moves faces between persons),
+      // so the group ops below need no full snapshot re-fetch.
+      const deltas: Delta[] = [];
+      const flush = async () => {
+        if (deltas.some((d) => d.drifted)) await refresh();
+        else for (const d of deltas) applyDelta(d);
+      };
       let done = 0;
       try {
         for (; done < all.length; done++) {
-          await stageOps(all[done]);
+          deltas.push(...(await stageOps(all[done])));
         }
       } catch (e) {
         // the applied prefix (ops 1..done−1) is in; the failed op and
@@ -1607,6 +1669,7 @@ export default function App() {
         // re-runs the idempotent field writes and continues from here
         setError(`Accept stopped at op ${done + 1}/${all.length}: ${e}`);
         setPending(all.slice(done));
+        await flush(); // #219: land the deltas that did apply
         return;
       }
       // a staged NAME assignment already claimed rejected faces (#165) —
@@ -1618,32 +1681,44 @@ export default function App() {
       // #181 (§4.38): the dialog's group-LIST edits — the name has
       // landed, so the scope's faces now name the SURVIVING person (the
       // merge target when the name was taken, the renamed/created one
-      // otherwise); re-read the fresh snapshot (the closure's
-      // facesById predates the claim) and replay the ops per owner
+      // otherwise); the owner comes from the staged deltas (fresh) or the
+      // pre-existing snap for untouched faces
       if (opsLive) {
-        const s = await api.getSnapshot();
+        const ownerOf = (faceId: number): number | null => {
+          for (let i = deltas.length - 1; i >= 0; i--) {
+            const f = deltas[i].faces?.find((x) => x.id === faceId);
+            if (f) return f.person_id ?? null;
+          }
+          return facesById.get(faceId)?.person_id ?? null;
+        };
         const owners = [
           ...new Set(
-            ids.map((id) => s.faces.find((f) => f.id === id)?.person_id)
-              .filter((p): p is number => p != null)
+            ids.map((id) => ownerOf(id)).filter((p): p is number => p != null)
           ),
         ];
         // #209: ONE call per op over ALL owners (the command is
         // per-person independent) — no refresh per call; the accept
-        // below lands exactly one refresh for the whole action. A failed
+        // below lands exactly one delta for the whole action. A failed
         // op surfaces the error toast and does not abort the rest (the
         // old per-mutate swallow-and-continue). A merge may have deleted
         // some owners — one existing owner still applies the op for all
         // (the old per-owner calls toasted on each deleted one).
-        for (const op of groupOps!)
-          await api
-            .movePersonsBetweenGroups(owners, op.from, op.to)
-            .catch((e) => setError(String(e)));
+        for (const op of groupOps!) {
+          try {
+            deltas.push(await api.movePersonsBetweenGroups(owners, op.from, op.to));
+          } catch (e) {
+            setError(String(e));
+          }
+        }
       }
+      // #219: land the staged + group-op deltas locally, then the accept
+      // delta lands through acceptAndNext's mutate. A drifted delta falls
+      // back to one full refresh.
+      await flush();
       await acceptAndNext(ids, claimed);
       setPending([]);
     },
-    [acceptAndNext, stageOps]
+    [acceptAndNext, stageOps, applyDelta, facesById, refresh]
   );
 
   // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the

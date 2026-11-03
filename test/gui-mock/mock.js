@@ -499,6 +499,33 @@
     "plugin:dialog|open": () => Promise.resolve(window.__MOCK_DIALOG_PICK__ ?? null),
   };
 
+  // #219 — the delta snapshot protocol: every mutating command returns a
+  // `Delta` (the touched rows + the new stamp) instead of nothing, so the
+  // GUI applies the diff locally instead of re-fetching the whole
+  // snapshot. The mock returns the FULL current rows as the delta (a
+  // mock simplification — touched-only optimisation is tested in Rust;
+  // applyDelta's upsert/removed handling is what the mock exercises).
+  // `remove_persons` carries `removed` so dropped persons leave the tree.
+  const delta = (removed = []) => {
+    const text = JSON.stringify(SNAP);
+    return { ...JSON.parse(text), version: stampOf(text), drifted: false, removed };
+  };
+  for (const name of [
+    "assign_person", "accept_faces", "reject_faces", "set_face_description",
+    "set_face_descriptions", "set_primary_face", "set_person_name",
+    "set_person_group", "set_person_note", "move_persons_to_group",
+    "move_persons_between_groups", "rename_group", "delete_group",
+    "remove_persons", "add_refcrop", "remove_refcrop", "rotate_image",
+    "rotate_images", "rotate_face",
+  ]) {
+    const orig = cmd[name];
+    cmd[name] = (args) => {
+      const removed = name === "remove_persons" ? (args?.personIds ?? []) : [];
+      orig(args);
+      return delta(removed);
+    };
+  }
+
   window.__TAURI_INTERNALS__ = {
     invoke: (command, args) =>
       ready

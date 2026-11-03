@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.9** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.10** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -38,6 +38,11 @@ src-tauri/tests/
   thread (argument shapes and TS-side `invoke` calls are unchanged; the
   runner-mutex/config-file exceptions are guarded by the
   `commands_run_off_the_main_thread_218` workflow test).
+  #219: every mutating command returns a `db::Delta` (the touched
+  rows + the new change stamp) instead of `()`/`i64` — the GUI applies
+  the diff locally instead of re-fetching the whole snapshot. Read-only
+  commands (`get_snapshot`, `get_refcrops`, `get_image_batch`, …) and
+  the config-only `get_settings`/`set_settings` are unchanged.
 - **`db.rs`** owns every query and every rule implementation. If a
   behaviour question arises, `db.rs` + gui-design §4 are the answer;
   nothing may embed SQL elsewhere (`main.rs` included).
@@ -104,7 +109,18 @@ Every mutating command follows the same shape (gui-design §4.8):
    stale), `recompute_refcrops` (§4.6 per-appearance top-N, `pinned`
    rows keep their `seq` slots, compare-and-skip — identical rows are
    never rewritten, #210);
-4. commit; the frontend re-fetches `get_snapshot()` (no push channel).
+4. commit; the command returns a `Delta` (#219) — the touched rows plus
+   the new change stamp — which the GUI applies locally. The delta is
+   built AFTER the commit by `delta_after()`: person rows for the
+   affected persons (with counts/groups), all faces of any person whose
+   names were re-derived (`refresh_person_names`), the directly-touched
+   face/image rows, and any removed person ids. `delta_after()` reads
+   the stamp before (`v1`) and after (`v2`) the write; `v2 > v1 + 1`
+   means an external write (importer) interleaved and the delta is
+   flagged `drifted` — the GUI then falls back to a full
+   `get_snapshot()`. A full snapshot is still used for cold load, the
+   focus/visibility reload (`get_data_version` gate), and import
+   completion.
 
 The stale-shell sweep (gui-design §4.27) rides the writers that can
 empty a person — `snapshot()` itself is a pure read (#208).

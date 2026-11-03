@@ -352,7 +352,7 @@ pub fn set_settings(paths: &Paths, settings: Settings) -> Result<()> {
 
 // ---------------------------------------------------------------- snapshot
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct PersonCounts {
     pub total: i64,
     pub provisional: i64,
@@ -360,7 +360,7 @@ pub struct PersonCounts {
     pub rejected: i64,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct Person {
     pub id: i64,
     pub name: String,
@@ -375,7 +375,7 @@ pub struct Person {
     pub counts: PersonCounts,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct Face {
     pub id: i64,
     pub image_id: i64,
@@ -400,7 +400,7 @@ pub struct Face {
     pub created_at: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct ImageRow {
     pub id: i64,
     pub primary_path: String,
@@ -604,6 +604,179 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
 
     let settings = get_settings(paths)?;
     Ok(Snapshot { version, persons, faces, images, imports, settings })
+}
+
+// ---------------------------------------------------------------- delta protocol (#219)
+
+/// #219 — the delta a mutation sends to the GUI instead of a full
+/// snapshot: only the tables/rows the mutation touched, plus the new
+/// change stamp.
+#[derive(Serialize, Clone, Debug)]
+pub struct Delta {
+    pub version: i64,
+    /// an external write moved the stamp by more than 1 between our
+    /// pre-read and our commit — the delta may be incomplete and the
+    /// frontend must full-refresh instead of applying it.
+    pub drifted: bool,
+    /// touched person rows (counts + groups included); `None` = none.
+    pub persons: Option<Vec<Person>>,
+    /// touched face rows; `None` = none.
+    pub faces: Option<Vec<Face>>,
+    /// touched image rows; `None` = none.
+    pub images: Option<Vec<ImageRow>>,
+    /// removed person ids (faces are never deleted — they are re-homed).
+    pub removed: Vec<i64>,
+}
+
+/// Person rows (with counts + groups) for the given ids, shaped exactly
+/// like `snapshot()` produces — used for a `Delta`'s `persons`.
+fn person_rows(con: &Connection, ids: &[i64]) -> Result<Vec<Person>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = ids_list(ids);
+    let mut counts: HashMap<i64, PersonCounts> = HashMap::new();
+    {
+        let mut st = con.prepare(&format!(
+            "SELECT person_id, COUNT(*),
+                    COALESCE(SUM(link_status = 'provisional'), 0),
+                    COALESCE(SUM(link_status = 'confirmed'), 0),
+                    COALESCE(SUM(link_status = 'rejected'), 0)
+               FROM faces WHERE person_id IS NOT NULL AND person_id IN ({list})
+               GROUP BY person_id"
+        ))?;
+        for row in st.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                PersonCounts { total: r.get(1)?, provisional: r.get(2)?, confirmed: r.get(3)?, rejected: r.get(4)? },
+            ))
+        })? {
+            let (pid, c) = row?; counts.insert(pid, c);
+        }
+    }
+    let mut groups: HashMap<i64, Vec<String>> = HashMap::new();
+    {
+        let mut st = con.prepare(&format!(
+            "SELECT person_id, path FROM person_groups WHERE person_id IN ({list}) ORDER BY person_id, path"
+        ))?;
+        for row in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (pid, path) = row?; groups.entry(pid).or_default().push(path);
+        }
+    }
+    let mut out = Vec::new();
+    let mut st = con.prepare(&format!(
+        "SELECT p.id, p.name, p.state, p.note, p.primary_face_id, p.primary_pinned, p.created_at
+           FROM persons p WHERE p.id IN ({list})
+           ORDER BY (p.name GLOB 'Unknown*') DESC, p.name COLLATE NOCASE, p.id"
+    ))?;
+    for row in st.query_map([], |r| {
+        Ok(Person {
+            id: r.get(0)?, name: r.get(1)?, state: r.get(2)?, note: r.get(3)?,
+            primary_face_id: r.get(4)?, primary_pinned: r.get(5)?, created_at: r.get(6)?,
+            groups: Vec::new(),
+            counts: PersonCounts { total: 0, provisional: 0, confirmed: 0, rejected: 0 },
+        })
+    })? {
+        let mut p = row?;
+        p.counts = counts.remove(&p.id).unwrap_or(PersonCounts { total: 0, provisional: 0, confirmed: 0, rejected: 0 });
+        p.groups = groups.remove(&p.id).unwrap_or_default();
+        out.push(p);
+    }
+    Ok(out)
+}
+
+fn face_rows(con: &Connection, ids: &[i64]) -> Result<Vec<Face>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = ids_list(ids);
+    let mut st = con.prepare(&format!(
+        "SELECT id, image_id, person_id, x, y, w, h, name, seq, description,
+                confidence, link_status, state, rotation, detected_in_import_id, created_at
+           FROM faces WHERE id IN ({list}) ORDER BY id"
+    ))?;
+    Ok(st
+        .query_map([], |r| {
+            Ok(Face {
+                id: r.get(0)?, image_id: r.get(1)?, person_id: r.get(2)?, x: r.get(3)?, y: r.get(4)?,
+                w: r.get(5)?, h: r.get(6)?, name: r.get(7)?, seq: r.get(8)?, description: r.get(9)?,
+                confidence: r.get(10)?, link_status: r.get(11)?, state: r.get(12)?, rotation: r.get(13)?,
+                import_id: r.get(14)?, created_at: r.get(15)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+fn image_rows(con: &Connection, ids: &[i64]) -> Result<Vec<ImageRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = ids_list(ids);
+    let mut st = con.prepare(&format!(
+        "SELECT id, primary_path, width, height, orientation, rotation, type, state,
+                first_import_id, last_import_id FROM images WHERE id IN ({list}) ORDER BY id"
+    ))?;
+    Ok(st
+        .query_map([], |r| {
+            Ok(ImageRow {
+                id: r.get(0)?, primary_path: r.get(1)?, width: r.get(2)?, height: r.get(3)?,
+                orientation: r.get(4)?, rotation: r.get(5)?, rtype: r.get(6)?, state: r.get(7)?,
+                first_import_id: r.get(8)?, last_import_id: r.get(9)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// #219 — build the `Delta` for a mutation that just committed: read the
+/// stamp before (`v1`, taken by the caller before the write) and after
+/// (`v2`). Drift (`v2 > v1 + 1`) means an external write (importer)
+/// interleaved — the delta may be incomplete, so `drifted` is true and
+/// the frontend must full-refresh instead of applying it.
+///
+/// `con` is the caller's open connection (the POOL lock is already held
+/// by the caller's `DbConn` guard — calling `connect` here would
+/// deadlock). The rows are read through it after the write, so they see
+/// the committed state.
+pub fn delta_after(
+    paths: &Paths,
+    con: &Connection,
+    v1: i64,
+    person_ids: &[i64],        // person rows only
+    person_face_ids: &[i64],   // person ids → fetch ALL their faces
+    face_ids: &[i64],          // additional specific face rows
+    image_ids: &[i64],         // image rows
+    removed: Vec<i64>,
+) -> Result<Delta> {
+    let v2 = data_version(paths)?;
+    let drifted = v2 > v1 + 1;
+    let mut all_face_ids: Vec<i64> = face_ids.to_vec();
+    if !person_face_ids.is_empty() {
+        let mut st = con.prepare(&format!(
+            "SELECT id FROM faces WHERE person_id IN ({}) ORDER BY id",
+            ids_list(person_face_ids)
+        ))?;
+        for row in st.query_map([], |r| r.get::<_, i64>(0))? {
+            all_face_ids.push(row?);
+        }
+    }
+    all_face_ids.sort_unstable();
+    all_face_ids.dedup();
+    let persons = if person_ids.is_empty() {
+        None
+    } else {
+        Some(person_rows(con, person_ids)?)
+    };
+    let faces = if all_face_ids.is_empty() {
+        None
+    } else {
+        Some(face_rows(con, &all_face_ids)?)
+    };
+    let images = if image_ids.is_empty() {
+        None
+    } else {
+        Some(image_rows(con, image_ids)?)
+    };
+    Ok(Delta { version: v2, drifted, persons, faces, images, removed })
 }
 
 // ---------------------------------------------------------------- images
@@ -1215,7 +1388,7 @@ fn seat_branch_doomed(tx: &Connection, branch: &str) -> Result<usize> {
 /// §4.1 — assign selected faces to a person (accept + name + group).
 /// Renames an UnknownN in place when the selection is exactly its faces;
 /// otherwise moves faces to an existing or newly created person.
-pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &str) -> Result<()> {
+pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &str) -> Result<Delta> {
     validate_person_name(name)?;
     let name = name.trim().to_string();
     let group_path = normalize_group_path(group_path); // #42
@@ -1227,6 +1400,8 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     let mut ids: Vec<i64> = face_ids.to_vec();
     ids.sort_unstable();
     ids.dedup();
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
@@ -1343,6 +1518,7 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     // §4.1/§4.13 housekeeping: a person left with zero faces by this move is
     // a stale shell — delete it (groups/refcrops with it, #46) so merges and
     // whole-group moves don't leave the old person behind in the tree.
+    let mut removed: Vec<i64> = Vec::new();
     for pid in &old_persons {
         if is_system_person(&tx, *pid)? {
             continue; // §4.35: the system person is never deleted — an
@@ -1361,6 +1537,7 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
             tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
             tx.execute("DELETE FROM person_refcrops WHERE person_id = ?", params![pid])?;
             tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
+            removed.push(*pid);
         }
     }
     // NOTE: affected must include the *old* owners — after the UPDATEs above the
@@ -1377,7 +1554,19 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     }
     sweep_stale_shells(&tx)?; // §4.27: sweep rides the writers (#208)
     tx.commit()?;
-    Ok(())
+    // #219 — affected = old owners + target; the target's faces are
+    // re-named by refresh_person_names (person_face_ids), the moved faces
+    // are the selected ids; removed = old owners emptied by the move.
+    delta_after(
+        paths,
+        &*con,
+        v1,
+        &affected,
+        &[target],
+        &ids,
+        &[],
+        removed,
+    )
 }
 
 /// §4.2/§4.3 (#165) — set the face verdict. `rejected` RE-HOMES every
@@ -1385,22 +1574,20 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
 /// (seq/name re-derived per §4.7, §4.35); `confirmed` NEVER un-rejects —
 /// rejected faces are skipped: the claim rule (#165) makes an
 /// assignment the only exit from `rejected`.
-pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<()> {
+pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<Delta> {
     if !matches!(status, "confirmed" | "rejected") {
         bail!("bad status {status}");
     }
     if face_ids.is_empty() {
         bail!("no faces selected");
     }
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
-    if status == "rejected" {
-        let affected = reject_and_rehome(&tx, face_ids)?;
-        for pid in &affected {
-            recompute_person(&tx, *pid, &settings)?;
-            reseat(&tx, *pid)?; // §4.35: e.g. `UnknownN` New → Accepted
-        }
+    let affected: Vec<i64> = if status == "rejected" {
+        reject_and_rehome(&tx, face_ids)?
     } else {
         // §4.3/§4.35: accept skips rejected faces — never un-rejects
         tx.execute(
@@ -1411,14 +1598,18 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
             ),
             [],
         )?;
-        for pid in affected_persons(&tx, face_ids, None)? {
-            recompute_person(&tx, pid, &settings)?;
-            reseat(&tx, pid)?;
-        }
+        affected_persons(&tx, face_ids, None)?
+    };
+    for pid in &affected {
+        recompute_person(&tx, *pid, &settings)?;
+        reseat(&tx, *pid)?; // §4.35: e.g. `UnknownN` New → Accepted
     }
     sweep_stale_shells(&tx)?; // §4.27: sweep rides the writers (#208)
     tx.commit()?;
-    Ok(())
+    // #219 — affected = face owners (+ `Rejected` on a reject); the faces
+    // whose status/person changed are `face_ids`; names are untouched by
+    // accept/reject so no person's full face set needs re-fetching.
+    delta_after(paths, &*con, v1, &affected, &[], face_ids, &[], Vec::new())
 }
 
 /// #122 — full-image display rotation (server state): `delta` is the
@@ -1445,12 +1636,21 @@ fn rotate_image_tx(tx: &Connection, image_id: i64, delta: i64) -> Result<i64> {
     Ok(next)
 }
 
-pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<i64> {
+pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<Delta> {
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
+    // #219 — every face on this image changes crop rotation.
+    let face_ids: Vec<i64> = con
+        .prepare("SELECT id FROM faces WHERE image_id = ?")?
+        .query_map(params![image_id], |r| r.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     let tx = con.transaction()?;
-    let next = rotate_image_tx(&tx, image_id, delta)?;
+    rotate_image_tx(&tx, image_id, delta)?;
     tx.commit()?;
-    Ok(next)
+    // #219 — the image row and every face on it change rotation; no
+    // person rows are affected.
+    delta_after(paths, &*con, v1, &[], &[], &face_ids, &[image_id], Vec::new())
 }
 
 /// #209 — batch display rotation: N images in ONE transaction behind one
@@ -1458,35 +1658,49 @@ pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<i64> {
 /// per-image semantics as `rotate_image`, incl. the crop cascade. A
 /// repeated id rotates once; a missing image rolls the whole batch back
 /// (the old per-image loop applied the prefix before failing).
-pub fn rotate_images(paths: &Paths, image_ids: &[i64], delta: i64) -> Result<()> {
+pub fn rotate_images(paths: &Paths, image_ids: &[i64], delta: i64) -> Result<Delta> {
     let mut ids: Vec<i64> = image_ids.to_vec();
     ids.sort_unstable();
     ids.dedup();
     if ids.is_empty() {
         bail!("no images selected");
     }
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
+    // #219 — every face on every rotated image changes crop rotation.
+    let face_ids: Vec<i64> = {
+        let list = ids_list(&ids);
+        let mut st = con.prepare(&format!("SELECT id FROM faces WHERE image_id IN ({list}) ORDER BY id"))?;
+        st.query_map([], |r| r.get::<_, i64>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
     let tx = con.transaction()?;
-    for id in ids {
-        rotate_image_tx(&tx, id, delta)?;
+    for id in &ids {
+        rotate_image_tx(&tx, *id, delta)?;
     }
     tx.commit()?;
-    Ok(())
+    // #219 — the image rows and every face on them change rotation; no
+    // person rows are affected.
+    delta_after(paths, &*con, v1, &[], &[], &face_ids, &ids, Vec::new())
 }
 
 /// #122/#183 — face-crop display rotation (server state): the per-crop
 /// correction — independent of the full-image rotation in the CONVERSE
 /// direction only (rotating the image cascades to its crops, this never
 /// touches the image); same ±90 quarter-turn contract as `rotate_image`.
-pub fn rotate_face(paths: &Paths, face_id: i64, delta: i64) -> Result<i64> {
+pub fn rotate_face(paths: &Paths, face_id: i64, delta: i64) -> Result<Delta> {
     let d = ((delta % 360) + 360) % 360;
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let con = connect(paths)?;
     let cur: i64 = con
         .query_row("SELECT rotation FROM faces WHERE id = ?", params![face_id], |r| r.get(0))
         .context("face not found")?;
     let next = (cur + d) % 360;
     con.execute("UPDATE faces SET rotation = ? WHERE id = ?", params![next, face_id])?;
-    Ok(next)
+    // #219 — only this face's crop rotation changes.
+    delta_after(paths, &*con, v1, &[], &[], &[face_id], &[], Vec::new())
 }
 
 /// The per-face core of `set_face_description` inside the caller's
@@ -1535,22 +1749,30 @@ fn set_face_description_tx(
 /// §4.4 — set face description (normalised): re-assign seq within the NEW
 /// (person, description) group, re-derive the label, and rebuild the
 /// person's refcrops — the face has changed appearance group (§4.6).
-pub fn set_face_description(paths: &Paths, face_id: i64, raw: &str) -> Result<()> {
+pub fn set_face_description(paths: &Paths, face_id: i64, raw: &str) -> Result<Delta> {
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
-    if let Some(person_id) = set_face_description_tx(&tx, face_id, &normalize_description(raw))? {
+    let owner = set_face_description_tx(&tx, face_id, &normalize_description(raw))?;
+    if let Some(person_id) = owner {
         recompute_person(&tx, person_id, &settings)?;
     }
     tx.commit()?;
-    Ok(())
+    // #219 — this face's description/seq/label changed; its owner's
+    // primary may have been re-derived by recompute_person.
+    let person_ids: Vec<i64> = owner.into_iter().collect();
+    delta_after(paths, &*con, v1, &person_ids, &[], &[face_id], &[], Vec::new())
 }
 
 /// #209 — batch description write behind one IPC call: one transaction,
 /// faces processed in CALL ORDER (each takes the next seq of the shared
 /// new group exactly as the sequential single calls did), and each
 /// owner's derived state recomputed once at the end instead of per face.
-pub fn set_face_descriptions(paths: &Paths, face_ids: &[i64], raw: &str) -> Result<()> {
+pub fn set_face_descriptions(paths: &Paths, face_ids: &[i64], raw: &str) -> Result<Delta> {
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
@@ -1563,15 +1785,19 @@ pub fn set_face_descriptions(paths: &Paths, face_ids: &[i64], raw: &str) -> Resu
             }
         }
     }
-    for pid in touched {
-        recompute_person(&tx, pid, &settings)?;
+    for pid in &touched {
+        recompute_person(&tx, *pid, &settings)?;
     }
     tx.commit()?;
-    Ok(())
+    // #219 — the described faces changed; each touched owner's primary may
+    // have been re-derived (names are untouched — no refresh_person_names).
+    delta_after(paths, &*con, v1, &touched, &[], face_ids, &[], Vec::new())
 }
 
 /// §4.5 — user-pinned primary face.
-pub fn set_primary_face(paths: &Paths, person_id: i64, face_id: i64) -> Result<()> {
+pub fn set_primary_face(paths: &Paths, person_id: i64, face_id: i64) -> Result<Delta> {
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
@@ -1592,11 +1818,14 @@ pub fn set_primary_face(paths: &Paths, person_id: i64, face_id: i64) -> Result<(
     )?;
     recompute_person(&tx, person_id, &settings)?;
     tx.commit()?;
-    Ok(())
+    // #219 — only the person row (primary pointer) changed.
+    delta_after(paths, &*con, v1, &[person_id], &[], &[], &[], Vec::new())
 }
 
-pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<()> {
+pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<Delta> {
     validate_person_name(name)?;
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
     let exists: bool = tx
@@ -1627,7 +1856,9 @@ pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<()> 
     // (compare-and-skip) and stays for symmetry with assign_person
     recompute_person(&tx, person_id, &get_settings(paths)?)?;
     tx.commit()?;
-    Ok(())
+    // #219 — the person row changed and ALL its faces were re-named by
+    // refresh_person_names (person_face_ids).
+    delta_after(paths, &*con, v1, &[person_id], &[person_id], &[], &[], Vec::new())
 }
 
 /// #42 — normalise a group path on the write side: trim each segment and
@@ -1642,9 +1873,11 @@ fn normalize_group_path(path: &str) -> String {
         .join("|")
 }
 
-pub fn set_person_group(paths: &Paths, person_id: i64, path: &str) -> Result<()> {
+pub fn set_person_group(paths: &Paths, person_id: i64, path: &str) -> Result<Delta> {
     let path = normalize_group_path(path);
     validate_group_path(&path)?; // #165: status seats are system-only
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
     guard_system_person(&tx, person_id)?; // §4.35
@@ -1664,7 +1897,8 @@ pub fn set_person_group(paths: &Paths, person_id: i64, path: &str) -> Result<()>
         params![person_id, final_path],
     )?;
     tx.commit()?;
-    Ok(())
+    // #219 — only the person row (groups) changed.
+    delta_after(paths, &*con, v1, &[person_id], &[], &[], &[], Vec::new())
 }
 
 /// §4.16 (#50/#165) — group paths are normalised (#42) and five segments
@@ -1696,7 +1930,7 @@ const BRANCH_OF: &str = "(path = ?1 OR (substr(path, 1, length(?1) + 1) = ?1 || 
 /// the rewrite; the clashing source rows are dropped (the person keeps
 /// the single destination row), the rest rewrite, and the source branch
 /// is absorbed by the destination (gone once emptied).
-pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()> {
+pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<Delta> {
     let old = normalize_group_path(old_path);
     let new = normalize_group_path(new_path);
     if old.is_empty() {
@@ -1709,7 +1943,17 @@ pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()>
     if new == old || new.starts_with(&format!("{old}|")) {
         bail!("a branch cannot be moved inside itself");
     }
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
+    // every person in the branch has their group path rewritten.
+    let affected: Vec<i64> = {
+        let mut st = con.prepare(&format!(
+            "SELECT DISTINCT person_id FROM person_groups WHERE {BRANCH_OF}"
+        ))?;
+        st.query_map(params![old], |r| r.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
     let tx = con.transaction()?;
     // The emptiness check runs BEFORE the rewrite (#193): an all-clashing
     // branch loses every row in the merge and rewrites none — still a
@@ -1759,7 +2003,8 @@ pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()>
         )?;
     }
     tx.commit()?;
-    Ok(())
+    // #219 — the persons in the branch have new group paths (person rows).
+    delta_after(paths, &*con, v1, &affected, &[], &[], &[], Vec::new())
 }
 
 /// §4.16 (#50/#165) — delete a group branch: the `person_groups` rows of
@@ -1768,7 +2013,7 @@ pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<()>
 /// the branch is not preserved — re-group via move/rename. Faces, names,
 /// statuses untouched. Status branches are system furniture and cannot
 /// be deleted.
-pub fn delete_group(paths: &Paths, path: &str) -> Result<()> {
+pub fn delete_group(paths: &Paths, path: &str) -> Result<Delta> {
     let path = normalize_group_path(path);
     if path.is_empty() {
         bail!("no group to delete");
@@ -1776,7 +2021,17 @@ pub fn delete_group(paths: &Paths, path: &str) -> Result<()> {
     if is_status_seat(&path) {
         bail!("status branches are system furniture (#165, §4.35) — delete is refused");
     }
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
+    // every person in the branch has their group path rewritten/dropped.
+    let affected: Vec<i64> = {
+        let mut st = con.prepare(&format!(
+            "SELECT DISTINCT person_id FROM person_groups WHERE {BRANCH_OF}"
+        ))?;
+        st.query_map(params![path], |r| r.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
     let tx = con.transaction()?;
     seat_branch_doomed(&tx, &path)?; // §4.35
     let n = tx.execute(
@@ -1787,7 +2042,8 @@ pub fn delete_group(paths: &Paths, path: &str) -> Result<()> {
         bail!("no persons in that group");
     }
     tx.commit()?;
-    Ok(())
+    // #219 — the persons in the branch have new group paths (person rows).
+    delta_after(paths, &*con, v1, &affected, &[], &[], &[], Vec::new())
 }
 
 /// §4.16 (#50/#165) — move persons to a (possibly new) group: each
@@ -1795,13 +2051,16 @@ pub fn delete_group(paths: &Paths, path: &str) -> Result<()> {
 /// falls to their status seat (§4.35). Works for any persons, wherever
 /// they live (rows in the status branches included — the system person
 /// itself is refused, §4.35). Faces, names, statuses, primaries untouched.
-pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> Result<()> {
+pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> Result<Delta> {
     let ids: HashSet<i64> = person_ids.iter().copied().collect();
     if ids.is_empty() {
         bail!("no persons selected");
     }
+    let id_list: Vec<i64> = ids.iter().copied().collect();
     let path = normalize_group_path(group);
     validate_group_path(&path)?;
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
     let mut moved = 0;
@@ -1833,7 +2092,8 @@ pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> 
         bail!("none of the selected persons exist any more");
     }
     tx.commit()?;
-    Ok(())
+    // #219 — the moved persons have new group paths (person rows).
+    delta_after(paths, &*con, v1, &id_list, &[], &[], &[], Vec::new())
 }
 
 /// §4.16 (#157, v3.59/#165) — tree D&D move for the §9 multi-row world:
@@ -1854,16 +2114,19 @@ pub fn move_persons_between_groups(
     person_ids: &[i64],
     from_group: &str,
     to_group: &str,
-) -> Result<()> {
+) -> Result<Delta> {
     let ids: HashSet<i64> = person_ids.iter().copied().collect();
     if ids.is_empty() {
         bail!("no persons selected");
     }
+    let id_list: Vec<i64> = ids.iter().copied().collect();
     let from = normalize_group_path(from_group);
     let to = normalize_group_path(to_group);
     if !to.is_empty() {
         validate_group_path(&to)?;
     }
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
     let mut moved = 0;
@@ -1901,16 +2164,20 @@ pub fn move_persons_between_groups(
         bail!("none of the selected persons exist any more");
     }
     tx.commit()?;
-    Ok(())
+    // #219 — the moved persons have new group paths (person rows).
+    delta_after(paths, &*con, v1, &id_list, &[], &[], &[], Vec::new())
 }
 
-pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<()> {
+pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<Delta> {
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let con = connect(paths)?;
     con.execute(
         "UPDATE persons SET note = ? WHERE id = ?",
         params![if note.trim().is_empty() { None } else { Some(note.trim()) }, person_id],
     )?;
-    Ok(())
+    // #219 — only the person row (note) changed.
+    delta_after(paths, &*con, v1, &[person_id], &[], &[], &[], Vec::new())
 }
 
 /// §4.13 (#35/#165) — remove unwanted persons: every face becomes
@@ -1920,19 +2187,22 @@ pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<()> 
 /// with it — the group invariant governs living persons only). Faces are
 /// never deleted. The system person itself can never be removed.
 /// One transaction for the whole batch; no undo.
-pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
+pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
     let ids: HashSet<i64> = person_ids.iter().copied().collect();
     if ids.is_empty() {
         bail!("no persons selected");
     }
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
     for pid in &ids {
         guard_system_person(&tx, *pid)?; // §4.35: Rejected never removed
     }
-    let mut removed = 0;
+    let mut removed: Vec<i64> = Vec::new();
     let mut touched: HashSet<i64> = HashSet::new();
+    let mut rehomed_faces: Vec<i64> = Vec::new();
     for pid in ids {
         // defensive: no OTHER person may keep pointing at these faces
         tx.execute(
@@ -1946,6 +2216,7 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
             let rows = st.query_map(params![pid], |r| r.get::<_, i64>(0))?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
+        rehomed_faces.extend(fids.iter().copied());
         if !fids.is_empty() {
             touched.extend(reject_and_rehome(&tx, &fids)?);
         }
@@ -1955,23 +2226,33 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<()> {
         // written for it — §4.35 governs living persons)
         tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
         tx.execute("DELETE FROM person_refcrops WHERE person_id = ?", params![pid])?;
-        removed += tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
+        let n_deleted = tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
+        if n_deleted > 0 {
+            removed.push(pid);
+        }
         touched.remove(&pid);
     }
-    if removed == 0 {
+    if removed.is_empty() {
         bail!("none of the selected persons exist any more");
     }
+    let touched: Vec<i64> = touched.into_iter().collect();
     for pid in &touched { // the system person, in practice
         recompute_person(&tx, *pid, &settings)?;
         reseat(&tx, *pid)?;
     }
     tx.commit()?;
-    Ok(())
+    // #219 — removed = deleted person ids; rehomed_faces = their faces
+    // (re-homed onto `Rejected`); touched = recomputed persons (e.g.
+    // `Rejected`'s primary). Names are set per-face by reject_and_rehome,
+    // so no person's full face set is re-fetched.
+    delta_after(paths, &*con, v1, &touched, &[], &rehomed_faces, &[], removed)
 }
 
 /// §4.6 — manually promote a confirmed face into refcrops (survives rebuilds).
 /// #210: the row is metadata only — crop and filename derive at read.
-pub fn add_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<()> {
+pub fn add_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<Delta> {
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
     let (ok, desc, preview): (bool, Option<String>, Option<Vec<u8>>) = tx
@@ -2032,16 +2313,23 @@ pub fn add_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<()> {
         }
     }
     tx.commit()?;
-    Ok(())
+    // #219 — only person_refcrops changed (metadata, not in the
+    // snapshot); the frontend tracks refcrops via refcropEpoch. The delta
+    // carries the new stamp only.
+    delta_after(paths, &*con, v1, &[], &[], &[], &[], Vec::new())
 }
 
-pub fn remove_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<()> {
+pub fn remove_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<Delta> {
+    // #219 — the stamp before the write, for drift detection.
+    let v1 = data_version(paths)?;
     let con = connect(paths)?;
     con.execute(
         "DELETE FROM person_refcrops WHERE person_id = ? AND face_id = ?",
         params![person_id, face_id],
     )?;
-    Ok(())
+    // #219 — only person_refcrops changed (metadata, not in the
+    // snapshot); the delta carries the new stamp only.
+    delta_after(paths, &*con, v1, &[], &[], &[], &[], Vec::new())
 }
 
 // ---------------------------------------------------------------- similarity

@@ -14,7 +14,7 @@
 pub mod db;
 pub mod importer;
 
-use db::{Paths, Settings};
+use db::{Delta, Paths, Settings};
 use importer::ImportRunner;
 
 use tauri::State;
@@ -103,36 +103,36 @@ async fn assign_person(
     face_ids: Vec<i64>,
     name: String,
     group: String,
-) -> Result<(), String> {
+) -> Result<Delta, String> {
     db::assign_person(state.paths()?, &face_ids, &name, &group).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn accept_faces(state: State<'_, AppState>, face_ids: Vec<i64>) -> Result<(), String> {
+async fn accept_faces(state: State<'_, AppState>, face_ids: Vec<i64>) -> Result<Delta, String> {
     db::set_link_status(state.paths()?, &face_ids, "confirmed").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn reject_faces(state: State<'_, AppState>, face_ids: Vec<i64>) -> Result<(), String> {
+async fn reject_faces(state: State<'_, AppState>, face_ids: Vec<i64>) -> Result<Delta, String> {
     db::set_link_status(state.paths()?, &face_ids, "rejected").map_err(|e| e.to_string())
 }
 
 /// #122 — rotate the full image ±90° (server state; refresh follows).
 #[tauri::command]
-async fn rotate_image(state: State<'_, AppState>, image_id: i64, delta: i64) -> Result<i64, String> {
+async fn rotate_image(state: State<'_, AppState>, image_id: i64, delta: i64) -> Result<Delta, String> {
     db::rotate_image(state.paths()?, image_id, delta).map_err(|e| e.to_string())
 }
 
 /// #209 — one call per user action for a multi-image rotate (the GUI's
 /// thumbnail-scope rotation), same per-image semantics as `rotate_image`
 #[tauri::command]
-async fn rotate_images(state: State<'_, AppState>, image_ids: Vec<i64>, delta: i64) -> Result<(), String> {
+async fn rotate_images(state: State<'_, AppState>, image_ids: Vec<i64>, delta: i64) -> Result<Delta, String> {
     db::rotate_images(state.paths()?, &image_ids, delta).map_err(|e| e.to_string())
 }
 
 /// #122 — rotate the face crop ±90° (server state; refresh follows).
 #[tauri::command]
-async fn rotate_face(state: State<'_, AppState>, face_id: i64, delta: i64) -> Result<i64, String> {
+async fn rotate_face(state: State<'_, AppState>, face_id: i64, delta: i64) -> Result<Delta, String> {
     db::rotate_face(state.paths()?, face_id, delta).map_err(|e| e.to_string())
 }
 
@@ -141,7 +141,7 @@ async fn set_face_description(
     state: State<'_, AppState>,
     face_id: i64,
     description: String,
-) -> Result<(), String> {
+) -> Result<Delta, String> {
     db::set_face_description(state.paths()?, face_id, &description).map_err(|e| e.to_string())
 }
 
@@ -152,7 +152,7 @@ async fn set_face_descriptions(
     state: State<'_, AppState>,
     face_ids: Vec<i64>,
     description: String,
-) -> Result<(), String> {
+) -> Result<Delta, String> {
     db::set_face_descriptions(state.paths()?, &face_ids, &description).map_err(|e| e.to_string())
 }
 
@@ -161,22 +161,22 @@ async fn set_primary_face(
     state: State<'_, AppState>,
     person_id: i64,
     face_id: i64,
-) -> Result<(), String> {
+) -> Result<Delta, String> {
     db::set_primary_face(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn set_person_name(state: State<'_, AppState>, person_id: i64, name: String) -> Result<(), String> {
+async fn set_person_name(state: State<'_, AppState>, person_id: i64, name: String) -> Result<Delta, String> {
     db::set_person_name(state.paths()?, person_id, &name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn set_person_group(state: State<'_, AppState>, person_id: i64, group: String) -> Result<(), String> {
+async fn set_person_group(state: State<'_, AppState>, person_id: i64, group: String) -> Result<Delta, String> {
     db::set_person_group(state.paths()?, person_id, &group).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn set_person_note(state: State<'_, AppState>, person_id: i64, note: String) -> Result<(), String> {
+async fn set_person_note(state: State<'_, AppState>, person_id: i64, note: String) -> Result<Delta, String> {
     db::set_person_note(state.paths()?, person_id, &note).map_err(|e| e.to_string())
 }
 
@@ -188,7 +188,7 @@ async fn move_persons_to_group(
     state: State<'_, AppState>,
     person_ids: Vec<i64>,
     group: String,
-) -> Result<(), String> {
+) -> Result<Delta, String> {
     db::move_persons_to_group(state.paths()?, &person_ids, &group).map_err(|e| e.to_string())
 }
 
@@ -201,35 +201,35 @@ async fn move_persons_between_groups(
     person_ids: Vec<i64>,
     from_group: String,
     to_group: String,
-) -> Result<(), String> {
+) -> Result<Delta, String> {
     db::move_persons_between_groups(state.paths()?, &person_ids, &from_group, &to_group)
         .map_err(|e| e.to_string())
 }
 
 /// §4.16 (#50) — rename/move a group branch (path-prefix rewrite).
 #[tauri::command]
-async fn rename_group(state: State<'_, AppState>, old_path: String, new_path: String) -> Result<(), String> {
+async fn rename_group(state: State<'_, AppState>, old_path: String, new_path: String) -> Result<Delta, String> {
     db::rename_group(state.paths()?, &old_path, &new_path).map_err(|e| e.to_string())
 }
 
 /// §4.16 (#50) — delete a group branch (members fall to Ungrouped).
 #[tauri::command]
-async fn delete_group(state: State<'_, AppState>, path: String) -> Result<(), String> {
+async fn delete_group(state: State<'_, AppState>, path: String) -> Result<Delta, String> {
     db::delete_group(state.paths()?, &path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn remove_persons(state: State<'_, AppState>, person_ids: Vec<i64>) -> Result<(), String> {
+async fn remove_persons(state: State<'_, AppState>, person_ids: Vec<i64>) -> Result<Delta, String> {
     db::remove_persons(state.paths()?, &person_ids).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn add_refcrop(state: State<'_, AppState>, person_id: i64, face_id: i64) -> Result<(), String> {
+async fn add_refcrop(state: State<'_, AppState>, person_id: i64, face_id: i64) -> Result<Delta, String> {
     db::add_refcrop(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn remove_refcrop(state: State<'_, AppState>, person_id: i64, face_id: i64) -> Result<(), String> {
+async fn remove_refcrop(state: State<'_, AppState>, person_id: i64, face_id: i64) -> Result<Delta, String> {
     db::remove_refcrop(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
 }
 

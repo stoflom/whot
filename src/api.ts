@@ -82,6 +82,23 @@ export interface Snapshot {
   imports: ImportRow[];
   settings: Settings;
 }
+/** #219 — the delta a mutation returns instead of a full snapshot: only
+    the tables/rows the mutation touched, plus the new change stamp. */
+export interface Delta {
+  /** the new change stamp (matches `Snapshot.version`) */
+  version: number;
+  /** an external write interleaved (importer) — full-refresh instead of
+      applying the delta */
+  drifted: boolean;
+  /** touched person rows (counts + groups included); null = none */
+  persons?: Person[] | null;
+  /** touched face rows; null = none */
+  faces?: Face[] | null;
+  /** touched image rows; null = none */
+  images?: ImageRow[] | null;
+  /** removed person ids (faces are never deleted — they are re-homed) */
+  removed: number[];
+}
 export interface Refcrop {
   face_id: number;
   seq: number;
@@ -105,39 +122,39 @@ export const getSnapshot = () => invoke<Snapshot>("get_snapshot");
 /** #208 — the cheap change stamp for the focus/visibility reload skip */
 export const getDataVersion = () => invoke<number>("get_data_version");
 export const assignPerson = (faceIds: number[], name: string, group: string) =>
-  invoke("assign_person", { faceIds, name, group });
+  invoke<Delta>("assign_person", { faceIds, name, group });
 export const acceptFaces = (faceIds: number[]) =>
-  invoke("accept_faces", { faceIds });
+  invoke<Delta>("accept_faces", { faceIds });
 export const rejectFaces = (faceIds: number[]) =>
-  invoke("reject_faces", { faceIds });
+  invoke<Delta>("reject_faces", { faceIds });
 /** #122: rotate the full image ±90° (server state) */
 export const rotateImage = (imageId: number, delta: number) =>
-  invoke("rotate_image", { imageId, delta });
+  invoke<Delta>("rotate_image", { imageId, delta });
 /** #209: batch twin of rotateImage — one call per user action */
 export const rotateImages = (imageIds: number[], delta: number) =>
-  invoke("rotate_images", { imageIds, delta });
+  invoke<Delta>("rotate_images", { imageIds, delta });
 /** #122: rotate the face crop ±90° (server state) */
 export const rotateFace = (faceId: number, delta: number) =>
-  invoke("rotate_face", { faceId, delta });
+  invoke<Delta>("rotate_face", { faceId, delta });
 export const setFaceDescription = (faceId: number, description: string) =>
-  invoke("set_face_description", { faceId, description });
+  invoke<Delta>("set_face_description", { faceId, description });
 /** #209: batch twin of setFaceDescription — one call per staged batch;
     the sequential per-face seq re-assignment (§4.4) happens inside its
     transaction, in call order */
 export const setFaceDescriptions = (faceIds: number[], description: string) =>
-  invoke("set_face_descriptions", { faceIds, description });
+  invoke<Delta>("set_face_descriptions", { faceIds, description });
 export const setPrimaryFace = (personId: number, faceId: number) =>
-  invoke("set_primary_face", { personId, faceId });
+  invoke<Delta>("set_primary_face", { personId, faceId });
 export const setPersonName = (personId: number, name: string) =>
-  invoke("set_person_name", { personId, name });
+  invoke<Delta>("set_person_name", { personId, name });
 export const setPersonGroup = (personId: number, group: string) =>
-  invoke("set_person_group", { personId, group });
+  invoke<Delta>("set_person_group", { personId, group });
 export const setPersonNote = (personId: number, note: string) =>
-  invoke("set_person_note", { personId, note });
+  invoke<Delta>("set_person_note", { personId, note });
 /** §4.16 (#50) — group membership: replace each person's group path
     (empty ⇒ Ungrouped); faces/statuses untouched */
 export const movePersonsToGroup = (personIds: number[], group: string) =>
-  invoke("move_persons_to_group", { personIds, group });
+  invoke<Delta>("move_persons_to_group", { personIds, group });
 /** §4.16 (#157, v3.59) — tree D&D: re-home ONE membership per person
     (remove the dragged-from row when they have it, file into the target
     branch, INSERT OR IGNORE dedupes); other memberships are kept */
@@ -145,20 +162,20 @@ export const movePersonsBetweenGroups = (
   personIds: number[],
   fromGroup: string,
   toGroup: string
-) => invoke("move_persons_between_groups", { personIds, fromGroup, toGroup });
+) => invoke<Delta>("move_persons_between_groups", { personIds, fromGroup, toGroup });
 /** §4.16 (#50) — rename/move a branch: rewrite the path prefix of every
     person inside it (sub-branches follow); empty new ⇒ subtree to Ungrouped */
 export const renameGroup = (oldPath: string, newPath: string) =>
-  invoke("rename_group", { oldPath, newPath });
+  invoke<Delta>("rename_group", { oldPath, newPath });
 /** §4.16 (#50) — delete a branch: members (incl. sub-branches) fall to their status seats (#165, §4.35) */
-export const deleteGroup = (path: string) => invoke("delete_group", { path });
+export const deleteGroup = (path: string) => invoke<Delta>("delete_group", { path });
 /** §4.13 (#35/#165) — reject + re-home faces onto `Rejected`, delete the person(s); no undo */
 export const removePersons = (personIds: number[]) =>
-  invoke("remove_persons", { personIds });
+  invoke<Delta>("remove_persons", { personIds });
 export const addRefcrop = (personId: number, faceId: number) =>
-  invoke("add_refcrop", { personId, faceId });
+  invoke<Delta>("add_refcrop", { personId, faceId });
 export const removeRefcrop = (personId: number, faceId: number) =>
-  invoke("remove_refcrop", { personId, faceId });
+  invoke<Delta>("remove_refcrop", { personId, faceId });
 export const getRefcrops = (personId: number) =>
   invoke<Refcrop[]>("get_refcrops", { personId });
 /** write the preview to a temp file and open it in the system viewer (#33) */

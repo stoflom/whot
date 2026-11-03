@@ -351,7 +351,12 @@ rules are `docs/gui-design.md` §4, architecture is
   the pane's read-only header
 
 **Mutations** (each ends with refcrops recompute + primary backfill for all
-affected persons; all return an error string on constraint violation)
+affected persons; all return an error string on constraint violation).
+#219: each returns a `Delta` `{ version, drifted, persons?, faces?,
+images?, removed[] }` — the touched rows + the new change stamp — which
+the GUI applies locally instead of re-fetching `get_snapshot()` (a
+`drifted` delta means an external write interleaved and the GUI
+full-refreshes instead).
 
 - `assign_person(face_ids, name, group_path)` — §4.1 (empty group ⇒ the
   person's status seat, §4.35; a rename keeps the person's current group

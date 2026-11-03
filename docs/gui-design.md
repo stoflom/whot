@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.96** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 3.97** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -530,9 +530,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    moved out and back in). On a move, a face gets the next free
    seq of its new person; renames only re-derive names, description edits
    re-derive names *and* re-assign seq within the new group (§4.4).
-8. **Sync** ⇒ every mutation runs in one SQLite transaction; the frontend
-   then re-fetches `get_snapshot()` and re-renders tree, grid, detail pane,
-   rule bar and rolls. Image BLOBs are fetched lazily per card and cached by
+8. **Sync** ⇒ every mutation runs in one SQLite transaction; the command
+   returns a `Delta` (#219) — the touched rows plus the new change stamp —
+   and the frontend applies the diff locally (tree, grid, detail pane,
+   rule bar and rolls re-render), with no full snapshot re-fetch. A
+   drifted delta (an external write interleaved — the importer) falls
+   back to a full `get_snapshot()`. A full snapshot is still used for
+   cold load, the focus/visibility reload (`get_data_version` gate), and
+   import completion. Image BLOBs are fetched lazily per card and cached by
    `face_id`/`image_id` (content never changes, cache never invalidated).
    External changes (a roll imported while the GUI is open) become visible
    via a **manual refresh button** in the top bar and an automatic re-fetch
