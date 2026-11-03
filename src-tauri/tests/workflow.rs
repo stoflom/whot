@@ -1359,3 +1359,148 @@ fn image_batch_framing_and_kinds_212() {
     assert!(parse_image_batch(&db::image_batch_bytes(&p, "face", &[]).unwrap()).is_empty());
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+/// #227 — a batch never exceeds its byte cap except a single oversized
+/// image (always served alone); deferred ids are a strict id-prefix and
+/// re-serve whole when requested alone — the api.ts re-request loop's
+/// contract.
+#[test]
+fn image_batch_byte_cap_truncates_and_defers_227() {
+    let p = fixture_paths("capbatch");
+    // 3 preview blobs of 2048 bytes each: with cap 4096 exactly two fit
+    let blob = |k: u8| vec![k; 2048];
+    {
+        let con = Connection::open(&p.db).unwrap();
+        for (id, k) in [(1, 0x11u8), (2, 0x22), (3, 0x33)] {
+            con.execute("UPDATE images SET preview = ? WHERE id = ?", params![blob(k), id]).unwrap();
+        }
+    }
+    // a multi-id batch truncates at the cap: strict id-prefix [1, 2]
+    let rows = parse_image_batch(&db::image_batch_bytes_capped(&p, "preview", &[3, 2, 1, 999], 4096).unwrap());
+    assert_eq!(
+        rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![1, 2],
+        "deferred at the cap; unsorted input deduped/ordered"
+    );
+    assert_eq!(rows[0].1, blob(0x11), "the prefix carries the right bytes");
+    // the deferred id re-requested later: served whole (single-id ⇒
+    // never truncatable)
+    let rows = parse_image_batch(&db::image_batch_bytes_capped(&p, "preview", &[3], 4096).unwrap());
+    assert_eq!(
+        rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![3]
+    );
+    // a single-id request is NEVER truncatable — one oversized image
+    // (> the whole cap) is served in full
+    let rows = parse_image_batch(&db::image_batch_bytes_capped(&p, "preview", &[1], 100).unwrap());
+    assert_eq!(rows, vec![(1, blob(0x11))]);
+    // a lone genuinely-missing id stays a miss (the frontend caches null)
+    assert!(parse_image_batch(&db::image_batch_bytes_capped(&p, "preview", &[999], 8192).unwrap()).is_empty());
+    // untruncated path unchanged: cap 32 MiB default via image_batch_bytes
+    let rows = parse_image_batch(&db::image_batch_bytes(&p, "preview", &[1, 2, 3]).unwrap());
+    assert_eq!(
+        rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![1, 2, 3],
+        "small blobs are never truncated by the default cap"
+    );
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #218 — the async command surface: concurrent readers and writers
+/// contend on the same pooled connection from DIFFERENT threads and
+/// stay serialised (no deadlock, no torn reads) — exactly the
+/// multi-thread situation the async commands introduce.
+#[test]
+fn concurrent_readers_and_writers_serialised_218() {
+    let p = fixture_paths("concur");
+    let paths_for = |p: &Paths| Paths { root: p.root.clone(), db: p.db.clone(), config: p.config.clone() };
+    let reader = std::thread::spawn({
+        let paths = paths_for(&p);
+        move || {
+            for _ in 0..30 {
+                let s = db::snapshot(&paths).unwrap();
+                assert!(s.faces.len() >= 6, "torn read: faces vanished");
+            }
+        }
+    });
+    // writer thread: a note write loop with real transactions
+    let writer = std::thread::spawn({
+        let paths = paths_for(&p);
+        move || {
+            for i in 0..30 {
+                db::set_person_note(&paths, 1, &format!("note {i}")).unwrap();
+            }
+        }
+    });
+    reader.join().unwrap();
+    writer.join().unwrap();
+    // the last write must be visible and the snapshot stays consistent
+    let s = db::snapshot(&p).unwrap();
+    assert_eq!(s.persons.iter().find(|x| x.id == 1).unwrap().note.as_deref(), Some("note 29"));
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #218 — every `#[tauri::command]` fn is `async fn` (off the UI main
+/// thread) except the listed cheap ones (runner-mutex / config-file
+/// only). A new command must be CONSCIOUSLY filed into one of the two
+/// lists — this is the guard for the #218 decision.
+#[test]
+fn commands_run_off_the_main_thread_218() {
+    // runner-mutex / config-file only: no DB, no blobs, no fs walks
+    const ALLOW_SYNC: [&str; 6] = [
+        "get_data_version", // one PRAGMA on the persistent probe connection
+        "get_settings",     // config file read
+        "set_settings",     // config file write
+        "start_import",     // runner mutex + one spawn + one fs is_file check
+        "stop_import",      // runner mutex + one child wait
+        "get_import_status", // runner mutex + bounded line slice
+    ];
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"));
+    // Collect (name, is_async) for each #[tauri::command] fn
+    let mut commands: Vec<(&str, bool)> = Vec::new();
+    let bytes = src.as_bytes();
+    let mut pos = 0;
+    while let Some(at) = src[pos..].find("#[tauri::command]") {
+        let start = pos + at + "#[tauri::command]".len();
+        // the first non-comment, non-empty line after the attribute is
+        // the fn head: "fn NAME(" or "async fn NAME("
+        let mut line_start = start;
+        loop {
+            let line_end = bytes[line_start..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|i| line_start + i)
+                .unwrap_or(src.len());
+            let line = src[line_start..line_end].trim();
+            if !line.is_empty() && !line.starts_with("//") {
+                let t = line.split_whitespace().collect::<Vec<_>>();
+                // e.g. ["async", "fn", "NAME("...] | ["fn", "NAME("...]
+                let is_async = t[0] == "async";
+                let fn_at = if is_async { 1 } else { 0 };
+                assert!(t[fn_at] == "fn", "unexpected line after #[tauri::command]: {line}");
+                let name = t[fn_at + 1].split('(').next().unwrap();
+                commands.push((name, is_async));
+                break;
+            }
+            line_start = line_end + 1;
+            if line_start >= src.len() {
+                panic!("#[tauri::command] with no fn head");
+            }
+        }
+        pos = pos + at + 1;
+    }
+    assert!(commands.len() >= 30, "command surface sanity: {}", commands.len());
+    for (name, is_async) in &commands {
+        if ALLOW_SYNC.contains(name) {
+            assert!(!is_async, "{name} must stay in the sync allowlist shape");
+        } else {
+            assert!(is_async, "{name} is DB-backed and must be `async fn` (#218)");
+        }
+    }
+    for name in ALLOW_SYNC {
+        assert!(
+            commands.iter().any(|(n, _)| *n == name),
+            "allowlist entry {name} is no longer a command — drop it from the list"
+        );
+    }
+}

@@ -2310,6 +2310,12 @@ def c31_rolls_import_pane(t):
            f"non-dir hint={after.get('hint')!r} paneGone={after.get('paneGone')}")
 
 
+# C32 is always to be tested STAND-ALONE (see the README note): in the
+# full-suite run it fails deterministically under the Firefox driver
+# with ElementClickInterceptedException at the overlay-rect click
+# (timing-sensitive hit-test on a `selected` sibling); stand-alone it
+# passes reliably — a full-suite abort at C32 is a known harness flake,
+# not an app regression.
 def c32_full_image_follows_person(t):
     """#171 (§4.37): the right pane follows the full image —
     card double-click opens focus mode AND shows that card's person in
