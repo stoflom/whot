@@ -1,6 +1,6 @@
 # WhoT Database Schema Design
 
-**Version: 2.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 2.3** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -18,7 +18,7 @@ specified in `docs/scripts-design.md` §8.2 (not repeated here).
 
 | Database | DDL | Version row | Lifetime |
 | --- | --- | --- | --- |
-| `faces.db` | `database/schema.sql` | `'1.7'` | long-lived; **dropped & recreated** on structural schema change; semantic changes ship as a one-off data fix (§5) |
+| `faces.db` | `database/schema.sql` | `'1.9'` | long-lived; **dropped & recreated** on structural schema change; semantic changes ship as a one-off data fix (§5) |
 | harvest staging | `database/harvest_schema.sql` | `'1.2'` | created fresh by every `harvest_legacy.py` run; consumed once by `import_harvested.py` |
 
 The harvester never touches `faces.db` (scripts-design §8 H2); the
@@ -37,6 +37,8 @@ One line each; the DDL carries the columns.
   (paths are regarded as mutable; content is identity).
 - `faces` — rectangle + lifecycle columns; `name`/`seq` are **derived**
   (§4); per-image rectangle is the face identity (§3).
+  `description_key` mirrors `description` normalised (`''` for NULL) so
+  the seq-group key is indexable (v1.9, #220).
 - `face_embeddings` — one vector per `(face_id, model)`; storage in §6.
 - `persons` — name is unique and **reserved** at the edges: `UnknownN`
   for importer clusters and the exact name `Rejected` for the system
@@ -82,6 +84,16 @@ mutating path re-derives them (gui-design §4.4/§4.5/§4.6/§4.7):
 
 - `faces.name` = `person.name[-description]-seq`; `faces.seq` is
   per `(person, description)`.
+- `faces.description_key` = `COALESCE(description, '')` — the writer-
+  maintained normalisation of `description`, stored so the seq-group key
+  `(person_id, description_key, seq)` is a **composite index** rather than
+  a `COALESCE` filter that defeats one (v1.9, #220). Every writer that
+  writes `faces.description` writes `description_key` in the same
+  statement: `db.rs` `set_face_description`, `import_roll.py` (insert +
+  `assign_seq`), `annotation_snapshot.py` restore, `import_harvested.py`
+  relabel. `description` stays the human column; `description_key` is a
+  derived index aid (gui-design §4.12 semantics unchanged — gaps stay
+  legal, MAX-based numbering).
 - `persons.primary_face_id` — user picks pin it (`primary_pinned=1`);
   otherwise the machine rule (highest-confidence, non-discarded,
   non-rejected face) backfills an empty slot.
@@ -106,7 +118,7 @@ mid-flight — both writers seat instead, and the fix script asserts.
   anything else at recreate instructions
   (`sqlite3 data/faces.db < database/schema.sql`), never on the first
   query.
-- The expected value `'1.7'` is a constant in **five** places that must be
+- The expected value `'1.9'` is a constant in **five** places that must be
   kept equal: `schema.sql` (the `INSERT`), `src-tauri/src/db.rs`
   (`SCHEMA_VERSION`), `scripts/import_roll.py` (`SCHEMA_VERSION`),
   `scripts/import_harvested.py` (`FACES_SCHEMA_VERSION`);
@@ -118,6 +130,15 @@ mid-flight — both writers seat instead, and the fix script asserts.
   backed-up, verified **in-place data fix**, not a migration framework — the app itself never migrates
   (AGENTS.md). The gate forces it: a v1.6 database is refused by a v1.7
   build until fixed. Fresh databases come from the DDL as always.
+- **v1.8 → v1.9** moved no data: one column added
+  (`faces.description_key`, backfilled from `description`) and one index
+  swapped (`idx_faces_person` → `idx_faces_person_desc_seq`). The
+  documented in-place step (exact statements in the `schema.sql` header;
+  backup first) keeps the stored DDL byte-identical with a fresh v1.9
+  build — the `description_key` column therefore sits at the **end** of
+  the `faces` column list, where SQLite's `ALTER TABLE … ADD COLUMN`
+  puts it. The export → recreate → restore path still works and is the
+  option when a full rebuild is wanted anyway.
 - Drop & recreate loses manual annotations by design — that is what
   `scripts/annotation_snapshot.py` (export before, restore after) is
   for; its matching keys are exactly the identities in §3.

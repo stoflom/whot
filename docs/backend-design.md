@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.10** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.11** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -80,7 +80,7 @@ is the 4-state `face_filter`, gui-design §4.10).
 
 - `connect()` opens SQLite with `foreign_keys = ON` and immediately runs
   `check_schema`: exact match against `SCHEMA_VERSION` (currently
-  `'1.7'`, equal to `database/schema.sql`'s marker row) — a mismatch is
+  `'1.9'`, equal to `database/schema.sql`'s marker row) — a mismatch is
   refused: a stale `'1.6'` marker is pointed at
   `scripts/fix_status_groups.py` (gui-design §4.35), anything else
   at recreate instructions; never worked around (no
@@ -101,7 +101,12 @@ Every mutating command follows the same shape (gui-design §4.8):
 
 1. **validate** (name rules, group-path rules, membership preconditions)
    — fail with a message string before touching anything;
-2. **mutate** the core rows in one transaction;
+2. **mutate** the core rows in one transaction — batch-shaped, not
+   per-row: seq assignment runs as one `UPDATE … FROM` statement per
+   `(person, description_key)` group (base `MAX(seq)` + `ROW_NUMBER()`
+   in id order, gap-proof F5 semantics preserved), and person
+   existence checks are one up-front `IN (…)` fetch, not a per-id
+   `COUNT(*)` in a loop (schema v1.9, #220);
 3. **maintain derived state** for every affected person, still inside
    the transaction: `refresh_person_names` (§4.7 name derivation, one
    UPDATE, #210),

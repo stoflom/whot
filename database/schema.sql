@@ -1,6 +1,10 @@
--- who app — faces.db schema (v1.8; behaviour rules: docs/gui-design.md §4,
+-- who app — faces.db schema (v1.9; behaviour rules: docs/gui-design.md §4,
 -- incl. §4.35: status seats New/Accepted/Rejected and the ≥1-group-row
--- invariant). No migrations: drop and recreate. The schema_version table
+-- invariant). No migrations: drop and recreate. v1.9 (#220) adds
+-- faces.description_key (= COALESCE(description,''), writer-maintained)
+-- and swaps idx_faces_person for the composite
+-- idx_faces_person_desc_seq(person_id, description_key, seq) so the
+-- seq-group key is index-backed; no data moves. The schema_version table
 -- lets the app, the importer and the annotation tools verify they are
 -- talking to the matching schema (SCHEMA_VERSION in src-tauri/src/db.rs,
 -- scripts/import_roll.py, scripts/import_harvested.py and
@@ -13,6 +17,17 @@
 --   ALTER TABLE person_refcrops DROP COLUMN filename;
 --   ALTER TABLE person_refcrops DROP COLUMN crop;
 --   UPDATE schema_version SET version = '1.8';
+-- v1.8 reaches v1.9 IN PLACE too (no data moves; backup first) — the
+-- ADD COLUMN lands description_key at the END of the column list (the
+-- fresh DDL below matches that shape, keeping the stored DDL
+-- byte-identical to a fresh build):
+--   VACUUM INTO 'faces.db.pre-v1.9-<ts>.db';
+--   ALTER TABLE faces ADD COLUMN description_key TEXT NOT NULL DEFAULT '';
+--   UPDATE faces SET description_key = COALESCE(description, '');
+--   DROP INDEX idx_faces_person;
+--   CREATE INDEX idx_faces_person_desc_seq
+--     ON faces(person_id, description_key, seq);
+--   UPDATE schema_version SET version = '1.9';
 -- The historical in-place v1.6 fix (scripts/fix_status_groups.py) lands
 -- at v1.7 and stops there; from there take either step above.
 --   sqlite3 data/faces.db < database/schema.sql
@@ -70,6 +85,15 @@ CREATE INDEX idx_image_paths_path ON image_paths(path);
 -- the `Unknown*` prefix rule in validate_person_name); that person is
 -- created on demand, never renamed/removed, and is only listed under
 -- Show → Rejected.
+-- v1.9 (#220): `description_key` is the writer-maintained
+-- COALESCE(description,'') normalisation — the composite index key
+-- below needs a plain column; the old COALESCE filter defeated
+-- idx_faces_person for the seq-group MAX(seq). It sits at the END of
+-- the column list on purpose: SQLite's ALTER TABLE … ADD COLUMN (the
+-- in-place v1.8 → v1.9 step in the header) puts it there, and a fresh
+-- build must stay byte-identical to a migrated one (#165's standard;
+-- v1.8 did the same for the `seq` line). Every writer that writes
+-- `description` writes `description_key` in the same statement.
 
 CREATE TABLE faces (
   id                    INTEGER PRIMARY KEY,
@@ -95,10 +119,14 @@ CREATE TABLE faces (
                         CHECK (inversion IN ('none','lr','tb','both')),
   preview               BLOB,
   detected_in_import_id INTEGER REFERENCES imports(id),
-  created_at            TEXT NOT NULL,
+  created_at            TEXT NOT NULL, description_key TEXT NOT NULL DEFAULT '',
   UNIQUE (image_id, x, y, w, h)              -- face identity: image + rectangle
 );
-CREATE INDEX idx_faces_person  ON faces(person_id);
+-- v1.9 (#220): composite seq-group key — the (person_id) prefix still
+-- serves the person-scoped lookups idx_faces_person did, and
+-- (person_id, description_key) = const makes MAX(seq) an index seek;
+-- one index instead of two on the same column.
+CREATE INDEX idx_faces_person_desc_seq ON faces(person_id, description_key, seq);
 CREATE INDEX idx_faces_image   ON faces(image_id);
 CREATE INDEX idx_faces_import  ON faces(detected_in_import_id);
 
@@ -160,4 +188,4 @@ CREATE TABLE schema_version (
   version    TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-INSERT INTO schema_version(version, updated_at) VALUES ('1.8', datetime('now'));
+INSERT INTO schema_version(version, updated_at) VALUES ('1.9', datetime('now'));
