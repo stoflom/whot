@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { buildSections, sectionsForImage } from "./sections";
 import type { SectionInputs } from "./sections";
 import type { AppearanceGroup, Face, ImageRow, Person, Snapshot } from "./api";
-import type { Stage } from "./stage";
+import { indexStagedSet } from "./stage";
 
 let nextId = 100;
 
@@ -109,7 +109,7 @@ function build(over: Partial<SectionInputs> = {}) {
     clusters: null,
     faceFilter: "all",
     clusterGroup: "accuracy",
-    pending: [] as Stage[],
+    stagedIdx: new Map(),
     snap: snap(personsFixture, facesFixture),
     facesById: new Map(facesFixture.map((f) => [f.id, f])),
     // the §4.24 branch only matters inside this suite when imageId is set;
@@ -378,7 +378,7 @@ describe("person view — description mode (§4.9, #155)", () => {
       personId: 1,
       selectedPerson: personsByIdFixture.get(1)!,
       clusterGroup: "description",
-      pending: [{ faceIds: [12], desc: "hat" }],
+      stagedIdx: indexStagedSet([{ faceIds: [12], desc: "hat" }]),
     });
     expect(out.map((x) => [x.title, x.faceIds])).toEqual([
       ["hat", [11, 12]],

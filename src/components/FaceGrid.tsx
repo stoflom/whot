@@ -7,7 +7,7 @@ import {
 } from "react";
 import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
-import { stagedFieldsForSection, type Stage } from "../stage";
+import { stagedFieldsForSectionIndex, type StagedEntry } from "../stage";
 
 export interface Section {
   key: string;
@@ -27,8 +27,9 @@ export interface Section {
 interface GridShared {
   faces: Map<number, Face>;
   persons: Map<number, Person>;
-  /** #101/#123: the live pending set — its fields preview on the covered labels */
-  stage: Stage[];
+  /** #101/#123 + #224: the live pending set indexed per face — the
+      staged fields previewing on cards/labels are map reads, not scans */
+  stageIdx: Map<number, StagedEntry>;
   primaryFaceId: number | null;
   onOpen: (id: number) => void;
   /** right-click menu on face tiles (#32) */
@@ -75,12 +76,14 @@ interface GridProps extends GridShared {
   onNeedMore?: () => void;
 }
 
-/** #109: a stable identity for "which staged fields preview on this
-    section" — "" while no live pending set overlaps it, so only the
-    sections a set newly covers (or stops covering) change when it does */
-function stagedKeyFor(stage: Stage[], ids: number[]): string {
-  if (stage.length === 0) return "";
-  const f = stagedFieldsForSection(stage, ids);
+/** #109 + #224: a stable identity for "which staged fields preview on
+    this section" — "" while no live pending set overlaps it, so only the
+    sections a set newly covers (or stops covering) change when it does.
+    The merge runs over the per-face index (one pass over the section's
+    ids) instead of scanning every op's face list per section. */
+function stagedKeyFor(idx: Map<number, StagedEntry>, ids: number[]): string {
+  if (idx.size === 0) return "";
+  const f = stagedFieldsForSectionIndex(idx, ids);
   return Object.keys(f).length ? JSON.stringify(f) : "";
 }
 
@@ -92,7 +95,7 @@ const SectionView = memo(
     stagedKey,
     faces,
     persons,
-    stage,
+    stageIdx,
     primaryFaceId,
     onOpen,
     onContextMenu,
@@ -146,8 +149,8 @@ const SectionView = memo(
     const staged = useMemo(
       () =>
         stagedKey
-          ? (JSON.parse(stagedKey) as ReturnType<typeof stagedFieldsForSection>)
-          : ({} as ReturnType<typeof stagedFieldsForSection>),
+          ? (JSON.parse(stagedKey) as ReturnType<typeof stagedFieldsForSectionIndex>)
+          : ({} as ReturnType<typeof stagedFieldsForSectionIndex>),
       [stagedKey]
     );
     const nameVal = staged.name ?? section.ruleDefaultName ?? "";
@@ -226,11 +229,17 @@ const SectionView = memo(
             const face = faces.get(id);
             if (!face) return null;
             const selected = sel.has(id);
+            // #224: this card's staged fields — one map read; passed as
+            // stable primitives so memo(FaceCard) holds for the cards an
+            // Apply does not touch
+            const staged = stageIdx.get(id);
             return (
               <FaceCard
                 key={id}
                 face={face}
-                stage={stage}
+                stagedName={staged?.name}
+                stagedGroup={staged?.group}
+                stagedDesc={staged?.desc}
                 selected={selected}
                 isPrimary={primaryFaceId === id}
                 onOpen={onOpen}
@@ -270,9 +279,11 @@ const SectionView = memo(
   },
   // #109: identity-compare every prop — a card toggle re-renders only the
   // section whose selSig changed (plus the sections holding a selection
-  // when the count moves). `stage` deliberately NOT compared: a stage's
-  // effect on a section is fully captured by its stagedKey, so sections a
-  // stage does not cover keep their (equivalent) previous stage prop
+  // when the count moves). `stageIdx` deliberately NOT compared: a
+  // stage's effect on a section is fully captured by its stagedKey (and
+  // the per-card primitives flow through the sections that re-render),
+  // so sections a stage does not cover keep their (equivalent) previous
+  // index prop
   (a, b) =>
     a.section === b.section &&
     a.selSig === b.selSig &&
@@ -353,7 +364,7 @@ function FaceGrid({
             section={s}
             selSig={selSig}
             selSize={selSig ? sel.size : undefined}
-            stagedKey={stagedKeyFor(shared.stage, s.faceIds)}
+            stagedKey={stagedKeyFor(shared.stageIdx, s.faceIds)}
             descTargetId={descTargetId}
             {...shared}
           />

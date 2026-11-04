@@ -36,9 +36,9 @@ import { groupPathOptions } from "./components/PathTypeahead";
 import {
   buildStage,
   dropStagesForFaces,
+  indexStagedSet,
   objectInsideSelection,
   stageSummarySet,
-  stagedFieldsForCard,
   upsertStage,
   prefillForFaces,
   type Prefill,
@@ -62,11 +62,18 @@ import { faceMenuGroups, imageAreaMenuGroups, thumbMenuGroups } from "./menus";
 // §4.44 (gui-design v3.94): the centre-pane section derivations are the
 // pure, co-tested buildSections/sectionsForImageOf; App owns only the
 // identities (see the #98 rules there)
-import { buildSections, sectionsForImage as sectionsForImageOf } from "./sections";
+import {
+  buildSections,
+  sectionsForImage as sectionsForImageOf,
+  sectionsPersonKey,
+} from "./sections";
 // §4.44 stage 2 (#206): the pane layout rules + the #191 click-pair
 // guard — pure/co-tested, App owns only the wiring
 import { usePaneSizes } from "./paneState";
 import { useClickPairGuard } from "./clickPair";
+// §4.44 + #222 (F-H3): the review-verdict callbacks — the #98 identity
+// rule lives in the hook (person anchor read via refs), co-tested
+import { useReviewVerdicts } from "./reviewVerdicts";
 
 type Mode = "review" | "rolls" | "person";
 
@@ -211,6 +218,14 @@ export default function App() {
   const [pending, setPending] = useState<Stage[]>([]);
   const pendingRef = useRef<Stage[]>([]);
   pendingRef.current = pending;
+  // #224 (F-M3): the pending set indexed once per set change — every
+  // staged lookup (card labels, section keys, drag sources) becomes a
+  // map read instead of a scan of the ops per face. The array stays the
+  // engine of the stage/commit model (upsert/drop/commit); the index is
+  // its preview.
+  const stagedIdx = useMemo(() => indexStagedSet(pending), [pending]);
+  const stagedIdxRef = useRef(stagedIdx);
+  stagedIdxRef.current = stagedIdx;
   /** #123: a CONTEXT change (person / view / focus) with a live set asks
       drop-or-accept — the stored action runs after the choice. The action is
       wrapped in an object: a bare function passed to a useState setter is
@@ -630,99 +645,27 @@ export default function App() {
   // whatever person the selection holds then
   const exhaustAtRef = useRef(-1);
   const exhaustPidRef = useRef<number | null>(null);
-  const markExhaust = useCallback(() => {
-    // #188/§4.40: the lock IS the mode — only verdicts made in Review
-    // mark (the #175 any-view widening died with the session lock)
-    if (mode === "review" && personId != null) {
-      exhaustAtRef.current = stepIdx;
-      exhaustPidRef.current = personId;
-    }
-  }, [mode, personId, stepIdx]);
-  // #189/§4.41 — focus follows the verdict: anchor the ACTED-ON person
-  // (cursor-as-target §4.25: last selected, else hovered, else the first
-  // acted face that has an owner). focusTarget computes the anchor to
-  // apply; focusActed applies it. Called only after the mutation
-  // succeeds — and after markExhaust captured its pre-mutation mark —
-  // so #148's mark comparison and the §4.30 hand-over are untouched;
-  // reject reads the PRE-reject owner on purpose (the person the user
-  // acted on, never the system person)
-  const focusTarget = useCallback(
-    (ids: number[]): number | null => {
-      const first = [lastSelRef.current, hoverRef.current].find(
-        (v) => v != null && ids.includes(v)
-      );
-      const cands = first != null ? [first, ...ids] : ids;
-      for (const id of cands) {
-        const pid = facesById.get(id)?.person_id;
-        if (pid != null) return pid;
-      }
-      return null;
-    },
-    [facesById]
-  );
-  const focusActed = useCallback(
-    (ids: number[]) => {
-      const pid = focusTarget(ids);
-      if (pid != null) setPersonId(pid);
-    },
-    [focusTarget]
-  );
-  // #189/§4.41 + #125/§4.30 interplay: after a verdict, focusActed's
-  // setPersonId commits AFTER the exhaust-advance effect (which fires
-  // on the refreshed snap). When the focus target IS the acted-upon
-  // anchor (the common Review case — the sections are that person's
-  // faces) and the verdict drains it, the advance moves the anchor to
-  // the next person and focusActed's update would clobber that
-  // hand-over (observed on WebKit, where React flushes the focus
-  // update as its own commit; Firefox batches it into the refresh
-  // commit and the effect wins). So the markExhaust call sites skip
-  // focusActed when its target equals the anchor as of the ACTION
-  // (the closure value — pre-advance). Targets differing from the
-  // anchor (a verdict on ANOTHER person's faces — C41 phase B) always
-  // apply: the advance is inert then (#148 — the mark belongs to the
-  // old anchor).
-  const focusActedUnlessNoop = useCallback(
-    (ids: number[], anchorAtAction: number | null) => {
-      if (focusTarget(ids) !== anchorAtAction) focusActed(ids);
-    },
-    [focusTarget, focusActed]
-  );
-  const doAccept = useCallback(
-    (ids: number[]) => {
-      // #165/§4.35: plain accept never un-rejects — a rejected-only scope
-      // is inert with guidance (an assignment is the claim path; the
-      // Edit dialog claims by staging a NAME, see commitPending)
-      if (
-        ids.length > 0 &&
-        ids.every((id) => facesById.get(id)?.link_status === "rejected")
-      ) {
-        setInfo("assign a person to bring it back");
-        return;
-      }
-      markExhaust();
-      return mutate(() => api.acceptFaces(ids), true).then((ok) => {
-        if (ok) focusActedUnlessNoop(ids, personId); // #189/§4.41
-        return ok;
-      });
-    },
-    [mutate, markExhaust, facesById, personId, focusActedUnlessNoop]
-  );
-  const doReject = useCallback(
-    (ids: number[]) => {
-      markExhaust();
-      // #141 (F2): ops touching the newly-rejected faces are moot (the
-      // commit skips rejected faces anyway) — drop them from the staged
-      // set, however the rejection was committed (bar ✗, keyboard, card
-      // ✗, Edit dialog — the dialog previously handled this itself and
-      // the other paths never did)
-      setPending((p) => dropStagesForFaces(p, ids));
-      return mutate(() => api.rejectFaces(ids), true).then((ok) => {
-        if (ok) focusActedUnlessNoop(ids, personId); // #189/§4.41
-        return ok;
-      });
-    },
-    [mutate, markExhaust, personId, focusActedUnlessNoop]
-  );
+  // §4.44 + #222 (F-H3): the verdict callbacks live in reviewVerdicts.ts
+  // (hook module, co-tested) — the #98 identity rule is preserved there:
+  // the person anchor is read via refs, so markExhaust → doAccept/
+  // doReject → faceMenu → gridHandlers stay identity-stable across a
+  // person advance / tree select and memo(FaceCard) skips untouched
+  // cards on every verdict
+  const { markExhaust, focusActed, focusActedUnlessNoop, doAccept, doReject } =
+    useReviewVerdicts({
+      mode,
+      personId,
+      stepIdx,
+      facesById,
+      mutate,
+      setInfo,
+      setPending,
+      setPersonId,
+      lastSelRef,
+      hoverRef,
+      exhaustAtRef,
+      exhaustPidRef,
+    });
   // #58 (§4.14): per-card inputs honour the same scope — editing the
   // description of a card inside a multi-selection updates the whole
   // selection; applied sequentially because each call re-assigns seq
@@ -1358,8 +1301,9 @@ export default function App() {
     onFaceDragOver: (id: number, e: ReactDragEvent) => {
       if (!faceDragRef.current) return;
       // #136: the copy source is what the card SHOWS — a live staged
-      // value when one is staged on it, else the committed one
-      const staged = stagedFieldsForCard(pendingRef.current, id);
+      // value when one is staged on it, else the committed one (#224:
+      // an O(1) index read)
+      const staged = stagedIdxRef.current.get(id);
       const desc = (staged?.desc ?? facesById.get(id)?.description ?? "").trim();
       if (!desc) return; // nothing to copy — not a target (Q3)
       e.preventDefault();
@@ -1384,7 +1328,7 @@ export default function App() {
       setFaceDrag(null);
       setFaceDropTarget(null);
       if (!payload) return;
-      const staged = stagedFieldsForCard(pendingRef.current, id);
+      const staged = stagedIdxRef.current.get(id); // #224: O(1) lookup
       const desc = (staged?.desc ?? facesById.get(id)?.description ?? "").trim();
       if (!desc) return; // double guard — the browser would not have dropped
       const ids = payload.filter((x) => x !== id); // its own desc is a no-op
@@ -1410,23 +1354,35 @@ export default function App() {
   // change (sectionsForImage is a stable useCallback, so the memo holds),
   // never per render. §4.44: the grouping rules are the pure
   // buildSections (sections.ts, co-tested); App owns only the identities.
+  // #222 (F-H3): the person inputs are value-gated through
+  // sectionsPersonKey — in Review the derivations never read the anchor,
+  // so the memo keys on null there and a verdict advance / tree select
+  // rebuilds nothing (section objects survive referentially, the
+  // O(total faces) regroup stays out of the verdict path). The staged
+  // index (#224) is fed only where the grouping reads it (person
+  // Description mode, #155) — a Review Apply regroups nothing.
+  const sectionsPerson = sectionsPersonKey(mode, personId);
+  const sectionsPersonObj =
+    sectionsPerson != null ? personsById.get(sectionsPerson) ?? null : null;
+  const sectionsStagedIdx =
+    mode === "person" && clusterGroup === "description" ? stagedIdx : null;
   const sections: Section[] = useMemo(
     () =>
       buildSections({
         snap,
         mode,
         imageId,
-        personId,
-        selectedPerson,
+        personId: sectionsPerson,
+        selectedPerson: sectionsPersonObj,
         clusters,
         facesById,
         faceFilter,
         clusterGroup,
-        pending,
+        stagedIdx: sectionsStagedIdx,
         sectionsForImage,
       }),
-    [snap, mode, imageId, personId, selectedPerson, clusters, facesById,
-     faceFilter, clusterGroup, pending, sectionsForImage] // #155: staged (§4.24) descriptions drive the regroup
+    [snap, mode, imageId, sectionsPerson, sectionsPersonObj, clusters, facesById,
+     faceFilter, clusterGroup, sectionsStagedIdx, sectionsForImage] // #155/#224: the staged (§4.24) descriptions drive the regroup, gated to where it is read
   );
   sectionsRef.current = sections;
   sectionsForImageRef.current = sectionsForImage;
@@ -2494,7 +2450,7 @@ export default function App() {
                   <FaceGrid
                     sections={splitSections} // #215: memoised per split image
                     sel={sel}
-                    stage={pending}
+                    stageIdx={stagedIdx}
                     faceDropTarget={faceDropTarget}
                     {...gridHandlers}
                     primaryFaceId={displayPerson?.primary_face_id ?? null}
@@ -2553,13 +2509,13 @@ export default function App() {
                   rotation={imgRow.rotation} // #122
                 />
               </div>
-              <FaceGrid sections={sections} sel={sel} stage={pending} faceDropTarget={faceDropTarget} {...gridHandlers} primaryFaceId={null} />
+              <FaceGrid sections={sections} sel={sel} stageIdx={stagedIdx} faceDropTarget={faceDropTarget} {...gridHandlers} primaryFaceId={null} />
             </div>
           ) : (
             <FaceGrid
               sections={sections}
               sel={sel}
-              stage={pending}
+              stageIdx={stagedIdx}
               faceDropTarget={faceDropTarget}
               emptyHint={emptyHint} // #194: guidance instead of bare "nothing to show"
               // #214: incremental mount — review mode only (the

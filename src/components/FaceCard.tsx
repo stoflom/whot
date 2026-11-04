@@ -6,14 +6,19 @@ import {
 import type { Face } from "../api";
 import { useFaceImage } from "../hooks";
 import { rotStyle } from "../rotation";
-import { stagedFieldsForCard, type Stage } from "../stage";
 
 interface Props {
   face: Face;
   selected: boolean;
   isPrimary: boolean;
-  /** #101/#123: the live pending set — its fields preview on this card's labels */
-  stage: Stage[];
+  /** #101/#123 + #224 (F-M3): THIS card's staged fields, resolved by the
+      section from the pending-set index — stable primitives (undefined
+      when nothing is staged) so memo(FaceCard) holds across unrelated
+      staged changes: an Apply re-renders only the cards whose own
+      staged value moved */
+  stagedName?: string;
+  stagedGroup?: string;
+  stagedDesc?: string;
   onToggle: (id: number) => void;
   /** plain click: select just this card — drops the range anchor (#69) */
   onSelectOne: (id: number) => void;
@@ -62,7 +67,9 @@ function FaceCard({
   face,
   selected,
   isPrimary,
-  stage,
+  stagedName,
+  stagedGroup,
+  stagedDesc,
   onToggle,
   onSelectOne,
   onRangeSelect,
@@ -84,10 +91,12 @@ function FaceCard({
   descTarget,
 }: Props) {
   const img = useFaceImage(face.id);
-  const staged = stagedFieldsForCard(stage, face.id);
-  const nameVal = staged.name ?? personName ?? "";
-  const groupVal = staged.group ?? personGroup ?? "";
-  const descVal = staged.desc ?? face.description ?? "";
+  // #224: the staged fields arrive resolved — no per-card scan of the
+  // pending set; `undefined` (not staged) vs "" (staged a clear) stays
+  // distinct, which is what the "staged" underline keys on
+  const nameVal = stagedName ?? personName ?? "";
+  const groupVal = stagedGroup ?? personGroup ?? "";
+  const descVal = stagedDesc ?? face.description ?? "";
   // unowned faces (defensive — none exist since #165, §4.13): no primary/reference actions
   const unowned = face.person_id == null;
   // #49 (§4.14): this card is part of a multi-selection — ★/◈ cannot
@@ -176,7 +185,7 @@ function FaceCard({
         )}
         {/* #102: the name sits inside the frame, at the top — its own strip */}
         <span
-          className={`card-label name${staged.name != null ? " staged" : ""}${nameVal ? "" : " is-empty"}`}
+          className={`card-label name${stagedName != null ? " staged" : ""}${nameVal ? "" : " is-empty"}`}
           title="Person name"
         >
           {nameVal || "–"}
@@ -194,7 +203,7 @@ function FaceCard({
           Edit… — the three fields stay visually distinct */}
       <div className="card-row">
         <span
-          className={`card-label group${staged.group != null ? " staged" : ""}${groupVal ? "" : " is-empty"}`}
+          className={`card-label group${stagedGroup != null ? " staged" : ""}${groupVal ? "" : " is-empty"}`}
           title="Group — edit via the Edit… dialog"
         >
           {groupVal || "Friends|School"}
@@ -202,7 +211,7 @@ function FaceCard({
       </div>
       <div className="card-row">
         <span
-          className={`card-label desc${staged.desc != null ? " staged" : ""}${descVal ? "" : " is-empty"}`}
+          className={`card-label desc${stagedDesc != null ? " staged" : ""}${descVal ? "" : " is-empty"}`}
           title="Description — edit via the Edit… dialog"
         >
           {descVal || "description"}

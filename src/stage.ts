@@ -67,6 +67,84 @@ export function dropStagesForFaces(
   return set.filter((s) => !s.faceIds.some((id) => gone.has(id)));
 }
 
+/** #224 (F-M3): the pending set indexed once per set change — ONE pass
+    over the ops replaces the per-card/per-section O(ops × opsize) scans
+    with O(1) map reads. The per-field winning op position is carried so
+    the section-level merge (#224 stagedFieldsForSectionIndex) reproduces
+    stagedFieldsForSection's later-ops-win rule EXACTLY. */
+export type StagedFields = { name?: string; group?: string; desc?: string };
+
+export interface StagedEntry extends StagedFields {
+  /** the op position that last set each field — the section merge keys
+      on it to keep the later-op-wins precedence across faces */
+  src: { name?: number; group?: number; desc?: number };
+}
+
+/** #224: indexStagedSet over the pending set. Later ops win per face
+    (the same merge stagedFieldsForCard shows) — upsertStage keeps the op
+    order, so a re-Apply replaces in place and the position order held. */
+export function indexStagedSet(set: Stage[]): Map<number, StagedEntry> {
+  const idx = new Map<number, StagedEntry>();
+  set.forEach((stage, si) => {
+    for (const id of stage.faceIds) {
+      let e = idx.get(id);
+      if (!e) {
+        e = { src: {} };
+        idx.set(id, e);
+      }
+      if (stage.name != null) {
+        e.name = stage.name;
+        e.src.name = si;
+      }
+      if (stage.group != null) {
+        e.group = stage.group;
+        e.src.group = si;
+      }
+      if (stage.desc != null) {
+        e.desc = stage.desc;
+        e.src.desc = si;
+      }
+    }
+  });
+  return idx;
+}
+
+/** #224: one face's staged fields — an O(1) map read (the identical
+    merge the per-op scan produced, later ops win). */
+export function stagedFieldsForIndex(
+  idx: Map<number, StagedEntry>,
+  faceId: number,
+): StagedFields {
+  return idx.get(faceId) ?? {};
+}
+
+/** #224: the section-level merge over the index — equivalent to
+    stagedFieldsForSection (any overlap stages the heading, later ops
+    win per field) without the scan. A field's winner is the highest
+    winning-op position among the covered faces. */
+export function stagedFieldsForSectionIndex(
+  idx: Map<number, StagedEntry>,
+  sectionIds: number[],
+): StagedFields {
+  const out: StagedFields = {};
+  const best: { name?: number; group?: number; desc?: number } = {};
+  for (const id of sectionIds) {
+    const e = idx.get(id);
+    if (!e) continue;
+    for (const f of ["name", "group", "desc"] as const) {
+      const v = e[f];
+      if (v === undefined) continue;
+      const b = e.src[f] as number | undefined;
+      if (b === undefined) continue;
+      if (best[f] === undefined || b > (best[f] as number)) {
+        out[f] = v;
+        best[f] = b;
+      }
+    }
+  }
+  return out;
+}
+
 /** card label overlay: the staged fields for one face (§4.24 H2, #123 —
     ops later in the set win when two cover the same face) */
 export function stagedFieldsForCard(

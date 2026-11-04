@@ -12,7 +12,7 @@
 
 import type { AppearanceGroup, Face, Person, Snapshot } from "./api";
 import { groupByDescription, matchesStatusFilter, type ClusterGroup, type FaceFilter } from "./viewFilters";
-import { stagedFieldsForCard, type Stage } from "./stage";
+import type { StagedEntry } from "./stage";
 import { renameGroupFor } from "./groupList";
 import type { Section } from "./components/FaceGrid";
 
@@ -36,11 +36,28 @@ export interface SectionInputs {
   facesById: Map<number, Face>;
   faceFilter: FaceFilter;
   clusterGroup: ClusterGroup;
-  /** §4.24/#155: the staged set drives the Description-mode grouping too */
-  pending: Stage[];
+  /** §4.24/#155: the staged set drives the Description-mode grouping
+      too — indexed per face (#224); App passes it only where the
+      grouping reads it (null elsewhere — the identity is irrelevant) */
+  stagedIdx: Map<number, StagedEntry> | null;
   /** the §4.24 grouping (same module, below) as a callback so the
       branches share one identity (App memoises it per snapshot) */
   sectionsForImage: (imgId: number) => Section[];
+}
+
+/** #222 (F-H3): the person anchor the section derivations actually read.
+    personId drives only the person view (§4.9) — the review grouping
+    (§4.30) and the image detail (§4.24) never touch it. App keys the
+    sections memo on THIS value instead of the raw personId, so a verdict
+    advance / tree select inside Review changes no section object: the
+    O(total faces) regroup and the memo(FaceCard) churn both stay away
+    from a Review verdict. In person modes the key passes through, so the
+    memo regroups exactly when the anchored person moves. */
+export function sectionsPersonKey(
+  mode: Mode,
+  personId: number | null,
+): number | null {
+  return mode === "person" ? personId : null;
 }
 
 /** one section per person over an image's faces — the §4.24 Rolls image
@@ -79,7 +96,7 @@ export function sectionsForImage(
     snapshot and the screen state. */
 export function buildSections(inp: SectionInputs): Section[] {
   const { snap, mode, imageId, personId, selectedPerson, clusters,
-          facesById, faceFilter, clusterGroup, pending,
+          facesById, faceFilter, clusterGroup, stagedIdx,
           sectionsForImage } = inp;
   if (!snap) return [];
   if (imageId != null) {
@@ -97,7 +114,8 @@ export function buildSections(inp: SectionInputs): Section[] {
       // #155: the §4.24 staged preview drives the grouping too — a face
       // with a staged description is grouped under the description it
       // will land in on Accept (Apply = screen preview), instead of
-      // showing the staged label under the old committed section.
+      // showing the staged label under the old committed section (#224:
+      // the staged desc is an O(1) index read now)
       const visible = snap.faces.filter(
         (f) =>
           f.person_id === personId &&
@@ -111,7 +129,7 @@ export function buildSections(inp: SectionInputs): Section[] {
           // F2 keeps rejected-touching ops out of the pending set, and
           // rejected faces never reach this branch
           description:
-            stagedFieldsForCard(pending, f.id).desc ??
+            stagedIdx?.get(f.id)?.desc ??
             f.description ??
             ""
         }))
