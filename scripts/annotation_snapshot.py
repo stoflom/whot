@@ -20,7 +20,7 @@ only the header and the final summary.
 
 Export never writes to the database (read-only connection) and reads any
 schema from pre-1.5 to the current one (the `source_schema` field records
-it). Restore requires a schema v1.8 target (schema_version gate), runs in
+it). Restore requires a schema v1.9 target (schema_version gate), runs in
 one transaction and prints a summary; unmatched faces are reported, never
 silently dropped.
 

@@ -174,7 +174,7 @@ class RoundTripTest(unittest.TestCase):
         """The documented upgrade path (#210): export must read a v1.7
         source — rows carrying the derived filename/crop columns — as
         readily as the current schema, while restore targets the
-        recreated v1.8 side."""
+        recreated v1.9 side."""
         con = sqlite3.connect(self.old)
         con.executescript(
             "ALTER TABLE person_refcrops ADD COLUMN filename TEXT NOT NULL DEFAULT '';"
