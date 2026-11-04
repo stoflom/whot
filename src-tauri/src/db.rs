@@ -7,7 +7,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -16,7 +16,7 @@ pub const MODEL_TAG: &str = "insightface:buffalo_l";
 /// Must match `schema_version.version` in database/schema.sql — exact
 /// match, no migrations by policy: mismatched DBs are refused up-front
 /// with recreate instructions instead of failing on the first query.
-pub const SCHEMA_VERSION: &str = "1.8";
+pub const SCHEMA_VERSION: &str = "1.9";
 const DEFAULT_THRESHOLD: f64 = 0.40;
 const DEFAULT_REFCROP_N: i64 = 5;
 
@@ -1327,28 +1327,46 @@ fn reject_and_rehome(tx: &Connection, face_ids: &[i64]) -> Result<Vec<i64>> {
         affected.push(rej);
     }
     let list = ids_list(&ids);
-    let rows: Vec<(i64, Option<String>)> = {
+    // #220 — seq assignment is SET-BASED per (Rejected, description_key)
+    // group: one statement per group instead of the per-face MAX+UPDATE
+    // loop (performance-review §3.2 B-M2). Gap-proof F5 semantics are
+    // preserved: base = the group's MAX before this batch, and each face
+    // takes base + its position (ROW_NUMBER in id order — the old loop
+    // walked the same sorted id order). The label follows the same seq,
+    // so the §4.7 shape (Rejected[-description]-seq) is unchanged.
+    let mut by_key: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+    {
         let mut st = tx.prepare(&format!(
-            "SELECT id, description FROM faces WHERE id IN ({list})
+            "SELECT id, description_key FROM faces WHERE id IN ({list})
               AND NOT (link_status = 'rejected' AND person_id = {rej})"
         ))?;
-        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<std::result::Result<Vec<_>, _>>()?
-    };
-    for (fid, desc) in rows {
-        let seq: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
-              WHERE person_id = ?1
-                AND COALESCE(description, '') = COALESCE(?2, '')",
-            params![rej, desc],
-            |r| r.get(0),
-        )?;
-        let name = face_name("Rejected", desc.as_deref(), seq);
+        let rows = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for (fid, key) in rows {
+            by_key.entry(key).or_default().push(fid);
+        }
+    }
+    for (key, fids) in by_key {
+        let fids_list = ids_list(&fids);
         tx.execute(
-            "UPDATE faces
-                SET link_status = 'rejected', person_id = ?1, seq = ?2, name = ?3
-              WHERE id = ?4",
-            params![rej, seq, name, fid],
+            &format!(
+                "WITH base AS (
+                     SELECT COALESCE(MAX(seq), 0) AS m FROM faces
+                       WHERE person_id = {rej} AND description_key = ?1),
+                  n AS (
+                     SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn
+                       FROM faces WHERE id IN ({fids_list}))
+                 UPDATE faces SET
+                   person_id = {rej},
+                   link_status = 'rejected',
+                   seq = base.m + n.rn,
+                   name = 'Rejected-' || CASE WHEN ?1 = '' THEN ''
+                                              ELSE ?1 || '-' END
+                        || (base.m + n.rn)
+                 FROM n, base WHERE faces.id = n.id",
+            ),
+            params![key],
         )?;
     }
     tx.execute(&format!("DELETE FROM person_refcrops WHERE face_id IN ({list})"), [])?;
@@ -1490,54 +1508,95 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     // assignment ALWAYS confirms what it touches — including previously
     // rejected faces (reachable only under Show → Rejected, §4.10), which
     // it un-rejects and moves. Plain accept never un-rejects (§4.3).
-    for (face_id, person_id, _status) in &selected {
-        if *person_id == Some(target) {
-            tx.execute(
-                "UPDATE faces SET link_status = 'confirmed' WHERE id = ?",
-                params![face_id],
-            )?;
-        } else {
-            // gap-proof next free number: MAX+1, not COUNT+1 — moving faces
-            // out leaves seq gaps and COUNT+1 could collide with an existing
-            // seq, producing duplicate names (F5, design §4.7)
-            let seq: i64 = tx.query_row(
-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
-                  WHERE person_id = ?
-                    AND COALESCE(description, '') = COALESCE((SELECT description FROM faces WHERE id = ?), '')",
-                params![target, face_id],
-                |r| r.get(0),
-            )?;
-            tx.execute(
-                "UPDATE faces SET person_id = ?, link_status = 'confirmed', reassigned = 1, seq = ? WHERE id = ?",
-                params![target, seq, face_id],
-            )?;
+    // #220 — set-based per (target, description_key) group: one statement
+    // per group instead of the per-face MAX+UPDATE loop (B-M2). The
+    // gap-proof next free number is preserved: base = the group's MAX
+    // before this batch, each face takes base + its ROW_NUMBER in id
+    // order (the old loop walked the same sorted id order) — moving faces
+    // out leaves seq gaps and COUNT+1 could collide (F5, design §4.7).
+    let sel_list = ids_list(&ids);
+    tx.execute(
+        &format!("UPDATE faces SET link_status = 'confirmed'
+                  WHERE person_id = {target} AND id IN ({sel_list})"),
+        [],
+    )?;
+    let mut by_key: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+    {
+        // NULL-owned faces join the batch too (the old Option loop moved
+        // them; `person_id != target` alone would drop NULLs from the SQL)
+        let mut st = tx.prepare(&format!(
+            "SELECT id, description_key FROM faces
+              WHERE id IN ({sel_list})
+                AND (person_id != {target} OR person_id IS NULL)"
+        ))?;
+        let rows = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for (fid, key) in rows {
+            by_key.entry(key).or_default().push(fid);
         }
+    }
+    for (key, fids) in by_key {
+        let fids_list = ids_list(&fids);
+        tx.execute(
+            &format!(
+                "WITH base AS (
+                     SELECT COALESCE(MAX(seq), 0) AS m FROM faces
+                       WHERE person_id = {target} AND description_key = ?1),
+                  n AS (
+                     SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn
+                       FROM faces WHERE id IN ({fids_list}))
+                 UPDATE faces SET
+                   person_id = {target},
+                   link_status = 'confirmed',
+                   reassigned = 1,
+                   seq = base.m + n.rn
+                 FROM n, base WHERE faces.id = n.id",
+            ),
+            params![key],
+        )?;
     }
 
     refresh_person_names(&tx, target)?;
     // §4.1/§4.13 housekeeping: a person left with zero faces by this move is
     // a stale shell — delete it (groups/refcrops with it, #46) so merges and
     // whole-group moves don't leave the old person behind in the tree.
+    // #220 — the per-pid COUNT loop is one IN-cluster fetch (B-M4) plus
+    // one statement per deletion target-set.
     let mut removed: Vec<i64> = Vec::new();
-    for pid in &old_persons {
-        if is_system_person(&tx, *pid)? {
-            continue; // §4.35: the system person is never deleted — an
-            // emptied `Rejected` is an invisible shell (§4.10) the next
-            // reject reuses
+    if !old_persons.is_empty() {
+        let mut pids: Vec<i64> = old_persons.iter().copied().collect();
+        pids.sort();
+        let p_list = ids_list(&pids);
+        // §4.35: the system person is never deleted — an emptied
+        // `Rejected` is an invisible shell (§4.10) the next reject reuses
+        let sys: HashSet<i64> = {
+            let mut st = tx.prepare(&format!(
+                "SELECT id FROM persons WHERE id IN ({p_list}) AND name = 'Rejected'"
+            ))?;
+            st.query_map([], |r| r.get::<_, i64>(0))?
+                .collect::<std::result::Result<HashSet<_>, _>>()?
+        };
+        // #46: delete dependents explicitly instead of trusting the FK
+        // cascade — a connection opened without foreign_keys=ON would
+        // otherwise orphan these rows
+        let mut st = tx.prepare(&format!(
+            "SELECT person_id, COUNT(*) FROM faces
+              WHERE person_id IN ({p_list}) GROUP BY person_id"
+        ))?;
+        let counts: HashMap<i64, i64> = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
+            .collect::<std::result::Result<HashMap<_, _>, _>>()?;
+        for pid in &pids {
+            if !sys.contains(pid) && counts.get(pid).copied().unwrap_or(0) == 0 {
+                removed.push(*pid);
+            }
         }
-        let n: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM faces WHERE person_id = ?",
-            params![pid],
-            |r| r.get(0),
-        )?;
-        if n == 0 {
-            // #46: delete dependents explicitly instead of trusting the FK
-            // cascade — a connection opened without foreign_keys=ON would
-            // otherwise orphan these rows
-            tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
-            tx.execute("DELETE FROM person_refcrops WHERE person_id = ?", params![pid])?;
-            tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
-            removed.push(*pid);
+        if !removed.is_empty() {
+            let r_list = ids_list(&removed);
+            tx.execute(&format!("DELETE FROM person_groups WHERE person_id IN ({r_list})"), [])?;
+            tx.execute(&format!("DELETE FROM person_refcrops WHERE person_id IN ({r_list})"), [])?;
+            tx.execute(&format!("DELETE FROM persons WHERE id IN ({r_list})"), [])?;
         }
     }
     // NOTE: affected must include the *old* owners — after the UPDATEs above the
@@ -1723,19 +1782,25 @@ fn set_face_description_tx(
     }
     let Some(person_id) = person_id else {
         // unowned face (removed person, §4.13): just record the tags
-        tx.execute("UPDATE faces SET description = ? WHERE id = ?", params![desc, face_id])?;
+        // (description_key mirrors description — v1.9, #220)
+        tx.execute(
+            "UPDATE faces SET description = ?, description_key = ? WHERE id = ?",
+            params![desc, desc.clone().unwrap_or_default(), face_id],
+        )?;
         return Ok(None);
     };
     // next free seq of the new group, counting the OTHER faces only (§4.7)
+    // — keyed on description_key so the composite index serves it (v1.9)
+    let key = desc.clone().unwrap_or_default();
     let seq: i64 = tx.query_row(
         "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces
-          WHERE person_id = ? AND id != ? AND COALESCE(description, '') = COALESCE(?, '')",
-        params![person_id, face_id, desc],
+          WHERE person_id = ? AND id != ? AND description_key = ?",
+        params![person_id, face_id, key],
         |r| r.get(0),
     )?;
     tx.execute(
-        "UPDATE faces SET description = ?, seq = ? WHERE id = ?",
-        params![desc, seq, face_id],
+        "UPDATE faces SET description = ?, description_key = ?, seq = ? WHERE id = ?",
+        params![desc, key, seq, face_id],
     )?;
     let person_name: String =
         tx.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
@@ -2063,14 +2128,20 @@ pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> 
     let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
+    // #220 — the per-pid existence COUNT + system-person guard is one
+    // IN-cluster fetch (B-M4): the guard reads the name from the same
+    // rows, so it needs no extra query.
+    let list = ids_list(&id_list);
+    let present: Vec<(i64, String)> = {
+        let mut st = tx.prepare(&format!("SELECT id, name FROM persons WHERE id IN ({list})"))?;
+        st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
     let mut moved = 0;
-    for pid in ids {
-        let exists: i64 =
-            tx.query_row("SELECT COUNT(*) FROM persons WHERE id = ?", params![pid], |r| r.get(0))?;
-        if exists == 0 {
-            continue;
+    for (pid, pname) in present {
+        if pname == "Rejected" {
+            bail!("'Rejected' is the system person for rejected faces (#165) and cannot be changed");
         }
-        guard_system_person(&tx, pid)?; // §4.35: Rejected never re-grouped
         // insert-first: the final row (target, or the derived seat for
         // empty input) lands before the old rows drop — §4.35
         let final_path = if path.is_empty() {
@@ -2129,14 +2200,20 @@ pub fn move_persons_between_groups(
     let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
     let tx = con.transaction()?;
+    // #220 — the per-pid existence COUNT + system-person guard is one
+    // IN-cluster fetch (B-M4): the guard reads the name from the same
+    // rows, so it needs no extra query.
+    let list = ids_list(&id_list);
+    let present: Vec<(i64, String)> = {
+        let mut st = tx.prepare(&format!("SELECT id, name FROM persons WHERE id IN ({list})"))?;
+        st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
     let mut moved = 0;
-    for pid in ids {
-        let exists: i64 =
-            tx.query_row("SELECT COUNT(*) FROM persons WHERE id = ?", params![pid], |r| r.get(0))?;
-        if exists == 0 {
-            continue;
+    for (pid, pname) in present {
+        if pname == "Rejected" {
+            bail!("'Rejected' is the system person for rejected faces (#165) and cannot be changed");
         }
-        guard_system_person(&tx, pid)?; // §4.35: Rejected never re-grouped
         if from != to {
             tx.execute(
                 "DELETE FROM person_groups WHERE person_id = ? AND path = ?",
@@ -2197,43 +2274,51 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
-    for pid in &ids {
-        guard_system_person(&tx, *pid)?; // §4.35: Rejected never removed
-    }
-    let mut removed: Vec<i64> = Vec::new();
-    let mut touched: HashSet<i64> = HashSet::new();
-    let mut rehomed_faces: Vec<i64> = Vec::new();
-    for pid in ids {
-        // defensive: no OTHER person may keep pointing at these faces
-        tx.execute(
-            "UPDATE persons SET primary_face_id = NULL, primary_pinned = 0
-              WHERE primary_face_id IN (SELECT id FROM faces WHERE person_id = ?)",
-            params![pid],
-        )?;
-        // §4.2/§4.35: rejection re-homes — the faces join `Rejected`
-        let fids: Vec<i64> = {
-            let mut st = tx.prepare("SELECT id FROM faces WHERE person_id = ?")?;
-            let rows = st.query_map(params![pid], |r| r.get::<_, i64>(0))?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        };
-        rehomed_faces.extend(fids.iter().copied());
-        if !fids.is_empty() {
-            touched.extend(reject_and_rehome(&tx, &fids)?);
+    // #220 — one IN-cluster fetch replaces the per-pid
+    // guard/SELECT/UPDATE/DELETE loop (B-M3/B-M4); the re-home is
+    // reject_and_rehome's set-based writer.
+    let id_list: Vec<i64> = ids.iter().copied().collect();
+    let p_list = ids_list(&id_list);
+    let present: Vec<(i64, String)> = {
+        let mut st = tx.prepare(&format!("SELECT id, name FROM persons WHERE id IN ({p_list})"))?;
+        st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    for (_, pname) in &present {
+        if pname == "Rejected" {
+            bail!("'Rejected' is the system person for rejected faces (#165) and cannot be changed");
         }
-        // #46: delete dependents explicitly instead of trusting the FK
-        // cascade — a connection opened without foreign_keys=ON would
-        // otherwise orphan these rows (the person dies, so no seat is
-        // written for it — §4.35 governs living persons)
-        tx.execute("DELETE FROM person_groups WHERE person_id = ?", params![pid])?;
-        tx.execute("DELETE FROM person_refcrops WHERE person_id = ?", params![pid])?;
-        let n_deleted = tx.execute("DELETE FROM persons WHERE id = ?", params![pid])?;
-        if n_deleted > 0 {
-            removed.push(pid);
-        }
-        touched.remove(&pid);
     }
-    if removed.is_empty() {
+    if present.is_empty() {
         bail!("none of the selected persons exist any more");
+    }
+    // defensive: no OTHER person may keep pointing at these faces
+    tx.execute(
+        &format!("UPDATE persons SET primary_face_id = NULL, primary_pinned = 0
+                  WHERE primary_face_id IN
+                      (SELECT id FROM faces WHERE person_id IN ({p_list}) )"),
+        [],
+    )?;
+    // §4.2/§4.35: rejection re-homes — the faces join `Rejected`
+    let rehomed_faces: Vec<i64> = {
+        let mut st = tx.prepare(&format!("SELECT id FROM faces WHERE person_id IN ({p_list})"))?;
+        let rows = st.query_map([], |r| r.get::<_, i64>(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    let mut touched: HashSet<i64> = HashSet::new();
+    if !rehomed_faces.is_empty() {
+        touched.extend(reject_and_rehome(&tx, &rehomed_faces)?);
+    }
+    // #46: delete dependents explicitly instead of trusting the FK
+    // cascade — a connection opened without foreign_keys=ON would
+    // otherwise orphan these rows (the person dies, so no seat is
+    // written for it — §4.35 governs living persons)
+    tx.execute(&format!("DELETE FROM person_groups WHERE person_id IN ({p_list})"), [])?;
+    tx.execute(&format!("DELETE FROM person_refcrops WHERE person_id IN ({p_list})"), [])?;
+    tx.execute(&format!("DELETE FROM persons WHERE id IN ({p_list})"), [])?;
+    let removed: Vec<i64> = present.iter().map(|(id, _)| *id).collect();
+    for pid in &removed {
+        touched.remove(pid);
     }
     let touched: Vec<i64> = touched.into_iter().collect();
     for pid in &touched { // the system person, in practice

@@ -1595,3 +1595,169 @@ fn delta_drift_flags_stale_prewrite_219() {
     assert!(!d2.drifted, "no external write ⇒ no drift");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
+
+// ---------------------------------------------------------------- #220
+// performance-review §3.2 B-M2/B-M3/B-M4 — write-path N+1. The
+// acceptance line: a reject batch over F faces must not run more than
+// 2·F statements (the old per-face MAX+UPDATE loop ran exactly 2 per
+// face, before even counting the per-person existence checks).
+
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+static STMT_ARMED: AtomicBool = AtomicBool::new(false);
+static STMT_SEEN: AtomicUsize = AtomicUsize::new(0);
+
+/// `Connection::trace` callback — counts every statement executed while
+/// armed. Only the fixture's own pooled connection carries the trace, so
+/// parallel tests on other fixtures never fire it.
+/// Counts the statements of the WRITE PHASE only — from `BEGIN` to
+/// `COMMIT`. That is the window the old per-face MAX+UPDATE loop lived in
+/// (B-M2); the per-person name refresh after commit is a fixed cost per
+/// person, not a per-face one.
+fn counting_trace(sql: &str) {
+    if sql.starts_with("BEGIN") {
+        STMT_ARMED.store(true, Ordering::SeqCst);
+        STMT_SEEN.store(0, Ordering::SeqCst);
+        return;
+    }
+    if !STMT_ARMED.load(Ordering::SeqCst) {
+        return;
+    }
+    if sql.starts_with("COMMIT") || sql.starts_with("ROLLBACK") {
+        STMT_ARMED.store(false, Ordering::SeqCst);
+        return;
+    }
+    STMT_SEEN.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Seed F extra faces on `person_id` (image 1) with the given
+/// descriptions, ids starting at `first_id` — through a SEPARATE
+/// connection so the counting window below only sees the batch itself.
+fn seed_faces(db_path: &std::path::Path, person_id: i64, first_id: i64, descs: &[&str]) {
+    let con = Connection::open(db_path).unwrap();
+    for (i, desc) in descs.iter().enumerate() {
+        con.execute(
+            "INSERT INTO faces(id, image_id, x, y, w, h, person_id, link_status, state, origin,
+                               description, name, seq, confidence, detected_in_import_id,
+                               created_at, description_key)
+             VALUES (?, 1, ?, 0, 10, 10, ?, 'provisional', 'detected', 'insightface',
+                     ?, ?, ?, 0.9, 1, '2026-10-15T00:00:00', ?)",
+            rusqlite::params![
+                first_id + i as i64,
+                500 + i,                      // x unique per image
+                person_id,
+                *desc,
+                format!("seed-{first_id}-{i}"),
+                i as i64 + 1,
+                desc,
+            ],
+        ).unwrap();
+    }
+}
+
+/// Run a reject batch over `descs` faces (all on Unknown1) in a fresh
+/// fixture and return the write-phase statement count (BEGIN..COMMIT).
+fn reject_count_fixture(name: &str, first_id: i64, descs: &[&str]) -> usize {
+    let p = fixture_paths(name);
+    seed_faces(&p.db, 1, first_id, descs);
+    let fids: Vec<i64> = (first_id..first_id + descs.len() as i64).collect();
+    // arm the trace on the pooled connection, release the guard, then run
+    // the batch (which re-checks the pool — no deadlock). The counter
+    // itself opens at BEGIN and closes at COMMIT (see counting_trace).
+    {
+        let mut con = db::connect(&p).unwrap();
+        con.trace(Some(counting_trace));
+    }
+    let _ = db::set_link_status(&p, &fids, "rejected").unwrap();
+    let seen = STMT_SEEN.load(Ordering::SeqCst);
+    {
+        let mut con = db::connect(&p).unwrap();
+        con.trace(None);
+    }
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+    seen
+}
+
+/// #220 — a reject batch must not scale with its FACE count (B-M2,
+/// statement-level instrument): the same two description groups with 5
+/// and with 15 faces may add at most one write-phase statement (the old
+/// per-face MAX+UPDATE loop adds exactly 2 per face — 20 here).
+#[test]
+fn reject_batch_no_per_face_scaling_220() {
+    let small = reject_count_fixture("stmtsmall220", 101, &["", "", "", "glasses", "glasses"]);
+    let large = reject_count_fixture(
+        "stmtlarge220",
+        101,
+        &["", "", "", "", "", "", "", "", "", "", "glasses", "glasses", "glasses", "glasses", "glasses"],
+    );
+    let growth = large.saturating_sub(small);
+    assert!(
+        growth <= 1,
+        "#220/B-M2: growing a two-group reject batch from 5 to 15 faces added \
+         {growth} write-phase statements — the old per-face MAX+UPDATE loop \
+         adds exactly 2 per face (20 here); the batch must not scale with \
+         face count (performance-review §3.2)",
+    );
+}
+
+/// #220 — set-based seq assignment keeps the gap-proof F5 semantics across
+/// MULTIPLE description groups in one batch: each (Rejected, key) group
+/// numbers from its own pre-batch MAX, positions in id order, names per
+/// §4.7 — and groups not in the batch are untouched.
+#[test]
+fn reject_multigroup_seq_monotonic_220() {
+    let p = fixture_paths("seqmono220");
+    // pre-state: faces 1 (Unknown1) and 4 (Unknown3) already rejected ⇒
+    // Rejected's '' group holds seqs 1,2
+    db::set_link_status(&p, &[1, 4], "rejected").unwrap();
+    let rej: i64 = {
+        let con = db::connect(&p).unwrap();
+        con.query_row("SELECT id FROM persons WHERE name = 'Rejected'", [], |r| r.get(0)).unwrap()
+    };
+    // Rejected already has an 'a'-group face (seq 1); Unknown2 has three
+    // 'b' faces and one 'a' face — reject the four in ONE batch
+    let con = Connection::open(&p.db).unwrap();
+    con.execute(
+        "INSERT INTO faces(id, image_id, x, y, w, h, person_id, link_status, state, origin,
+                           description, name, seq, confidence, detected_in_import_id,
+                           created_at, description_key)
+         VALUES (201, 2, 500, 0, 10, 10, ?, 'rejected', 'detected', 'insightface',
+                 'a', 'Rejected-a-1', 1, 0.9, 1, '2026-10-15T00:00:00', 'a')",
+        rusqlite::params![rej],
+    ).unwrap();
+    seed_faces(&p.db, 2, 202, &["a", "b", "b", "b"]);
+    db::set_link_status(&p, &[202, 203, 204, 205], "rejected").unwrap();
+    // verify per group: seqs contiguous from the pre-batch MAX, id order,
+    // §4.7 names, and the untouched '' group keeps seqs 1,2
+    let con = Connection::open(&p.db).unwrap();
+    let mut st = con.prepare(
+        "SELECT id, description_key, seq, name FROM faces
+          WHERE person_id = ? ORDER BY description_key, id").unwrap();
+    let rows: Vec<(i64, String, i64, String)> = st
+        .query_map(rusqlite::params![rej], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let by_group = |key: &str| -> Vec<(i64, i64, String)> {
+        rows.iter()
+            .filter(|(_, k, _, _)| k == key)
+            .map(|(id, _, seq, name)| (*id, *seq, name.clone()))
+            .collect()
+    };
+    let empty = by_group("");
+    assert_eq!(empty, vec![(1, 1, "Rejected-1".into()), (4, 2, "Rejected-2".into())],
+               "group not in the batch is untouched: {empty:?}");
+    let a = by_group("a");
+    assert_eq!(a, vec![(201, 1, "Rejected-a-1".into()), (202, 2, "Rejected-a-2".into())],
+               "'a' continues from the pre-batch MAX: {a:?}");
+    let b = by_group("b");
+    assert_eq!(b, vec![(203, 1, "Rejected-b-1".into()), (204, 2, "Rejected-b-2".into()),
+                       (205, 3, "Rejected-b-3".into())],
+               "'b' numbers 1..n in id order: {b:?}");
+    let names: std::collections::HashSet<&str> =
+        rows.iter().map(|(_, _, _, n)| n.as_str()).collect();
+    assert_eq!(names.len(), rows.len(), "no duplicate names after the batch");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}

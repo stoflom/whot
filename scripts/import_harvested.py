@@ -52,7 +52,7 @@ import pathmap      # legacy path-map file (scripts-design §8.6, #85)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STAGING_SCHEMA_VERSION = "1.2"     # §8.2, exact-match (J3)
-FACES_SCHEMA_VERSION = "1.8"       # database/schema.sql, exact-match
+FACES_SCHEMA_VERSION = "1.9"       # database/schema.sql, exact-match
 # #165/§4.35: system status seats — not user filings, never matched as
 # group identity on either side of the §9.4 group-set equality
 STATUS_SEATS = {"new", "accepted", "rejected"}
@@ -716,7 +716,7 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
         desc = row[0] or ""
         seq = dbcon.execute(
             "SELECT COALESCE(MAX(seq),0) FROM faces WHERE person_id=?"
-            " AND COALESCE(description,'')=COALESCE(?,'')",
+            " AND description_key=?",   # v1.9 composite index key (#220)
             (pid, desc)).fetchone()[0] + 1
         name = f"{person_name}-{desc}-{seq}" if desc else f"{person_name}-{seq}"
         dbcon.execute(

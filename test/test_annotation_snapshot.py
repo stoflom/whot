@@ -93,7 +93,7 @@ class RoundTripTest(unittest.TestCase):
     def test_export_reports_schema_and_decisions(self):
         data = ansi.do_export(self.old)
         self.assertEqual(data["format"], 1)
-        self.assertEqual(data["source_schema"], "1.8")
+        self.assertEqual(data["source_schema"], "1.9")
         self.assertEqual([p["name"] for p in data["persons"]], ["Alice"])
         self.assertEqual(data["persons"][0]["groups"], ["family|test"])
         self.assertEqual(data["persons"][0]["note"], "mom")

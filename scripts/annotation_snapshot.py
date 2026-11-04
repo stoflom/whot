@@ -39,7 +39,7 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # must match database/schema.sql and scripts/import_roll.py / db.rs
-SCHEMA_VERSION = "1.8"
+SCHEMA_VERSION = "1.9"
 FORMAT = 1
 
 
@@ -347,8 +347,8 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
         rej = ensure_rejected_person()
         seq = con.execute(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces "
-            "WHERE person_id = ? AND COALESCE(description, '') = COALESCE(?, '')",
-            (rej, desc)).fetchone()[0]
+            "WHERE person_id = ? AND description_key = ?",   # v1.9 (#220)
+            (rej, desc or "")).fetchone()[0]
         con.execute(
             "UPDATE faces SET person_id = ?, seq = ?, link_status = 'rejected', name = ? "
             "WHERE id = ?",
@@ -399,8 +399,9 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
             elif pname in restored:
                 con.execute(
                     "UPDATE faces SET person_id = ?, seq = ?, link_status = ?, "
-                    "description = ?, reassigned = 1, name = ? WHERE id = ?",
+                    "description = ?, description_key = ?, reassigned = 1, name = ? WHERE id = ?",
                     (restored[pname], f["seq"], f["link_status"], f["description"],
+                     f["description"] or "",   # description_key: v1.9 (#220)
                      derive_name(pname, f["description"], f["seq"]), fid))
                 stats["moved_faces"] += 1
             else:
@@ -410,8 +411,9 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
                     "WHERE f.id = ?", (fid,)).fetchone()
                 new_name = derive_name(cur[0] or "?", f["description"], cur[1])
                 con.execute(
-                    "UPDATE faces SET link_status = ?, description = ?, name = ? WHERE id = ?",
-                    (f["link_status"], f["description"], new_name, fid))
+                    "UPDATE faces SET link_status = ?, description = ?, "
+                    "description_key = ?, name = ? WHERE id = ?",
+                    (f["link_status"], f["description"], f["description"] or "", new_name, fid))
             stats["faces"] += 1
 
         # #165/§4.35: group invariant + seat derivation for every person

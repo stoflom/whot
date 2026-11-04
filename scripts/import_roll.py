@@ -32,7 +32,7 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_TAG = "insightface:buffalo_l"
 # must match database/schema.sql's schema_version row and db.rs SCHEMA_VERSION
-SCHEMA_VERSION = "1.8"
+SCHEMA_VERSION = "1.9"
 
 
 # ---------------------------------------------------------------- insightface venv
@@ -586,9 +586,11 @@ def ensure_person(con: sqlite3.Connection, stub: PersonStub, unknowns: list[Pers
 
 def assign_seq(con: sqlite3.Connection, person_id: int, description: str = "") -> int:
     """Next seq for one (person, description) group — derived face name part
-    (design 5, §4.12): MAX-based and scoped to the appearance group."""
+    (design 5, §4.12): MAX-based and scoped to the appearance group.
+    Keyed on description_key (schema v1.9, #220) so the composite
+    (person_id, description_key, seq) index serves the MAX."""
     row = con.execute(
-        "SELECT COALESCE(MAX(seq), 0) FROM faces WHERE person_id = ? AND COALESCE(description,'') = COALESCE(?, '')",
+        "SELECT COALESCE(MAX(seq), 0) FROM faces WHERE person_id = ? AND description_key = ?",
         (person_id, description)).fetchone()
     return row[0] + 1
 
@@ -611,10 +613,11 @@ def store_image(con: sqlite3.Connection, plan: ImportPlan, pairs, unknowns, impo
         name = f"{stub.name}-{desc}-{seq}" if desc else f"{stub.name}-{seq}"
         cur = con.execute("""
             INSERT INTO faces(image_id, x, y, w, h, person_id, link_status, state, origin,
-                              description, name, seq, confidence, preview, detected_in_import_id, created_at)
-            VALUES (?,?,?,?,?,?, 'provisional', 'detected', 'insightface', ?,?,?,?,?,?,?)
+                              description, name, seq, confidence, preview, detected_in_import_id, created_at,
+                              description_key)
+            VALUES (?,?,?,?,?,?, 'provisional', 'detected', 'insightface', ?,?,?,?,?,?, ?, ?)
         """, (image_id, *det.box, person_id, desc, name, seq, det.det_score,
-               det.crop_jpeg, import_id, now))
+               det.crop_jpeg, import_id, now, desc or ""))  # description_key: v1.9 (#220)
         con.execute("INSERT INTO face_embeddings(face_id, model, dim, vector, created_at) "
                     "VALUES (?,?,?,?,?)",
                     (cur.lastrowid, MODEL_TAG, det.embedding.size,

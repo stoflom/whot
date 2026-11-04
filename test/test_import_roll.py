@@ -96,7 +96,9 @@ class UnknownNumberingTest(unittest.TestCase):
 
 # ---------------------------------------------------------------- seq / primary
 
-SEQ_DDL = "CREATE TABLE faces (id INTEGER PRIMARY KEY, person_id INT, description TEXT, seq INT)"
+# #220: assign_seq keys on description_key (schema v1.9)
+SEQ_DDL = ("CREATE TABLE faces (id INTEGER PRIMARY KEY, person_id INT, "
+           "description TEXT, description_key TEXT, seq INT)")
 
 
 class AssignSeqTest(unittest.TestCase):
@@ -104,14 +106,14 @@ class AssignSeqTest(unittest.TestCase):
         con = sqlite3.connect(":memory:")
         con.execute(SEQ_DDL)
         # Alice keeps seqs {1,3} after the GUI moved face seq 2 away
-        con.execute("INSERT INTO faces VALUES (1,1,NULL,1)")
-        con.execute("INSERT INTO faces VALUES (3,1,NULL,3)")
+        con.execute("INSERT INTO faces VALUES (1,1,NULL,'',1)")
+        con.execute("INSERT INTO faces VALUES (3,1,NULL,'',3)")
         self.assertEqual(ir.assign_seq(con, 1, ""), 4)   # COUNT+1 would yield 3 → collision
 
     def test_scoped_to_its_appearance_group(self):  # §4.12 / S2
         con = sqlite3.connect(":memory:")
         con.execute(SEQ_DDL)
-        con.execute("INSERT INTO faces VALUES (1,1,'beard',1)")
+        con.execute("INSERT INTO faces VALUES (1,1,'beard','beard',1)")
         self.assertEqual(ir.assign_seq(con, 1, ""), 1)   # no desc-group row yet
         self.assertEqual(ir.assign_seq(con, 1, "beard"), 2)
         self.assertEqual(ir.assign_seq(con, 2, "beard"), 1)  # other person unaffected
@@ -291,9 +293,10 @@ class AppearanceCorpusTest(unittest.TestCase):
             con.execute(
                 "INSERT INTO faces(id, image_id, x, y, w, h, person_id, link_status, "
                 "state, origin, description, name, seq, confidence, detected_in_import_id, "
-                "created_at) VALUES (?, 1, ?, ?, 10, 10, 1, 'confirmed', 'detected', "
-                "'insightface', ?, ?, ?, 0.9, 1, 't')",
-                (fid, x, y, "beard" if fid == 1 else None, desc_name, seq))
+                "created_at, description_key) VALUES (?, 1, ?, ?, 10, 10, 1, 'confirmed', "
+                "'detected', 'insightface', ?, ?, ?, 0.9, 1, 't', ?)",  # key: v1.9 (#220)
+                (fid, x, y, "beard" if fid == 1 else None, desc_name, seq,
+                 "beard" if fid == 1 else ""))
         for fid, v in ((1, vec(1.0, 0.0, 0.0, 0.0)), (2, vec(0.0, 1.0, 0.0, 0.0))):
             con.execute("INSERT INTO face_embeddings(face_id, model, dim, vector, created_at) "
                         "VALUES (?, ?, 4, ?, 't')",
