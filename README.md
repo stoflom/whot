@@ -323,6 +323,9 @@ rules are `docs/gui-design.md` §4, architecture is
   first_import_id, last_import_id}], imports: [{id, path, started_at}],
   settings {cluster_threshold, refcrop_n, face_filter, cluster_group,
   merge_name_distance, merge_suffix_aliases} }`
+- `get_data_version() → number` — #208 the cheap change stamp (the
+  snapshot's `version` column); equal to the last-seen stamp ⇒ the GUI
+  skips its focus/visibility reload
 - `get_image_batch(kind, ids) → bytes` — raw JPEG bytes (no base64) in
   the framed `WHOTIMG` container (#212): kind = `face` (`faces.preview`),
   `thumb` (`images.thumbnail`) or `preview` (`images.preview`); images
@@ -364,9 +367,14 @@ full-refreshes instead).
 - `accept_faces(face_ids)` — §4.3 (never un-rejects; §4.35)
 - `reject_faces(face_ids)` — §4.2 (moves the face to the system person
   `Rejected`; §4.35)
-- `rotate_image(image_id, delta)` / `rotate_face(face_id, delta)` —
-  display rotation in 90° steps (§4.32)
-- `set_face_description(face_id, description)` — §4.4
+- `rotate_image(image_id, delta)` / `rotate_face(face_id, delta)` /
+  `rotate_images(image_ids, delta)` — display rotation in 90° steps
+  (§4.32; the plural is #209's one-call batch for the thumbnail-scope
+  multi-image rotate, same per-image semantics)
+- `set_face_description(face_id, description)` /
+  `set_face_descriptions(face_ids, description)` — §4.4 (the plural is
+  #209's one-call batch: the sequential per-face `seq` re-assignment
+  happens inside its transaction, in call order)
 - `set_primary_face(person_id, face_id)` — §4.5
 - `set_person_name(person_id, name)` / `set_person_group(person_id, path)` /
   `set_person_note(person_id, note)`
@@ -375,10 +383,15 @@ full-refreshes instead).
 - `remove_persons(person_ids)` — §4.13 (reject + move to `Rejected` +
   delete, no undo)
 - `rename_group(old_path, new_path)` / `delete_group(path)` /
-  `move_persons_to_group(person_ids, group)` — §4.16 group
-  membership: prefix rewrite / subtree drop to status seats (§4.35) /
-  per-person replace; normalised; the `Ungrouped`, `New`,
-  `Accepted`, `Rejected` and `Unknown` segments are reserved
+  `move_persons_to_group(person_ids, group)` /
+  `move_persons_between_groups(person_ids, from_group, to_group)` —
+  §4.16 group membership: prefix rewrite / subtree drop to status seats
+  (§4.35) / per-person replace / #157's drag-and-drop placement (per
+  person: drop the `from_group` row if present, file into `to_group`,
+  every other membership kept; `from_group == to_group` is a no-op,
+  `to_group = ''` ungroups that one membership only); all normalised;
+  the `Ungrouped`, `New`, `Accepted`, `Rejected` and `Unknown` segments
+  are reserved
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
 
 **Import runner** (§4.36 — spawns, never blocks the GUI)
@@ -412,8 +425,9 @@ whot/
       SuggestInput.tsx  SettingsPopover.tsx    # (Name/Path/Suggest); settings
     viewFilters.ts  reviewFlow.ts  stage.ts  faceDrop.ts  stepFlow.ts   # pure logic
     sections.ts  paneState.ts  clickPair.ts  menus.ts          # §4.44 pure App extractions (v3.94)
+    gridMount.ts  personSig.ts  treeIndex.ts  rollsTree.ts     # view/grid pure logic (#213/#223)
     groupList.ts  imageSelect.ts  nameCluster.ts  autoText.ts          # helpers
-    rotation.ts  hooks.ts                                              # helpers
+    imageBatch.ts  lruCache.ts  importPoll.ts  rotation.ts  hooks.ts   # helpers (#212/#207)
     overlays.tsx                   # one overlay registry (Esc/keys)
     styles.css
     *.test.ts                      # vitest unit tests (`npm test`)
@@ -421,7 +435,10 @@ whot/
     tauri.conf.json  Cargo.toml    # tauri 2, rusqlite(bundled), serde
     src/main.rs  src/lib.rs        # lib.rs: #[tauri::command] surface
     src/db.rs                      # db.rs: queries + embeddings + refcrops
-    tests/workflow.rs              # Rust integration tests (embeds dist/; fixture DB)
+    src/importer.rs                # the import runner (spawn/monitor/kill
+                                   # import_roll.py + scan_import_dir, §4.36)
+    tests/workflow.rs  tests/importer.rs  # Rust integration tests (embed dist/;
+                                   # fixture DB; real child lifecycle)
   scripts/                         # Python tooling (dev-time only)
     cli_console.py                 # shared header/status/quiet console (scripts-design §10)
     pathmap.py                     # legacy path-map file (scripts-design §8.6)
@@ -431,7 +448,7 @@ whot/
     import_harvested.py            # scripts-design §9: attach harvested persons (copy-only)
     legacy/                        # archived importers, superseded by harvest_legacy.py
   database/
-    schema.sql                     # faces.db DDL (v1.8)
+    schema.sql                     # faces.db DDL (v1.9)
     harvest_schema.sql             # staging DDL for harvest_legacy.py (v1.2)
   test/
     test_*.py                      # Python unit tests (import + harvest helpers)
