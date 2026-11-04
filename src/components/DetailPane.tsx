@@ -214,13 +214,14 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
         </div>
       ) : (
         // #172 (§4.38) — the group LIST replaces the single field: every
-        // membership with an × that stages its removal (a status-seat row
-        // is dimmed with an inert × — system furniture, §4.35); rows are
-        // editable inline (re-home that one membership); Add group stages
-        // a new membership; the staged set commits via Enter-in-add or
-        // the Update person button (#173) — never per-gesture. #181:
-        // the rows live in the SHARED GroupListEditor (the Edit dialog
-        // fronts the same list when the Name holds a known person)
+        // REAL membership with an × that stages its removal — the status
+        // seat is never a row (a seated person's list is empty, §4.35/
+        // #233 display rule); rows are editable inline (re-home that one
+        // membership); Add group stages a new membership; the staged set
+        // commits via Enter-in-add or the Update person button (#173) —
+        // never per-gesture. #181: the rows live in the SHARED
+        // GroupListEditor (the Edit dialog fronts the same list when the
+        // Name holds a known person)
         <div className="dp-field">
           <span>Groups ({display.length})</span>
           <GroupListEditor

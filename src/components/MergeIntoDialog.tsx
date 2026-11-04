@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
+import { realGroups } from "../groupList";
 import { useOwnsKeyboard } from "../overlays";
 
 // Shared merge confirmation (#88, gui-design §4.28). All three entry
@@ -90,7 +91,9 @@ export default function MergeIntoDialog({ sources, defaultTarget, persons, onCon
               type="button"
               className={`ev-chip${p.id === target?.id ? " merge-chip-picked" : ""}`}
               key={p.id}
-              title={`${p.groups.join(", ") || "(no group)"} — ${p.counts.total} face(s)`}
+              // #233 (§4.35 display rule): the hint lists the person's
+              // REAL groups — a status seat is never a real group
+              title={`${realGroups(p.groups).join(", ") || "(no group)"} — ${p.counts.total} face(s)`}
               onClick={() => setName(p.name)}
             >
               {p.name} · {p.counts.total}f

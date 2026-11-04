@@ -11,6 +11,7 @@ import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
 import { groupPathOptions } from "./PathTypeahead";
+import { firstRealGroup } from "../groupList";
 import { rotStyle } from "../rotation";
 import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
@@ -793,7 +794,10 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
               ? groupDialog.path
               : groupDialog.kind === "add-group"
                 ? ""
-              : (byId.get(groupDialog.ids[0])?.groups[0] ?? "")
+                // #233 (§4.35 display rule): the prefill is the person's
+                // first REAL group — a status seat never shows as the
+                // current group
+                : firstRealGroup(byId.get(groupDialog.ids[0])?.groups ?? [])
           }
           submitLabel={
             groupDialog.kind === "rename-branch"
