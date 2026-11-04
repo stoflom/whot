@@ -43,3 +43,28 @@ describe("growLimit (#214)", () => {
     expect(growLimit(16)).toBe(16 + 8);
   });
 });
+
+// #225 (F-M4) — the same rule now windows every heavy surface: the
+// person grid, the image-detail grid and the focus film roll share the
+// App-owned prefix (the reveal rule stays review-only by construction —
+// those effects gate on mode), and RollsThumbs windows its branch thumbs
+// in-pane with its own limit (reset per branch). These tests pin the
+// growth contract the new surfaces rely on.
+describe("growLimit (#225 — the extended surfaces)", () => {
+  it("converges on a flat 5k branch in a handful of sentinel hits", () => {
+    // RollsThumbs' worst case: one flat directory, thousands of thumbs
+    let n = GRID_MOUNT_INITIAL;
+    let hits = 0;
+    while (n < 5000) {
+      n = growLimit(n);
+      hits++;
+    }
+    expect(n).toBeGreaterThanOrEqual(5000);
+    expect(hits).toBeLessThanOrEqual(16); // geometric: ~15 hits for 5k
+  });
+
+  it("the first sentinel hit already covers a small branch/person view", () => {
+    // a person with a handful of sections never windowing-paints twice
+    expect(growLimit(GRID_MOUNT_INITIAL)).toBeGreaterThanOrEqual(20);
+  });
+});

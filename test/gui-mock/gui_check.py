@@ -280,9 +280,16 @@ def _grid_grow(t, value, cycles=14):
         for _ in range(cycles):
             if t.driver.find_elements(By.CSS_SELECTOR, value):
                 return
+            # #225: every centre surface windows now — the film roll and
+            # the right pane scroll in their own containers (the review/
+            # person/image-detail grids scroll .center-scroll; in focus
+            # mode .center-scroll is overflow:hidden and .film-roll is
+            # the scroller). Scroll each candidate; a non-scrollable one
+            # ignores the write.
             t.driver.execute_script(
-                "const el = document.querySelector('.center-scroll');"
-                " if (el) el.scrollTop = el.scrollHeight;")
+                "for (const sel of ['.center-scroll', '.film-roll', '.right']) {"
+                " const el = document.querySelector(sel);"
+                " if (el) el.scrollTop = el.scrollHeight; }")
             time.sleep(0.35)
     except Exception:
         pass
@@ -299,6 +306,27 @@ def install_grid_grow(t):
 
     t.find_element = find_element
     return t
+
+
+# #225 — the branch thumbs window in-pane now (the right pane is the
+# scroll container): before a pane_state read that asserts the FULL
+# listing, scroll-reach the sentinel so the mounted prefix grows to the
+# branch's direct-image count (the same accommodation install_grid_grow
+# made for the centre grids — no check semantics changed).
+def _thumbs_grow(t, cycles=16):
+    try:
+        last = -1
+        for _ in range(cycles):
+            n = js(t, "return document.querySelectorAll('.rolls-thumbs .img-thumb').length")
+            if n == last:
+                return
+            last = n
+            t.driver.execute_script(
+                "const el = document.querySelector('.right');"
+                " if (el) el.scrollTop = el.scrollHeight;")
+            time.sleep(0.35)
+    except Exception:
+        pass
 
 
 def fresh(t):
@@ -2772,6 +2800,7 @@ def c34_rolls_branch_thumbnails(t):
         return True
 
     def pane_state():
+        _thumbs_grow(t)  # #225: the thumbs window — grow before the read
         return js(t, r"""
           const thumbs = [...document.querySelectorAll('.rolls-thumbs .img-thumb')];
           return {
