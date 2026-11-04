@@ -110,12 +110,20 @@ export function indexStagedSet(set: Stage[]): Map<number, StagedEntry> {
 }
 
 /** #224: one face's staged fields — an O(1) map read (the identical
-    merge the per-op scan produced, later ops win). */
+    merge the per-op scan produced, later ops win). The internal
+    winning-op positions stay in the entry; this returns the plain
+    fields. */
 export function stagedFieldsForIndex(
   idx: Map<number, StagedEntry>,
   faceId: number,
 ): StagedFields {
-  return idx.get(faceId) ?? {};
+  const e = idx.get(faceId);
+  if (!e) return {};
+  const out: StagedFields = {};
+  if (e.name !== undefined) out.name = e.name;
+  if (e.group !== undefined) out.group = e.group;
+  if (e.desc !== undefined) out.desc = e.desc;
+  return out;
 }
 
 /** #224: the section-level merge over the index — equivalent to
