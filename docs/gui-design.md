@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 4.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 4.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -856,7 +856,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - **Every value field suggests**: the name
       typeahead (existing persons, `UnknownN` excluded, pick = merge
       target) and the group-path suggestions (no `ungrouped` quick-pick
-      — an empty input seats, §4.35)
+      — an empty input seats, §4.35 — and a status seat is never
+      suggested as a path, §4.35/#233)
       live wherever a value is typed: **the §4.24 Edit dialog** (name
       and group; description stays free text), the detail-pane
       Name/Group, the tree inline rename, `GroupDialog` and the merge
@@ -943,7 +944,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       untouched fields re-base on the new scope's prefill (the group
       mirroring the scope's person); a snapshot refresh re-basing the
       prefills obeys the same retention rule, so in-progress typing is
-      never silently discarded.
+      never silently discarded. The **group prefill is the person's
+      first real group** — a status seat never prefills (a seated
+      person's group field opens **empty** = ungrouped, §4.35/#233).
     - **Description add mode (`+` prefix)**: a description value
       starting with **+** is an *add*, not a replace — the tokens after
       the **+** (split on `|`, spaces trimmed as usual) are **appended
@@ -1536,6 +1539,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       bucket names only as a **lazily-created, fail-visible fallback**
       (only an invariant breach could populate one, so a healthy tree
       never shows them and no writer can produce one).
+    - **Display rule (#233)**: the seats are **never displayed as
+      actual groups** — outside the left pane (where they organize the
+      tree list as system branches) no surface shows them. The person
+      group lists (§4.38 — details pane and Edit dialog) list **real
+      memberships only**: a seated person's list is simply empty, and
+      the staged preview drops the seat the moment a real group is
+      staged (filing replaces the seat, above — the preview matches
+      the committed result). The group-path suggestions (§4.21) never
+      offer a seat, the Edit dialog's group prefill (§4.24) never
+      prefills one, and every other group display (face-card label,
+      name-suggestion and merge hints/tooltips) shows the real groups
+      only. A seated person therefore reads as *ungrouped* everywhere
+      except where the tree/sections place them by status.
     - **The group invariant**: every person has **≥ 1 group row** — the
       “no group” state does not exist. Everything that would leave a
       person groupless **seats** them instead: an empty assign or
@@ -1719,13 +1735,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      §4.16). Each row shows the path and an **×** button that removes
      that membership; removing the last real membership re-seats the
      person by state (§4.35 — the backend's `ensure_seat`).
-   - **Status seats are inert**: a row that is the person's status seat
-     (`New`/`Accepted`/`Rejected`, §4.35 — system furniture) renders
-     dimmed with its × **disabled**; it is never staged for removal.
+   - **Status seats are not rows (#233)**: the list shows real
+     memberships only — the person's status seat (`New`/`Accepted`/
+     `Rejected`, §4.35) is never rendered as a group row. A person
+     whose only membership is their seat shows an **empty list** (a
+     dimmed hint; `Groups (0)`). Staging a real group onto such a
+     person shows **only the new group** in the preview (filing
+     replaces the seat, §4.35 — the preview matches the committed
+     result, and the person re-lists under the new branch), and
+     removing the last real membership leaves the list empty again
+     (the backend re-seats the person, §4.35).
    - **Add group**: a path input below the list (path typeahead, §4.18
-     options) appends a **new** membership — every current group is
-     kept and the status seat drops when a real group is filed (the
-     §4.35 rules). Reserved segments are refused
+     options — never a status seat, §4.35/#233) appends a **new**
+     membership — every current group is kept and the status seat
+     drops when a real group is filed (the §4.35 rules). Reserved
+     segments are refused
      client-side before staging, exactly as the backend refuses them.
    - **Editable rows**: clicking a row's path edits it inline (path
      typeahead); a committed change re-homes **that one** membership
@@ -1751,10 +1775,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    - **The Edit dialog fronts the same list**: whenever the
      dialog's **Name field holds a known person's name** (typed or
      prefilled), the single Group field is replaced by that person's
-     group LIST — the identical rows (× removal, inert seat, inline
-     re-home, add row — one shared `GroupListEditor`, so the pane and
-     the dialog can never drift). The list edits stage **locally in the
-     dialog**; **Apply** leaves them staged (they preview in the list
+     group LIST — the identical rows (× removal, inline re-home, add
+     row — one shared `GroupListEditor`, so the pane and the dialog
+     can never drift; no status-seat row, §4.35/#233). The dialog's
+     add-row **Enter stages just that add** (‘add new group’, #233 —
+     the pane's add-row Enter commits the staged set, above); the
+     list edits stage **locally in the dialog**; **Apply** leaves them staged (they preview in the list
      itself — an informed note says they commit with Accept), **Accept**
      commits them **after the name lands** — the membership ops replay
      in order against the **surviving person** (the merge target when

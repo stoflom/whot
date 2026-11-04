@@ -993,7 +993,7 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   text-overflow: ellipsis;
 }
 button.dp-group-path:hover:not(:disabled) { border-color: var(--border); }
-.dp-group-path.seat { color: var(--dim); cursor: default; }
+.dp-group-empty { color: var(--dim); font-size: 0.9em; padding: 2px 0; }
 .dp-group-x { flex: none; padding: 0 6px; font-size: 0.85rem; line-height: 1.4; }
 .dp-add-group { display: flex; gap: 4px; align-items: stretch; }
 .dp-add-group .typeahead { flex: 1; min-width: 0; }

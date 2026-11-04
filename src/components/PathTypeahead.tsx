@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { Person } from "../api";
+import { isSeat } from "../groupList";
 import SuggestInput, { type SuggestOption } from "./SuggestInput";
 
 export type { SuggestOption };
@@ -11,12 +12,15 @@ export type { SuggestOption };
 // backend.
 
 /** distinct non-empty group paths over the persons (+ the ungrouped
-    entry), sorted — one option list per parent render of its persons */
+    entry), sorted — one option list per parent render of its persons.
+    #233 (§4.35 display rule): status seats are never suggested — they
+    are not actual groups (the backend refuses them anyway) */
 export function groupPathOptions(
   persons: Pick<Person, "groups">[],
 ): SuggestOption[] {
   const set = new Set<string>();
-  for (const p of persons) for (const g of p.groups) if (g) set.add(g);
+  for (const p of persons)
+    for (const g of p.groups) if (g && !isSeat(g)) set.add(g);
   return [
     ...[...set].sort().map((v) => ({ value: v })),
     { value: "", label: "ungrouped" },

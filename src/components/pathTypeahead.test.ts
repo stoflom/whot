@@ -9,6 +9,8 @@ const persons = [
   { groups: [] }, // ungrouped person — no path contributed
   { groups: ["travel"] },
   { groups: ["family"] }, // first segment also exists on its own
+  { groups: ["New"] }, // #233: seated person — the seat is never suggested
+  { groups: ["Accepted", "Rejected"] }, // every seat is reserved
 ];
 
 describe("groupPathOptions", () => {
@@ -19,6 +21,12 @@ describe("groupPathOptions", () => {
       { value: "travel" },
       { value: "", label: "ungrouped" },
     ]);
+  });
+
+  it("#233 (§4.35 display rule): status seats are never suggested — they are not actual groups", () => {
+    const opts = groupPathOptions(persons).map((o) => o.value);
+    for (const seat of ["New", "Accepted", "Rejected"])
+      expect(opts).not.toContain(seat);
   });
 
   it("the ungrouped entry inserts '' — a literal 'Ungrouped' path is illegal", () => {

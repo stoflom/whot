@@ -3,7 +3,6 @@ import PathTypeahead from "./PathTypeahead";
 import type { SuggestOption } from "./PathTypeahead";
 import {
   applyGroupOps,
-  isSeat,
   stageAdd,
   stageRemove,
   stageRehome,
@@ -11,8 +10,10 @@ import {
 } from "../groupList";
 
 // #181 (§4.38/#4.24) — the group-LIST editor, SHARED by the person
-// details pane (#172) and the Edit dialog (#181): every membership is a
-// row (a status-seat row is dimmed with an inert ×, §4.35), × stages a
+// details pane (#172) and the Edit dialog (#181): every REAL
+// membership is a row — the status seat is never rendered (§4.35/#233
+// display rule: a seated person's list is empty, and the staged
+// preview drops the seat when a real group is added), × stages a
 // removal, an inline row edit re-homes that one membership (§4.16) and
 // the add row stages a new one. Purely CONTROLLED — the parent owns the
 // staged ops and the commit (Update person in the pane, Accept in the
@@ -21,7 +22,8 @@ import {
 // open).
 
 interface Props {
-  /** the committed memberships (incl. any status seat) */
+  /** the committed memberships (may include the status seat — it is
+      never rendered, §4.35/#233) */
   groups: string[];
   /** the staged ops (pane/dialog-local) */
   ops: GroupOp[];
@@ -46,7 +48,8 @@ export default function GroupListEditor({
 }: Props) {
   const [addPath, setAddPath] = useState("");
   const [editing, setEditing] = useState<{ path: string; value: string } | null>(null);
-  // the staged result — the committed memberships with the ops applied
+  // the staged result — the REAL memberships with the ops applied (the
+  // status seat is filtered out, §4.35/#233)
   const display = applyGroupOps(groups, ops);
   const stageAddPath = (commitAfter: boolean) => {
     const next = stageAdd(ops, display, addPath);
@@ -66,61 +69,55 @@ export default function GroupListEditor({
   return (
     <>
       <ul className={className}>
-        {display.map((g) => {
-          const seat = isSeat(g);
-          const staged = ops.some((o) => o.to === g);
-          // #165/§4.35 (seat rows) + §4.16 (inline re-home) + §4.38
-          // (staged add): the row/add titles stay reference-free (§4.43)
-          return (
-            <li key={g} className={`dp-group-row${staged ? " staged" : ""}`}>
-              {editing?.path === g ? (
-                <PathTypeahead
-                  className="input-group dp-group-edit"
-                  value={editing.value}
-                  onChange={(v) => setEditing({ path: g, value: v })}
-                  options={options}
-                  autoFocus
-                  onSubmit={commitEdit}
-                  onEscape={() => setEditing(null)}
-                  onLeave={commitEdit}
-                  title="Re-home this membership (Enter commits, Esc cancels)"
-                />
-              ) : seat ? (
-                <span
-                  className="dp-group-path seat"
-                  title="status seat — system-written, never removed"
-                >
-                  {g}
-                </span>
-              ) : (
+        {display.length === 0 ? (
+          // #233 (§4.35/#233): the person holds no real membership
+          // (their status seat is never a row) — the dimmed hint keeps
+          // the list's slot, like the pane's other empty states
+          <li className="dp-group-empty">no groups yet — add one below</li>
+        ) : (
+          display.map((g) => {
+            const staged = ops.some((o) => o.to === g);
+            // §4.16 (inline re-home) + §4.38 (staged add): the row/add
+            // titles stay reference-free (§4.43)
+            return (
+              <li key={g} className={`dp-group-row${staged ? " staged" : ""}`}>
+                {editing?.path === g ? (
+                  <PathTypeahead
+                    className="input-group dp-group-edit"
+                    value={editing.value}
+                    onChange={(v) => setEditing({ path: g, value: v })}
+                    options={options}
+                    autoFocus
+                    onSubmit={commitEdit}
+                    onEscape={() => setEditing(null)}
+                    onLeave={commitEdit}
+                    title="Re-home this membership (Enter commits, Esc cancels)"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="dp-group-path"
+                    title="click to edit — re-homes just this membership"
+                    onClick={() => setEditing({ path: g, value: g })}
+                  >
+                    {g}
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="dp-group-path"
-                  title="click to edit — re-homes just this membership"
-                  onClick={() => setEditing({ path: g, value: g })}
+                  className="dp-group-x"
+                  title="remove this membership (staged — commit with Update person)"
+                  onClick={() => {
+                    const next = stageRemove(ops, display, g);
+                    if (next) onOps(next);
+                  }}
                 >
-                  {g}
+                  ×
                 </button>
-              )}
-              <button
-                type="button"
-                className="dp-group-x"
-                disabled={seat}
-                title={
-                  seat
-                    ? "status seat — never removed"
-                    : "remove this membership (staged — commit with Update person)"
-                }
-                onClick={() => {
-                  const next = stageRemove(ops, display, g);
-                  if (next) onOps(next);
-                }}
-              >
-                ×
-              </button>
-            </li>
-          );
-        })}
+              </li>
+            );
+          })
+        )}
       </ul>
       <div className="dp-add-group">
         <PathTypeahead

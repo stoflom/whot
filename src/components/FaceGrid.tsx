@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { Face, Person } from "../api";
 import FaceCard from "./FaceCard";
+import { firstRealGroup } from "../groupList";
 import { stagedFieldsForSectionIndex, type StagedEntry } from "../stage";
 
 export interface Section {
@@ -233,6 +234,14 @@ const SectionView = memo(
             // stable primitives so memo(FaceCard) holds for the cards an
             // Apply does not touch
             const staged = stageIdx.get(id);
+            // #233 (§4.35 display rule): the card's group label shows the
+            // person's REAL groups only — a status seat is never a real
+            // group, so a seated person gets the empty hint
+            const person =
+              face.person_id != null ? persons.get(face.person_id) : undefined;
+            const personGroup = person
+              ? firstRealGroup(person.groups) || undefined
+              : undefined;
             return (
               <FaceCard
                 key={id}
@@ -248,14 +257,8 @@ const SectionView = memo(
                 // unselected cards get a stable `undefined` so their memo
                 // holds across toggles elsewhere
                 selSize={selected ? selSize : undefined}
-                personName={
-                  face.person_id != null ? persons.get(face.person_id)?.name : undefined
-                }
-                personGroup={
-                  face.person_id != null
-                    ? persons.get(face.person_id)?.groups[0]
-                    : undefined
-                }
+                personName={person?.name}
+                personGroup={personGroup}
                 onEdit={onEditCard}
                 onToggle={onToggle}
                 onSelectOne={onSelectOne}

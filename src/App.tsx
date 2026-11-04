@@ -20,7 +20,11 @@ import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
 import { personDataSig } from "./personSig";
 import { mountLimitFor, growLimit, GRID_MOUNT_INITIAL } from "./gridMount";
-import { renameGroupFor as renameGroup, type GroupOp } from "./groupList";
+import {
+  firstRealGroup,
+  renameGroupFor as renameGroup,
+  type GroupOp,
+} from "./groupList";
 import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
@@ -1038,11 +1042,13 @@ export default function App() {
           const f = facesById.get(id);
           const p = f?.person_id != null ? personsById.get(f.person_id) : undefined;
           // #165/§4.35: the system person's reserved name/seat never
-          // prefills — a claim needs a typed name (untouched = no stage)
+          // prefills — a claim needs a typed name (untouched = no stage).
+          // #233 (§4.35 display rule): a status seat never prefills either
+          // — the group prefill is the person's first REAL group
           const system = p?.name === "Rejected";
           return {
             name: system ? "" : p?.name ?? "",
-            group: system ? "" : p?.groups[0] ?? "",
+            group: system ? "" : firstRealGroup(p?.groups ?? []),
             desc: f?.description ?? "",
           };
         },

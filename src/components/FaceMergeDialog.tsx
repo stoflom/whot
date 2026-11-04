@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { Person } from "../api";
 import type { FaceMergePlan } from "../faceDrop";
+import { firstRealGroup } from "../groupList";
 import { useOwnsKeyboard } from "../overlays";
 
 // #135 (rule 34) — face-level merge confirmation. A face drag dropped on a
@@ -56,7 +57,9 @@ export default function FaceMergeDialog({
         </h3>
         <p className="dim">
           <b>{plan.movers.length}</b> face(s) move to <b>{target.name}</b>
-          {target.groups[0] ? ` (${target.groups[0]})` : ""} — rejected faces
+          {/* #233 (§4.35 display rule): the target's first REAL group —
+              a status seat is never shown as a real group */}
+          {firstRealGroup(target.groups) ? ` (${firstRealGroup(target.groups)})` : ""} — rejected faces
           keep their status, the rest become confirmed.
           {plan.emptied.length > 0 && (
             <>

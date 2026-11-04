@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Person, Settings } from "../api";
 import { aliasesToText, clusterPersons, textToAliases, type MergeCluster } from "../nameCluster";
+import { realGroups } from "../groupList";
 import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
 import ContextMenu, { type MenuState } from "./ContextMenu";
 import { useOwnsKeyboard } from "../overlays";
@@ -293,8 +294,10 @@ export default function MergeSimilarDialog({
                       {m.counts.total}f {m.counts.provisional}p {m.counts.confirmed}c{" "}
                       {m.counts.rejected}r
                     </span>
+                    {/* #233 (§4.35 display rule): the REAL groups only —
+                        a status seat is never shown as a real group */}
                     <span className="merge-groups dim" title="group path(s)">
-                      {m.groups.join(", ") || "(no group)"}
+                      {realGroups(m.groups).join(", ") || "(no group)"}
                     </span>
                     <span className="merge-when dim" title="created (UTC)">
                       {m.created_at}

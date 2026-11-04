@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { Person } from "../api";
+import { realGroups } from "../groupList";
 import SuggestInput, { type SuggestOption } from "./SuggestInput";
 
 // #67/#97 (§4.21) — name input with a suggestion dropdown over the
@@ -47,7 +48,9 @@ export default function NameTypeahead({
     () =>
       persons
         .filter((p) => !p.name.startsWith("Unknown")) // generated names are noise
-        .map((p) => ({ value: p.name, hint: p.groups.join(", ") || "ungrouped" })),
+        // #233 (§4.35 display rule): the hint lists the person's REAL
+        // groups — a status seat is never shown as a real group
+        .map((p) => ({ value: p.name, hint: realGroups(p.groups).join(", ") || "ungrouped" })),
     [persons],
   );
   return (

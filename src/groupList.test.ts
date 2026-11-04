@@ -1,7 +1,16 @@
 // #172 (gui-design §4.38) — the person pane's staged group-list edits.
 // Run: npm test (vitest run)
 import { describe, expect, it } from "vitest";
-import { applyGroupOps, isSeat, stageAdd, stageRemove, stageRehome, validPath } from "./groupList";
+import {
+  applyGroupOps,
+  firstRealGroup,
+  isSeat,
+  realGroups,
+  stageAdd,
+  stageRemove,
+  stageRehome,
+  validPath,
+} from "./groupList";
 
 describe("applyGroupOps (#172, §4.38)", () => {
   it("no ops = the committed memberships, in order", () => {
@@ -36,6 +45,42 @@ describe("applyGroupOps (#172, §4.38)", () => {
         { from: "B", to: "" },
       ])
     ).toEqual(["A"]);
+  });
+});
+
+describe("the #233 display rule — seats are never displayed groups", () => {
+  it("a seated person's staged result is empty (no ops)", () => {
+    expect(applyGroupOps(["New"], [])).toEqual([]);
+    expect(applyGroupOps(["Accepted"], [])).toEqual([]);
+  });
+
+  it("adding a real group onto a seated person shows ONLY the new group (the seat is replaced in the preview — filing replaces the seat, §4.35)", () => {
+    expect(applyGroupOps(["New"], [{ from: "", to: "Family|Lombards" }])).toEqual(
+      ["Family|Lombards"]
+    );
+  });
+
+  it("removing the last real group leaves the preview empty (the backend re-seats the person; the seat is never a displayed row)", () => {
+    expect(applyGroupOps(["A"], [{ from: "A", to: "" }])).toEqual([]);
+  });
+
+  it("a mixed committed list never shows the seat alongside real groups", () => {
+    expect(applyGroupOps(["New", "A"], [])).toEqual(["A"]);
+  });
+});
+
+describe("realGroups / firstRealGroup (#233)", () => {
+  it("realGroups drops the status seats, keeps the rest in order", () => {
+    expect(realGroups(["New", "A", "Accepted"])).toEqual(["A"]);
+    expect(realGroups(["A", "B"])).toEqual(["A", "B"]);
+    expect(realGroups(["New"])).toEqual([]);
+  });
+
+  it("firstRealGroup is the first real path, '' when the person is seated", () => {
+    expect(firstRealGroup(["New"])).toBe("");
+    expect(firstRealGroup(["Accepted", "A"])).toBe("A");
+    expect(firstRealGroup(["A", "B"])).toBe("A");
+    expect(firstRealGroup([])).toBe("");
   });
 });
 

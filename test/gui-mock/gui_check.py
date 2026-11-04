@@ -100,7 +100,8 @@ Checks (contract refs: docs/gui-design.md):
       removal and Add group stages a membership (the mock is NOT
       touched until commit); Update person sits directly above Remove
       person and commits the staged set via move_persons_between_groups;
-      a status-seat row renders dimmed with an inert ×; renaming the
+      a seated person's list is EMPTY (the status seat is never a row,
+      §4.35/#233); renaming the
       pane person to a KNOWN person re-anchors the pane on the merge
       target and lists ITS groups; the system person Rejected sees the
       list read-only with no Update button
@@ -2544,10 +2545,11 @@ def c33_person_group_list_update(t):
     the staged display, the mock untouched) and Add group stages a new
     membership; the staged set commits via the Update person button
     (directly above Remove person) through move_persons_between_groups;
-    a status-seat row is inert (× disabled); renaming the pane person to
-    a KNOWN person re-anchors the pane on the merge target and lists ITS
-    groups; the system person Rejected sees the list read-only with no
-    Update button."""
+    a seated person's list is EMPTY — the status seat is never a row
+    (the dimmed empty hint shows, §4.35/#233); renaming the pane person
+    to a KNOWN person re-anchors the pane on the merge target and lists
+    ITS groups; the system person Rejected sees the list read-only with
+    no Update button."""
     fresh(t)
     set_show_filter(t, "all")
 
@@ -2642,17 +2644,22 @@ def c33_person_group_list_update(t):
     """, pick["id"])
     staged_clear = wait_for(lambda: not any(r["staged"] for r in rows()))
 
-    # ── phase C: a status-seat row is inert ────────────────────────────
+    # ── phase C: a seated person's list is EMPTY (the status seat is
+    #    never a row — §4.35/#233 display rule) ────────────────────────
     seat_pick = js(t, r"""
       const snap = window.__MOCK_SNAP;
-      const p = snap.persons.find(x => /^unknown/i.test(x.name));
+      const SEATS = ['New', 'Accepted', 'Rejected'];
+      const p = snap.persons.find(x => /^unknown/i.test(x.name) &&
+        x.groups.every(g => SEATS.includes(g)));
       return p ? {id: p.id, groups: [...p.groups]} : null;
     """)
     if seat_pick:
         select_person(seat_pick["id"])
         seat_rows = rows()
+        seat_empty = js(t, "return !!document.querySelector('.dp-groups .dp-group-empty')")
     else:
         seat_rows = None
+        seat_empty = None
 
     # ── phase D: rename to a KNOWN person re-anchors on the target ─────
     mpick = js(t, r"""
@@ -2709,20 +2716,20 @@ def c33_person_group_list_update(t):
         and mock_after_add == pick["groups"]                         # …mock untouched
         and committed and sorted(mock_after or []) == want_after     # Update commits the set
         and staged_clear                                             # staging cleared after commit
-        and seat_rows is not None and seat_rows
-        and all(r["seat"] and r["xDisabled"] for r in seat_rows)     # seat rows inert
+        and seat_rows is not None and seat_rows == []                  # seat is never a row
+        and seat_empty is True                                         # dimmed empty hint
         and (merge_ok is not False and anchor is not None)
         and (mpick is None or (anchor["name"] == mpick["dstName"]
                                and anchor["groups"] == mpick["dstGroups"]))  # re-anchored
         and sys_ok is not False                                       # system person read-only
     )
-    record("C33 group list + Update person (#172/#173, §4.38): stage ×/add, commit, seat inert, merge re-anchor, system read-only",
+    record("C33 group list + Update person (#172/#173, §4.38): stage ×/add, commit, seated person's list empty (#233), merge re-anchor, system read-only",
            ok,
            f"listed={[r['path'] for r in listed]} (want {pick['groups']}); "
            f"after×={[r['path'] for r in after_x]} mockUntouched={mock_after_x == pick['groups']}; "
            f"afterAdd={[r['path'] for r in after_add]} staged={after_add[-1]['staged'] if after_add else None}; "
            f"committed={committed} mock={mock_after} stagedClear={staged_clear}; "
-           f"seat={seat_rows}; merge={merge_ok} anchor={anchor}; system={sys_ok}")
+           f"seat={seat_rows} emptyHint={seat_empty}; merge={merge_ok} anchor={anchor}; system={sys_ok}")
 
 
 def c34_rolls_branch_thumbnails(t):
@@ -4398,7 +4405,10 @@ def c46_edit_dialog_group_list(t):
     locally and Accept commits them AFTER the name (a list-only Accept
     runs the chain too), landing on the SURVIVING person (the merge
     target when the name merges); a NEW name keeps the single Group
-    field."""
+    field. #233 (§4.35 display rule): a SEEDED person's list is empty
+    (the status seat is never a row), and Enter in the add input is
+    'add new group' — the staged preview shows only the new group (the
+    seat is replaced) and Accept commits exactly it."""
     fresh(t)
     set_show_filter(t, "all")
 
@@ -4462,14 +4472,16 @@ def c46_edit_dialog_group_list(t):
           return true;
         """, sel, text)
 
-    def set_add(v):
+    def set_add(v, enter=False):
         js(t, r"""
           const el = document.querySelector('.edit-dialog .dp-add-group .typeahead input');
           const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
           setter.call(el, arguments[0]);
           el.dispatchEvent(new Event('input', {bubbles: true}));
-        """, v)
-        time.sleep(0.3)
+          if (arguments[1])
+            el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+        """, v, enter)
+        time.sleep(0.4)
 
     def groups_of(pid):
         return js(t, r"""
@@ -4551,11 +4563,51 @@ def c46_edit_dialog_group_list(t):
                 and c_after == ["Ck46|G3"]
                 and merged_face == a["pid"])   # the face landed on the TARGET
 
-    ok = pa_ok and a_commit_ok and (b_ok is not False) and (c_ok is not False)
-    record("C46 Edit dialog group list (#181/§4.38): known name fronts the list, staged ops commit on Accept (list-only too), merge ops hit the target, new name keeps the single field",
+    # ── phase D (#233, §4.35 display rule): a SEEDED person — the list
+    #    is empty (the status seat is never a row), Enter in the add
+    #    input stages JUST 'add new group', the preview shows only the
+    #    new group (the seat is replaced) and Accept commits exactly it
+    d = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const SEATS = ['New', 'Accepted', 'Rejected'];
+      const byId = new Map(snap.persons.map(p => [p.id, p]));
+      for (const f of snap.faces) {
+        if (f.link_status !== 'provisional' || f.person_id == null) continue;
+        const p = byId.get(f.person_id);
+        if (!p || !/^unknown/i.test(p.name)) continue;
+        if (!p.groups.every(g => SEATS.includes(g))) continue;   // seat only
+        return {fid: f.id, pid: p.id, name: p.name, groups: p.groups.slice()};
+      }
+      return null;
+    """)
+    d_ok = None
+    d_state = {}
+    if d:
+        js(t, "arguments[0].scrollIntoView({block: 'center'})",
+           t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{d['fid']}']"))
+        time.sleep(0.3)
+        open_dialog(d["fid"])
+        time.sleep(0.6)
+        pd = rows()
+        pd_empty_hint = js(t, "return !!document.querySelector('.edit-dialog .ed-groups .dp-group-empty')")
+        set_add("Ck46|Seat", enter=True)    # Enter = 'add new group'
+        pd2 = rows()
+        staged_only = groups_of(d["pid"]) == d["groups"]
+        click_btn(".edit-dialog .dialog-actions button", "Accept")
+        time.sleep(1.8)
+        d_after = groups_of(d["pid"])
+        d_state = {"open": pd, "emptyHint": pd_empty_hint, "afterEnter": pd2, "stagedOnly": staged_only, "after": d_after}
+        d_ok = (pd["list"] and pd["paths"] == [] and pd_empty_hint
+                and pd2["paths"] == ["Ck46|Seat"]        # the seat is replaced in the preview
+                and staged_only
+                and d_after == ["Ck46|Seat"])            # the committed result
+
+    ok = pa_ok and a_commit_ok and (b_ok is not False) and (c_ok is not False) and (d_ok is not False)
+    record("C46 Edit dialog group list (#181/§4.38, #233): known name fronts the list, staged ops commit on Accept (list-only too), merge ops hit the target, new name keeps the single field, a seated person's list is empty and Enter-add replaces the seat",
            ok,
            f"A: pick={a} rows={pa} staged-only={untouched} after={a_after} closed={dialog_gone}; "
-           f"B: pick={b} → {pb} (ok={b_ok}); C: pick={c} {c_state} (ok={c_ok})")
+           f"B: pick={b} → {pb} (ok={b_ok}); C: pick={c} {c_state} (ok={c_ok}); "
+           f"D: pick={d} {d_state} (ok={d_ok})")
 
 
 def c47_first_run_no_database(t):

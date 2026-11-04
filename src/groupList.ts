@@ -23,6 +23,17 @@ export const SEATS = ["New", "Accepted", "Rejected"];
 
 export const isSeat = (path: string) => SEATS.includes(path);
 
+/** #233 (§4.35 display rule) — the person's REAL memberships: the
+    status seats are system furniture, never displayed as actual
+    groups — they exist only to organize the left-pane list */
+export const realGroups = (groups: string[]): string[] =>
+  groups.filter((g) => !isSeat(g));
+
+/** the first real group path ("" = ungrouped) — prefill/label/hint
+    displays never surface a status seat (§4.35/#233) */
+export const firstRealGroup = (groups: string[]): string =>
+  realGroups(groups)[0] ?? "";
+
 /** #153 (+ #165/§4.35, #178/§4.1) — the group argument for every
     rename-style person assign: a filed person keeps their group path,
     the system person's seat never prefills a group field, and a STATUS
@@ -43,9 +54,13 @@ export function validPath(path: string): boolean {
 
 /** the staged result — the committed memberships with the ops applied
     in order (a re-home onto an existing path merges the rows, which is
-    exactly the backend's DELETE + INSERT OR IGNORE) */
+    exactly the backend's DELETE + INSERT OR IGNORE). #233 (§4.35
+    display rule): the result shows REAL memberships only — the status
+    seat is never a displayed group, and filing replaces the seat (the
+    backend drops it once any real group lands), so the preview can
+    never show both */
 export function applyGroupOps(groups: string[], ops: GroupOp[]): string[] {
-  let out = [...groups];
+  let out = realGroups(groups);
   for (const op of ops) {
     if (op.from === "") {
       if (op.to && !out.includes(op.to)) out.push(op.to);
