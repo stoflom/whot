@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Person, Refcrop, Snapshot } from "../api";
 import { useFaceImage } from "../hooks";
 import { rotStyle } from "../rotation";
@@ -152,9 +152,14 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
   useEffect(() => setNameDraft(person.name), [person.name]);
   useEffect(() => setNoteDraft(person.note ?? ""), [person.note]);
   // #122: crop rotations are per-face — the primary face and every
-  // refcrop spin with their own stored angle
-  const rotOf = (faceId: number) =>
-    snapshot?.faces.find((f) => f.id === faceId)?.rotation ?? 0;
+  // refcrop spin with their own stored angle. #228 (F-L2): the lookup is
+  // a memoised id → rotation map (the old `faces.find` ran per crop per
+  // pane render); App builds the same shape for primaryRot
+  const rotByFace = useMemo(
+    () => new Map((snapshot?.faces ?? []).map((f) => [f.id, f.rotation])),
+    [snapshot]
+  );
+  const rotOf = (faceId: number) => rotByFace.get(faceId) ?? 0;
   const pathOptions = useGroupPathOptions(snapshot?.persons ?? []);   // #97
   // the staged result — the committed memberships with the ops applied
   const display = applyGroupOps(person.groups, ops);

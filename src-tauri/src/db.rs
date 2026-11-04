@@ -1089,13 +1089,15 @@ fn recompute_refcrops(con: &Connection, person_id: i64, n: i64) -> Result<()> {
         "DELETE FROM person_refcrops WHERE person_id = ? AND pinned = 0",
         params![person_id],
     )?;
+    // #228 (B-L2): the INSERT is prepared once — the old loop re-prepared
+    // the same statement per row (inside the writer tx, so minor, but free)
+    let mut ins = con.prepare(
+        "INSERT OR REPLACE INTO person_refcrops
+           (person_id, face_id, description, pinned, seq)
+         VALUES (?, ?, ?, 0, ?)",
+    )?;
     for (face_id, group, seq) in want {
-        con.execute(
-            "INSERT OR REPLACE INTO person_refcrops
-               (person_id, face_id, description, pinned, seq)
-             VALUES (?, ?, ?, 0, ?)",
-            params![person_id, face_id, group, seq],
-        )?;
+        ins.execute(params![person_id, face_id, group, seq])?;
     }
     Ok(())
 }

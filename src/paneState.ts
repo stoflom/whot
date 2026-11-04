@@ -61,10 +61,18 @@ export function usePaneSizes(rollsBrowse: boolean): PaneSizesApi {
       startX: e.clientX,
       start: edge === "right" && browse ? rollCenterPx : paneSizes[edge],
     };
-    const move = (ev: MouseEvent) => {
+    // #226 (F-M6): the drag used to setPaneSizes/setRollCenter per raw
+    // mousemove — one whole-App render per event (the hover listener
+    // already rAF-throttles its own work; the drag now does too). The
+    // latest pointer position is coalesced to at most one state update
+    // per frame; mouseup flushes the final position so the committed
+    // size is the pointer's last word, not the last frame's.
+    let raf = 0;
+    let pendingX: number | null = null;
+    const apply = (clientX: number) => {
       const d = dragRef.current;
       if (!d) return;
-      const dx = ev.clientX - d.startX;
+      const dx = clientX - d.startX;
       if (d.edge === "left") {
         setPaneSizes((s) => ({ ...s, left: Math.min(Math.max(d.start + dx, 160), 480) }));
         return;
@@ -76,7 +84,24 @@ export function usePaneSizes(rollsBrowse: boolean): PaneSizesApi {
       }
       setPaneSizes((s) => ({ ...s, right: Math.min(Math.max(d.start - dx, 200), 560) }));
     };
+    const move = (ev: MouseEvent) => {
+      pendingX = ev.clientX;
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const x = pendingX;
+        pendingX = null;
+        if (x != null) apply(x);
+      });
+    };
     const up = () => {
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      const x = pendingX;
+      pendingX = null;
+      if (x != null) apply(x); // commit the final size
       dragRef.current = null;
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);

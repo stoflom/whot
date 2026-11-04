@@ -1,4 +1,4 @@
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { memo, type MouseEvent as ReactMouseEvent } from "react";
 import type { Face } from "../api";
 import { useRotatedImage, imagePreview } from "../hooks";
 import { displayDims, rotatedRect } from "../rotation";
@@ -28,7 +28,7 @@ interface Props {
   rotation?: number;
 }
 
-export default function FaceOverlay({
+function FaceOverlay({
   imageId,
   width,
   height,
@@ -78,3 +78,8 @@ export default function FaceOverlay({
     </div>
   );
 }
+
+// #228 (F-L1): memoised — the callers hand it memoised `faces` arrays
+// and stable handlers, so an unrelated App re-render (selection aside,
+// which legitimately re-colours the rects) skips the whole overlay
+export default memo(FaceOverlay);

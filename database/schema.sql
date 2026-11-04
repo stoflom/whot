@@ -165,6 +165,16 @@ CREATE TABLE person_groups (
   PRIMARY KEY (person_id, path)
 );
 
+-- #228 (B-L1): person_groups had no standalone path index — every
+-- membership lookup went through the (person_id, path) PRIMARY KEY or a
+-- scan. The path index serves the equality half of the BRANCH_OF match
+-- (`path = ?1`) and the pure-path lookups; the substr prefix half stays
+-- unsargable (SQLite cannot index a substr expression, and a range
+-- rewrite of `path >= ?1 || '|'` would break on arbitrary path bytes),
+-- which is why the finding is LOW: it only matters with thousands of
+-- memberships × branch writes.
+CREATE INDEX idx_person_groups_path ON person_groups(path);
+
 -- #210 (schema v1.8) / gui-design §4.6: per-appearance reference faces.
 -- The row is METADATA only — the crop and the filename derive at READ
 -- time from the referenced face (`faces.preview`;

@@ -7,6 +7,7 @@ import {
   type ImportOptions,
   type ImportStatus,
 } from "../api";
+import { pollDelayMs } from "../importPoll";
 
 // #167 (gui-design §4.36) — the Rolls import pane: a per-roll option
 // panel + stdout monitoring viewport driving scripts/import_roll.py as
@@ -66,11 +67,14 @@ export default function ImportPane({ dir, onClose, onImported, initial }: Props)
       .catch((e) => setError(String(e)));
   }, []);
 
-  // poll while the pane is open — cheap (300 ms) and keeps the viewport
-  // live across tab switches; a finished run is detected by the flip
-  // running → !running and a clean exit refreshes the snapshot
+  // poll while the pane is open — #226 (F-M7): 300 ms only while a run
+  // is live (the viewport must feel live), a 2.5 s heartbeat otherwise
+  // (the old fixed 300 ms interval woke the renderer's task queue for
+  // the pane's whole lifetime); a finished run is still detected by the
+  // flip running → !running and a clean exit refreshes the snapshot
   useEffect(() => {
     let stop = false;
+    let timer: number | undefined;
     let prevRunning = false;
     const tick = async () => {
       if (stop) return;
@@ -92,12 +96,15 @@ export default function ImportPane({ dir, onClose, onImported, initial }: Props)
       } catch (e) {
         if (!stop) setError(String(e));
       }
+      // the next beat follows the state just observed — one chained
+      // timeout, never overlapping ticks (the old setInterval could pile
+      // up a slow IPC response behind the next 300 ms fire)
+      if (!stop) timer = window.setTimeout(() => void tick(), pollDelayMs(runningRef.current));
     };
-    const id = window.setInterval(() => void tick(), 300);
     void tick();
     return () => {
       stop = true;
-      window.clearInterval(id);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [onImported]);
 

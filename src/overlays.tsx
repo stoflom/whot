@@ -18,6 +18,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -35,7 +36,11 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
     setCount((c) => c + 1);
     return () => setCount((c) => Math.max(0, c - 1));
   }, []);
-  return <Ctx.Provider value={{ count, register }}>{children}</Ctx.Provider>;
+  // #228 (F-L8): the context value is memoised — a fresh object literal
+  // per render re-renders every consumer of the count even when neither
+  // field moved
+  const value = useMemo(() => ({ count, register }), [count, register]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 /** an overlay calls this once at its top level — while mounted it owns the keyboard */

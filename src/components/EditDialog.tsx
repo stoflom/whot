@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead from "./PathTypeahead";
@@ -86,7 +86,14 @@ export default function EditDialog({
   // details pane shows, §4.38); a new/empty name keeps the single field
   const [groupOps, setGroupOps] = useState<GroupOp[]>([]);
   const knownName = name.trim();
-  const known = knownName ? persons.find((p) => p.name.trim() === knownName) ?? null : null;
+  // #228 (F-L5): the known-person lookup is indexed once per persons
+  // change — the old linear `find` with a `.trim()` per person ran per
+  // keystroke
+  const byTrimmedName = useMemo(
+    () => new Map(persons.map((p) => [p.name.trim(), p])),
+    [persons]
+  );
+  const known = knownName ? byTrimmedName.get(knownName) ?? null : null;
 
   // #197 (§4.24): a scope switch (or a snapshot refresh re-basing the
   // prefills) keeps every field the user already TOUCHED in this dialog

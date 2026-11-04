@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
 import { useOwnsKeyboard } from "../overlays";
@@ -44,10 +44,18 @@ export default function MergeIntoDialog({ sources, defaultTarget, persons, onCon
   }, [onCancel]);
 
   const trimmed = name.trim();
+  // #228 (F-L5): the target lookup is indexed once per candidates change
+  // — the old double linear scan re-allocated a `.toLowerCase()` string
+  // per person per keystroke
+  const { byName, byLowerName } = useMemo(
+    () => ({
+      byName: new Map(candidates.map((p) => [p.name, p])),
+      byLowerName: new Map(candidates.map((p) => [p.name.toLowerCase(), p])),
+    }),
+    [candidates]
+  );
   const target =
-    candidates.find((p) => p.name === trimmed) ??
-    candidates.find((p) => p.name.toLowerCase() === trimmed.toLowerCase()) ??
-    null;
+    byName.get(trimmed) ?? byLowerName.get(trimmed.toLowerCase()) ?? null;
 
   const moving = target ? sources.filter((p) => p.id !== target.id) : sources;
   const faceCount = moving.reduce((a, p) => a + p.counts.total, 0);

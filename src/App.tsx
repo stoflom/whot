@@ -145,6 +145,11 @@ export default function App() {
   const hoverRef = useRef<number | null>(null);
   const selRef = useRef<Set<number>>(new Set());
   selRef.current = sel;
+  // #228 (F-L4): the menu callbacks read the selections through these
+  // refs so memo(RollsThumbs) is not re-rendered by a face/image
+  // selection change via callback identity churn
+  const imgSelRef = useRef<ImageSel>(emptyImageSel());
+  imgSelRef.current = imgSel;
   // #98: sections handed to callbacks defined *before* them (the memoised
   // grid handlers) — same latest-value pattern as selRef/hoverRef
   const sectionsRef = useRef<Section[]>([]);
@@ -1178,6 +1183,8 @@ export default function App() {
         changeSel,
       }));
     },
+    // #228 (F-L4): sel read via selRef — the callback identity must not
+    // churn per face selection (it re-renders memo(RollsThumbs))
     [snap, faceVisible, openMenu, rotateImg, changeSel]
   );
 
@@ -1190,10 +1197,10 @@ export default function App() {
       );
       openMenu(e, thumbMenuGroups({
         image,
-        imgSel,
+        imgSel: imgSelRef.current,
         inBranch,
         faces,
-        sel,
+        sel: selRef.current,
         openImageInView: (id) =>
           confirmContext(() => {
             setMode("rolls");
@@ -1206,7 +1213,8 @@ export default function App() {
         changeSel,
       }));
     },
-    [snap, branchThumbs, imgSel, sel, faceVisible, openMenu, confirmContext,
+    // #228 (F-L4): sel/imgSel read via refs (see imageAreaMenu)
+    [snap, branchThumbs, faceVisible, openMenu, confirmContext,
      rotateImages, doAccept, changeSel]
   );
 
@@ -1846,8 +1854,49 @@ export default function App() {
       ?.getAttribute("data-section-key");
     return key ? rendered.find((s) => s.key === key) : undefined;
   };
+  // #228 (F-L3): the hot keydown listener used to re-bind on every
+  // selection change — its dep list carried sel/sections/stepPerson, so
+  // every click tore the listener down and re-attached it. Everything
+  // volatile is read through this ref at event time (the render-body
+  // assignment is the house latest-value pattern — selRef/hoverRef/
+  // pendingRef); the effect binds once.
+  const keyRef = useRef({
+    overlayCount,
+    sections,
+    sectionsForImage,
+    sel,
+    splitImageId,
+    mode,
+    toggle,
+    toggleMany,
+    changeSel,
+    commitPending,
+    acceptAndNext,
+    doReject,
+    stepPerson,
+  });
+  keyRef.current = {
+    overlayCount,
+    sections,
+    sectionsForImage,
+    sel,
+    splitImageId,
+    mode,
+    toggle,
+    toggleMany,
+    changeSel,
+    commitPending,
+    acceptAndNext,
+    doReject,
+    stepPerson,
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const {
+        overlayCount, sections, sectionsForImage, sel, splitImageId, mode,
+        toggle, toggleMany, changeSel, commitPending, acceptAndNext, doReject,
+        stepPerson,
+      } = keyRef.current;
       const tgt = e.target as HTMLElement | null;
       if (
         tgt &&
@@ -1965,11 +2014,10 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // toggle/toggleMany/doAccept/doReject follow this file's pattern:
-    // recreated per render, the handler re-captures them whenever any
-    // listed dep changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepPerson, acceptAndNext, commitPending, overlayCount, changeSel, lastSelRef, sections, sectionsForImage, sel, splitImageId, mode, mergeOpen, mergeInto, contextConfirm]);
+    // #228 (F-L3): everything volatile is read via keyRef above — the
+    // listener binds once for the app's lifetime (no exhaustive-deps
+    // disable needed: the empty dep list is literally correct)
+  }, []);
 
   const pendingCount = useMemo(
     () => snap?.faces.filter((f) => f.link_status === "provisional").length ?? 0,
@@ -2136,6 +2184,28 @@ export default function App() {
     void mutate(() => api.movePersonsToGroup(ids, group));
   }, [mutate]);
 
+  // #228 (F-L1): the focus/detail image rows and their face lists are
+  // memoised — the old inline `snap.faces.filter(...)` per render handed
+  // FaceOverlay a fresh array every time (and the two image lookups were
+  // linear scans per render); with stable identities memo(FaceOverlay)
+  // can skip when only unrelated state moved
+  const imgRow: ImageRow | undefined = useMemo(
+    () => (imageId != null ? snap?.images.find((i) => i.id === imageId) : undefined),
+    [snap, imageId]
+  );
+  const splitRow: ImageRow | undefined = useMemo(
+    () => (splitImageId != null ? snap?.images.find((i) => i.id === splitImageId) : undefined),
+    [snap, splitImageId]
+  );
+  const focusFaces = useMemo(
+    () => (splitRow ? snap?.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f)) ?? [] : []),
+    [snap, splitRow, faceVisible]
+  );
+  const detailFaces = useMemo(
+    () => (imgRow ? snap?.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f)) ?? [] : []),
+    [snap, imgRow, faceVisible]
+  );
+
   if (noDb) {
     // #185 (§4.36): no usable database — the first-run screen owns the
     // whole flow incl. the dialog → import-pane switch (components/
@@ -2156,10 +2226,6 @@ export default function App() {
   if (!snap) {
     return <div className="dim center-msg">loading…</div>;
   }
-
-  const imgRow: ImageRow | undefined = imageId != null ? snap.images.find((i) => i.id === imageId) : undefined;
-  const splitRow: ImageRow | undefined =
-    splitImageId != null ? snap.images.find((i) => i.id === splitImageId) : undefined;
 
   return (
     <div className="app">
@@ -2456,7 +2522,7 @@ export default function App() {
                     imageId={splitRow.id}
                     width={splitRow.width}
                     height={splitRow.height}
-                    faces={snap.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f))}
+                    faces={focusFaces}
                     sel={sel}
                     onToggle={rectToggle}
                     onFaceContextMenu={faceMenu}
@@ -2523,7 +2589,7 @@ export default function App() {
                   imageId={imgRow.id}
                   width={imgRow.width}
                   height={imgRow.height}
-                  faces={snap.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f))}
+                  faces={detailFaces}
                   sel={sel}
                   onToggle={rectToggle}
                   onFaceContextMenu={faceMenu}
