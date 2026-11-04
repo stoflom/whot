@@ -4,13 +4,16 @@ import { describe, expect, it } from "vitest";
 import {
   buildStage,
   dropStagesForFaces,
+  indexStagedSet,
   objectInsideSelection,
   sameIdSet,
   scopeFaceIds,
   stageSummary,
   stageSummarySet,
   stagedFieldsForCard,
+  stagedFieldsForIndex,
   stagedFieldsForSection,
+  stagedFieldsForSectionIndex,
   upsertStage,
   prefillForFaces,
   type Stage,
@@ -153,6 +156,79 @@ describe("label overlays (H2)", () => {
   it("a header stages on any overlap", () => {
     expect(stagedFieldsForSection([stage], [2, 3])).toEqual({ name: "Alice", desc: "beard" });
     expect(stagedFieldsForSection([stage], [3])).toEqual({});
+  });
+});
+
+describe("indexStagedSet (#224 — the pending set indexed once per change)", () => {
+  // ops chosen to exercise every merge corner: multi-face ops, a cleared
+  // group (''), a later op overriding one field only, a face under three ops
+  const ops: Stage[] = [
+    { faceIds: [1, 2], name: "Alice", desc: "beard" },
+    { faceIds: [2, 3], group: "" },
+    { faceIds: [3], desc: "glasses" },
+    { faceIds: [1], name: "Alicia" }, // later op wins the name on face 1
+  ];
+
+  it("per-face lookups equal stagedFieldsForCard for every face (later ops win)", () => {
+    const idx = indexStagedSet(ops);
+    for (const id of [1, 2, 3, 9]) {
+      expect(stagedFieldsForIndex(idx, id)).toEqual(stagedFieldsForCard(ops, id));
+    }
+    expect(stagedFieldsForIndex(idx, 1)).toEqual({ name: "Alicia", desc: "beard" });
+    expect(stagedFieldsForIndex(idx, 2)).toEqual({ name: "Alice", desc: "beard", group: "" });
+    expect(stagedFieldsForIndex(idx, 3)).toEqual({ desc: "glasses", group: "" });
+    expect(stagedFieldsForIndex(idx, 9)).toEqual({});
+  });
+
+  it("every section subset merges identically to stagedFieldsForSection — in either id order", () => {
+    const idx = indexStagedSet(ops);
+    const universe = [1, 2, 3, 4];
+    // all 2^4 subsets: the section merge must not depend on the ids'
+    // order (the old scan merged in OP order; the index reproduces that
+    // via the winning-op position, not the face order)
+    for (let mask = 0; mask < 1 << universe.length; mask++) {
+      const ids = universe.filter((_, i) => mask & (1 << i));
+      expect(stagedFieldsForSectionIndex(idx, ids))
+        .toEqual(stagedFieldsForSection(ops, ids));
+      expect(stagedFieldsForSectionIndex(idx, [...ids].reverse()))
+        .toEqual(stagedFieldsForSection(ops, ids));
+    }
+  });
+
+  it("an op covering a section face stages the whole heading — fields aimed at any of its faces included", () => {
+    // the merge is per OP, not per face: the index must reproduce it
+    const set: Stage[] = [{ faceIds: [1, 2], name: "Alice" }];
+    const idx = indexStagedSet(set);
+    expect(stagedFieldsForSectionIndex(idx, [2, 3])).toEqual({ name: "Alice" });
+    expect(stagedFieldsForSection(set, [2, 3])).toEqual({ name: "Alice" });
+  });
+
+  it("a later op that does not set a field keeps the earlier op's value (per face and per section)", () => {
+    const set: Stage[] = [
+      { faceIds: [1], name: "Alice" },
+      { faceIds: [1, 2], group: "" },
+    ];
+    const idx = indexStagedSet(set);
+    expect(stagedFieldsForIndex(idx, 1)).toEqual({ name: "Alice", group: "" });
+    expect(stagedFieldsForSection(set, [1, 2])).toEqual({ name: "Alice", group: "" });
+    expect(stagedFieldsForSectionIndex(idx, [1, 2])).toEqual(
+      stagedFieldsForSection(set, [1, 2])
+    );
+  });
+
+  it("the lookup is a map read — the structure carries the cost once, not per lookup", () => {
+    // the acceptance's API-level equivalent: the index is a Map keyed by
+    // face id, built in ONE pass over the ops; a lookup touches one
+    // entry regardless of how many ops or faces the set holds
+    const big: Stage[] = Array.from({ length: 500 }, (_, i) => ({
+      faceIds: [i, i + 1],
+      desc: `d${i}`,
+    }));
+    const idx = indexStagedSet(big);
+    expect(idx).toBeInstanceOf(Map);
+    expect(idx.size).toBe(501); // one entry per distinct face — nothing per-lookup
+    expect(stagedFieldsForIndex(idx, 250)).toEqual({ desc: "d250" }); // later op wins
+    expect(stagedFieldsForIndex(idx, 0)).toEqual({ desc: "d0" });
   });
 });
 

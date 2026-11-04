@@ -6,7 +6,7 @@
 //   §4.35  the rejected section + the system person's empty rule default
 //   #155   the staged (§4.24) description drives the Description regroup
 import { describe, expect, it } from "vitest";
-import { buildSections, sectionsForImage } from "./sections";
+import { buildSections, sectionsForImage, sectionsPersonKey } from "./sections";
 import type { SectionInputs } from "./sections";
 import type { AppearanceGroup, Face, ImageRow, Person, Snapshot } from "./api";
 import { indexStagedSet } from "./stage";
@@ -415,6 +415,47 @@ describe("person view — description mode (§4.9, #155)", () => {
     // both survivor faces are description-less → ONE "(no description)"
     // section holds them (groupByDescription buckets by description)
     expect(out.map((x) => [x.title, x.faceIds])).toEqual([["(no description)", [12, 13]]]);
+  });
+});
+
+// ---------------------------------------------------------------- #222
+
+describe("sectionsPersonKey (#222 F-H3)", () => {
+  it("review mode never keys on the anchor — a verdict advance changes no section input", () => {
+    expect(sectionsPersonKey("review", 7)).toBeNull();
+    expect(sectionsPersonKey("review", null)).toBeNull();
+  });
+  it("person mode passes the anchor through; rolls (no image open) reads no anchor either", () => {
+    expect(sectionsPersonKey("person", 7)).toBe(7);
+    expect(sectionsPersonKey("person", null)).toBeNull();
+    expect(sectionsPersonKey("rolls", 7)).toBeNull();
+  });
+});
+
+describe("review sections are personId-blind (#222 F-H3)", () => {
+  it("the same review inputs under a different anchor produce identical sections — App's memo may hold across a verdict advance", () => {
+    resetFixtures(
+      [person(3, "Anna", { total: 2 }), person(5, "Unknown1", { total: 1 })],
+      [
+        face({ person: 3, status: "provisional" }),
+        face({ person: 5, status: "provisional" }),
+      ],
+    );
+    const a = build({
+      mode: "review",
+      personId: 3,
+      selectedPerson: personsByIdFixture.get(3)!,
+    });
+    const b = build({
+      mode: "review",
+      personId: 5,
+      selectedPerson: personsByIdFixture.get(5)!,
+    });
+    // the derivations never read the anchor in review (§4.30 groups by
+    // importer person) — so keying the memo on sectionsPersonKey (null
+    // in review) is sound: the section objects survive the advance
+    // referentially and memo(FaceCard) skips the untouched cards
+    expect(a).toEqual(b);
   });
 });
 
