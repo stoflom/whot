@@ -27,6 +27,7 @@
 --   DROP INDEX idx_faces_person;
 --   CREATE INDEX idx_faces_person_desc_seq
 --     ON faces(person_id, description_key, seq);
+--   CREATE INDEX idx_person_groups_path ON person_groups(path);
 --   UPDATE schema_version SET version = '1.9';
 -- The historical in-place v1.6 fix (scripts/fix_status_groups.py) lands
 -- at v1.7 and stops there; from there take either step above.

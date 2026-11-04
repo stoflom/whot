@@ -1,6 +1,6 @@
 # WhoT Database Schema Design
 
-**Version: 2.3** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 2.4** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -131,14 +131,17 @@ mid-flight — both writers seat instead, and the fix script asserts.
   (AGENTS.md). The gate forces it: a v1.6 database is refused by a v1.7
   build until fixed. Fresh databases come from the DDL as always.
 - **v1.8 → v1.9** moved no data: one column added
-  (`faces.description_key`, backfilled from `description`) and one index
-  swapped (`idx_faces_person` → `idx_faces_person_desc_seq`). The
-  documented in-place step (exact statements in the `schema.sql` header;
-  backup first) keeps the stored DDL byte-identical with a fresh v1.9
-  build — the `description_key` column therefore sits at the **end** of
-  the `faces` column list, where SQLite's `ALTER TABLE … ADD COLUMN`
-  puts it. The export → recreate → restore path still works and is the
-  option when a full rebuild is wanted anyway.
+  (`faces.description_key`, backfilled from `description`), one index
+  swapped (`idx_faces_person` → `idx_faces_person_desc_seq`) and one
+  index added (`idx_person_groups_path`, #228 — it entered the fresh
+  DDL under the v1.9 marker, so the in-place step must create it too or
+  the stored DDL drifts from a fresh build). The documented in-place
+  step (exact statements in the `schema.sql` header; backup first)
+  keeps the stored DDL byte-identical with a fresh v1.9 build — the
+  `description_key` column therefore sits at the **end** of the `faces`
+  column list, where SQLite's `ALTER TABLE … ADD COLUMN` puts it. The
+  export → recreate → restore path still works and is the option when a
+  full rebuild is wanted anyway.
 - Drop & recreate loses manual annotations by design — that is what
   `scripts/annotation_snapshot.py` (export before, restore after) is
   for; its matching keys are exactly the identities in §3.
