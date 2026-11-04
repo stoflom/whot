@@ -1,7 +1,12 @@
-import { memo, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { ImageRow } from "../api";
 import { useImageThumbImg } from "../hooks";
 import { rotStyle } from "../rotation";
+// #225 (F-M4): the branch thumbs window with the same prefix+sentinel
+// rule as the centre grids (gridMount.ts) — a flat directory with
+// thousands of photos must not coalesce into one multi-MB IPC batch
+// and thousands of <img> mounts in a single commit
+import { GRID_MOUNT_INITIAL, growLimit } from "../gridMount";
 
 // #174 (gui-design §4.39) — the Rolls mode right pane: the SELECTED
 // branch's images, direct children only (the caller filters), filename
@@ -47,6 +52,29 @@ function Thumb({ image, selected, onClick, onOpen, onContextMenu }: {
 }
 
 function RollsThumbs({ branch, images, hasSubBranches, sel, onClickImage, onOpenImage, onContextMenuImage }: Props) {
+  // #225: the mounted prefix — App-owned depth is pointless here (the
+  // pane remounts per branch), so the limit lives here and resets when
+  // the branch changes (a new listing starts at its prefix)
+  const [limit, setLimit] = useState(GRID_MOUNT_INITIAL);
+  useEffect(() => setLimit(GRID_MOUNT_INITIAL), [branch]);
+  const shown = images.slice(0, limit);
+  const more = images.length > limit;
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // the same grow-toward-the-viewport rule as FaceGrid's sentinel — the
+  // scroll container is the right pane (.right)
+  useEffect(() => {
+    if (!more) return;
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setLimit((n) => growLimit(n));
+      },
+      { rootMargin: "800px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [more]);
   if (images.length > 0) {
     return (
       <div className="rolls-thumbs">
@@ -55,7 +83,7 @@ function RollsThumbs({ branch, images, hasSubBranches, sel, onClickImage, onOpen
           {sel.size > 1 ? ` · ${sel.size} selected` : ""}
         </div>
         <div className="img-grid">
-          {images.map((img) => (
+          {shown.map((img) => (
             <Thumb
               key={img.id}
               image={img}
@@ -65,6 +93,7 @@ function RollsThumbs({ branch, images, hasSubBranches, sel, onClickImage, onOpen
               onContextMenu={(e) => onContextMenuImage(img, e)}
             />
           ))}
+          {more && <div ref={sentinelRef} className="grid-grow-sentinel" />}
         </div>
       </div>
     );

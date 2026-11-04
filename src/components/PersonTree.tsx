@@ -15,103 +15,15 @@ import { rotStyle } from "../rotation";
 import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
 import GroupDialog from "./GroupDialog";
-
-interface TreeNode {
-  name: string;
-  personIds: number[];
-  children: TreeNode[];
-}
-
-function buildTree(persons: Person[]): TreeNode {
-  const root: TreeNode = { name: "", personIds: [], children: [] };
-  const find = (parent: TreeNode, name: string): TreeNode => {
-    let n = parent.children.find((c) => c.name === name);
-    if (!n) {
-      n = { name, personIds: [], children: [] };
-      parent.children.push(n);
-    }
-    return n;
-  };
-  // #153 (§3): group placement first — a person with a group row renders
-  // under their first path even when named UnknownN (the user may group
-  // an UnknownN they remember by face but not by name). #165 (§4.35):
-  // every person carries ≥ 1 group row since v1.7 — the virtual
-  // Unknown/Ungrouped branches are retired and appear only as a
-  // fail-visible fallback for a groupless person (an invariant breach no
-  // writer can produce; created lazily, so healthy snapshots never show
-  // them). #156 (v3.56): a person with SEVERAL group rows renders under
-  // every listed path — the §9 harvest importer legally leaves multiple
-  // person_groups rows per person (§9.6/#128 additive shell groups), and
-  // hiding them on all but the alphabetically-first branch made the
-  // person unfindable in the branch the user filed them under. Each
-  // distinct row is one placement; duplicates are impossible (PK).
-  for (const p of persons) {
-    if (p.groups.length > 0) {
-      for (const g of p.groups) {
-        const parts = g.split("|").filter(Boolean);
-        let node = root;
-        for (const part of parts) node = find(node, part);
-        node.personIds.push(p.id);
-      }
-    } else {
-      find(root, p.name.startsWith("Unknown") ? "Unknown" : "Ungrouped").personIds.push(p.id);
-    }
-  }
-  // #61 (§3): within every branch, biggest clusters first — persons
-  // ordered by face count desc; ties by name, then id (deterministic).
-  // Sub-branches keep their (snapshot) order.
-  const byId = new Map(persons.map((p) => [p.id, p]));
-  const sortNodes = (n: TreeNode) => {
-    n.personIds.sort((a, b) => {
-      const pa = byId.get(a);
-      const pb = byId.get(b);
-      const d = (pb?.counts.total ?? 0) - (pa?.counts.total ?? 0);
-      if (d !== 0) return d;
-      const c = (pa?.name ?? "").localeCompare(pb?.name ?? "");
-      return c !== 0 ? c : a - b;
-    });
-    n.children.forEach(sortNodes);
-  };
-  sortNodes(root);
-  return root;
-}
-
-/** Person ids in the tree's visual (filtered) display order — the
- * ‹ › / arrow-key person stepping walks this list (#31). A multi-group
- * person renders under every path (#156) but is stepped once, at the
- * first placement reached. */
-export function orderedVisiblePersonIds(persons: Person[], filter: string): number[] {
-  const tree = buildTree(persons);
-  const byId = new Map(persons.map((p) => [p.id, p]));
-  const f = filter.trim().toLowerCase();
-  const matches = (p: Person) =>
-    f === "" ||
-    p.name.toLowerCase().includes(f) ||
-    p.groups.some((g) => g.toLowerCase().includes(f));
-  const subtreeMatch = (node: TreeNode): boolean =>
-    node.personIds.some((id) => {
-      const p = byId.get(id);
-      return !!p && matches(p);
-    }) || node.children.some(subtreeMatch);
-  const out: number[] = [];
-  const seen = new Set<number>();
-  const walk = (node: TreeNode, isRoot: boolean) => {
-    if (!isRoot && !subtreeMatch(node)) return;
-    for (const id of node.personIds) {
-      if (seen.has(id)) continue; // #156: one placement only per id
-      const p = byId.get(id);
-      if (p && matches(p)) {
-        out.push(id);
-        seen.add(id);
-      }
-    }
-    for (const c of node.children) walk(c, false);
-  };
-  walk(tree, true);
-  return out;
-}
+// #223 (F-M1/F-M2): the tree structure and its queries are pure
+// (treeIndex.ts, co-tested) — the pane receives the App-built tree and
+// indexes it once per (tree, persons, filter) change
+import { indexTree, type TreeNode } from "../treeIndex";
 
 interface Props {
+  /** #223: the App-built tree (built once per treePersons change) — the
+      pane no longer rebuilds it per render */
+  tree: TreeNode;
   persons: Person[];
   selectedId: number | null;
   reviewCount: number;
@@ -172,6 +84,7 @@ function PersonRow({
   renaming,
   rot,
   dropTarget,
+  groupPath,
   onSelect,
   onStartRename,
   onRename,
@@ -193,18 +106,23 @@ function PersonRow({
   rot: number;
   /** #88: highlighted as the merge target while persons are dragged over it */
   dropTarget: boolean;
-  onSelect: (e: ReactMouseEvent) => void;
-  onStartRename: () => void;
+  /** #223: the row's branch path ('|' form) — the person-drag src (#157) */
+  groupPath: string;
+  /** #223: id-carrying handlers with ONE shared identity (the pane's
+      rowHandlers memo) — the per-row closures that defeated memo() are
+      gone; the row binds its own id at the DOM boundary */
+  onSelect: (id: number, e: ReactMouseEvent) => void;
+  onStartRename: (id: number) => void;
   onRename: (id: number, name: string) => void;
-  onRenameCancel: () => void;
-  onContextMenu: (e: ReactMouseEvent) => void;
+  onRenameCancel: (id: number) => void;
+  onContextMenu: (id: number, e: ReactMouseEvent) => void;
   /** #50: drag the person — or the whole selection when part of one */
-  onDragStart: (e: React.DragEvent) => void;
+  onDragStart: (id: number, groupPath: string, e: React.DragEvent) => void;
   onDragEnd: () => void;
   /** #88: merge-on-drop target */
-  onDragOver: (e: React.DragEvent) => void;
-  onDragLeave: () => void;
-  onDrop: (e: React.DragEvent) => void;
+  onDragOver: (id: number, e: React.DragEvent) => void;
+  onDragLeave: (id: number) => void;
+  onDrop: (id: number, e: React.DragEvent) => void;
 }) {
   const img = useFaceImage(person.primary_face_id);
   const system = person.name === "Rejected"; // #165/§4.35
@@ -213,7 +131,7 @@ function PersonRow({
   const commit = () => {
     const v = name.trim();
     if (v && v !== person.name) onRename(person.id, v);
-    onRenameCancel();
+    onRenameCancel(person.id);
   };
   const cls = `tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}${dropTarget ? " merge-target" : ""}`;
   // #165: the system person Rejected — its tooltip states the way back
@@ -275,15 +193,15 @@ function PersonRow({
     <button
       data-person-id={person.id} // #76: cursor hit-test for ←/→ stepping
       className={cls}
-      onClick={onSelect}
-      onDoubleClick={() => !system && onStartRename()}
-      onContextMenu={onContextMenu}
+      onClick={(e) => onSelect(person.id, e)}
+      onDoubleClick={() => !system && onStartRename(person.id)}
+      onContextMenu={(e) => onContextMenu(person.id, e)}
       draggable={!renaming && !system}
-      onDragStart={onDragStart}
+      onDragStart={(e) => onDragStart(person.id, groupPath, e)}
       onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
+      onDragOver={(e) => onDragOver(person.id, e)}
+      onDragLeave={() => onDragLeave(person.id)}
+      onDrop={(e) => onDrop(person.id, e)}
       title={title}
     >
       {inner}
@@ -291,7 +209,14 @@ function PersonRow({
   );
 }
 
-function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onAddGroup, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces }: Props) {
+// #223 (F-M2): memoised — every row carries its own useFaceImage and DOM
+// subtree; with the id-carrying handler identities shared (rowHandlers)
+// and the per-row values passed as primitives, a tree selection, drag
+// highlight, rename or filter keystroke re-renders only the rows whose
+// own values moved
+const MemoPersonRow = memo(PersonRow);
+
+function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onAddGroup, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces }: Props) {
   // #135: a face drag ending without a drop (Esc, drop outside) must
   // clear the merge-target highlight — the drag state itself lives in
   // App, only the highlight is ours
@@ -331,30 +256,35 @@ function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onRevi
   >(null);
   const [dropPath, setDropPath] = useState<string | null>(null); // '' = Ungrouped node
   const [dropPerson, setDropPerson] = useState<number | null>(null); // #88 merge target
-  // #135 (rule 34): face drag in flight (state view — highlight/effects)
-  const faceDrag = faceDragIds != null && faceDragIds.length > 0;
-  // v3.33 fix: the EVENT-TIME views — acceptance and the dropped payload
-  // come from the ref, mirroring how the person-drag path reads dragRef
+  // #223: the render-time views the row handlers read — refs (the
+  // pendingRef pattern) so the shared rowHandlers identity never depends
+  // on the selection or the highlight state
+  const selectedIdsRef = useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
+  const dropPersonRef = useRef(dropPerson);
+  dropPersonRef.current = dropPerson;
+  // #135 (rule 34): face drag in flight — the EVENT-TIME views read the
+  // ref (v3.33 fix: acceptance and the dropped payload come from the
+  // ref, mirroring how the person-drag path reads dragRef); the state
+  // view only drives the clear-on-end effect below
   const liveFaceDrag = () =>
     faceDragRef?.current != null && faceDragRef.current.length > 0;
-  const liveFaceDragIds = () => faceDragRef?.current ?? null;
-  const tree = useMemo(() => buildTree(persons), [persons]);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // #215: the filter input stays crisp — the (heavier) row filtering
   // trails a frame behind the keystrokes instead of blocking them
   const deferredFilter = useDeferredValue(filter);
   const f = deferredFilter.trim().toLowerCase();
+  // #223 (F-M1): ONE post-order pass per (tree, persons, filter) change
+  // produces every node's match/count — the render reads entries instead
+  // of running the two recursive subtreeMatch walks and the recursive
+  // countPersons sums per node (O(n·depth) → O(n) total, once)
+  const treeIdx = useMemo(() => indexTree(tree, byId, deferredFilter), [tree, byId, deferredFilter]);
 
   const matches = (p: Person) =>
     f === "" ||
     p.name.toLowerCase().includes(f) ||
     p.groups.some((g) => g.toLowerCase().includes(f));
-
-  const subtreeMatch = (node: TreeNode): boolean => {
-    if (node.personIds.some((id) => byId.get(id) && matches(byId.get(id)!))) return true;
-    return node.children.some(subtreeMatch);
-  };
 
   const toggle = (path: string) =>
     setCollapsed((prev) => {
@@ -413,19 +343,6 @@ function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onRevi
   const isStatusBranch = (name: string, depth: number) =>
     depth === 0 && (name === "New" || name === "Accepted" || name === "Rejected");
 
-  const startDragPerson = (e: React.DragEvent, id: number, fromPath: string) => {
-    // #165/§4.35: the system person never drags (merge/move source)
-    if (byId.get(id)?.name === "Rejected") return;
-    // dragging a selected row moves the whole selection; otherwise just it
-    const ids = selectedIds.has(id) && selectedIds.size > 1 ? [...selectedIds] : [id];
-    // #157 (v3.59): the dragged placement's branch path rides along — the
-    // drop re-homes THAT membership (owner ruling: the dragged-from group
-    // leaves the person, the target group is filed, other memberships are
-    // kept)
-    dragRef.current = { kind: "persons", ids, src: fromPath };
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", `${ids.length} person(s)`); // firefox needs data
-  };
   const startDragBranch = (e: React.DragEvent, groupPath: string) => {
     dragRef.current = { kind: "branch", path: groupPath };
     e.dataTransfer.effectAllowed = "move";
@@ -435,58 +352,6 @@ function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onRevi
     dragRef.current = null;
     setDropPath(null);
     setDropPerson(null);
-  };
-  // #88 (§4.28): dragging persons ONTO a person row = merge into it —
-  // a new drop-target type beside #50's branch/Ungrouped drops. #135
-  // (rule 34) adds the same row as a target for FACE drags from the
-  // centre pane. Branch drags deliberately fall through (no
-  // stopPropagation) so hovering a person row inside a branch still
-  // targets that branch.
-  const dragOverPerson = (e: React.DragEvent, id: number) => {
-    const d = dragRef.current;
-    if (d && d.kind === "persons") {
-      e.preventDefault();
-      e.stopPropagation(); // the branch under this row must not highlight
-      e.dataTransfer.dropEffect = "move";
-      if (dropPerson !== id) setDropPerson(id);
-      return;
-    }
-    if (liveFaceDrag()) {
-      // #135: face payload — person rows accept (ref-checked at event
-      // time, v3.33)
-      e.preventDefault();
-      e.stopPropagation();
-      e.dataTransfer.dropEffect = "move";
-      if (dropPerson !== id) setDropPerson(id);
-    }
-  };
-  const dragLeavePerson = (id: number) => {
-    if (
-      (dragRef.current?.kind === "persons" || faceDrag) &&
-      dropPerson === id
-    ) {
-      setDropPerson(null);
-    }
-  };
-  const acceptPersonDrop = (e: React.DragEvent, id: number) => {
-    const d = dragRef.current;
-    if (d && d.kind === "persons") {
-      e.preventDefault();
-      e.stopPropagation();
-      const ids = d.ids;
-      clearDrag();
-      // validation + confirmation live in App (shared with menu/dialog, §4.28)
-      onMergeInto(ids, id);
-      return;
-    }
-    const faces = liveFaceDragIds();
-    if (faces && faces.length > 0) {
-      // #135: face payload → face-level merge (ref at drop time, v3.33)
-      e.preventDefault();
-      e.stopPropagation();
-      clearDrag();
-      onDropFaces?.(faces, id);
-    }
   };
   const acceptDrop = (e: React.DragEvent, target: string) => {
     // #135: face drags target person rows only — branches refuse them
@@ -526,12 +391,122 @@ function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onRevi
     if (dropPath !== target) setDropPath(target);
   };
 
+  // #223 (F-M2): ONE handler set for every row — id-carrying and identity
+  // stable across renders. Everything the handlers read lives behind a
+  // ref (the pendingRef pattern, §4.44 rule 44): the selection, the drop
+  // highlight, the snapshot map, and App's own callbacks (whose
+  // identities legitimately move with the snapshot/selection — the pane
+  // must not inherit that churn into every row). The row binds its own
+  // id at the DOM boundary.
+  const byIdRef = useRef(byId);
+  byIdRef.current = byId;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const onRenameRef = useRef(onRename);
+  onRenameRef.current = onRename;
+  const mergeIntoRef = useRef(onMergeInto);
+  mergeIntoRef.current = onMergeInto;
+  const dropFacesRef = useRef(onDropFaces);
+  dropFacesRef.current = onDropFaces;
+  const rowHandlers = useMemo(() => {
+    const clear = () => {
+      dragRef.current = null;
+      setDropPath(null);
+      setDropPerson(null);
+    };
+    const faceDragLive = () =>
+      faceDragRef?.current != null && faceDragRef.current.length > 0;
+    return {
+      onSelect: (id: number, e: ReactMouseEvent) => onSelectRef.current(id, e),
+      onStartRename: (id: number) => setRenamingId(id),
+      onRename: (id: number, name: string) => onRenameRef.current(id, name),
+      onRenameCancel: (_id: number) => setRenamingId(null),
+      onContextMenu: (id: number, e: ReactMouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setMenu({ x: e.clientX, y: e.clientY, id });
+      },
+      // #50: drag the person — or the whole selection when part of one
+      onDragStart: (id: number, groupPath: string, e: React.DragEvent) => {
+        // #165/§4.35: the system person never drags (merge/move source)
+        if (byIdRef.current.get(id)?.name === "Rejected") return;
+        const sel = selectedIdsRef.current;
+        const ids = sel.has(id) && sel.size > 1 ? [...sel] : [id];
+        // #157 (v3.59): the dragged placement's branch path rides along —
+        // the drop re-homes THAT membership (owner ruling: the
+        // dragged-from group leaves the person, the target group is
+        // filed, other memberships are kept)
+        dragRef.current = { kind: "persons", ids, src: groupPath };
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", `${ids.length} person(s)`); // firefox needs data
+      },
+      onDragEnd: clear,
+      // #88 (§4.28): dragging persons ONTO a person row = merge into it —
+      // a new drop-target type beside #50's branch/Ungrouped drops. #135
+      // (rule 34) adds the same row as a target for FACE drags from the
+      // centre pane. Branch drags deliberately fall through (no
+      // stopPropagation) so hovering a person row inside a branch still
+      // targets that branch.
+      onDragOver: (id: number, e: React.DragEvent) => {
+        const d = dragRef.current;
+        if (d && d.kind === "persons") {
+          e.preventDefault();
+          e.stopPropagation(); // the branch under this row must not highlight
+          e.dataTransfer.dropEffect = "move";
+          if (dropPersonRef.current !== id) setDropPerson(id);
+          return;
+        }
+        if (faceDragLive()) {
+          // #135: face payload — person rows accept (ref-checked at
+          // event time, v3.33)
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "move";
+          if (dropPersonRef.current !== id) setDropPerson(id);
+        }
+      },
+      onDragLeave: (id: number) => {
+        if (
+          (dragRef.current?.kind === "persons" || faceDragLive()) &&
+          dropPersonRef.current === id
+        ) {
+          setDropPerson(null);
+        }
+      },
+      onDrop: (id: number, e: React.DragEvent) => {
+        const d = dragRef.current;
+        if (d && d.kind === "persons") {
+          e.preventDefault();
+          e.stopPropagation();
+          const ids = d.ids;
+          clear();
+          // validation + confirmation live in App (shared with
+          // menu/dialog, §4.28)
+          mergeIntoRef.current(ids, id);
+          return;
+        }
+        const faces = faceDragRef?.current ?? null;
+        if (faces && faces.length > 0) {
+          // #135: face payload → face-level merge (ref at drop time, v3.33)
+          e.preventDefault();
+          e.stopPropagation();
+          clear();
+          dropFacesRef.current?.(faces, id);
+        }
+      },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ref-only by construction (#223)
+  }, []);
+
   const renderNode = (node: TreeNode, depth: number, path: string, groupPath: string) => {
-    if (!subtreeMatch(node)) return null;
+    // #223: the index entry replaces the subtreeMatch walk…
+    const entry = treeIdx.get(node);
+    if (!entry || !entry.match) return null;
     const personsHere = node.personIds
       .map((id) => byId.get(id))
       .filter((p): p is Person => !!p && matches(p));
-    const children = node.children.filter(subtreeMatch);
+    // …and the child filter is an O(children) lookup, not a walk
+    const children = node.children.filter((c) => treeIdx.get(c)?.match);
     if (node.name === "" ) {
       // root: just render children; #164 removed the empty-space
       // 'Add group…' menu (#54 superseded) — swallow the context menu
@@ -584,19 +559,13 @@ function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onRevi
             <span className="tree-arrow" />
           )}
           <span className="tree-node-name">{node.name}</span>
-          <span className="tree-count dim">
-            {node.personIds.filter((id) => byId.get(id) && matches(byId.get(id)!)).length +
-              node.children.reduce(
-                (acc, c) => acc + countPersons(c),
-                0
-              )}
-          </span>
+          <span className="tree-count dim">{entry.count}</span>
         </div>
         {!isCollapsed && (
           <>
             <div className="tree-children" style={{ paddingLeft: 10 + depth * 14 }}>
               {personsHere.map((p) => (
-                <PersonRow
+                <MemoPersonRow
                   key={p.id}
                   person={p}
                   personOptions={persons}
@@ -604,21 +573,9 @@ function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onRevi
                   multi={selectedIds.has(p.id)}
                   renaming={renamingId === p.id}
                   rot={primaryRot.get(p.id) ?? 0}
-                  onSelect={(e) => onSelect(p.id, e)}
-                  onStartRename={() => setRenamingId(p.id)}
-                  onRename={onRename}
-                  onRenameCancel={() => setRenamingId(null)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setMenu({ x: e.clientX, y: e.clientY, id: p.id });
-                  }}
-                  onDragStart={(e) => startDragPerson(e, p.id, groupPath)}
-                  onDragEnd={clearDrag}
+                  groupPath={groupPath}
+                  {...rowHandlers}
                   dropTarget={dropPerson === p.id}
-                  onDragOver={(e) => dragOverPerson(e, p.id)}
-                  onDragLeave={() => dragLeavePerson(p.id)}
-                  onDrop={(e) => acceptPersonDrop(e, p.id)}
                 />
               ))}
             </div>
@@ -627,18 +584,6 @@ function PersonTree({ persons, selectedId, reviewCount, filter, onFilter, onRevi
         )}
       </div>
     );
-
-    function countPersons(n: TreeNode): number {
-      if (f !== "") {
-        return (
-          n.personIds.filter((id) => byId.get(id) && matches(byId.get(id)!)).length +
-          n.children.reduce((acc, c) => acc + countPersons(c), 0)
-        );
-      }
-      return (
-        n.personIds.length + n.children.reduce((acc, c) => acc + countPersons(c), 0)
-      );
-    }
   };
 
   return (

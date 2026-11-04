@@ -1,7 +1,7 @@
 // #156 (gui-design §4.16 multi-group placement). Run: npm test (vitest run)
 import { describe, expect, it } from "vitest";
 import type { Person } from "./api";
-import { orderedVisiblePersonIds } from "./components/PersonTree";
+import { orderedVisiblePersonIds } from "./treeIndex";
 
 function person(
   id: number,

@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -50,7 +51,10 @@ import DetailPane from "./components/DetailPane";
 import { useOverlayCount } from "./overlays";
 import FaceGrid, { type Section } from "./components/FaceGrid";
 import FaceOverlay from "./components/FaceOverlay";
-import PersonTree, { orderedVisiblePersonIds } from "./components/PersonTree";
+import PersonTree from "./components/PersonTree";
+// #223 (F-M1): the tree is built ONCE per treePersons change and shared
+// with the pane; the step list walks the shared tree
+import { buildTree, orderedVisiblePersonIdsFromTree } from "./treeIndex";
 import RollsPane from "./components/RollsPane";
 import RollsThumbs from "./components/RollsThumbs";
 import ImportPane from "./components/ImportPane";
@@ -153,13 +157,20 @@ export default function App() {
   // in occluded/automated WebKit and must not gate user-visible work)
   const [reanchor, setReanchor] = useState<{ pid: number } | null>(null);
   // #214 (§4.40/§4.30 reveal): the centre grid's incremental mount —
-  // the review grid renders a PREFIX of sections and grows toward the
+  // the grid renders a PREFIX of sections and grows toward the
   // viewport edge / reveal targets (gridMount.ts). App-owned (like
   // reviewScrollRef) so the depth survives grid unmounts: the §4.40
   // scroll restore then lands on heights the user already scrolled
-  // through. Person/rolls views render everything — their card counts
-  // are bounded and the in-view card contracts (gui-mock C12/C13) hold
-  // by construction.
+  // through. #225 (F-M4): the prefix covers every centre surface now —
+  // review, person, image detail and the focus film roll (the gui-mock
+  // harness scroll-reaches its subjects the real way, so the in-view
+  // card contracts C12/C13 hold through the sentinel growth).
+  // #214/#225: the mounted prefix — the review grid, the person grid,
+  // the image-detail grid and the focus film roll all grow toward the
+  // viewport edge (the sentinel); the App owns the limit so the depth
+  // survives grid unmounts, and the reveal rule (§4.40 re-anchor, §4.30
+  // accept-&-next) grows into the target before the scroll runs.
+  // RollsThumbs windows its branch thumbs with the same rule in-pane.
   const [mountLimit, setMountLimit] = useState(GRID_MOUNT_INITIAL);
   const growMount = useCallback(
     () => setMountLimit((n) => growLimit(n)),
@@ -388,10 +399,16 @@ export default function App() {
   }, [snap]);
   // #31 — the review step list: the persons in the tree's current
   // (filtered) display order; declared early — #125's exhaust check and
-  // doAccept/doReject need the index before their point of use
+  // doAccept/doReject need the index before their point of use.
+  // #223 (F-M1): the tree is built once per treePersons change (shared
+  // with the pane) and the step walk runs over it; the filter is
+  // deferred so a keystroke does not re-walk synchronously (the pane
+  // defers its own copy the same way, #215)
+  const tree = useMemo(() => buildTree(treePersons), [treePersons]);
+  const deferredStepFilter = useDeferredValue(filter);
   const stepIds = useMemo(
-    () => orderedVisiblePersonIds(treePersons, filter),
-    [treePersons, filter]
+    () => orderedVisiblePersonIdsFromTree(tree, treePersons, deferredStepFilter),
+    [tree, treePersons, deferredStepFilter]
   );
   const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
 
@@ -2273,6 +2290,7 @@ export default function App() {
       <div className="main">
         <aside className="left" style={{ width: paneSizes.left }}>
           <PersonTree
+            tree={tree}
             persons={treePersons}
             primaryRot={primaryRot}
             selectedId={personId}
@@ -2452,6 +2470,10 @@ export default function App() {
                     sel={sel}
                     stageIdx={stagedIdx}
                     faceDropTarget={faceDropTarget}
+                    // #225: the film roll windows too — it scrolls in its
+                    // own pane (an image with many persons' faces)
+                    mountLimit={mountLimit}
+                    onNeedMore={growMount}
                     {...gridHandlers}
                     primaryFaceId={displayPerson?.primary_face_id ?? null}
                   />
@@ -2509,7 +2531,10 @@ export default function App() {
                   rotation={imgRow.rotation} // #122
                 />
               </div>
-              <FaceGrid sections={sections} sel={sel} stageIdx={stagedIdx} faceDropTarget={faceDropTarget} {...gridHandlers} primaryFaceId={null} />
+              <FaceGrid sections={sections} sel={sel} stageIdx={stagedIdx} faceDropTarget={faceDropTarget}
+                // #225: the image-detail grid windows like the rest
+                mountLimit={mountLimit} onNeedMore={growMount}
+                {...gridHandlers} primaryFaceId={null} />
             </div>
           ) : (
             <FaceGrid
@@ -2518,10 +2543,9 @@ export default function App() {
               stageIdx={stagedIdx}
               faceDropTarget={faceDropTarget}
               emptyHint={emptyHint} // #194: guidance instead of bare "nothing to show"
-              // #214: incremental mount — review mode only (the
-              // thousands-of-cards surface; person/rolls stay fully
-              // mounted so the in-view card contracts hold)
-              mountLimit={mode === "review" ? mountLimit : undefined}
+              // #214 + #225: incremental mount on every centre surface —
+              // the thousands-of-cards surfaces grow toward the viewport
+              mountLimit={mountLimit}
               onNeedMore={growMount}
               {...gridHandlers}
               primaryFaceId={mode === "person" ? selectedPerson?.primary_face_id ?? null : null}
