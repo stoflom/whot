@@ -35,11 +35,14 @@ import {
 import { stepBase } from "./stepFlow";
 import { groupPathOptions } from "./components/PathTypeahead";
 import {
+  addTokens,
   buildStage,
   dropStagesForFaces,
+  expandAddStage,
   indexStagedSet,
   objectInsideSelection,
   stageSummarySet,
+  stagedFieldsForCard,
   upsertStage,
   prefillForFaces,
   type Prefill,
@@ -1048,8 +1051,9 @@ export default function App() {
     [facesById, personsById]
   );
 
-  /** Q1/G3 + invocation-site defaults (§4.24): Edit on a card → Card,
-      header → Group, bottom bar → Selection */
+  /** Q1/G3 + invocation-site defaults (§4.24): Edit on a card →
+      Selection when it sits inside a multi-face selection, else Card
+      (#230); header → Group; bottom bar → Selection */
   const openEdit = useCallback(
     (
       defaultScope: StageScope,
@@ -1303,8 +1307,12 @@ export default function App() {
     onAccept: (id: number) => acceptFlowRef.current(actionScope(id)),
     onAcceptGroup: (ids: number[]) => acceptFlowRef.current(ids),
     onRejectGroup: (ids: number[]) => doReject(ids),
-    // #101: the grid's only editable surface — one dialog
-    onEditCard: (id: number) => openEdit("card", { card: id }),
+    // #101: the grid's only editable surface — one dialog. #230 (§4.24):
+    // inside a multi-face selection the scope defaults to the whole
+    // selection (the actionScope the card's accept/reject already
+    // honour); a lone card stays Card
+    onEditCard: (id: number) =>
+      openEdit(actionScope(id).length > 1 ? "selection" : "card", { card: id }),
     onEditGroup: (ids: number[]) => openEdit("group", { group: ids }),
     // #135/#136 (rule 34): face drag & drop — the live payload is read
     // from refs so these identities (and thus the grid memo) never churn
@@ -2786,8 +2794,20 @@ export default function App() {
                   ? edit.group
                   : [...selRef.current];
             setEdit(null);
+            // #231 (§4.24): a `+` add-mode description expands per face
+            // against its displayed value (staged overlay over
+            // committed); faces the add leaves unchanged drop out
             const st = buildStage(ids, r.values, r.touched);
-            if (!st) {
+            const stages =
+              st?.desc != null && addTokens(st.desc).length > 0
+                ? expandAddStage(st, (id) =>
+                    stagedFieldsForCard(pendingRef.current, id).desc ??
+                    facesById.get(id)?.description ??
+                    "")
+                : st
+                  ? [st]
+                  : null;
+            if (!stages) {
               if (r.kind === "accept") {
                 // nothing field-staged — Accept still accepts the scope
                 // (§4.30); #181: a list-only Accept commits the group
@@ -2806,14 +2826,20 @@ export default function App() {
               return;
             }
             if (r.kind === "apply") {
-              setPending((p) => upsertStage(p, st)); // #123: extend the set
+              // #123: extend the set (#231: an add-mode submit can be
+              // several concrete stages)
+              setPending((p) => stages.reduce((acc, s) => upsertStage(acc, s), p));
               return;
             }
             // #166: the staged ops commit first, then this dialog's
             // chosen scope is accepted (the set edits, never the scope);
             // #181: the list edits ride along (name first, memberships
             // against the surviving person)
-            void commitPending(upsertStage(pendingRef.current, st), ids, r.groupOps);
+            void commitPending(
+              stages.reduce((acc, s) => upsertStage(acc, s), pendingRef.current),
+              ids,
+              r.groupOps,
+            );
           }}
           onReject={(scope) => {
             // #124: a verdict, not a field edit — commits immediately.

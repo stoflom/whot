@@ -27,8 +27,9 @@ export interface EditResult {
 }
 
 interface Props {
-  /** scope preselected per invocation site (§4.24): card → Card,
-      header → Group, bottom bar → Selection */
+  /** scope preselected per invocation site (§4.24): card → Selection
+      when inside a multi-face selection, else Card (#230); header →
+      Group; bottom bar → Selection */
   defaultScope: StageScope;
   /** live face counts of each scope (0 = the choice is disabled) */
   counts: { card: number; group: number; selection: number };
@@ -231,7 +232,7 @@ export default function EditDialog({
             className="input-desc"
             value={desc}
             placeholder={ph("desc") ?? "e.g. beard|glasses"}
-            title="Face description — free text; empty clears it"
+            title="Face description — free text; empty clears it. Start with + to ADD tags to the current ones (e.g. +beard → beard|glasses), no duplicates"
             onChange={(e) => {
               setDesc(e.target.value);
               setTouched((t) => ({ ...t, desc: true }));
