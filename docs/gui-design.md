@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 3.97** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 4.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -270,7 +270,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   tile (whose avatar is a small circle) without cropping the face tight.
 - **Face-card name label**: the card's name is a **label**
   (the strip inside the image frame), not an input — editing goes through
-  the shared Edit dialog scoped to the card (§4.24); a name commit
+  the shared Edit dialog (§4.24); a name commit
   **assigns that person** — an existing person is merged into, a new one is
   created (`assign_person` semantics, never a collision error); the shared
   Edit dialog's scope selector is the disambiguation between face and
@@ -501,7 +501,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    `rejected` faces in the scope are **skipped** — accept never un-rejects
    (§4.2); and when the person holds no user-given group, the accept
    re-seats it `Accepted` (§4.35).
-4. **Description** ⇒ free text, spaces around `|` trimmed by the writer; the
+4. **Description** ⇒ free text, spaces around `|` trimmed by the writer (a
+   `+`-prefixed dialog value is the §4.24 add mode — append to each face's
+   existing descriptors, no duplicates); the
    derived face label becomes `person.name-description-seq`. Editing a
    description **re-assigns the face's `seq`** to `MAX(others)+1` within its
    new `(person, description)` group (so §4.7 uniqueness survives the move)
@@ -930,7 +932,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       current selection the selection is kept; **outside**, the
       selection becomes that card (header → that cluster). The
       **scope default follows the invocation site**: Edit on a **card
-      → `Card`**, Edit on a **header →
+      → `Selection` when that card sits inside a multi-face selection,
+      else `Card`**, Edit on a **header →
       `Group`**, bottom bar → **`Selection`** (greyed at N = 0); the
       selector switches scope explicitly and **Apply binds the stage to
       the chosen scope's faceIds**; Accept commits those staged ops and
@@ -941,6 +944,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       mirroring the scope's person); a snapshot refresh re-basing the
       prefills obeys the same retention rule, so in-progress typing is
       never silently discarded.
+    - **Description add mode (`+` prefix)**: a description value
+      starting with **+** is an *add*, not a replace — the tokens after
+      the **+** (split on `|`, spaces trimmed as usual) are **appended
+      to each scope face's own existing descriptors** in typed order,
+      and a token already present on a face is skipped (**no
+      duplicates**). Order is per-face: existing descriptors first, new
+      ones appended — a face that already carried a token is unchanged
+      by it, and the per-face `seq` reassignment / refcrop recompute of
+      §4 (Description) apply as for any description edit. A lone **+**
+      (no tokens) applies nothing ("nothing to apply" path). The mode
+      works in **every scope** (Card adds to that card's own value) and
+      is the way to tag a scope without re-typing its prefill — in
+      particular a `various` placeholder, which is empty by design.
     - **Buttons**: `Apply` = stage + close (screen preview), `Accept` =
       commit the staged ops, then accept the chosen scope (the shortcut
       — “Accept is what makes my changes permanent”), `Reject` = the

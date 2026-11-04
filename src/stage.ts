@@ -41,9 +41,82 @@ export function buildStage(
   const name = values.name.trim();
   if (touched.name && name) stage.name = name;
   if (touched.group) stage.group = values.group;
-  if (touched.desc) stage.desc = values.desc;
+  if (touched.desc) {
+    // #231 (§4.24): a `+` add-mode value with no tokens is a no-op — it
+    // never stages (a literal `+` must not reach the writer)
+    const d = values.desc.trim();
+    if (!(d.startsWith("+") && addTokens(values.desc).length === 0))
+      stage.desc = values.desc;
+  }
   if (stage.name == null && stage.group == null && stage.desc == null) return null;
   return stage;
+}
+
+/** #231 (§4.24): the add-mode tokens of a `+`-prefixed description value
+    — the value minus the `+`, split on `|`, trimmed, empties dropped.
+    A non-`+` value yields no tokens (plain replace semantics). */
+export function addTokens(desc: string): string[] {
+  const v = desc.trim();
+  if (!v.startsWith("+")) return [];
+  return v
+    .slice(1)
+    .split("|")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+/** #231: append the add-mode tokens to a face's existing descriptors —
+    the existing order is kept, new tokens come in typed order, and a
+    token the face already carries is skipped (no duplicates). */
+export function applyAdd(existing: string, tokens: string[]): string {
+  const cur = existing
+    .split("|")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  for (const t of tokens) if (!cur.includes(t)) cur.push(t);
+  return cur.join("|");
+}
+
+/** #231 (§4.24): expand a `+`-prefixed description stage into concrete
+    per-face stages. Each face resolves the add against its DISPLAYED
+    value (the staged overlay over the committed one); faces the add
+    leaves unchanged drop out (no-op — no re-seq/refcrop churn); and
+    each distinct resolved value carries its own stage (the batched
+    writer takes one value per call). A name/group part, if any, rides
+    its own stage over the full id set; a uniform result collapses back
+    to the original single stage. Null when nothing changes and no
+    field part remains (the "nothing to apply" path). */
+export function expandAddStage(
+  st: Stage,
+  displayed: (id: number) => string,
+): Stage[] | null {
+  const tokens = addTokens(st.desc ?? "");
+  if (tokens.length === 0) return [st];
+  const groups = new Map<string, number[]>();
+  for (const id of st.faceIds) {
+    const cur = displayed(id);
+    const next = applyAdd(cur, tokens);
+    if (next === cur) continue; // already there — or nothing to add onto
+    let bucket = groups.get(next);
+    if (!bucket) groups.set(next, (bucket = []));
+    bucket.push(id);
+  }
+  const hasField = st.name != null || st.group != null;
+  if (groups.size === 1) {
+    const [[value, ids]] = groups;
+    if (ids.length === st.faceIds.length) {
+      // uniform — the original single-stage shape, concrete value
+      return hasField
+        ? [{ faceIds: st.faceIds, name: st.name, group: st.group, desc: value }]
+        : [{ faceIds: ids, desc: value }];
+    }
+  }
+  if (!hasField && groups.size === 0) return null;
+  const out: Stage[] = hasField
+    ? [{ faceIds: st.faceIds, name: st.name, group: st.group }]
+    : [];
+  for (const [value, ids] of groups) out.push({ faceIds: ids, desc: value });
+  return out;
 }
 
 /** #123 — the pending SET: an ordered list of ops, one per Apply. A
