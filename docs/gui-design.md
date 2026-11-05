@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 4.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2057,6 +2057,37 @@ cluster and refcrop effects consume a prefetched entry only when the
 target person's §213 data signature is unchanged at consumption
 time; a failed prefetch never surfaces — the normal fetch path covers
 it.
+
+**46. (v5.0, #235) Film-roll image stepping in Rolls.**
+
+In Rolls mode, when a full image is open, the centre renders the same
+centre toolbar as the other modes, carrying the shared `‹  n/m  ›`
+nav cluster — but its subject is the **film roll**: the selected
+branch's listed images, the exact list and filename order the
+right-pane thumbnails render (§4.39). `n` is the open image's
+1-based position in that list; `m` its length. **›** opens the next
+image in the roll, **‹** the previous one; the buttons disable at the
+list ends (the person-stepping convention, no wrap) and the roll does
+not cross branch boundaries.
+
+The cluster works only on the selected branch's list. When the open
+image is not in it — it was opened from the path filter in another
+branch, or the Show filter no longer lists it — the position reads
+`–/m` and both buttons are disabled. While **browsing** (no image
+open) the centre renders no toolbar at all, as before (#163).
+
+A step is a view-context change — it goes through the same staged-set
+drop-or-accept confirm as opening a thumbnail (§4.24/#123), and
+explicit navigation ends focus mode: a step closes an open focus
+split (§4.15) and opens the neighbouring image. The step keeps the
+mode Rolls (no yank to Person), leaves the right pane's person anchor
+and the thumbnail multi-selection untouched, and returns the centre
+scroll to the top so the new image opens whole.
+
+Keyboard: `←` / `→` step the open image in Rolls mode **only while a
+full image is open**; while browsing they stay inert and keep their
+native scroll behaviour (#163), and outside Rolls they keep the
+person-stepping binding (§4.22).
 
 ## 5. Related documents
 
