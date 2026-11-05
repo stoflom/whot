@@ -1,7 +1,13 @@
 // #96 (§4.30) — Review accept-&-next planning.
 // Run: npm test (vitest run)
 import { describe, expect, it } from "vitest";
-import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
+import type { Face, Snapshot } from "./api";
+import {
+  acceptAdvancePlan,
+  exhaustAdvanceTarget,
+  reviewStatusOf,
+  verdictAdvanceTarget,
+} from "./reviewFlow";
 
 const sections = [
   { key: "rev-1", faceIds: [1, 2, 3] },
@@ -89,5 +95,133 @@ describe("exhaustAdvanceTarget (#159)", () => {
 
   it("no mark, no target", () => {
     expect(exhaustAdvanceTarget(list, null, 0, has)).toBeNull();
+  });
+});
+
+// #234 (gui-design rule 45) — the advance-target prefetch prediction:
+// a verdict that drains the anchored person predicts the exhaust
+// advance, so the caller can prefetch the target's clusters/refcrops
+// in parallel with the verdict IPC.
+describe("reviewStatusOf", () => {
+  it("`all` reviews provisional; the other filters review themselves", () => {
+    expect(reviewStatusOf("all")).toBe("provisional");
+    expect(reviewStatusOf("provisional")).toBe("provisional");
+    expect(reviewStatusOf("confirmed")).toBe("confirmed");
+    expect(reviewStatusOf("rejected")).toBe("rejected");
+  });
+});
+
+describe("verdictAdvanceTarget (#234)", () => {
+  function faceOf(
+    id: number,
+    person: number | null,
+    status: "provisional" | "confirmed" | "rejected",
+  ): Face {
+    return {
+      id,
+      image_id: 9,
+      person_id: person,
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      name: "",
+      seq: 0,
+      description: null,
+      confidence: 0,
+      link_status: status,
+      state: "live",
+      rotation: 0,
+      import_id: null,
+      created_at: "",
+    } as Face;
+  }
+  // persons 3 (anchor) and 5 carry provisional faces; person 8 has
+  // ONLY a confirmed face (no review candidate under `all`); 3 is
+  // FIRST in the step list, 5 last
+  const snap: Snapshot = {
+    version: 1,
+    persons: [],
+    faces: [
+      faceOf(1, 3, "provisional"),
+      faceOf(2, 3, "provisional"),
+      faceOf(8, 8, "confirmed"),
+      faceOf(7, 5, "provisional"),
+    ],
+    images: [],
+    imports: [],
+    settings: {
+      cluster_threshold: 0.4,
+      refcrop_n: 6,
+      face_filter: "all",
+      cluster_group: "accuracy",
+      merge_name_distance: 2,
+      merge_suffix_aliases: [],
+    },
+  };
+  // a second scenario for the status-dependent predicate: person 3's
+  // faces are ALREADY confirmed, so an accept on them is a flip no-op
+  // and drains them under Show=confirmed — but not under Show=all
+  // (they carry no provisional face to begin with)
+  const snapConfirmed: Snapshot = {
+    version: 1,
+    persons: [],
+    faces: [
+      faceOf(1, 3, "confirmed"),
+      faceOf(2, 3, "confirmed"),
+      faceOf(8, 8, "confirmed"),
+      faceOf(7, 5, "provisional"),
+    ],
+    images: [],
+    imports: [],
+    settings: {
+      cluster_threshold: 0.4,
+      refcrop_n: 6,
+      face_filter: "all",
+      cluster_group: "accuracy",
+      merge_name_distance: 2,
+      merge_suffix_aliases: [],
+    },
+  };
+  const stepIds = [3, 8, 5];
+
+  it("a draining accept predicts the advance target", () => {
+    expect(verdictAdvanceTarget(snap, stepIds, 3, 0, [1, 2], "confirmed", "all")).toBe(5);
+  });
+
+  it("a draining reject predicts the advance target too", () => {
+    expect(verdictAdvanceTarget(snap, stepIds, 3, 0, [1, 2], "rejected", "all")).toBe(5);
+  });
+
+  it("a PARTIAL verdict does not drain the anchor (no target)", () => {
+    expect(verdictAdvanceTarget(snap, stepIds, 3, 0, [1], "confirmed", "all")).toBeNull();
+  });
+
+  it("a verdict on ANOTHER person's faces leaves the anchor in place", () => {
+    expect(verdictAdvanceTarget(snap, stepIds, 3, 0, [7], "rejected", "all")).toBeNull();
+  });
+
+  it("the drain + the advance predicate follow the review status (POST-flip face set)", () => {
+    // scenario 1: 3's faces are provisional — under `all` the draining
+    // accept skips person 8 (no provisional face there) and lands on 5
+    expect(verdictAdvanceTarget(snap, stepIds, 3, 0, [1, 2], "confirmed", "all")).toBe(5);
+    // ...and under Show=confirmed the SAME verdict does NOT drain 3 —
+    // the flip leaves 1+2 as CONFIRMED faces, which the filter reviews
+    expect(verdictAdvanceTarget(snap, stepIds, 3, 0, [1, 2], "confirmed", "confirmed")).toBeNull();
+    // scenario 2: 3's faces are already confirmed — a REJECT flips them
+    // to rejected; under Show=confirmed that drains 3 and the candidate
+    // is 8 (its confirmed face), NOT 5 (a provisional face is no
+    // candidate there)
+    expect(verdictAdvanceTarget(snapConfirmed, stepIds, 3, 0, [1, 2], "rejected", "confirmed")).toBe(8);
+    // ...and under Show=all the same reject drains 3 too (3 holds no
+    // provisional face), skipping 8 and landing on 5
+    expect(verdictAdvanceTarget(snapConfirmed, stepIds, 3, 0, [1, 2], "rejected", "all")).toBe(5);
+    // an ACCEPT on already-confirmed faces is a flip no-op — 3 keeps
+    // its confirmed faces and is never drained by it
+    expect(verdictAdvanceTarget(snapConfirmed, stepIds, 3, 0, [1, 2], "confirmed", "confirmed")).toBeNull();
+  });
+
+  it("a draining verdict on the LAST person has no forward target", () => {
+    expect(verdictAdvanceTarget(snap, stepIds, 5, 2, [7], "confirmed", "all")).toBeNull();
   });
 });

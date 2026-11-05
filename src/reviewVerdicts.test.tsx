@@ -46,7 +46,7 @@ function makeInputs(personId: number | null, faces?: Face[]): ReviewVerdictInput
     facesById: new Map(
       (faces ?? [faceOf(1, personId), faceOf(2, personId)]).map((f) => [f.id, f])
     ),
-    mutate: async () => true,
+    verdictMutate: async () => true,
     setInfo: () => {},
     setPending: () => {},
     setPersonId: () => {},
