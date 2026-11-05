@@ -84,6 +84,30 @@ describe("exhaustAdvanceTarget (#159)", () => {
     expect(exhaustAdvanceTarget([10, 40, 50], 20, 1, has)).toBe(50);
   });
 
+  it("a marked person who MOVED UP (verdict re-seats New→Accepted, §4.35) advances from the captured position, skipping the old predecessor that slid into the gap (gui-mock C61)", () => {
+    // original order at mark time: [1, 2, 3, 4, 5] — 3 (marked) at index 2;
+    // the verdict's delta re-ordered the tree: 3 jumped to the front and
+    // 2 (the old predecessor) slid into the captured gap
+    const movedUp = [3, 1, 2, 4, 5];
+    const faces = new Set([2, 4, 5]); // 2 had a review face but was
+    // BEFORE the marked person originally — a backward hand-over
+    const h = (id: number) => faces.has(id);
+    // old behaviour scanned from indexOf(3)+1 = 1 and landed on 1, then
+    // 2 — both backward; the captured scan yields the true next, 4
+    expect(exhaustAdvanceTarget(movedUp, 3, 2, h)).toBe(4);
+  });
+
+  it("a marked person who moved DOWN (or is unchanged) advances from the captured gap, which holds the old successor", () => {
+    // original [1, 2, 3, 4, 5], 3 marked at 2; the tree re-ordered and 3
+    // moved down — the old successor 4 slid into the captured gap
+    const movedDown = [1, 2, 4, 3, 5];
+    const h = (id: number) => id === 4 || id === 5;
+    expect(exhaustAdvanceTarget(movedDown, 3, 2, h)).toBe(4);
+    // unchanged: the person sits on the gap, the guard skips them
+    const h2 = (id: number) => id === 4;
+    expect(exhaustAdvanceTarget([1, 2, 3, 4, 5], 3, 2, h2)).toBe(4);
+  });
+
   it("an unlocatable mark with invalid captured index scans from the start", () => {
     expect(exhaustAdvanceTarget(list, 99, -1, has)).toBe(30);
     expect(exhaustAdvanceTarget(list, 99, -1, () => false)).toBeNull();
