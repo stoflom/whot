@@ -1713,7 +1713,11 @@ export default function App() {
     // §4.15/#175: the advance ends an open full image/focus — the
     // person on screen is no longer the one shown (stepping closes it too)
     if (splitImageId != null) setSplitImageId(null);
-  }, [snap, mode, personId, faceFilter, stepIds, splitImageId]);
+    // #234 (rule 45): `inFlight` is a dep — the flight CLEAR re-runs this
+    // effect so a mark deferred during the in-flight window is consumed
+    // on the authoritative snap (the delta render can land before the
+    // flight clear — the guard must not swallow the mark)
+  }, [snap, mode, personId, faceFilter, stepIds, splitImageId, inFlight]);
 
   // #176 (§4.41) — the sticky person: a Show change (or a verdict) that
   // hides EVERY face of the anchored person opens the guard dialog once
