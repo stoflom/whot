@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 4.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 4.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2024,6 +2024,39 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   menus, hooks) MUST preserve the latest-value ref pattern — an
   extraction that churns the memoised grid identities is wrong even
   when its behaviour looks right.
+
+**45. (v4.2, #234) Optimistic verdict acknowledgement.**
+
+A verdict (✓/✗ on a card, on a cluster header, from the selection
+bar) is *optimistic*: the moment the click fires, the acted-upon
+faces' `link_status` flips in the local snapshot — accept flips
+non-rejected faces to `confirmed`, reject flips non-rejected faces to
+`rejected` — **before** the backend round-trip begins. Only the
+acted-upon face rows are replaced, so memoized cards elsewhere skip
+re-render (#222). The §219 delta overwrites those rows with the
+authoritative state on arrival. If the IPC fails, the pre-flip rows
+are restored, the failed verdict's exhaust mark (§4.30) is cleared,
+and the error toast is shown as before.
+
+While a verdict is in flight (click → delta landed, or failure), the
+acted-upon cards' ✓/✗ and the cluster header's ✓/✗ are disabled and
+dimmed, and the selection bar's Accept/Reject are disabled while any
+selected face is in flight. The top-bar `working…` roller (rule 11)
+is unchanged.
+
+§4.30's advance and §4.41's focus still run **only on success** — on
+the authoritative snapshot — never on the optimistic state. The
+exhaust-advance effect defers consuming the mark while any verdict is
+in flight, so the optimistic flip can never trigger an advance.
+
+In Review mode, when a verdict is predicted to exhaust the anchored
+person (every face of the person under the current review status is
+acted upon), the app prefetches the advance target's similarity
+clusters and reference crops *in parallel* with the verdict IPC. The
+cluster and refcrop effects consume a prefetched entry only when the
+target person's §213 data signature is unchanged at consumption
+time; a failed prefetch never surfaces — the normal fetch path covers
+it.
 
 ## 5. Related documents
 
