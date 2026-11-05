@@ -1,3 +1,8 @@
+import type { Snapshot } from "./api";
+import type { FaceFilter } from "./viewFilters";
+import type { Verdict } from "./verdictFlip";
+import { flipLinkStatus } from "./verdictFlip";
+
 // #96 (§4.30) — where an accept leaves the Review-mode context.
 //
 // The plan is computed from the **pre-accept** sections and stays valid
@@ -55,5 +60,50 @@ export function exhaustAdvanceTarget(
     stepIds
       .slice(first)
       .find((id) => id !== markedPid && hasReviewableFace(id)) ?? null
+  );
+}
+
+// #234 (gui-design rule 45) — the advance-target prefetch prediction.
+
+/** The review status a Show filter reviews: `all` reviews `provisional`
+    (the fresh faces), the other filters review themselves. Mirrors the
+    exhaust effect's status derivation. */
+export function reviewStatusOf(
+  faceFilter: FaceFilter,
+): "provisional" | "confirmed" | "rejected" {
+  return faceFilter === "confirmed" || faceFilter === "rejected"
+    ? faceFilter
+    : "provisional";
+}
+
+/** If the verdict `to` on `ids` drains the anchored person `pid`
+    (every face of the person under the current review status is acted
+    upon), the exhaust-advance effect will fire once the authoritative
+    delta lands — so the caller can prefetch the advance target's
+    clusters/refcrops NOW, in parallel with the verdict IPC. Returns
+    the advance target (the `exhaustAdvanceTarget` rule, evaluated on
+    the POST-flip face set) or null. Pure — mirrors the optimistic flip
+    without touching state. */
+export function verdictAdvanceTarget(
+  snap: Snapshot,
+  stepIds: number[],
+  pid: number,
+  stepIdx: number,
+  ids: number[],
+  to: Verdict,
+  faceFilter: FaceFilter,
+): number | null {
+  const status = reviewStatusOf(faceFilter);
+  const flipped = flipLinkStatus(snap, ids, to);
+  for (const f of flipped.next.faces)
+    if (f.person_id === pid && f.link_status === status) return null;
+  return exhaustAdvanceTarget(
+    stepIds,
+    pid,
+    stepIdx,
+    (id) =>
+      flipped.next.faces.some(
+        (f) => f.person_id === id && f.link_status === status,
+      ),
   );
 }

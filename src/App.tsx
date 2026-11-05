@@ -19,13 +19,22 @@ import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
 import { personDataSig } from "./personSig";
+import {
+  flipLinkStatus,
+  restoreLinkStatus,
+  type Verdict,
+} from "./verdictFlip";
 import { mountLimitFor, growLimit, GRID_MOUNT_INITIAL } from "./gridMount";
 import {
   firstRealGroup,
   renameGroupFor as renameGroup,
   type GroupOp,
 } from "./groupList";
-import { acceptAdvancePlan, exhaustAdvanceTarget } from "./reviewFlow";
+import {
+  acceptAdvancePlan,
+  exhaustAdvanceTarget,
+  verdictAdvanceTarget,
+} from "./reviewFlow";
 import { faceDragPayload, faceMergePlan } from "./faceDrop";
 import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
@@ -93,6 +102,10 @@ type Mode = "review" | "rolls" | "person";
 function isDelta(x: unknown): x is Delta {
   return typeof x === "object" && x != null && "version" in x && "drifted" in x;
 }
+
+// #234 (rule 45): the shared empty in-flight set — a stable identity so
+// the grid's `inFlight` prop churns nothing while no verdict is pending
+const INFLIGHT_EMPTY: Set<number> = new Set();
 
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -447,6 +460,15 @@ export default function App() {
       personSig &&
       clusterGroup === "accuracy"
     ) {
+      // #234 (rule 45): a prefetched advance target — consume it only
+      // when the person's data is unchanged since the prefetch
+      const hit = prefetchRef.current.get(
+        `c|${personId}|${clusterThreshold}`
+      );
+      if (hit && hit.sig === personSig) {
+        setClusters(hit.value as AppearanceGroup[]);
+        return;
+      }
       api
         .personFaceClusters(personId, clusterThreshold)
         .then(setClusters)
@@ -462,6 +484,13 @@ export default function App() {
   useEffect(() => {
     if (personId == null || !personSig) {
       setRefcrops([]);
+      return;
+    }
+    // #234 (rule 45): a prefetched advance target (see the cluster
+    // effect) — the §213 signature guards against a changed person
+    const hit = prefetchRef.current.get(`r|${personId}`);
+    if (hit && hit.sig === personSig) {
+      setRefcrops(hit.value as Refcrop[]);
       return;
     }
     api.getRefcrops(personId).then(setRefcrops).catch(() => setRefcrops([]));
@@ -674,6 +703,120 @@ export default function App() {
   // whatever person the selection holds then
   const exhaustAtRef = useRef(-1);
   const exhaustPidRef = useRef<number | null>(null);
+  // #234 (rule 45) — optimistic verdicts: the flip, the in-flight
+  // bookkeeping and the advance-target prefetch all live in one stable
+  // callback, so the #98/#222 identity chain
+  // markExhaust → doAccept/doReject → faceMenu → gridHandlers stays
+  // put. Every render-value it needs is read via a latest-value ref
+  // (the pendingRef pattern).
+  const [inFlight, setInFlight] = useState<Set<number>>(INFLIGHT_EMPTY);
+  const inFlightRef = useRef(inFlight);
+  inFlightRef.current = inFlight;
+  const snapRef = useRef<Snapshot | null>(null);
+  snapRef.current = snap;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const personIdRef = useRef(personId);
+  personIdRef.current = personId;
+  const faceFilterRef = useRef(faceFilter);
+  faceFilterRef.current = faceFilter;
+  const stepIdsRef = useRef(stepIds);
+  stepIdsRef.current = stepIds;
+  const stepIdxRef = useRef(stepIdx);
+  stepIdxRef.current = stepIdx;
+  const clusterGroupRef = useRef(clusterGroup);
+  clusterGroupRef.current = clusterGroup;
+  const clusterThresholdRef = useRef(clusterThreshold);
+  clusterThresholdRef.current = clusterThreshold;
+  const personsByIdRef = useRef(personsById);
+  personsByIdRef.current = personsById;
+  // #234: prefetched advance-target data — consumed by the cluster/
+  // refcrop effects only when the target's §213 signature is unchanged
+  const prefetchRef = useRef(
+    new Map<string, { sig: string; value: unknown }>()
+  );
+  const prefetchTarget = useCallback((target: number) => {
+    const s = snapRef.current;
+    if (!s) return;
+    const sig = personDataSig(
+      personsByIdRef.current.get(target) ?? null,
+      s.faces,
+      s.settings ?? null
+    );
+    if (sig == null) return;
+    if (clusterGroupRef.current === "accuracy") {
+      const threshold = clusterThresholdRef.current;
+      api
+        .personFaceClusters(target, threshold)
+        .then((clusters) => {
+          prefetchRef.current.set(`c|${target}|${threshold}`, {
+            sig,
+            value: clusters,
+          });
+        })
+        .catch(() => {}); // best-effort — the normal fetch covers a miss
+    }
+    api
+      .getRefcrops(target)
+      .then((refcrops) => {
+        prefetchRef.current.set(`r|${target}`, { sig, value: refcrops });
+      })
+      .catch(() => {});
+  }, []);
+  const verdictMutate = useCallback(
+    (
+      fn: () => Promise<unknown>,
+      ids: number[],
+      to: Verdict,
+      clearSel = false
+    ): Promise<boolean> => {
+      const s = snapRef.current;
+      let prior: Map<number, Face> | null = null;
+      if (s) {
+        const r = flipLinkStatus(s, ids, to);
+        if (r.next !== s) {
+          prior = r.prior;
+          setSnap(r.next); // the cards respond BEFORE the IPC begins
+        }
+        const pid = personIdRef.current;
+        if (modeRef.current === "review" && pid != null) {
+          const target = verdictAdvanceTarget(
+            s,
+            stepIdsRef.current,
+            pid,
+            stepIdxRef.current,
+            ids,
+            to,
+            faceFilterRef.current
+          );
+          if (target != null) prefetchTarget(target);
+        }
+      }
+      const flight = new Set(inFlightRef.current);
+      for (const id of ids) flight.add(id);
+      inFlightRef.current = flight;
+      setInFlight(flight);
+      return mutate(fn, clearSel).then((ok) => {
+        if (inFlightRef.current.size > 0) {
+          const rest = new Set(inFlightRef.current);
+          for (const id of ids) rest.delete(id);
+          inFlightRef.current = rest.size > 0 ? rest : INFLIGHT_EMPTY;
+          setInFlight(inFlightRef.current);
+        }
+        if (!ok) {
+          // roll the flip back and clear THIS verdict's exhaust mark
+          // (#148 — it used to be cleared in the focus callback, which
+          // never ran on failure)
+          if (prior && prior.size > 0)
+            setSnap((cur) => (cur ? restoreLinkStatus(cur, prior) : cur));
+          exhaustAtRef.current = -1;
+          exhaustPidRef.current = null;
+        }
+        return ok;
+      });
+    },
+    [mutate, prefetchTarget, setInFlight, setSnap]
+  );
   // §4.44 + #222 (F-H3): the verdict callbacks live in reviewVerdicts.ts
   // (hook module, co-tested) — the #98 identity rule is preserved there:
   // the person anchor is read via refs, so markExhaust → doAccept/
@@ -686,7 +829,7 @@ export default function App() {
       personId,
       stepIdx,
       facesById,
-      mutate,
+      verdictMutate,
       setInfo,
       setPending,
       setPersonId,
@@ -1458,7 +1601,12 @@ export default function App() {
       // path (mark + advance plan), and a drained person's advance
       // closes the split and focuses the next face to review (§4.30)
       if (mode !== "review") {
-        const ok = await mutate(() => api.acceptFaces(ids), true);
+        const ok = await verdictMutate(
+          () => api.acceptFaces(ids),
+          ids,
+          "confirmed",
+          true
+        );
         if (ok) focusActed(ids); // #189/§4.41: focus follows the verdict
         return;
       }
@@ -1475,7 +1623,12 @@ export default function App() {
       // pre-failure state. Everything below runs only on success.
       // (#139: commitPending runs the staged ops before calling this —
       // each op its own mutate so a mid-set failure can be re-staged.)
-      const ok = await mutate(() => api.acceptFaces(ids), false);
+      const ok = await verdictMutate(
+        () => api.acceptFaces(ids),
+        ids,
+        "confirmed",
+        false
+      );
       if (!ok) return;
       // #189/§4.41: focus follows the verdict — with the #125 interplay
       // guard (focusActedUnlessNoop): a no-op anchor re-set would
@@ -1492,7 +1645,17 @@ export default function App() {
         setRevealFace(first);
       }
     },
-    [snap, mode, sections, mutate, markExhaust, facesById, personId, focusActed, focusActedUnlessNoop]
+    [
+      snap,
+      mode,
+      sections,
+      verdictMutate,
+      markExhaust,
+      facesById,
+      personId,
+      focusActed,
+      focusActedUnlessNoop,
+    ]
   );
 
   // #125 (§4.30): a verdict (Accept / Reject / Delete Person) that leaves
@@ -1504,6 +1667,11 @@ export default function App() {
   useEffect(() => {
     const at = exhaustAtRef.current;
     if (at < 0) return;
+    // #234 (rule 45): a verdict in flight — the optimistic flip has
+    // already landed, the authoritative delta has not. Consuming the
+    // mark now would advance on stale data; the post-delta refresh
+    // re-runs this effect with the flight cleared.
+    if (inFlightRef.current.size > 0) return;
     // #148: consume unconditionally — the mark must never linger across
     // view switches / person changes and fire from stale state later
     const markedPid = exhaustPidRef.current;
@@ -1739,6 +1907,12 @@ export default function App() {
     }
     openEdit("selection");
   };
+  // #234 (rule 45): the bar's verdicts disable while any selected face
+  // is in flight (its optimistic flip / delta is pending)
+  const barInFlight = useMemo(
+    () => [...sel].some((id) => inFlight.has(id)),
+    [sel, inFlight]
+  );
 
   // #31 — person stepping: ‹ › and ← → walk the persons in the tree's
   // current (filtered) display order (stepIds/stepIdx declared early —
@@ -2548,6 +2722,7 @@ export default function App() {
                   <FaceGrid
                     sections={splitSections} // #215: memoised per split image
                     sel={sel}
+                    inFlight={inFlight} // #234 (rule 45)
                     stageIdx={stagedIdx}
                     faceDropTarget={faceDropTarget}
                     // #225: the film roll windows too — it scrolls in its
@@ -2611,7 +2786,8 @@ export default function App() {
                   rotation={imgRow.rotation} // #122
                 />
               </div>
-              <FaceGrid sections={sections} sel={sel} stageIdx={stagedIdx} faceDropTarget={faceDropTarget}
+              <FaceGrid sections={sections} sel={sel} inFlight={inFlight}
+                stageIdx={stagedIdx} faceDropTarget={faceDropTarget}
                 // #225: the image-detail grid windows like the rest
                 mountLimit={mountLimit} onNeedMore={growMount}
                 {...gridHandlers} primaryFaceId={null} />
@@ -2620,6 +2796,7 @@ export default function App() {
             <FaceGrid
               sections={sections}
               sel={sel}
+              inFlight={inFlight} // #234 (rule 45)
               stageIdx={stagedIdx}
               faceDropTarget={faceDropTarget}
               emptyHint={emptyHint} // #194: guidance instead of bare "nothing to show"
@@ -2704,6 +2881,7 @@ export default function App() {
 
       <RuleBar
         count={sel.size}
+        verdictInFlight={barInFlight} // #234 (rule 45)
         stageLive={pending.length > 0}
         stageText={pending.length > 0 ? stageSummarySet(pending) : undefined}
         onApply={barApply}

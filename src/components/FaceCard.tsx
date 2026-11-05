@@ -10,6 +10,9 @@ import { rotStyle } from "../rotation";
 interface Props {
   face: Face;
   selected: boolean;
+  /** #234 (rule 45): this card's verdict is in flight — the ✓/✗ dim
+      and disable until the delta lands (or the flip rolls back) */
+  inFlight?: boolean;
   isPrimary: boolean;
   /** #101/#123 + #224 (F-M3): THIS card's staged fields, resolved by the
       section from the pending-set index — stable primitives (undefined
@@ -66,6 +69,7 @@ interface Props {
 function FaceCard({
   face,
   selected,
+  inFlight,
   isPrimary,
   stagedName,
   stagedGroup,
@@ -267,7 +271,8 @@ function FaceCard({
             confirmed card needs none (its status badge reads ✓). */}
         {face.link_status !== "confirmed" && (
           <button
-            className="card-accept"
+            className={`card-accept${inFlight ? " in-flight" : ""}`}
+            disabled={inFlight} // #234 (rule 45)
             title={
               "Accept this card as-is" +
               scopeLabel +
@@ -282,6 +287,8 @@ function FaceCard({
         )}
         {face.link_status !== "rejected" && (
           <button
+            className={`card-reject${inFlight ? " in-flight" : ""}`}
+            disabled={inFlight} // #234 (rule 45)
             title={
               "Reject face — only rejected faces get a ✗ marker; accepted is the default" +
               scopeLabel

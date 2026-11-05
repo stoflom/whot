@@ -63,6 +63,11 @@ interface GridShared {
 interface GridProps extends GridShared {
   sections: Section[];
   sel: Set<number>;
+  /** #234 (rule 45): the faces whose verdict is in flight — the acted
+      cards' ✓/✗ and the cluster headers' ✓/✗ dim while their verdict
+      is pending. A stable identity (App's INFLIGHT_EMPTY) while no
+      verdict is pending, so nothing churns in the idle state */
+  inFlight: Set<number>;
   /** #136: the card a face drag currently hovers (null = none) */
   faceDropTarget: number | null;
   /** #194 (§4.41): the empty-state guidance — replaces the bare
@@ -92,6 +97,7 @@ const SectionView = memo(
   function SectionView({
     section,
     selSig,
+    inFlightSig,
     selSize,
     stagedKey,
     faces,
@@ -128,6 +134,10 @@ const SectionView = memo(
         selection (their selected cards' count labels need it); a
         section without one gets a stable `undefined` */
     selSize?: number;
+    /** #234 (rule 45): this section's in-flight face ids as "a,b,c" —
+        identical while its own in-flight set is unchanged, so memo()
+        skips the whole section on an O(1) compare ("" = none) */
+    inFlightSig: string;
     /** #109: the staged fields previewing here ("" when none) */
     stagedKey: string;
     /** #136 (rule 34): this section's hovered description-drop target —
@@ -144,6 +154,15 @@ const SectionView = memo(
     }, [selSig]);
     const allSelected =
       section.faceIds.length > 0 && section.faceIds.every((id) => sel.has(id));
+    // #234 (rule 45): rebuild this section's in-flight set from its
+    // signature — the body runs only when the memo lets the section
+    // through
+    const inFlight = useMemo(() => {
+      const s = new Set<number>();
+      if (inFlightSig) for (const t of inFlightSig.split(",")) s.add(Number(t));
+      return s;
+    }, [inFlightSig]);
+    const groupInFlight = inFlightSig !== "";
     // #101 (§4.24): labels, not inputs — a staged change previews on them.
     // #109: decoded from the very key the memo compared — the data the
     // comparator saw and the data the body renders are one and the same
@@ -203,14 +222,16 @@ const SectionView = memo(
                 (§4.43). #101/§4.24: Edit… opens the dialog at scope
                 Group */}
             <button
-              className="sec-accept"
+              className={`sec-accept${groupInFlight ? " in-flight" : ""}`}
+              disabled={groupInFlight} // #234 (rule 45)
               onClick={() => onAcceptGroup(section.faceIds)}
               title={`Accept all ${section.faceIds.length} face(s) of this group as-is — stages commit first`}
             >
               ✓
             </button>
             <button
-              className="sec-reject"
+              className={`sec-reject${groupInFlight ? " in-flight" : ""}`}
+              disabled={groupInFlight} // #234 (rule 45)
               onClick={() => onRejectGroup(section.faceIds)}
               title={`Reject all ${section.faceIds.length} face(s) of this group`}
             >
@@ -250,6 +271,7 @@ const SectionView = memo(
                 stagedGroup={staged?.group}
                 stagedDesc={staged?.desc}
                 selected={selected}
+                inFlight={inFlight.has(id)} // #234 (rule 45)
                 isPrimary={primaryFaceId === id}
                 onOpen={onOpen}
                 onContextMenu={onContextMenu}
@@ -290,6 +312,7 @@ const SectionView = memo(
   (a, b) =>
     a.section === b.section &&
     a.selSig === b.selSig &&
+    a.inFlightSig === b.inFlightSig &&
     a.stagedKey === b.stagedKey &&
     a.selSize === b.selSize &&
     a.faces === b.faces &&
@@ -320,6 +343,7 @@ const SectionView = memo(
 function FaceGrid({
   sections,
   sel,
+  inFlight,
   faceDropTarget,
   emptyHint,
   mountLimit,
@@ -356,6 +380,11 @@ function FaceGrid({
         // #109: the per-section selection identity — computed per render
         // (cheap: one `sel.has` per face), consumed only by the comparator
         const selSig = s.faceIds.filter((id) => sel.has(id)).join(",");
+        // #234 (rule 45): the per-section in-flight identity (same
+        // pattern) — "" while no verdict in this section is pending
+        const inFlightSig = s.faceIds
+          .filter((id) => inFlight.has(id))
+          .join(",");
         // #136: only the section holding the hovered card gets a target
         const descTargetId =
           faceDropTarget != null && s.faceIds.includes(faceDropTarget)
@@ -366,6 +395,7 @@ function FaceGrid({
             key={s.key}
             section={s}
             selSig={selSig}
+            inFlightSig={inFlightSig}
             selSize={selSig ? sel.size : undefined}
             stagedKey={stagedKeyFor(shared.stageIdx, s.faceIds)}
             descTargetId={descTargetId}

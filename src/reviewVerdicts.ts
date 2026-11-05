@@ -17,6 +17,7 @@ import {
 } from "react";
 import * as api from "./api";
 import type { Face } from "./api";
+import type { Verdict } from "./verdictFlip";
 import { dropStagesForFaces, type Stage } from "./stage";
 import type { Mode } from "./sections";
 
@@ -28,7 +29,14 @@ export interface ReviewVerdictInputs {
   personId: number | null;
   stepIdx: number;
   facesById: Map<number, Face>;
-  mutate: (fn: () => Promise<unknown>, clearSel?: boolean) => Promise<boolean>;
+  /** the App verdict runner (#234/rule 45): optimistic flip + in-flight
+      bookkeeping + the #219 delta/refresh, clearSel — true on success */
+  verdictMutate: (
+    fn: () => Promise<unknown>,
+    ids: number[],
+    to: Verdict,
+    clearSel?: boolean
+  ) => Promise<boolean>;
   setInfo: (info: string | null) => void;
   setPending: (update: (p: Stage[]) => Stage[]) => void;
   setPersonId: (id: number | null) => void;
@@ -44,7 +52,7 @@ export function useReviewVerdicts(inp: ReviewVerdictInputs) {
   const {
     mode,
     facesById,
-    mutate,
+    verdictMutate,
     setInfo,
     setPending,
     setPersonId,
@@ -147,12 +155,14 @@ export function useReviewVerdicts(inp: ReviewVerdictInputs) {
       // value — pre-advance), not re-read after the await: the #189
       // no-op guard compares against the person the verdict acted on
       const anchor = personIdRef.current;
-      return mutate(() => api.acceptFaces(ids), true).then((ok) => {
-        if (ok) focusActedUnlessNoop(ids, anchor); // #189/§4.41
-        return ok;
-      });
+      return verdictMutate(() => api.acceptFaces(ids), ids, "confirmed", true).then(
+        (ok) => {
+          if (ok) focusActedUnlessNoop(ids, anchor); // #189/§4.41
+          return ok;
+        }
+      );
     },
-    [mutate, markExhaust, facesById, focusActedUnlessNoop, setInfo]
+    [verdictMutate, markExhaust, facesById, focusActedUnlessNoop, setInfo]
   );
   const doReject = useCallback(
     (ids: number[]) => {
@@ -165,12 +175,17 @@ export function useReviewVerdicts(inp: ReviewVerdictInputs) {
       setPending((p) => dropStagesForFaces(p, ids));
       // #222: the anchor is captured as of the ACTION (see doAccept)
       const anchor = personIdRef.current;
-      return mutate(() => api.rejectFaces(ids), true).then((ok) => {
+      return verdictMutate(
+        () => api.rejectFaces(ids),
+        ids,
+        "rejected",
+        true
+      ).then((ok) => {
         if (ok) focusActedUnlessNoop(ids, anchor); // #189/§4.41
         return ok;
       });
     },
-    [mutate, markExhaust, focusActedUnlessNoop, setPending]
+    [verdictMutate, markExhaust, focusActedUnlessNoop, setPending]
   );
   return { markExhaust, doAccept, doReject, focusTarget, focusActed, focusActedUnlessNoop };
 }
