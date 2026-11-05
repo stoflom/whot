@@ -51,11 +51,22 @@ export function exhaustAdvanceTarget(
   hasReviewableFace: (id: number) => boolean,
 ): number | null {
   if (markedPid == null) return null;
-  let first = stepIds.indexOf(markedPid) + 1;
-  if (first <= 0) {
-    // pruned between mark and consume: continue from the captured gap
-    first = Math.max(0, Math.min(capturedAt, stepIds.length));
-  }
+  // The scan starts from the CAPTURED position — the marked person's
+  // index at mark time — never from their CURRENT index: between mark
+  // and consume the tree can reorder (a verdict re-seats a drained
+  // person New→Accepted, §4.35 — the Accepted branch walks earlier, so
+  // the person JUMPS UP the list) or prune them (Show → New). One
+  // exception: when the person moved UP, their removal let the old
+  // PREDECESSOR into the captured gap (the re-insertion above does not
+  // reclaim it) — starting at the gap would hand the review one person
+  // backward, so the scan skips it. In every other case the gap holds
+  // the old successor (pruned / moved down) or the person themselves
+  // (unchanged — skipped by the `!== markedPid` guard below).
+  const cur = stepIds.indexOf(markedPid);
+  const first =
+    cur !== -1 && cur < capturedAt
+      ? Math.min(capturedAt + 1, stepIds.length)
+      : Math.max(0, Math.min(capturedAt, stepIds.length));
   return (
     stepIds
       .slice(first)
