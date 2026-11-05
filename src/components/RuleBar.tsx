@@ -5,6 +5,9 @@
 
 interface Props {
   count: number;
+  /** #234 (rule 45): a verdict on part of the selection is in flight
+      — Accept/Reject disable until it lands */
+  verdictInFlight?: boolean;
   /** a staged (Apply) preview is live — Undo becomes available */
   stageLive: boolean;
   /** #103: human summary of the live stage, shown beside the buttons */
@@ -23,6 +26,7 @@ interface Props {
 
 export default function RuleBar({
   count,
+  verdictInFlight,
   stageLive,
   stageText,
   onApply,
@@ -60,7 +64,7 @@ export default function RuleBar({
       </button>
       <button
         className="ok"
-        disabled={none && !stageLive}
+        disabled={(none && !stageLive) || !!verdictInFlight} // #234
         onClick={onAccept}
         title={
           stageLive
@@ -96,7 +100,7 @@ export default function RuleBar({
       </button>
       <button
         className="bad"
-        disabled={none}
+        disabled={none || !!verdictInFlight} // #234
         onClick={onReject}
         title={`Reject the ${count} selected face(s) — hidden unless the filter shows them (shortcut: R)`}
       >

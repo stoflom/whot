@@ -968,8 +968,14 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 
 /* #177 (§4.42): verdict icons — the card tick, the cluster-header ✓/✗ */
 .card-accept { color: var(--ok); }
+.card-reject { color: var(--bad); }
 .sec-accept { color: var(--ok); }
 .sec-reject { color: var(--bad); }
+
+/* #234 (rule 45): a verdict in flight — the acted-upon cards' ✓/✗ and
+   the cluster headers' ✓/✗ dim until the delta lands (or the flip
+   rolls back) */
+button.in-flight { opacity: 0.45; cursor: progress; }
 
 /* #172/#173 (§4.38) — the person pane's staged group list + Update person */
 .dp-update { margin: 0.5rem 0 0; }

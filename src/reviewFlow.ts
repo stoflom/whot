@@ -1,3 +1,8 @@
+import type { Snapshot } from "./api";
+import type { FaceFilter } from "./viewFilters";
+import type { Verdict } from "./verdictFlip";
+import { flipLinkStatus } from "./verdictFlip";
+
 // #96 (§4.30) — where an accept leaves the Review-mode context.
 //
 // The plan is computed from the **pre-accept** sections and stays valid
@@ -46,14 +51,70 @@ export function exhaustAdvanceTarget(
   hasReviewableFace: (id: number) => boolean,
 ): number | null {
   if (markedPid == null) return null;
-  let first = stepIds.indexOf(markedPid) + 1;
-  if (first <= 0) {
-    // pruned between mark and consume: continue from the captured gap
-    first = Math.max(0, Math.min(capturedAt, stepIds.length));
-  }
+  // The scan starts from the CAPTURED position — the marked person's
+  // index at mark time — never from their CURRENT index: between mark
+  // and consume the tree can reorder (a verdict re-seats a drained
+  // person New→Accepted, §4.35 — the Accepted branch walks earlier, so
+  // the person JUMPS UP the list) or prune them (Show → New). One
+  // exception: when the person moved UP, their removal let the old
+  // PREDECESSOR into the captured gap (the re-insertion above does not
+  // reclaim it) — starting at the gap would hand the review one person
+  // backward, so the scan skips it. In every other case the gap holds
+  // the old successor (pruned / moved down) or the person themselves
+  // (unchanged — skipped by the `!== markedPid` guard below).
+  const cur = stepIds.indexOf(markedPid);
+  const first =
+    cur !== -1 && cur < capturedAt
+      ? Math.min(capturedAt + 1, stepIds.length)
+      : Math.max(0, Math.min(capturedAt, stepIds.length));
   return (
     stepIds
       .slice(first)
       .find((id) => id !== markedPid && hasReviewableFace(id)) ?? null
+  );
+}
+
+// #234 (gui-design rule 45) — the advance-target prefetch prediction.
+
+/** The review status a Show filter reviews: `all` reviews `provisional`
+    (the fresh faces), the other filters review themselves. Mirrors the
+    exhaust effect's status derivation. */
+export function reviewStatusOf(
+  faceFilter: FaceFilter,
+): "provisional" | "confirmed" | "rejected" {
+  return faceFilter === "confirmed" || faceFilter === "rejected"
+    ? faceFilter
+    : "provisional";
+}
+
+/** If the verdict `to` on `ids` drains the anchored person `pid`
+    (every face of the person under the current review status is acted
+    upon), the exhaust-advance effect will fire once the authoritative
+    delta lands — so the caller can prefetch the advance target's
+    clusters/refcrops NOW, in parallel with the verdict IPC. Returns
+    the advance target (the `exhaustAdvanceTarget` rule, evaluated on
+    the POST-flip face set) or null. Pure — mirrors the optimistic flip
+    without touching state. */
+export function verdictAdvanceTarget(
+  snap: Snapshot,
+  stepIds: number[],
+  pid: number,
+  stepIdx: number,
+  ids: number[],
+  to: Verdict,
+  faceFilter: FaceFilter,
+): number | null {
+  const status = reviewStatusOf(faceFilter);
+  const flipped = flipLinkStatus(snap, ids, to);
+  for (const f of flipped.next.faces)
+    if (f.person_id === pid && f.link_status === status) return null;
+  return exhaustAdvanceTarget(
+    stepIds,
+    pid,
+    stepIdx,
+    (id) =>
+      flipped.next.faces.some(
+        (f) => f.person_id === id && f.link_status === status,
+      ),
   );
 }
