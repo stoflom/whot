@@ -2348,6 +2348,12 @@ def c31_rolls_import_pane(t):
 # (timing-sensitive hit-test on a `selected` sibling); stand-alone it
 # passes reliably — a full-suite abort at C32 is a known harness flake,
 # not an app regression.
+#
+# #188/§4.40 interaction: re-entering Review fires the entry pin
+# (Show → New), which would hide the CONFIRMED faces phase B needs in
+# the overlay — the phase-B Review click therefore restores Show → All
+# through the harness dispatch (set_show_filter fights the pin's own
+# dispatch; the review-disabled select still accepts it).
 def c32_full_image_follows_person(t):
     """#171 (§4.37): the right pane follows the full image —
     card double-click opens focus mode AND shows that card's person in
@@ -2445,7 +2451,11 @@ def c32_full_image_follows_person(t):
     import_open = view_state()
 
     js(t, "document.querySelectorAll('.topbar nav button')[0]?.click();")  # Review
-    time.sleep(0.8)
+    # the entry pin (#188/§4.40) fired on this re-entry (Show → New) —
+    # phase B needs the shared image's CONFIRMED faces visible in the
+    # overlay, so restore Show → All (harness dispatch — see the note
+    # above the check)
+    set_show_filter(t, "all")
     card2 = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['cardId']}']")
     js(t, "arguments[0].scrollIntoView({block:'center'})", card2)
     time.sleep(0.3)
