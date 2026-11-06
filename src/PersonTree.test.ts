@@ -24,8 +24,8 @@ function person(
 
 describe("orderedVisiblePersonIds — multi-group placement (#156, v3.56)", () => {
   const persons = [
-    person(1, "Burgit Oosthuizen", ["Friends", "Friends|PHS"], 19),
-    person(2, "Esther Buchanan", ["Friends", "Friends|PHS"], 30),
+    person(1, "John Smith", ["Friends", "Friends|PHS"], 19),
+    person(2, "Jane Smith", ["Friends", "Friends|PHS"], 30),
     person(3, "Mary", ["Family|Smith-PaMa|Friends"], 2),
     person(4, "Solo", [], 1),
   ];
@@ -43,7 +43,7 @@ describe("orderedVisiblePersonIds — multi-group placement (#156, v3.56)", () =
 
   it("the filter keeps working across all placements of a person", () => {
     // name filter
-    expect(orderedVisiblePersonIds(persons, "burgit")).toEqual([1]);
+    expect(orderedVisiblePersonIds(persons, "john")).toEqual([1]);
     // group-path filter matches persons whose ANY row matches ('PHS')
     expect(orderedVisiblePersonIds(persons, "PHS").sort()).toEqual([1, 2]);
     // single-group person unaffected

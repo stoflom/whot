@@ -90,8 +90,8 @@ function referenceCount(node: TreeNode, persons: Person[], filter: string): numb
 }
 
 const fixture = [
-  person(1, "Burgit Oosthuizen", ["Friends", "Friends|PHS"], 19),
-  person(2, "Esther Buchanan", ["Friends", "Friends|PHS"], 30),
+  person(1, "John Smith", ["Friends", "Friends|PHS"], 19),
+  person(2, "Jane Smith", ["Friends", "Friends|PHS"], 30),
   person(3, "Mary", ["Family|Smith-PaMa|Friends"], 2),
   person(4, "Solo", [], 1),
   person(5, "Unknown7", [], 5),
