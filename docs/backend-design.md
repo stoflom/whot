@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.12** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.13** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -232,7 +232,9 @@ Behaviour rules: gui-design §4.36. Structure:
   `webkit_tester.py` (Selenium `Remote` → the system `WebKitWebDriver`
   binary, a `WebElement` subclass fixing WebKit's broken `getElementText`
   and its pre-dispatch occlusion check, one driver process per run — no
-  leaked sessions). Firefox remains a supported choice:
+  leaked sessions). The suite's snapshot is **sanitized at dump time**
+  (`test/gui-mock/README.md` → Sanitization): no personal names,
+  surnames, notes or home paths survive, so the test corpus is sharable Firefox remains a supported choice:
   `WHOT_GUI_DRIVER=firefox` uses the personal firefox-testing skill
   (true headless). WebKit has no headless mode — it needs a display
   (a desktop `DISPLAY`, or a **private virtual display** when the

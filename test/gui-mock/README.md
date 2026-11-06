@@ -15,7 +15,7 @@ without running the Rust backend or touching the real database.
 
 | file | role |
 | --- | --- |
-| `dump_snap.py` | read-only dump of `data/faces.db` → `snap.json` (gitignored) |
+| `dump_snap.py` | sanitized dump of `data/faces.db` → `snap.json` (gitignored): no personal names, surnames, notes or home paths survive (see Sanitization); `--raw` for a debugging dump |
 | `mock.js` | in-memory `window.__TAURI_INTERNALS__` emulator (command list in the file header) |
 | `server.py` | serves `dist/`, rewrites `index.html` to load `mock.js` before the app bundle; serves `/snap.json` |
 | `webkit_tester.py` | the WebKitGTK driver: Selenium `Remote` → system `WebKitWebDriver`, `.text`/occlusion fixes (see Fidelity notes) |
@@ -25,7 +25,7 @@ without running the Rust backend or touching the real database.
 
 ```sh
 npm run build            # dist/ must be current
-python3 test/gui-mock/dump_snap.py
+python3 test/gui-mock/dump_snap.py   # sanitized snapshot -> snap.json (see Sanitization)
 python3 test/gui-mock/server.py &     # default http://127.0.0.1:8123/
 python3 test/gui-mock/gui_check.py    # WebKitGTK (default): exit 0 iff all 64 checks pass (C1–C63, C17 retired, + R1–R2)
 WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox instead
@@ -63,6 +63,38 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
   `window.__MOCK_IMPORT__` exposes the live slot to checks.
 - Mock state is in-memory and per page-load: every navigation reloads
   `snap.json`, so checks are independent and the real DB is never written.
+
+## Sanitization (the snapshot carries no personal data, #236)
+
+`dump_snap.py` sanitizes its output **by default** — `snap.json` may be
+shared freely, and no real name, surname, note or user-home path may
+appear in it. `--raw` dumps the snapshot unsanitized for local
+debugging fidelity; **never commit or share a `--raw` dump**. The
+sanitizer is a pure function (`sanitize_snap`) with these rules and
+invariants (pinned by `test/test_sanitize_snap.py`):
+
+- `persons.name`: every real-name person → `John Smith{n}` (id order;
+  `UnknownN` and the system person `Rejected` are structural and stay).
+- `person_groups.path`: every non-reserved segment → a generic
+  `Group{n}`, one generic **per distinct segment** (first-seen order) —
+  injective, so the tree's branch shape and ordering are unchanged and
+  the sanitized corpus never merges two different branches into one.
+  The reserved status seats (`Accepted`, `New`, `Rejected`) stay.
+- `faces.name`: rebuilt from the mapped person name with the same
+  `name[-description]-seq` formula the mock's renumber uses, so labels
+  stay coherent before **and** after any renumber.
+- `persons.note` and free-text `faces.description`: name-bearing words
+  replaced via a dictionary built from the real-name tokens + the
+  original segment names (plus a small curated list for stray personal
+  words, e.g. `Dawid`) → the neutral word `person`.
+- `images.primary_path` / `imports.path`: only the home component
+  rewritten (`/home/stoflom/…` → `/home/tester/…`) — the `Pictures/…`
+  structure and the timestamp filenames stay, so every dynamic check
+  (C34, C63's filename walk, the path filter) sees identical order.
+- Invariants: deterministic across runs, identity-preserving (same
+  distinct name always → same generic name), order-preserving (no sort
+  order changes), counts and ids untouched, and the scan gate: no
+  real-name token survives in the serialized JSON.
 
 ## Requirements
 
