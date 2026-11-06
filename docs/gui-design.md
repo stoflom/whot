@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -229,9 +229,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
   the person view forms its sections (§4.9), so the seg is hidden in
   the Review and Rolls views, where it would change nothing. **Rolls
-  renders no centre toolbar at all**: neither the navigation
-  cluster nor the seg appear there — the grid gets the pane's full
-  height (Review and Person keep the navigation cluster). The
+  while browsing renders no centre toolbar at all** (§4.38) — the grid
+  gets the pane's full height; the one exception is rule 46: a full
+  image open in Rolls returns the toolbar carrying the film-roll nav
+  cluster. Review and Person keep the navigation cluster. The
   toolbar is the center pane's **fixed header** (in the views that have
   one): the sections scroll
   beneath it in their own, shorter scroll area — nothing can scroll past
@@ -292,10 +293,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 - **Section stepping**: ‹ › buttons in the center toolbar — and the
   `←`/`→` **shortcuts** — step through the persons in the tree's current
   (filtered) display order, selecting each (person view); disabled at the
-  ends, `n/m` indicator in the toolbar. **Neither exists in the Rolls
-  view**: the toolbar is not rendered there and the shortcuts are
+  ends, `n/m` indicator in the toolbar. Not in the **browsing** Rolls
+  view: no toolbar is rendered there and the shortcuts are
   inert — person stepping can only land in the person view, so ‹/← have
-  no target in Rolls. Shortcuts never fire while an
+  no target in Rolls; with a full image open in Rolls, ‹ › and ←/→
+  step the film roll's images instead (rule 46). Shortcuts never fire while an
   input or dialog has focus; the current set is listed in the settings
   popover (`Esc` closes overlays, `Enter` commits fields).
 - **Context menus**: face cards, person rows and image thumbs show a
@@ -877,7 +879,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     the card itself, **Ctrl-A** selects
     all cards of the current view, **A**/**R** accept/reject the
     selection (the rule-bar buttons' scope), ←/→ step persons (**not in
-    Rolls**) and
+    browsing Rolls**; with a full image open in Rolls they step the
+    film roll's images — rule 46) and
     Esc closes split/dialog/menu (§4.19). Shortcuts are suppressed while
     typing in any input and while a menu or dialog is open. Context-menu
     items display their shortcut as a right-aligned dim hint
