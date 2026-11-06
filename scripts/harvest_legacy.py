@@ -45,7 +45,7 @@ rectangle-less presence (MPRI display names, tag->image hits) is gone.
 Usage:
   scripts/harvest_legacy.py --out /tmp/harvest.db \\
       --images '/run/media/.../PicFiles' \\
-      --lightroom-catalog /run/media/.../StofLomPictures-v13-3.lrcat \\
+      --lightroom-catalog /run/media/.../Pictures-v13-3.lrcat \\
       --lr-root 'D:/LIVE/=/run/media/.../LIVE'
   scripts/harvest_legacy.py --out /tmp/harvest.db --resume  # rerun: reuse
                                                     # the recorded hashes (§8.7)
