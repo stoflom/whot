@@ -48,6 +48,14 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
 - The binary image batch returns a tiny shared JPEG standing in for the
   DB blobs — layout and interaction
   checks only, never pixel checks.
+- The check suite is **corpus-agnostic**: no check hardcodes a person
+  id or name. C23 (D&D moves one membership) discovers its scenario in
+  the loaded snapshot — a person whose memberships contain a nested
+  pair (`P` + `P|X`) plus a sibling branch `P|Y` with another member —
+  and exercises the same contract on the discovered paths; with no
+  such person in the corpus it records a vacuous pass-with-caveat, as
+  the other discovery-based checks do (so any sanitized-or-raw dump,
+  any group vocabulary, works).
 - `person_face_clusters` mirrors the backend's single-linkage clustering
   (cosine similarity, distance = 1 − sim, default threshold 0.40) over the
   person's non-rejected, non-discarded faces.
@@ -129,8 +137,9 @@ invariants (pinned by `test/test_sanitize_snap.py`):
 
 - `selenium` + `webdriver-manager` (geckodriver auto-downloaded) and a
   `firefox` binary on PATH (true headless — no display needed).
-- The `firefox-testing` skill at `/home/stoflom/.pi/agent/skills/firefox-testing`
-  (imported only for this driver; adjust the path if the skill moves).
+- The `firefox-testing` skill, resolvable from the environment:
+  `WHOT_FIREFOX_SKILL` overrides the path; the documented default is
+  `~/.pi/agent/skills/firefox-testing` (imported only for this driver).
 
 ## WebKit quirks the tester papers over
 

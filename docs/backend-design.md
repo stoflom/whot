@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.13** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.14** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -234,9 +234,13 @@ Behaviour rules: gui-design §4.36. Structure:
   and its pre-dispatch occlusion check, one driver process per run — no
   leaked sessions). The suite's snapshot is **sanitized at dump time**
   (`test/gui-mock/README.md` → Sanitization): no personal names,
-  surnames, notes or home paths survive, so the test corpus is sharable Firefox remains a supported choice:
-  `WHOT_GUI_DRIVER=firefox` uses the personal firefox-testing skill
-  (true headless). WebKit has no headless mode — it needs a display
+  surnames, notes or home paths survive, so the test corpus is sharable
+  (the suite is corpus-agnostic: no check hardcodes a person or group
+  name; C23 discovers its drag-drop scenario in the loaded snapshot).
+  Firefox remains a supported choice (true headless):
+  `WHOT_GUI_DRIVER=firefox` uses the personal firefox-testing skill,
+  resolved from `WHOT_FIREFOX_SKILL` (default `~/.pi/agent/skills/
+  firefox-testing`). WebKit has no headless mode — it needs a display
   (a desktop `DISPLAY`, or a **private virtual display** when the
   session is remote/idle: Xvfb, or Xvnc — `Xvnc :123 -geometry
   1600x1000 -depth 24 -SecurityTypes None` — since an idle
