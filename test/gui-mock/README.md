@@ -88,9 +88,15 @@ invariants (pinned by `test/test_sanitize_snap.py`):
   original segment names (plus a small curated list for stray personal
   words, e.g. `Dawid`) → the neutral word `person`.
 - `images.primary_path` / `imports.path`: only the home component
-  rewritten (`/home/stoflom/…` → `/home/tester/…`) — the `Pictures/…`
-  structure and the timestamp filenames stay, so every dynamic check
-  (C34, C63's filename walk, the path filter) sees identical order.
+  rewritten (`/home/stoflom/…` → `/home/tester/…`), plus **directory
+  segments carrying a person-name word** → one `Dir{n}` per distinct
+  segment (injective, first-seen in the images' id order; imports
+  inherit the same segment map — the annotator used personal names as
+  directory labels). Filenames stay; so does the generic directory
+  structure. Every dynamic check (C34, C63's filename walk, the path
+  filter) discovers these branches by path, and each path remains
+  consistent within the snapshot; the branches' alpha-sort may shift
+  for the renamed segments.
 - Invariants: deterministic across runs, identity-preserving (same
   distinct name always → same generic name), order-preserving (no sort
   order changes), counts and ids untouched, and the scan gate: no
