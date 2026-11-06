@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { groupPathOptions } from "./PathTypeahead";
 
 const persons = [
-  { groups: ["family|lombards"] },
-  { groups: ["family|lombards"] }, // duplicate collapses
+  { groups: ["family|smiths"] },
+  { groups: ["family|smiths"] }, // duplicate collapses
   { groups: [] }, // ungrouped person — no path contributed
   { groups: ["travel"] },
   { groups: ["family"] }, // first segment also exists on its own
@@ -17,7 +17,7 @@ describe("groupPathOptions", () => {
   it("collects the distinct non-empty paths, sorted, plus 'ungrouped'", () => {
     expect(groupPathOptions(persons)).toEqual([
       { value: "family" },
-      { value: "family|lombards" },
+      { value: "family|smiths" },
       { value: "travel" },
       { value: "", label: "ungrouped" },
     ]);

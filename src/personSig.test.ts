@@ -65,7 +65,7 @@ describe("personDataSig (#213)", () => {
     // face rotation (display-only; refcrop crops and vectors are pixels-fixed)
     expect(personDataSig(p1, [face(10, 1, { rotation: 90 }), face(11, 1), face(20, 2)], settings())).toBe(base);
     // group membership (neither command reads person_groups)
-    expect(personDataSig(person(1, { groups: ["family|lombards"] }), faces, settings())).toBe(base);
+    expect(personDataSig(person(1, { groups: ["family|smiths"] }), faces, settings())).toBe(base);
     // array order of unrelated rows
     expect(personDataSig(p1, [face(20, 2), face(11, 1), face(10, 1)], settings())).toBe(base);
   });
