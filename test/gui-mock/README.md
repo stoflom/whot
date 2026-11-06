@@ -72,7 +72,17 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
   `webkitgtk-driver`/`webkit2gtk-driver`), MiniBrowser at
   `/usr/libexec/webkit2gtk-4.1/MiniBrowser`.
 - A display — WebKitGTK has no headless mode: run on a desktop
-  session or under Xvfb (`xorg-x11-server-Xvfb`) on CI.
+  session or under Xvfb (`xorg-x11-server-Xvfb`) on CI. On a
+  **headless box with an X11 session but no active display** (screen
+  off, no console, remote handover) the Xwayland compositor idles: the
+  automation window reports `visibilityState: hidden`, WebKit suspends
+  `requestAnimationFrame` and IntersectionObserver callbacks, and the
+  grid's incremental mount (#214) never grows — checks that need deep
+  cards then time out, and X11 modifier/right-click combos can deadlock
+  the session. Run under a private virtual display instead (Xvfb, or
+  Xvnc — `Xvnc :123 -geometry 1600x1000 -depth 24 -SecurityTypes None`
+  — with `DISPLAY=:123`), which composites regardless of the desktop
+  state.
 - No skill needed: `webkit_tester.py` lives in this directory and
   spawns its own driver process per run (a crashed run cannot leak a
   wedged session into the next one).

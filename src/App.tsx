@@ -77,7 +77,13 @@ import ImportPane from "./components/ImportPane";
 import FirstRun from "./components/FirstRun";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
-import { byFilename, clickImage, emptyImageSel, type ImageSel } from "./imageSelect";
+import {
+  byFilename,
+  clickImage,
+  emptyImageSel,
+  imageStepTarget,
+  type ImageSel,
+} from "./imageSelect";
 import { faceMenuGroups, imageAreaMenuGroups, thumbMenuGroups } from "./menus";
 // §4.44 (gui-design v3.94): the centre-pane section derivations are the
 // pure, co-tested buildSections/sectionsForImageOf; App owns only the
@@ -1321,6 +1327,28 @@ export default function App() {
       }),
     [confirmContext]
   );
+  // #235 (rule 46) — film-roll image stepping: ‹/› walk the selected
+  // branch's listed images — the right pane's own thumbnails, list and
+  // order (imageStepTarget). A step is a view-context change (the #123
+  // confirm, like openThumb) and explicit navigation ends focus mode
+  // (§4.15); the new image opens at the top of the centre scroll.
+  // Off-list open image / list end → null: the buttons are disabled.
+  const stepImage = useCallback(
+    (dir: 1 | -1) => {
+      const id = imageStepTarget(
+        branchThumbs.images.map((x) => x.id),
+        imageId,
+        dir,
+      );
+      if (id == null) return;
+      confirmContext(() => {
+        if (splitImageId != null) setSplitImageId(null);
+        setImageId(id);
+        centerScrollRef.current?.scrollTo({ top: 0 });
+      });
+    },
+    [branchThumbs, imageId, splitImageId, confirmContext],
+  );
 
   const imageAreaMenu = useCallback(
     (e: ReactMouseEvent, imageId: number) => {
@@ -2058,6 +2086,7 @@ export default function App() {
     sectionsForImage,
     sel,
     splitImageId,
+    imageId,
     mode,
     toggle,
     toggleMany,
@@ -2066,6 +2095,7 @@ export default function App() {
     acceptAndNext,
     doReject,
     stepPerson,
+    stepImage,
   });
   keyRef.current = {
     overlayCount,
@@ -2073,6 +2103,7 @@ export default function App() {
     sectionsForImage,
     sel,
     splitImageId,
+    imageId,
     mode,
     toggle,
     toggleMany,
@@ -2081,13 +2112,15 @@ export default function App() {
     acceptAndNext,
     doReject,
     stepPerson,
+    stepImage,
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const {
-        overlayCount, sections, sectionsForImage, sel, splitImageId, mode,
+        overlayCount, sections, sectionsForImage, sel, splitImageId, imageId,
+        mode,
         toggle, toggleMany, changeSel, commitPending, acceptAndNext, doReject,
-        stepPerson,
+        stepPerson, stepImage,
       } = keyRef.current;
       const tgt = e.target as HTMLElement | null;
       if (
@@ -2189,17 +2222,21 @@ export default function App() {
             e.preventDefault();
             doReject(ids);
           }
-        } else if (e.key === "ArrowLeft" && mode !== "rolls") {
-          // #95: plain arrows step persons (§4.22/#31) — they were dead
-          // because this block returned before the arrow checks;
-          // #163 (v3.64): inert in Rolls — stepping always lands in the
-          // person view and must not yank a rolls browser away (there
-          // the arrows keep their native scroll behaviour)
-          e.preventDefault();
-          stepPerson(-1);
-        } else if (e.key === "ArrowRight" && mode !== "rolls") {
-          e.preventDefault();
-          stepPerson(1);
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          const dir: 1 | -1 = e.key === "ArrowRight" ? 1 : -1;
+          if (mode === "rolls") {
+            // #235 (rule 46): in Rolls the arrows step the OPEN film-
+            // roll image; while browsing (no image open) they stay inert
+            // and keep their native scroll behaviour (#163)
+            if (imageId == null) return;
+            e.preventDefault();
+            stepImage(dir);
+          } else {
+            // #95: plain arrows step persons (§4.22/#31) — they were
+            // dead because this block returned before the arrow checks
+            e.preventDefault();
+            stepPerson(dir);
+          }
         }
         return;
       }
@@ -2384,6 +2421,14 @@ export default function App() {
   const imgRow: ImageRow | undefined = useMemo(
     () => (imageId != null ? snap?.images.find((i) => i.id === imageId) : undefined),
     [snap, imageId]
+  );
+  // #235 (rule 46) — the open image's position in the branch's listed
+  // roll (the cluster's `n` of `n/m`); -1 = not in the list (opened
+  // from the path filter in another branch, or the Show filter no
+  // longer lists it) → `–/m`, both buttons disabled
+  const imgStepIdx = useMemo(
+    () => (imageId != null ? branchThumbs.images.findIndex((x) => x.id === imageId) : -1),
+    [branchThumbs, imageId],
   );
   const splitRow: ImageRow | undefined = useMemo(
     () => (splitImageId != null ? snap?.images.find((i) => i.id === splitImageId) : undefined),
@@ -2594,36 +2639,75 @@ export default function App() {
           // width (default = the left pane's); the right pane flexes
           style={rollsBrowse ? { width: rollCenterPx, flex: "none" } : undefined}
         >
-          {/* #163 (v3.64): Rolls renders no centre toolbar at all — no
-              nav cluster (person stepping always lands in Person — it
-              used to yank a rolls browser away), no seg (§4.9); the
-              grid gets the pane's full height */}
-          {mode !== "rolls" && (
+          {/* #163 (v3.64): browsing Rolls renders no centre toolbar at
+              all — no nav cluster (person stepping always lands in
+              Person — it used to yank a rolls browser away), no seg
+              (§4.9); the grid gets the pane's full height. #235 (rule
+              46): a FULL IMAGE open in Rolls is the one exception —
+              the toolbar returns carrying the film-roll ‹ n/m ›
+              cluster (stepImage over the branch's listed images) */}
+          {mode !== "rolls" || imageId != null ? (
           <div className="center-toolbar">
             <span className="toolbar-left">
-              <button
-                className="ghost"
-                onClick={() => stepPerson(-1)}
-                disabled={stepIds.length === 0 || (stepIdx !== -1 && stepIdx <= 0)}
-                title="previous person (←)"
-              >
-                ‹
-              </button>
-              <span className="nav-pos">
-                {stepIds.length > 0
-                  ? `${stepIdx === -1 ? "–" : stepIdx + 1}/${stepIds.length}`
-                  : "–"}
-              </span>
-              <button
-                className="ghost"
-                onClick={() => stepPerson(1)}
-                disabled={
-                  stepIds.length === 0 || (stepIdx !== -1 && stepIdx >= stepIds.length - 1)
-                }
-                title="next person (→)"
-              >
-                ›
-              </button>
+              {mode === "rolls" ? (
+                <>
+                  <button
+                    className="ghost"
+                    onClick={() => stepImage(-1)}
+                    disabled={
+                      branchThumbs.images.length === 0 ||
+                      imgStepIdx === -1 ||
+                      imgStepIdx <= 0
+                    }
+                    title="previous image (←)"
+                  >
+                    ‹
+                  </button>
+                  <span className="nav-pos">
+                    {branchThumbs.images.length > 0
+                      ? `${imgStepIdx === -1 ? "–" : imgStepIdx + 1}/${branchThumbs.images.length}`
+                      : "–"}
+                  </span>
+                  <button
+                    className="ghost"
+                    onClick={() => stepImage(1)}
+                    disabled={
+                      branchThumbs.images.length === 0 ||
+                      imgStepIdx === -1 ||
+                      imgStepIdx >= branchThumbs.images.length - 1
+                    }
+                    title="next image (→)"
+                  >
+                    ›
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="ghost"
+                    onClick={() => stepPerson(-1)}
+                    disabled={stepIds.length === 0 || (stepIdx !== -1 && stepIdx <= 0)}
+                    title="previous person (←)"
+                  >
+                    ‹
+                  </button>
+                  <span className="nav-pos">
+                    {stepIds.length > 0
+                      ? `${stepIdx === -1 ? "–" : stepIdx + 1}/${stepIds.length}`
+                      : "–"}
+                  </span>
+                  <button
+                    className="ghost"
+                    onClick={() => stepPerson(1)}
+                    disabled={
+                      stepIds.length === 0 || (stepIdx !== -1 && stepIdx >= stepIds.length - 1)
+                    }
+                    title="next person (→)"
+                  >
+                    ›
+                  </button>
+                </>
+              )}
             </span>
             {/* #99/#100: the cluster-group seg hugs the right side of the
                 person view — the Show filter is a global control and lives
@@ -2653,7 +2737,7 @@ export default function App() {
             </span>
             )}
           </div>
-          )}
+          ) : null}
           {/* #100: the bar is the pane's real header — only the area below
               it scrolls, so no section content can ever pass above it */}
           <div

@@ -65,3 +65,21 @@ export function imageScope(sel: ImageSel, inBranch: ReadonlySet<number>, id: num
   }
   return [id];
 }
+
+// #235 (rule 46) — film-roll image stepping: the ‹/› target within the
+// branch's display list (the right pane's own thumbnails, list and
+// order). null = no step — the open image is not in the list (opened
+// from the path filter in another branch, or the Show filter no
+// longer lists it), or the list end (no wrap).
+export function imageStepTarget(
+  ordered: number[],
+  openId: number | null,
+  dir: 1 | -1,
+): number | null {
+  if (openId == null) return null;
+  const idx = ordered.indexOf(openId);
+  if (idx === -1) return null;
+  const next = idx + dir;
+  if (next < 0 || next >= ordered.length) return null;
+  return ordered[next];
+}
