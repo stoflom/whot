@@ -269,11 +269,18 @@ npm run tauri build    # release bundles
   branch re-homes **that one membership** — the dragged-from row leaves
   the person, the target group is filed, other memberships stay.
   Right-click: rows, branches and cards all carry menus.
-- **Centre pane** — the face grid, `Show`-filtered; Review groups the
-  pending faces by the importer's `UnknownN` clusters, Rolls lists
-  imports as expandable sections (a roll with **0 images** is never
-  listed), and double-clicking a card
-  opens the annotated full-size image.
+- **Centre pane** — changes by mode (Review / Rolls / Person),
+  `Show`-filtered. Review groups the pending faces by the importer's
+  `UnknownN` clusters; Person holds the tree's selected person; Rolls
+  is the **path hierarchy mirroring the pictures' filesystem paths** —
+  every directory segment is an expandable branch, a branch holding no
+  listing image is pruned (its raw header counts keep it discoverable),
+  and clicking a header selects the branch's images into the right
+  pane. Double-clicking a card (Review/Person) or a thumbnail (Rolls)
+  opens the annotated full-size image — in Rolls the toolbar then
+  carries the `‹ n/m ›` cluster stepping the previous/next image of
+  the selected branch (`←`/`→` too), and going back to browse hides it
+  again (§4.39, rule 46).
 - **Detail pane** — person name, group path, note, primary face,
   refcrops.
 - **Rule bar** — selection-wide actions (Apply/Accept/Assign/Reject…).
@@ -303,8 +310,9 @@ rename / bulk group the selection — merging always goes through a
 confirmation dialog (from the dialog, the context menu **or** by
 dragging a selection onto a person row) because it cannot be undone.
 
-Behaviour is specified in `docs/gui-design.md` (§3 layout, §4 the ~30
-decided behaviour rules) — that document is the contract; this section
+Behaviour is specified in `docs/gui-design.md` (§3 layout, §4 the deep
+register of decided behaviour rules, 1–46) — that document is the
+contract; this section
 only orients.
 
 ## Tauri commands (Rust)
@@ -472,8 +480,11 @@ python3 -m unittest discover -s test   # Python: harvest + import + annotation h
 
 # GUI contract checks against the mocked backend (WebKitGTK by
 # default — the engine Tauri ships; needs selenium, the system
-# WebKitWebDriver binary + a display (Xvfb on CI), snap.json, and the
-# mock server; Firefox stays available via WHOT_GUI_DRIVER=firefox):
+# WebKitWebDriver binary + a display — a desktop session, or a private
+# virtual display when the desktop is idle (Xvfb; Xvnc if no Xvfb:
+# `Xvnc :123 -geometry 1600x1000 -depth 24 -SecurityTypes None` +
+# `DISPLAY=:123`), snap.json, and the mock server; Firefox stays
+# available via WHOT_GUI_DRIVER=firefox):
 python3 test/gui-mock/dump_snap.py
 python3 test/gui-mock/server.py &
 python3 test/gui-mock/gui_check.py                      # WebKitGTK (default)
@@ -488,4 +499,4 @@ WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox
 - `docs/scripts-design.md` — Python tooling: §8 harvest, §9 harvest import
 - `docs/schema-design.md` — `faces.db` DDL design: identities, version gate, drop & recreate
 - `docs/backend-design.md` — Rust backend architecture (`lib.rs`/`db.rs`)
-- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C62`, C17 retired, + `R1`–`R2`)
+- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C63`, C17 retired, + `R1`–`R2`)

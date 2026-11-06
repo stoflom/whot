@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.11** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.12** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -235,5 +235,9 @@ Behaviour rules: gui-design §4.36. Structure:
   leaked sessions). Firefox remains a supported choice:
   `WHOT_GUI_DRIVER=firefox` uses the personal firefox-testing skill
   (true headless). WebKit has no headless mode — it needs a display
-  (a desktop `DISPLAY`, or Xvfb on CI); both drivers must pass before a
-  commit.
+  (a desktop `DISPLAY`, or a **private virtual display** when the
+  session is remote/idle: Xvfb, or Xvnc — `Xvnc :123 -geometry
+  1600x1000 -depth 24 -SecurityTypes None` — since an idle
+  GNOME/Xwayland compositor suspends `requestAnimationFrame` and the
+  grid's incremental mount never grows); both drivers must pass
+  before a commit.
