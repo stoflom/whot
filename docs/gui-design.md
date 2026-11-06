@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -743,9 +743,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     re-homes **the dragged membership only** — the row's own group path
     (its placement) is removed from the person, the person is filed into
     the target branch (`move_persons_between_groups`; `INSERT OR IGNORE`
-    dedupes when the target row already exists, e.g. dragging Christiaan
-    Swart from `Friends` onto `Friends|Swartse` leaves exactly
-    `Friends|Swartse`), and **all other memberships are kept** — a
+    dedupes when the target row already exists, e.g. dragging a person
+    from a parent branch onto one of its child branches leaves exactly
+    the child branch), and **all other memberships are kept** — a
     multi-group person stays multi-group. Dropping onto a branch the row
     already belongs to is a **no-op** (the person already renders there).
     The §4.16 dialog entry points (person menu *move to group…*, review
@@ -753,7 +753,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     placement context.
 
     **Display guarantees**: group paths are **case-significant**
-    — `Family|Lombards` and `family|Lombard` are distinct data and each
+    — `Family|Smiths` and `family|Smith` are distinct data and each
     renders its own branch (the builder is case-sensitive; do not fold).
     Under the **All** face-status filter and an empty text filter, **every
     person in the snapshot is findable in the tree** — including faceless
@@ -821,7 +821,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     explicit navigation (top-bar tabs, *Review*). Selection and view
     state survive the mode; there is no side-by-side split (the
     regular grid returns when the mode ends).
-20. **Input families** ⇒ group-path inputs (`family|lombards`) and
+20. **Input families** ⇒ group-path inputs (`family|smiths`) and
     face-description inputs (`beard|glasses`) are **visually distinct**
     everywhere they appear: group paths get a solid accent-tinted frame
     and slightly tinted background (structural, hierarchical value),
