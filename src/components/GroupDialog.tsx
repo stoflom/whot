@@ -56,8 +56,8 @@ export default function GroupDialog({
             value={path}
             onChange={setPath}
             options={options}
-            title="Group path — '|' separated, e.g. family|lombards (empty = ungrouped)"
-            placeholder="e.g. family|lombards (empty = ungrouped)"
+            title="Group path — '|' separated, e.g. family|smiths (empty = ungrouped)"
+            placeholder="e.g. family|smiths (empty = ungrouped)"
             onSubmit={submit}
             onEscape={onCancel}
           />

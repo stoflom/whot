@@ -162,7 +162,7 @@ CREATE TABLE persons (
 -- path segments no user input may produce (validate_group_path).
 CREATE TABLE person_groups (
   person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-  path       TEXT NOT NULL,                 -- free-form | -path, e.g. family|lombards
+  path       TEXT NOT NULL,                 -- free-form | -path, e.g. family|smiths
   PRIMARY KEY (person_id, path)
 );
 
