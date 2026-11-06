@@ -51,7 +51,7 @@ MWG_ELEMENT = """<x:xmpmeta><rdf:RDF><rdf:Description>
      <stArea:w>0.3</stArea:w><stArea:h>0.4</stArea:h>
      <stArea:unit>normalized</stArea:unit>
    </mwg-rs:Area>
-   <mwg-rs:Name>Winnie Pelser</mwg-rs:Name>
+   <mwg-rs:Name>John Smith</mwg-rs:Name>
    <mwg-rs:Type>Face</mwg-rs:Type>
  </rdf:li></rdf:Bag>
  <stDim:w>4000</stDim:w><stDim:h>3000</stDim:h>
@@ -67,12 +67,12 @@ MWG_ATTRIBUTE = """<x:xmpmeta><rdf:RDF>
 </mwg-rs:Regions></rdf:RDF></x:xmpmeta>"""
 
 HIER = """<lr:hierarchicalSubject><rdf:Bag>
- <rdf:li>People|Family|Winnie Pelser</rdf:li>
+ <rdf:li>People|Family|John Smith</rdf:li>
  <rdf:li>People|Family</rdf:li>
 </rdf:Bag></lr:hierarchicalSubject>"""
 
 MPRI = ('<MPReg:Regions><rdf:Bag>'
-        '<rdf:li MPReg:PersonDisplayName="Barry Pelser"/>'
+        '<rdf:li MPReg:PersonDisplayName="Barry Smith"/>'
         '</rdf:Bag></MPReg:Regions>')
 
 
@@ -95,7 +95,7 @@ def build_digikam(path: Path, pics: Path) -> None:
         icon BLOB, modificationDate TEXT);
     INSERT INTO Tags VALUES (1, 0, 'People', NULL, NULL);
     INSERT INTO Tags VALUES (2, 1, 'Family', NULL, NULL);
-    INSERT INTO Tags VALUES (3, 2, 'Winnie Pelser', NULL, NULL);
+    INSERT INTO Tags VALUES (3, 2, 'John Smith', NULL, NULL);
     INSERT INTO Tags VALUES (4, 0, 'Places', NULL, NULL);
     INSERT INTO AlbumRoots VALUES (1, 'r', 1, 1, 'x', '{pics}', 0);
     INSERT INTO Albums VALUES (1, 1, '', NULL, NULL, 0, NULL, NULL);
@@ -126,7 +126,7 @@ def build_recognition(path: Path) -> None:
     CREATE TABLE IdentityAttributes (id INTEGER, attribute TEXT, value TEXT);
     INSERT INTO Identities VALUES (1, 'internal');
     INSERT INTO IdentityAttributes VALUES (1, 'uuid', 'UUID-AAA');
-    INSERT INTO IdentityAttributes VALUES (1, 'fullName', 'Winnie Pelser');
+    INSERT INTO IdentityAttributes VALUES (1, 'fullName', 'John Smith');
     """)
     con.commit()
     con.close()
@@ -151,7 +151,7 @@ def build_lrcat(path: Path) -> None:
         userPick INTEGER);
     INSERT INTO AgLibraryKeyword VALUES (1, 'KWROOT', 'People', NULL, 'person');
     INSERT INTO AgLibraryKeyword VALUES (2, 'KW-FAM', 'Family', 1, 'person');
-    INSERT INTO AgLibraryKeyword VALUES (3, 'KW-WIN', 'Winnie Pelser', 2, 'person');
+    INSERT INTO AgLibraryKeyword VALUES (3, 'KW-WIN', 'John Smith', 2, 'person');
     INSERT INTO AgLibraryRootFolder VALUES (1, 'D:/LIVE/');
     INSERT INTO AgLibraryFolder VALUES (1, 1, 'PICTURES/PicFiles');
     INSERT INTO AgLibraryFile VALUES (1, 1, 'a.jpg');
@@ -241,7 +241,7 @@ class ParserTests(unittest.TestCase):
         rows = list(hl.sidecar_face_data(MWG_ELEMENT))
         self.assertEqual(len(rows), 1)
         name, x, y, w, h, unit, iw, ih = rows[0]
-        self.assertEqual(name, "Winnie Pelser")
+        self.assertEqual(name, "John Smith")
         self.assertEqual((x, y, w, h), (0.1, 0.2, 0.3, 0.4))
         self.assertEqual((unit, iw, ih), ("normalized", 4000, 3000))
 
@@ -264,7 +264,7 @@ class ParserTests(unittest.TestCase):
 
     def test_people_paths(self):
         got = hl.sidecar_people_paths(HIER)
-        self.assertEqual(got, {"People|Family|Winnie Pelser", "People|Family"})
+        self.assertEqual(got, {"People|Family|John Smith", "People|Family"})
 
     def test_lr_roots_and_mapping(self):
         roots = hl.parse_lr_roots(["D:/LIVE/=/mnt/archive/LIVE",
@@ -284,11 +284,11 @@ class ParserTests(unittest.TestCase):
         CREATE TABLE Tags (id INTEGER, pid INTEGER, name TEXT);
         INSERT INTO Tags VALUES (1, 0, 'People');
         INSERT INTO Tags VALUES (2, 1, 'Family');
-        INSERT INTO Tags VALUES (3, 2, 'Winnie Pelser');
+        INSERT INTO Tags VALUES (3, 2, 'John Smith');
         INSERT INTO Tags VALUES (4, 4, 'Cycle');       -- pid points at self
         """)
         paths = hl._digikam_tag_paths(con)
-        self.assertEqual(paths[3], "People|Family|Winnie Pelser")
+        self.assertEqual(paths[3], "People|Family|John Smith")
         self.assertEqual(paths[4], "Cycle")            # cycle terminates
         con.close()
 
@@ -450,19 +450,19 @@ class EndToEndTests(HarvestFixture):
     def test_persons_and_refs(self):
         self.run_harvest()
         names = {r["name"] for r in self.q("SELECT name FROM persons")}
-        self.assertIn("Winnie Pelser", names)
+        self.assertIn("John Smith", names)
         self.assertIn("Koos Kat", names)
-        self.assertNotIn("Barry Pelser", names)   # MPRI presence: not captured
+        self.assertNotIn("Barry Smith", names)   # MPRI presence: not captured
         refs = {(r["name"], r["kind"], r["ref"])
                 for r in self.q("SELECT p.name, pr.* FROM person_refs pr"
                                 " JOIN persons p ON p.id=pr.person_id")}
-        self.assertIn(("Winnie Pelser", "digikam-recognition", "UUID-AAA"), refs)
-        self.assertIn(("Winnie Pelser", "lightroom-catalog", "keyword:KW-WIN"),
+        self.assertIn(("John Smith", "digikam-recognition", "UUID-AAA"), refs)
+        self.assertIn(("John Smith", "lightroom-catalog", "keyword:KW-WIN"),
                       refs)
         groups = {(r["name"], r["path"])
                   for r in self.q("SELECT p.name, pg.path FROM person_groups pg"
                                   " JOIN persons p ON p.id=pg.person_id")}
-        self.assertIn(("Winnie Pelser", "People|Family|Winnie Pelser"), groups)
+        self.assertIn(("John Smith", "People|Family|John Smith"), groups)
         self.assertIn(("Kat Booi", "People|Pets|Kat Booi"), groups)
 
     def test_sources_untouched(self):
@@ -506,7 +506,7 @@ class EndToEndTests(HarvestFixture):
                       " JOIN sources s ON s.id=pg.source_id")
         self.assertEqual({r["src"] for r in rows}, {"sidecars-catsets"})
         names = {r["name"] for r in self.q("SELECT name FROM persons")}
-        self.assertIn("Winnie Pelser", names)
+        self.assertIn("John Smith", names)
         self.assertNotIn("Koos Kat", names)      # mwgrs disabled
         self.assertNotIn("Kat Booi", names)      # lr-sidecars disabled
 

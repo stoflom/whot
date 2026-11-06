@@ -11,6 +11,7 @@ Requires:
 Then:
     python3 gui_check.py [PORT]              # WebKitGTK (default, #170)
     WHOT_GUI_DRIVER=firefox python3 gui_check.py   # Firefox (skill needed)
+    #   skill path: WHOT_FIREFOX_SKILL (default ~/.pi/agent/skills/firefox-testing)
 
 Each check starts from a fresh page load, which reloads /snap.json, so the
 in-memory mock state is clean per check. Interaction uses trusted input
@@ -213,16 +214,21 @@ import time
 # #170: driver choice — WebKitGTK (the engine Tauri ships, #168) is the
 # default; Firefox stays available via WHOT_GUI_DRIVER=firefox. The
 # WebKit tester lives in this directory (test infra belongs to the repo);
-# the Firefox tester is the personal firefox-testing skill.
+# the Firefox tester is the personal firefox-testing skill, resolved from
+# WHOT_FIREFOX_SKILL (default: ~/.pi/agent/skills/firefox-testing).
 DRIVER = os.environ.get("WHOT_GUI_DRIVER", "webkit").strip().lower()
+FIREFOX_SKILL = os.environ.get(
+    "WHOT_FIREFOX_SKILL",
+    os.path.join(os.path.expanduser("~"), ".pi", "agent", "skills",
+                 "firefox-testing"))
 
 if DRIVER == "firefox":
     try:
-        sys.path.insert(0, "/home/stoflom/.pi/agent/skills/firefox-testing")
+        sys.path.insert(0, FIREFOX_SKILL)
         from firefox_tester import FirefoxTester as Tester
     except ImportError as e:
         sys.exit(f"firefox-testing skill not importable: {e}\n"
-                 f"(expected at /home/stoflom/.pi/agent/skills/firefox-testing)")
+                 f"(resolved from WHOT_FIREFOX_SKILL: {FIREFOX_SKILL})")
 elif DRIVER == "webkit":
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1809,8 +1815,13 @@ def c23_dnd_moves_one_membership(t):
     """#157 (§4.16, v3.59, owner ruling): dragging a person row onto a
     branch re-homes THAT membership — remove the dragged-from row, file
     into the target (INSERT OR IGNORE), keep every other membership.
-    Christiaan Swart (Friends + Friends|Swartse) dragged from Friends
-    onto Friends|Swartse ends up in exactly Friends|Swartse."""
+
+    Corpus-agnostic (#238): the scenario is DISCOVERED in the loaded
+    snapshot — a person with ≥ 2 memberships, one source membership g,
+    and distinct real branches o / o2 to file onto (preferred: a child
+    of g, then its parent, then any other branch). With no such person
+    in the dump the check records a vacuous pass-with-caveat, as the
+    other discovery-based checks do."""
 
     drag = r"""
       // find a person placement row by its branch path, and the target
@@ -1882,50 +1893,78 @@ def c23_dnd_moves_one_membership(t):
             `.tree-person[data-person-id='${arguments[0]}']`)].length;
         """, pid)
 
-    # --- A: the owner's scenario — Christiaan Swart (1304)
-    # Friends + Friends|Swartse, Friends-row dropped on Friends|Swartse
+    # --- discovery (corpus-agnostic, #238): a person with ≥ 2
+    # memberships, a source membership g, and distinct real branches
+    # o / o2 to file onto (preferred: a child of g, then its parent, then
+    # any other branch). With no such person in the dump the check is
+    # vacuous.
     fresh(t)
     set_show_filter(t, "all")
-    before = groups_of(t, 1304)
-    if not (isinstance(before, list) and set(before) == {"Friends", "Friends|Swartse"}):
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const RESERVED = new Set(['Accepted', 'New', 'Rejected']);
+      const allg = new Set();
+      for (const p of snap.persons) for (const g of p.groups) allg.add(g);
+      const branches = [...allg].filter((g) => !RESERVED.has(g));
+      const rank = (o, g) =>
+        o.startsWith(g + '|') ? 0 : (g.startsWith(o + '|') ? 1 : 2);
+      for (const p of snap.persons) {
+        const gs = p.groups.filter((g) => !RESERVED.has(g));
+        if (gs.length < 2) continue;
+        const g = gs[0];
+        const cands = branches
+          .filter((o) => o !== g && !p.groups.includes(o))
+          .sort((a, b) => rank(a, g) - rank(b, g) || (a < b ? -1 : a > b ? 1 : 0));
+        if (!cands.length) continue;
+        return {pid: p.id, g: g, o: cands[0], o2: cands[1] ?? null,
+                groups: [...p.groups]};
+      }
+      return null;
+    """)
+    if pick is None:
         record("C23 D&D moves ONE membership (#157)", True,
-               f"Christiaan Swart rows changed in the dump (now {before}) — vacuous")
+               "no person with ≥ 2 group memberships in the dump — vacuous")
         return
-    r = js(t, drag, 1304, "Friends", "Friends|Swartse")
-    time.sleep(1.6)
-    after = groups_of(t, 1304)
-    a_ok = (r.get("src") and r.get("dst") and after == ["Friends|Swartse"]
-            and placements(t, 1304) == 1)
-    detail_a = (f"owner case: {before} dropped Friends→Friends|Swartse: "
-                f"drag={r} → {after}, placements={placements(t, 1304)}")
+    pid, g, o = pick["pid"], pick["g"], pick["o"]
+    before = list(pick["groups"])
+    expect_a = sorted(set(before) - {g} | {o})
 
-    # --- B: cross-move — Esther (1248) Friends + Friends|PHS, Friends-row
-    # dropped onto Friends|Swartse: Friends membership leaves, target filed
+    # --- A: move — drag g onto o: g leaves, o is filed, every other
+    # membership stays
     fresh(t)
     set_show_filter(t, "all")
-    before = groups_of(t, 1248)
-    if not (isinstance(before, list) and set(before) == {"Friends", "Friends|PHS"}):
-        record("C23 D&D moves ONE membership (#157)", True,
-               f"Esther rows changed in the dump (now {before}) — vacuous")
-        return
-    r = js(t, drag, 1248, "Friends", "Friends|Swartse")
+    r = js(t, drag, pid, g, o)
     time.sleep(1.6)
-    after = groups_of(t, 1248)
-    b_ok = (r.get("src") and r.get("dst") and sorted(after)
-            == sorted(["Friends|PHS", "Friends|Swartse"]))
-    detail_b = (f"cross-move: {before} dropped Friends→Friends|Swartse → {after}")
+    after = groups_of(t, pid)
+    a_ok = (r.get("src") and r.get("dst") and sorted(after) == expect_a
+            and placements(t, pid) == len(expect_a))
+    detail_a = (f"move {g}→{o}: drag={r} → {after}, "
+                f"placements={placements(t, pid)} (want {expect_a})")
 
-    # --- C: no-op — Esther's Friends|PHS placement dropped onto its own
-    # branch (src == dst): nothing changes, both rows remain
+    # --- B: cross-move — drag g onto a second distinct branch o2
+    b_ok, detail_b = True, "no second target branch — vacuous"
+    if pick.get("o2"):
+        o2 = pick["o2"]
+        fresh(t)
+        set_show_filter(t, "all")
+        r = js(t, drag, pid, g, o2)
+        time.sleep(1.6)
+        after = groups_of(t, pid)
+        expect_b = sorted(set(before) - {g} | {o2})
+        b_ok = (r.get("src") and r.get("dst") and sorted(after) == expect_b)
+        detail_b = (f"cross-move {g}→{o2}: → {after} (want {expect_b})")
+
+    # --- C: no-op — drag g onto its own branch (src == dst): nothing
+    # changes, every membership row remains
     fresh(t)
     set_show_filter(t, "all")
-    before = groups_of(t, 1248)
-    r = js(t, drag, 1248, "Friends|PHS", "Friends|PHS")
+    before_c = groups_of(t, pid)
+    r = js(t, drag, pid, g, g)
     time.sleep(1.6)
-    after = groups_of(t, 1248)
-    c_ok = (r.get("src") and r.get("dst") and after == before
-            and placements(t, 1248) == 2)
-    detail_c = f"no-op drop: {before} onto itself → {after}, placements={placements(t, 1248)}"
+    after_c = groups_of(t, pid)
+    c_ok = (r.get("src") and r.get("dst") and after_c == before_c
+            and placements(t, pid) == len(before_c))
+    detail_c = (f"no-op {g}→{g}: → {after_c}, placements={placements(t, pid)}")
 
     record("C23 D&D moves ONE membership (#157)", a_ok and b_ok and c_ok,
            f"{detail_a}; {detail_b}; {detail_c}")
@@ -2047,6 +2086,42 @@ def c26_rolls_path_filter(t):
           return [...kids].sort();
         """, root)
 
+    # corpus-agnostic roots (#238): the dump is sanitized, so no literal
+    # machine path may be pinned — discover a real directory prefix (one
+    # whose child segments are non-empty) and a real image file from the
+    # loaded snapshot.
+    disc = js(t, r"""
+      const snaps = window.__MOCK_SNAP;
+      const kids = (root) => {
+        const pre = root === '/' ? '/' : root + '/';
+        const k = new Set();
+        for (const i of snaps.images) {
+          if (!i.primary_path.startsWith(pre)) continue;
+          const rest = root === '/' ? i.primary_path.slice(1)
+            : i.primary_path.slice(root.length + 1);
+          const seg = rest.split('/').filter(Boolean)[0];
+          if (seg) k.add(seg);
+        }
+        return [...k].sort();
+      };
+      const cand = new Set();
+      for (const i of snaps.images) {
+        let d = i.primary_path;
+        while (d !== '/' && d.includes('/')) {
+          cand.add(d);
+          d = d.slice(0, d.lastIndexOf('/'));
+        }
+      }
+      const roots = [...cand].filter((d) => kids(d).length > 0).sort();
+      return {root1: roots[0] ?? null, root2: roots[1] ?? roots[0] ?? null,
+              img: snaps.images[0] ? snaps.images[0].primary_path : null};
+    """)
+    if not (disc and disc.get("root1") and disc.get("img")):
+        record("C26 Rolls path filter: root / filename-open / refusal / browse (#162)",
+               True, "no directory/image structure in the dump — vacuous")
+        return
+    root1, root2, img_path = disc["root1"], disc["root2"], disc["img"]
+
     # row pinned at the top of the pane (sticky, like the tree header)
     row = js(t, r"""
       const el = document.querySelector('.roll-filter');
@@ -2057,7 +2132,6 @@ def c26_rolls_path_filter(t):
     """)
 
     # 1) typed folder → root: top-level branches = its child segments
-    root1 = "/home/stoflom/Pictures/OtherPictures"
     set_path(root1)
     h1 = headers()
     exp1 = expected_children(root1)
@@ -2068,7 +2142,6 @@ def c26_rolls_path_filter(t):
     h2 = headers()
 
     # 3) typed image file → full-image mode, root untouched
-    img_path = js(t, "return window.__MOCK_SNAP.images.find(i => i.primary_path.includes('Camera'))?.primary_path ?? null")
     set_path(img_path)
     detail = js(t, r"""
       const d = document.querySelector('.image-detail');
@@ -2079,7 +2152,6 @@ def c26_rolls_path_filter(t):
     back_val = input_value()
 
     # 4) browse… (mocked native picker) → same validation, new root
-    root2 = "/home/stoflom/Pictures"
     js(t, "window.__MOCK_DIALOG_PICK__ = arguments[0];", root2)
     js(t, "[...document.querySelectorAll('.roll-filter button')].find(b => b.textContent.includes('browse')).click();")
     time.sleep(0.6)
@@ -2168,10 +2240,18 @@ def c28_add_group_person_rows_only(t):
         js(t, "document.body.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}))")
         time.sleep(0.3)
 
-    # 1) branch menu — real branch 'Friends': no Add, keeps rename/delete
+    # 1) branch menu — a REAL branch (discovered, #238): no Add, keeps
+    # rename/delete
     js(t, r"""
+      const segs = new Set();
+      for (const p of window.__MOCK_SNAP.persons)
+        for (const g of p.groups) g.split('|').forEach((s) => segs.add(s));
+      const RESERVED = new Set(['Accepted', 'New', 'Rejected']);
       const n = [...document.querySelectorAll('.tree-node')]
-        .find(x => x.querySelector('.tree-node-name')?.textContent === 'Friends');
+        .find(x => {
+          const nm = x.querySelector('.tree-node-name')?.textContent.trim();
+          return nm && segs.has(nm) && !RESERVED.has(nm);
+        });
       if (n) n.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 80, clientY: 220}));
       window.__C28_branch = !!n;
     """)

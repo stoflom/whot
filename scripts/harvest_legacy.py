@@ -45,7 +45,7 @@ rectangle-less presence (MPRI display names, tag->image hits) is gone.
 Usage:
   scripts/harvest_legacy.py --out /tmp/harvest.db \\
       --images '/run/media/.../PicFiles' \\
-      --lightroom-catalog /run/media/.../StofLomPictures-v13-3.lrcat \\
+      --lightroom-catalog /run/media/.../Pictures-v13-3.lrcat \\
       --lr-root 'D:/LIVE/=/run/media/.../LIVE'
   scripts/harvest_legacy.py --out /tmp/harvest.db --resume  # rerun: reuse
                                                     # the recorded hashes (§8.7)
@@ -722,7 +722,7 @@ def map_lr_path(catalog_root: str | None, path_from_root: str | None,
 
 
 def _lr_keyword_paths(con2: sqlite3.Connection) -> dict[int, str]:
-    """id_local -> 'People|Friends|Pelsers|Winnie Pelser', for person keywords.
+    """id_local -> 'People|Friends|Smiths|John Smith', for person keywords.
 
     The walk is over *every* keyword, not just person ones, so the path
     reaches the top of the tree (a person-only walk stops at the first

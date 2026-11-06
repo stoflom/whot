@@ -125,7 +125,7 @@ export default function GroupListEditor({
           value={addPath}
           onChange={setAddPath}
           options={options}
-          placeholder="e.g. family|lombards"
+          placeholder="e.g. family|smiths"
           title="Add a group membership — staged, Enter commits the staged set"
           onSubmit={() => stageAddPath(true)}
         />

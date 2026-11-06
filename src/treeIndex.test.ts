@@ -90,9 +90,9 @@ function referenceCount(node: TreeNode, persons: Person[], filter: string): numb
 }
 
 const fixture = [
-  person(1, "Burgit Oosthuizen", ["Friends", "Friends|PHS"], 19),
-  person(2, "Esther Buchanan", ["Friends", "Friends|PHS"], 30),
-  person(3, "Mary", ["Family|Lombard-PaMa|Friends"], 2),
+  person(1, "John Smith", ["Friends", "Friends|PHS"], 19),
+  person(2, "Jane Smith", ["Friends", "Friends|PHS"], 30),
+  person(3, "Mary", ["Family|Smith-PaMa|Friends"], 2),
   person(4, "Solo", [], 1),
   person(5, "Unknown7", [], 5),
   person(6, "Rejected", ["Rejected"], 3),
@@ -136,7 +136,7 @@ describe("indexTree (#223) — one pass answers the walks", () => {
     const idx = indexTree(tree, byId, "");
     const friends = tree.children.find((c) => c.name === "Friends")!;
     // per-placement counting: p1 twice (Friends, Friends|PHS), p2 twice,
-    // Mary once under Family|Lombard-PaMa|Friends, Solo/Unknown7/
+    // Mary once under Family|Smith-PaMa|Friends, Solo/Unknown7/
     // Rejected once each — 8 placements over 6 persons
     expect(idx.get(friends)!.count).toBe(4);
     expect(idx.get(tree)!.count).toBe(8);
@@ -144,7 +144,7 @@ describe("indexTree (#223) — one pass answers the walks", () => {
 
   it("a filter matching only a deep descendant marks every ancestor", () => {
     const tree = buildTree(persons);
-    const idx = indexTree(tree, byId, "lombard");
+    const idx = indexTree(tree, byId, "smith");
     const family = tree.children.find((c) => c.name === "Family")!;
     expect(idx.get(family)!.match).toBe(true);
     expect(idx.get(family)!.count).toBe(1);

@@ -182,8 +182,8 @@ def strip_group_root(path: str, person: str | None = None) -> str | None:
     is the person's own name by construction (§8); faces.db group
     paths name the groups ABOVE the person, never the person itself
     (gui-design §3/§4.1). With the person's name given, a trailing
-    segment equal to it is dropped: 'People|Family|Winnie Pelser' ->
-    'Family', 'People|Winnie Pelser' -> ungrouped (None). A trailing
+    segment equal to it is dropped: 'People|Family|John Smith' ->
+    'Family', 'People|John Smith' -> ungrouped (None). A trailing
     segment that does not equal the name is kept (capture, never
     guessed — §8 H4).
     """
@@ -191,8 +191,8 @@ def strip_group_root(path: str, person: str | None = None) -> str | None:
     if parts and parts[0].casefold() in GROUP_ROOTS:
         parts = parts[1:]
     # v4.0 (#87): the name-leaf drop is case-insensitive too — the whole
-    # person/group identity compares casefold, so 'WINNIE PELSER' in a
-    # path is the leaf of person 'winnie pelser'
+    # person/group identity compares casefold, so 'JOHN SMITH' in a
+    # path is the leaf of person 'john smith'
     if person is not None and parts and parts[-1].casefold() == person.casefold():
         parts = parts[:-1]
     return "|".join(parts) if parts else None
@@ -210,8 +210,8 @@ def next_free_name(taken: set[str], name: str) -> str:
 
 def next_free_name_ci(taken_cf: set[str], name: str) -> str:
     """Like next_free_name, but *taken_cf* holds casefolded names and the
-    comparison is case-insensitive (§9.4 v4.0, #87): 'Winnie Pelser' and
-    'winnie pelser' collide, and 'winnie pelser 2' shadows 'W. 2'."""
+    comparison is case-insensitive (§9.4 v4.0, #87): 'John Smith' and
+    'john smith' collide, and 'john smith 2' shadows 'W. 2'."""
     if name.casefold() not in taken_cf:
         return name
     n = 2

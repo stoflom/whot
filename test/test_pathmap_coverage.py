@@ -19,8 +19,8 @@ import import_harvested as ih  # noqa: E402
 
 SAMPLE = """
 # legacy root -> local root
-D:/images/PicFiles   = /run/media/stoflom/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
-D:/LIVE = /run/media/stoflom/Seagate Expansion Drive/LIVE
+D:/images/PicFiles   = /run/media/testuser/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
+D:/LIVE = /run/media/testuser/Seagate Expansion Drive/LIVE
 \\\\NAS\\photos = /mnt/nas/photos
 """
 
@@ -39,17 +39,17 @@ class PathMapTests(unittest.TestCase):
     def test_rewrite_keeps_remainder(self):
         self.assertEqual(
             apply_path_map("D:/images/PicFiles/Becks/P1.JPG", self.rules),
-            "/run/media/stoflom/Seagate Expansion Drive/LIVE/PICTURES/PicFiles/Becks/P1.JPG")
+            "/run/media/testuser/Seagate Expansion Drive/LIVE/PICTURES/PicFiles/Becks/P1.JPG")
 
     def test_case_and_separator_insensitive_match(self):
         self.assertEqual(
             apply_path_map("d:\\images\\picfiles\\Becks\\P1.JPG", self.rules),
-            "/run/media/stoflom/Seagate Expansion Drive/LIVE/PICTURES/PicFiles/Becks/P1.JPG")
+            "/run/media/testuser/Seagate Expansion Drive/LIVE/PICTURES/PicFiles/Becks/P1.JPG")
 
     def test_exact_prefix_match(self):
         self.assertEqual(
             apply_path_map("D:/LIVE", self.rules),
-            "/run/media/stoflom/Seagate Expansion Drive/LIVE")
+            "/run/media/testuser/Seagate Expansion Drive/LIVE")
 
     def test_prefix_boundary(self):
         """D:/images2 must NOT match the D:/images/PicFiles rule."""
@@ -85,7 +85,7 @@ class PathMapTests(unittest.TestCase):
 
     def test_local_roots(self):
         roots = local_roots(self.rules)
-        self.assertEqual(str(roots[-1]), "/run/media/stoflom/Seagate Expansion Drive/LIVE")
+        self.assertEqual(str(roots[-1]), "/run/media/testuser/Seagate Expansion Drive/LIVE")
 
 
 class ExcludeTests(PathMapTests):
@@ -132,7 +132,7 @@ class UnmappedBreakdownTests(unittest.TestCase):
         return [
             ("D:/LIVE/PICTURES/PicFiles/SourcePictures/2024/a.PEF", "a.PEF"),
             ("D:/LIVE/PICTURES/PicFiles/SourcePictures/2024/b.PEF", "b.PEF"),
-            ("D:/LIVE/PICTURES/PicFiles/OtherPictures/Marianne/c.jpg", "c.jpg"),
+            ("D:/LIVE/PICTURES/PicFiles/OtherPictures/photos/c.jpg", "c.jpg"),
             ("D:/LIVE/PICTURES/PicFiles/Trees/d.jpg", "d.jpg"),
         ]
 

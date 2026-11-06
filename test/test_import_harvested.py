@@ -241,27 +241,27 @@ class GeometryTests(unittest.TestCase):
     def test_strip_group_root_drops_name_leaf(self):
         """§9.4 v2.1 (#80): staging paths end in the person's own name;
         faces.db group paths never do — the leaf is dropped."""
-        self.assertEqual(ih.strip_group_root("People|Family|Winnie Pelser",
-                                             "Winnie Pelser"), "Family")
+        self.assertEqual(ih.strip_group_root("People|Family|John Smith",
+                                             "John Smith"), "Family")
         # leaf kept when it is NOT the person's name (capture, no guessing)
-        self.assertEqual(ih.strip_group_root("People|Family|Winnie Pelser",
-                                             "Koos Kat"), "Family|Winnie Pelser")
+        self.assertEqual(ih.strip_group_root("People|Family|John Smith",
+                                             "Koos Kat"), "Family|John Smith")
         self.assertEqual(ih.strip_group_root("Family|Mary", "Mary"), "Family")
         # name directly under the root -> ungrouped
-        self.assertIsNone(ih.strip_group_root("People|Winnie Pelser",
-                                              "Winnie Pelser"))
+        self.assertIsNone(ih.strip_group_root("People|John Smith",
+                                              "John Smith"))
         # §9.4 v4.0 (#87): the name-leaf drop is case-insensitive too
         self.assertEqual(
-            ih.strip_group_root("People|family|WINNIE PELSER", "winnie pelser"),
+            ih.strip_group_root("People|family|JOHN SMITH", "john smith"),
             "family")
         self.assertIsNone(
-            ih.strip_group_root("People|WINNIE PELSER", "winnie pelser"))
+            ih.strip_group_root("People|JOHN SMITH", "john smith"))
 
     def test_next_free_name(self):
-        self.assertEqual(ih.next_free_name(set(), "Winnie"), "Winnie")
-        self.assertEqual(ih.next_free_name({"Winnie"}, "Winnie"), "Winnie 2")
-        self.assertEqual(ih.next_free_name({"Winnie", "Winnie 2"}, "Winnie"),
-                         "Winnie 3")
+        self.assertEqual(ih.next_free_name(set(), "John"), "John")
+        self.assertEqual(ih.next_free_name({"John"}, "John"), "John 2")
+        self.assertEqual(ih.next_free_name({"John", "John 2"}, "John"),
+                         "John 3")
 
 
 # -------------------------------------------------------- lifecycle & copies
@@ -281,7 +281,7 @@ class LifecycleTests(Fixture):
         """J1: the source db is byte-identical after a real run."""
         before = self.faces_db.read_bytes()
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         self.con.commit()
         rc = ih.main([str(self.staging), "--faces-db", str(self.faces_db)])
         self.assertEqual(rc, 0)
@@ -294,11 +294,11 @@ class LifecycleTests(Fixture):
         name = con.execute("SELECT name FROM persons WHERE state='imported'"
                            ).fetchone()[0]
         con.close()
-        self.assertEqual(name, "Winnie Pelser")
+        self.assertEqual(name, "John Smith")
 
     def test_report_files_written(self):
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         self.con.commit()
         ih.main([str(self.staging), "--faces-db", str(self.faces_db)])
         jpath = sorted(self.base.glob("faces-*.import.json"))[0]
@@ -309,7 +309,7 @@ class LifecycleTests(Fixture):
 
     def test_dry_run_writes_nothing(self):
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         self.con.commit()
         before = self.faces_db.read_bytes()
         ih.main([str(self.staging), "--faces-db", str(self.faces_db),
@@ -323,10 +323,10 @@ class LifecycleTests(Fixture):
 class ScenarioTests(Fixture):
     def test_cluster_merge_unanimous(self):
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
-                    groups=("People|Family|Winnie Pelser",))
-        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20)
-        self.s_face(img, "Winnie Pelser", 80, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20,
+                    groups=("People|Family|John Smith",))
+        self.s_face(img, "John Smith", 50, 50, 20, 20)
+        self.s_face(img, "John Smith", 80, 10, 20, 20)
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters["matched"], 3)
@@ -336,15 +336,15 @@ class ScenarioTests(Fixture):
         rows = self.q("SELECT f.id, f.name, f.seq, f.link_status, p.name pname"
                       " FROM faces f JOIN persons p ON p.id=f.person_id"
                       " WHERE f.image_id=1 ORDER BY f.id")
-        self.assertTrue(all(r["pname"] == "Winnie Pelser" for r in rows))
+        self.assertTrue(all(r["pname"] == "John Smith" for r in rows))
         self.assertTrue(all(r["link_status"] == "provisional" for r in rows))
         self.assertEqual([r["seq"] for r in rows], [1, 2, 3])
-        self.assertEqual(rows[0]["name"], "Winnie Pelser-1")
+        self.assertEqual(rows[0]["name"], "John Smith-1")
         self.assertEqual(self.q("SELECT * FROM persons WHERE name='Unknown7'"),
                          [])
         groups = self.q("SELECT path FROM person_groups pg"
                         " JOIN persons p ON p.id=pg.person_id"
-                        " WHERE p.name='Winnie Pelser'")
+                        " WHERE p.name='John Smith'")
         self.assertEqual([g["path"] for g in groups],
                          ["Family"])   # root+name-leaf stripped (§9.4 v2.1)
 
@@ -352,19 +352,19 @@ class ScenarioTests(Fixture):
         """§9.5: as if the user assigned the whole group — an unmatched
         cluster face moves along."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
-        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 50, 50, 20, 20)
         self.con.commit()
         self.run_plan()
         rows = self.q("SELECT p.name FROM faces f"
                       " JOIN persons p ON p.id=f.person_id"
                       " WHERE f.image_id=1")
-        self.assertEqual({r["name"] for r in rows}, {"Winnie Pelser"})
+        self.assertEqual({r["name"] for r in rows}, {"John Smith"})
         self.assertEqual(len(rows), 3)                  # f3 came along
 
     def test_below_threshold_logged(self):
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 0, 0, 5, 5)   # IoU ~0.04 vs f1
+        self.s_face(img, "John Smith", 0, 0, 5, 5)   # IoU ~0.04 vs f1
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters.get("matched", 0), 0)
@@ -376,7 +376,7 @@ class ScenarioTests(Fixture):
 
     def test_hash_mismatch_and_missing(self):
         img = self.s_image("f" * 64)                    # not in faces.db
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         img2 = self.s_image(None, path="/arc/missing.jpg")   # never hashed
         self.s_face(img2, "Koos Kat", 10, 10, 20, 20)
         self.con.commit()
@@ -387,7 +387,7 @@ class ScenarioTests(Fixture):
 
     def test_status_protected_then_overwrite(self):
         img = self.s_image(H2, w=200, h=200)
-        self.s_face(img, "Winnie Pelser", 20, 20, 40, 40)   # matches Mary f4
+        self.s_face(img, "John Smith", 20, 20, 40, 40)   # matches Mary f4
         self.con.commit()
         rep = self.run_plan()                              # default: protected
         self.assertEqual(rep.counters["status-protected"], 1)
@@ -397,7 +397,7 @@ class ScenarioTests(Fixture):
         self.assertEqual(rep.counters["faces_moved"], 1)
         row = self.q("SELECT f.person_id, f.link_status, p.name FROM faces f"
                      " JOIN persons p ON p.id=f.person_id WHERE f.id=4")[0]
-        self.assertEqual(row["name"], "Winnie Pelser")     # J5: provisional again
+        self.assertEqual(row["name"], "John Smith")     # J5: provisional again
         self.assertEqual(row["link_status"], "provisional")
 
     def test_contested_face_left_untouched(self):
@@ -405,7 +405,7 @@ class ScenarioTests(Fixture):
         IoU never picks the person. The face stays, all claimants are
         logged, and contest-only claimants are not created."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # IoU 1.00 on f1
+        self.s_face(img, "John Smith", 10, 10, 20, 20)   # IoU 1.00 on f1
         self.s_face(img, "Koos Kat", 12, 12, 20, 20)       # IoU ~0.69 on f1
         self.con.commit()
         rep = self.run_plan()
@@ -417,11 +417,11 @@ class ScenarioTests(Fixture):
         self.assertEqual(self.q("SELECT person_id FROM faces WHERE id=1")[0]
                          ["person_id"], 7)
         self.assertEqual(self.q("SELECT * FROM persons WHERE name"
-                                " IN ('Winnie Pelser','Koos Kat')"), [])
+                                " IN ('John Smith','Koos Kat')"), [])
         # the log names every claimant with source and IoU
         det = [d for d in rep.details if d.startswith("contested")]
         self.assertEqual(len(det), 1)
-        self.assertIn("Winnie Pelser", det[0])
+        self.assertIn("John Smith", det[0])
         self.assertIn("Koos Kat", det[0])
         self.assertIn("IoU 1.00", det[0])
         self.assertIn("left with Unknown7", det[0])
@@ -430,7 +430,7 @@ class ScenarioTests(Fixture):
         """§9.3 v4.0: two DIFFERENT whot faces, one claim each — each face
         decides alone; the cluster's undecided mates do not co-move."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # claims f1
+        self.s_face(img, "John Smith", 10, 10, 20, 20)   # claims f1
         self.s_face(img, "Koos Kat", 50, 50, 20, 20)       # claims f2
         self.con.commit()
         rep = self.run_plan()
@@ -439,7 +439,7 @@ class ScenarioTests(Fixture):
         names = {r["id"]: r["name"] for r in self.q(
             "SELECT f.id, p.name FROM faces f JOIN persons p"
             " ON p.id=f.person_id WHERE f.id IN (1,2)")}
-        self.assertEqual(names, {1: "Winnie Pelser", 2: "Koos Kat"})
+        self.assertEqual(names, {1: "John Smith", 2: "Koos Kat"})
         # f3 had no claim and the cluster was NOT unanimous -> stays
         self.assertEqual(self.q("SELECT person_id FROM faces WHERE id=3")[0]
                          ["person_id"], 7)
@@ -473,7 +473,7 @@ class ScenarioTests(Fixture):
 
     def test_known_person_emptied_not_deleted(self):
         img = self.s_image(H2, w=200, h=200)
-        self.s_face(img, "Winnie Pelser", 20, 20, 40, 40)  # matches Mary f4
+        self.s_face(img, "John Smith", 20, 20, 40, 40)  # matches Mary f4
         self.con.commit()
         rep = self.run_plan(overwrite=True)
         self.assertEqual(rep.counters["faces_moved"], 1)
@@ -481,7 +481,7 @@ class ScenarioTests(Fixture):
                          1)                                # never deleted
         row = self.q("SELECT p.name FROM faces f JOIN persons p"
                      " ON p.id=f.person_id WHERE f.id=4")[0]
-        self.assertEqual(row["name"], "Winnie Pelser")
+        self.assertEqual(row["name"], "John Smith")
 
     def test_claim_reseats_origin_and_leaves_filed_groups(self):
         """#165/§4.35: a claim takes faces AWAY — the origin's status seat
@@ -545,7 +545,7 @@ class ScenarioTests(Fixture):
         con.commit()
         con.close()
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         self.con.commit()
         self.run_plan()
         # Unknown7 deleted -> its refcrop/primary went with the cascade
@@ -554,7 +554,7 @@ class ScenarioTests(Fixture):
         mary = self.q("SELECT primary_face_id FROM persons WHERE name='Mary'")[0]
         self.assertEqual(mary["primary_face_id"], 4)
         # now move Mary's primary away and check the pointer is cleared
-        self.s_face(self.s_image(H2, w=200, h=200), "Winnie Pelser",
+        self.s_face(self.s_image(H2, w=200, h=200), "John Smith",
                     20, 20, 40, 40)
         self.con.commit()                     # the plan reads staging ro
         con = sqlite3.connect(self.faces_db)
@@ -572,22 +572,22 @@ class ScenarioTests(Fixture):
 
     def test_unowned_face_moves(self):
         img = self.s_image(H2, w=200, h=200)
-        self.s_face(img, "Winnie Pelser", 120, 120, 30, 30)  # matches f5
+        self.s_face(img, "John Smith", 120, 120, 30, 30)  # matches f5
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters["faces_moved"], 1)
         row = self.q("SELECT p.name FROM faces f JOIN persons p"
                      " ON p.id=f.person_id WHERE f.id=5")[0]
-        self.assertEqual(row["name"], "Winnie Pelser")
+        self.assertEqual(row["name"], "John Smith")
 
     def test_same_person_many_rects_dedup_to_one_move(self):
         """§9.3 v4.0 (#87): several rects of the SAME person on one db
         face are agreement — exactly one move; the rects are claims, not
         competitors."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # IoU 1.00
-        self.s_face(img, "winnie pelser", 12, 12, 20, 20)  # ~0.69, case-variant
-        self.s_face(img, "WINNIE PELSER", 11, 11, 20, 20)  # in between
+        self.s_face(img, "John Smith", 10, 10, 20, 20)   # IoU 1.00
+        self.s_face(img, "john smith", 12, 12, 20, 20)  # ~0.69, case-variant
+        self.s_face(img, "JOHN SMITH", 11, 11, 20, 20)  # in between
         self.con.commit()
         rep = self.run_plan()
         # one db face decided (agreement deduped the three rects) ...
@@ -598,7 +598,7 @@ class ScenarioTests(Fixture):
         rows = self.q("SELECT p.name FROM faces f JOIN persons p"
                       " ON p.id=f.person_id WHERE f.id IN (1,2,3)")
         # case-insensitive agreement -> one person, first source's spelling
-        self.assertEqual({r["name"] for r in rows}, {"Winnie Pelser"})
+        self.assertEqual({r["name"] for r in rows}, {"John Smith"})
 
     # ---------------------------------------------------- #80 regressions
 
@@ -606,43 +606,43 @@ class ScenarioTests(Fixture):
         """§9.4 v2.1 (#80): 'People|<name>' leaves no group above the
         person -> ungrouped, never a same-named twig in the tree."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
-                    groups=("People|Winnie Pelser",))
+        self.s_face(img, "John Smith", 10, 10, 20, 20,
+                    groups=("People|John Smith",))
         self.con.commit()
         self.run_plan()
         groups = self.q("SELECT path FROM person_groups pg"
                         " JOIN persons p ON p.id=pg.person_id"
-                        " WHERE p.name='Winnie Pelser'")
+                        " WHERE p.name='John Smith'")
         self.assertEqual(groups, [{"path": "New"}])  # #165/§4.35: seated
 
     def test_harvested_persons_get_machine_primary(self):
         """§9.5 v2.1 (#80): the §4.5 machine rule backfills every empty
         primary in the copy — the person view must not rely on NULL."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
-        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 50, 50, 20, 20)
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters["faces_moved"], 3)   # cluster merge
         rows = self.q("SELECT p.name, p.primary_face_id FROM persons p"
-                      " WHERE p.name='Winnie Pelser'")
+                      " WHERE p.name='John Smith'")
         self.assertEqual(len(rows), 1)
         self.assertIsNotNone(rows[0]["primary_face_id"],
                              "machine primary backfilled (§4.5 rule)")
 
     def test_reuse_matches_gui_group_after_correction(self):
-        """§9.4 v2.1 (#80): a harvested 'People|Family|Winnie Pelser'
+        """§9.4 v2.1 (#80): a harvested 'People|Family|John Smith'
         matches a GUI person grouped 'Family' (before the correction the
         trailing name leaf defeated the reuse rule)."""
         con = sqlite3.connect(self.faces_db)
-        con.execute("UPDATE persons SET name='Winnie Pelser' WHERE id=9")
+        con.execute("UPDATE persons SET name='John Smith' WHERE id=9")
         con.execute("INSERT INTO person_groups(person_id, path)"
                     " VALUES (9, 'Family')")
         con.commit()
         con.close()
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
-                    groups=("People|Family|Winnie Pelser",))
+        self.s_face(img, "John Smith", 10, 10, 20, 20,
+                    groups=("People|Family|John Smith",))
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters["persons_reused"], 1)
@@ -656,7 +656,7 @@ class ScenarioTests(Fixture):
         # db face f1 sits at (10,10,20,20) in DISPLAY space; the same
         # physical rectangle in RAW space of a 90°-rotated 100x100 file
         # is (10,70,20,20): (H-y-h, x, h, w) -> (100-70-20, 10, 20, 20)
-        self.s_face(img, "Winnie Pelser", 10, 70, 20, 20)
+        self.s_face(img, "John Smith", 10, 70, 20, 20)
         self.con.commit()
         rep = self.run_plan()
         # the RAW-space box mapped through the 90° rotation lands exactly
@@ -665,7 +665,7 @@ class ScenarioTests(Fixture):
         self.assertEqual(
             self.q("SELECT p.name FROM faces f JOIN persons p"
                    " ON p.id=f.person_id WHERE f.id=1")[0]["name"],
-            "Winnie Pelser")
+            "John Smith")
         self.assertEqual(self.q("SELECT rotation FROM images WHERE id=1")[0]
                          ["rotation"], 90)
 
@@ -676,7 +676,7 @@ class ScenarioTests(Fixture):
         con.close()
         img2 = self.s_image(H2, w=200, h=200, rotation=90)
         # unowned f5 at display (120,120,30,30) <- RAW (120,50,30,30)
-        self.s_face(img2, "Winnie Pelser", 120, 50, 30, 30)
+        self.s_face(img2, "John Smith", 120, 50, 30, 30)
         self.con.commit()
         self.run_plan()
         self.assertEqual(self.q("SELECT rotation FROM images WHERE id=2")[0]
@@ -684,7 +684,7 @@ class ScenarioTests(Fixture):
         self.assertEqual(self.q("SELECT person_id FROM faces WHERE id=5")[0]
                          ["person_id"],
                          self.q("SELECT id FROM persons"
-                                " WHERE name='Winnie Pelser'")[0]["id"])
+                                " WHERE name='John Smith'")[0]["id"])
 
     def test_faceless_shell_name_reuse(self):
         """#128 (v5.2): a same-named person with ZERO faces is a shell —
@@ -738,10 +738,10 @@ class IdempotencyTests(Fixture):
     def seed_cluster(self):
         # the whole Unknown7 cluster on image 1 (exact matches)
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
-                    groups=("People|Family|Winnie Pelser",))
-        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20)
-        self.s_face(img, "Winnie Pelser", 80, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20,
+                    groups=("People|Family|John Smith",))
+        self.s_face(img, "John Smith", 50, 50, 20, 20)
+        self.s_face(img, "John Smith", 80, 10, 20, 20)
         # a second staging person colliding with the GUI 'Mary' by name:
         # her staged face matches the unowned provisional f5 on image 2,
         # and her group set differs from GUI-Mary's (none) -> first run
@@ -813,26 +813,26 @@ class IdempotencyTests(Fixture):
         self.assertIn("KeepMe", names, "user person untouched")
 
     def test_whot_spelling_wins_case_insensitive_reuse(self):
-        """§9.4 v4.0 (#87): claims spelled 'winnie pelser'/'WINNIE PELSER'
-        reuse the whot person 'Winnie Pelser' — whot's spelling wins,
+        """§9.4 v4.0 (#87): claims spelled 'john smith'/'JOHN SMITH'
+        reuse the whot person 'John Smith' — whot's spelling wins,
         no new person, existing derived labels untouched."""
         con = sqlite3.connect(self.faces_db)
-        con.execute("UPDATE persons SET name='Winnie Pelser' WHERE id=9")
+        con.execute("UPDATE persons SET name='John Smith' WHERE id=9")
         con.execute("INSERT INTO person_groups(person_id, path)"
                     " VALUES (9, 'Family')")          # note: 'Family' capital
         con.commit()
         con.close()
         img = self.s_image(H1)
-        self.s_face(img, "winnie pelser", 10, 10, 20, 20,
-                    groups=("People|family|WINNIE PELSER",))  # case-variant groups
+        self.s_face(img, "john smith", 10, 10, 20, 20,
+                    groups=("People|family|JOHN SMITH",))  # case-variant groups
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters["persons_reused"], 1)
         self.assertEqual(rep.counters.get("persons_created", 0), 0)
         rows = self.q("SELECT id, name FROM persons WHERE name"
-                      " COLLATE NOCASE = 'winnie pelser'")
+                      " COLLATE NOCASE = 'john smith'")
         self.assertEqual(len(rows), 1)                # one person, not two
-        self.assertEqual(rows[0]["name"], "Winnie Pelser")   # whot spelling
+        self.assertEqual(rows[0]["name"], "John Smith")   # whot spelling
         g = self.q("SELECT path FROM person_groups WHERE person_id=9")
         self.assertEqual([x["path"] for x in g], ["Family"])  # untouched
 
@@ -840,14 +840,14 @@ class IdempotencyTests(Fixture):
         """§9.4 v4.0 (#87): no whot match -> one new person, spelled as
         the FIRST source (lowest staging person id) stated it."""
         img = self.s_image(H1)
-        # s_face creates staging persons in call order: 'winnie pelser' is
+        # s_face creates staging persons in call order: 'john smith' is
         # the first source, the capitalised variants join the same identity
-        self.s_face(img, "winnie pelser", 10, 10, 20, 20,
-                    groups=("People|Family|winnie pelser",))
-        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20,
-                    groups=("People|Family|Winnie Pelser",))
-        self.s_face(img, "WINNIE PELSER", 80, 10, 20, 20,
-                    groups=("People|family|WINNIE PELSER",))
+        self.s_face(img, "john smith", 10, 10, 20, 20,
+                    groups=("People|Family|john smith",))
+        self.s_face(img, "John Smith", 50, 50, 20, 20,
+                    groups=("People|Family|John Smith",))
+        self.s_face(img, "JOHN SMITH", 80, 10, 20, 20,
+                    groups=("People|family|JOHN SMITH",))
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters["matched"], 3)
@@ -856,7 +856,7 @@ class IdempotencyTests(Fixture):
         # the three case-variants merged into ONE person ...
         self.assertEqual(len(names), 1, names)
         # ... spelled as the first source said it
-        self.assertEqual(names[0], "winnie pelser")
+        self.assertEqual(names[0], "john smith")
         # its group is first-source spelling too — and the name-leaf was
         # dropped by §9.4 v2.1, so just 'Family' (spelled by the first source,
         # which happens to be capitalised here)
@@ -866,57 +866,57 @@ class IdempotencyTests(Fixture):
         self.assertEqual([x["path"] for x in g], ["Family"])
 
     def test_case_insensitive_own_generation_reuse(self):
-        """#82 + §9.4 v4.0: claims spelled 'winnie pelser' recognise the
-        previous run's 'Winnie Pelser 2' (state='imported') — no ' 3'."""
-        # a GUI 'Winnie Pelser' with DIFFERENT groups forces the suffix
+        """#82 + §9.4 v4.0: claims spelled 'john smith' recognise the
+        previous run's 'John Smith 2' (state='imported') — no ' 3'."""
+        # a GUI 'John Smith' with DIFFERENT groups forces the suffix
         con = sqlite3.connect(self.faces_db)
-        con.execute("UPDATE persons SET name='Winnie Pelser' WHERE id=9")
+        con.execute("UPDATE persons SET name='John Smith' WHERE id=9")
         con.execute("INSERT INTO person_groups(person_id, path)"
                     " VALUES (9, 'Other')")
         con.commit()
         con.close()
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20,
-                    groups=("People|Family|Winnie Pelser",))
+        self.s_face(img, "John Smith", 10, 10, 20, 20,
+                    groups=("People|Family|John Smith",))
         self.con.commit()
-        self.run_plan()                       # run 1 mints 'Winnie Pelser 2'
+        self.run_plan()                       # run 1 mints 'John Smith 2'
         names1 = {r["name"] for r in self.q("SELECT name FROM persons")}
-        self.assertIn("Winnie Pelser 2", names1)
+        self.assertIn("John Smith 2", names1)
         # run 2: same claims, different capitalization (re-harvest effect)
         st = sqlite3.connect(self.staging)
-        st.execute("UPDATE persons SET name='WINNIE PELSER'")
-        st.execute("UPDATE person_groups SET path='People|family|WINNIE PELSER'")
+        st.execute("UPDATE persons SET name='JOHN SMITH'")
+        st.execute("UPDATE person_groups SET path='People|family|JOHN SMITH'")
         st.commit()
         st.close()
         rep = self.run_plan()
         self.assertEqual(rep.counters.get("persons_created", 0), 0)
         self.assertEqual(rep.counters.get("faces_moved", 0), 0)   # already-there
         names2 = {r["name"] for r in self.q("SELECT name FROM persons")}
-        self.assertEqual(names2, names1)          # no 'Winnie Pelser 3'
+        self.assertEqual(names2, names1)          # no 'John Smith 3'
 
     def test_loose_rect_cannot_override_agreement(self):
         """§9.3 v4.0 (#87): a large loose rect adds a claim but can never
         overturn agreement of the other sources."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)   # tight, IoU 1.0
-        self.s_face(img, "Winnie Pelser", 12, 12, 20, 20)   # tight, ~0.69
+        self.s_face(img, "John Smith", 10, 10, 20, 20)   # tight, IoU 1.0
+        self.s_face(img, "John Smith", 12, 12, 20, 20)   # tight, ~0.69
         # a loose rect for the SAME person also hitting f2 (IoU ~0.69) ->
-        # f2's only claim is Winnie, so it links too (agreement is per face)
-        self.s_face(img, "Winnie Pelser", 48, 48, 24, 24)
+        # f2's only claim is John, so it links too (agreement is per face)
+        self.s_face(img, "John Smith", 48, 48, 24, 24)
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters.get("contested", 0), 0)
         self.assertEqual(rep.counters["matched"], 2)   # f1 and f2 decided
         rows = self.q("SELECT p.name FROM faces f JOIN persons p"
                       " ON p.id=f.person_id WHERE f.id IN (1,2)")
-        self.assertTrue(all(r["name"] == "Winnie Pelser" for r in rows))
+        self.assertTrue(all(r["name"] == "John Smith" for r in rows))
 
     def test_confirmed_face_claims_ignored(self):
         """§9.3 rule 1 (#87): confirmed whot faces keep whot's work."""
         img = self.s_image(H1)
-        self.s_face(img, "Winnie Pelser", 50, 50, 20, 20)   # on f2 (provisional)
+        self.s_face(img, "John Smith", 50, 50, 20, 20)   # on f2 (provisional)
         img2 = self.s_image(H2, w=200, h=200)
-        self.s_face(img2, "Winnie Pelser", 20, 20, 40, 40)  # on f4 (Mary, confirmed)
+        self.s_face(img2, "John Smith", 20, 20, 40, 40)  # on f4 (Mary, confirmed)
         self.con.commit()
         rep = self.run_plan()
         self.assertEqual(rep.counters["status-protected"], 1)  # f4's claim
@@ -926,7 +926,7 @@ class IdempotencyTests(Fixture):
         self.assertEqual(row["name"], "Mary")   # f4 still belongs to Mary
         det = [d for d in rep.details if d.startswith("status-protected")]
         self.assertEqual(len(det), 1)
-        self.assertIn("Winnie Pelser", det[0])   # the ignored claim is logged
+        self.assertIn("John Smith", det[0])   # the ignored claim is logged
 
     def test_rescue_overlay_feeds_matching(self):
         """§8.6: hashes rescued by the path map overlay the staging images
@@ -934,7 +934,7 @@ class IdempotencyTests(Fixture):
         import hashlib
         img = self.s_image(None, path="/moved/nowhere/a.jpg")  # hashless
         # stage a face; without a rescue it is hash-missing
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         self.con.commit()
         st = sqlite3.connect(self.staging)
         ch0 = st.execute("SELECT content_hash FROM images WHERE id=?",
@@ -978,7 +978,7 @@ class CoverageWarningImportTests(Fixture):
     def test_warning_on_poor_coverage(self):
         # one pathless, unhashable staging face -> 100% unusable
         img = self.s_image(None, path=None)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         self.con.commit()
         rc, out, err = self.run_main(str(self.staging),
                                      "--faces-db", str(self.faces_db),
@@ -992,7 +992,7 @@ class CoverageWarningImportTests(Fixture):
 
     def test_warning_survives_quiet(self):
         img = self.s_image(None, path=None)
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         self.con.commit()
         rc, out, err = self.run_main(str(self.staging),
                                      "--faces-db", str(self.faces_db),
@@ -1007,9 +1007,9 @@ class CoverageWarningImportTests(Fixture):
         # two hashless images with stated paths; image A has two faces
         a = self.s_image(None, path="/old/moved/first.JPG")
         b = self.s_image(None, path="/old/moved/second.JPG", w=200, h=200)
-        self.s_face(a, "Winnie Pelser", 10, 10, 20, 20)
-        self.s_face(a, "Winnie Pelser", 50, 50, 20, 20)
-        self.s_face(b, "Winnie Pelser", 20, 20, 40, 40)
+        self.s_face(a, "John Smith", 10, 10, 20, 20)
+        self.s_face(a, "John Smith", 50, 50, 20, 20)
+        self.s_face(b, "John Smith", 20, 20, 40, 40)
         self.con.commit()
         rep = ih.Report()
         stcon = ih.open_ro(self.staging)
@@ -1033,7 +1033,7 @@ class CoverageWarningImportTests(Fixture):
     def test_image_not_in_db_details_path(self):
         # a hashed staging image that faces.db lacks
         img = self.s_image("c" * 64, path="/archive/unimported/never-seen.jpg")
-        self.s_face(img, "Winnie Pelser", 10, 10, 20, 20)
+        self.s_face(img, "John Smith", 10, 10, 20, 20)
         self.con.commit()
         rep = ih.Report()
         stcon = ih.open_ro(self.staging)

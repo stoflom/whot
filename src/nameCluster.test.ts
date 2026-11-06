@@ -34,13 +34,13 @@ function persons(...names: string[]): Person[] {
 
 describe("normalization", () => {
   it("folds case and collapses whitespace", () => {
-    expect(foldName("  Winnie   Pelser ")).toBe("winnie pelser");
-    expect(foldName("WINNIE PELSER")).toBe("winnie pelser");
+    expect(foldName("  John   Smith ")).toBe("john smith");
+    expect(foldName("JOHN SMITH")).toBe("john smith");
   });
 
   it("strips a trailing seq suffix (#82)", () => {
-    expect(normalizeName("Winnie Pelser 2")).toBe("winnie pelser");
-    expect(normalizeName("Winnie Pelser 12")).toBe("winnie pelser");
+    expect(normalizeName("John Smith 2")).toBe("john smith");
+    expect(normalizeName("John Smith 12")).toBe("john smith");
     // digits inside the name are not a seq suffix
     expect(normalizeName("Bossa Nova")).toBe("bossa nova");
     expect(normalizeName("2001 A Space")).toBe("2001 a space");
@@ -48,12 +48,12 @@ describe("normalization", () => {
 
   it("strips alias tokens repeatedly", () => {
     const g = [["jr", "junior"], ["sr", "senior"]];
-    expect(stripSuffixAliases("winnie pelser jr", g)).toBe("winnie pelser");
-    expect(stripSuffixAliases("winnie pelser junior", g)).toBe("winnie pelser");
+    expect(stripSuffixAliases("john smith jr", g)).toBe("john smith");
+    expect(stripSuffixAliases("john smith junior", g)).toBe("john smith");
     // no alias group match — untouched
-    expect(stripSuffixAliases("winnie pelser iii", g)).toBe("winnie pelser iii");
+    expect(stripSuffixAliases("john smith iii", g)).toBe("john smith iii");
     // without groups, never strips
-    expect(stripSuffixAliases("winnie pelser jr", [])).toBe("winnie pelser jr");
+    expect(stripSuffixAliases("john smith jr", [])).toBe("john smith jr");
   });
 });
 
@@ -68,15 +68,15 @@ describe("clampDistance", () => {
 
 describe("damerauLevenshtein (OSA)", () => {
   it("counts a transposition as ONE edit (the whole point vs plain Levenshtein)", () => {
-    expect(damerauLevenshtein("pelsre", "pelser", 3)).toBe(1);
+    expect(damerauLevenshtein("smiht", "smith", 3)).toBe(1);
     // sanity: plain Levenshtein would score this 2
-    expect(damerauLevenshtein("pelser", "pelsre", 1)).toBe(1);
+    expect(damerauLevenshtein("smith", "smiht", 1)).toBe(1);
   });
 
   it("basic substitutions / insertions / deletions", () => {
-    expect(damerauLevenshtein("winnie", "winne", 3)).toBe(1); // deletion
-    expect(damerauLevenshtein("winnie", "winnnie", 3)).toBe(1); // insertion
-    expect(damerauLevenshtein("winnie", "lennie", 3)).toBe(2); // two subs: w→l, i→e
+    expect(damerauLevenshtein("john", "joh", 3)).toBe(1); // deletion
+    expect(damerauLevenshtein("john", "johhn", 3)).toBe(1); // insertion
+    expect(damerauLevenshtein("john", "kahn", 3)).toBe(2); // two subs: j→k, o→a
     expect(damerauLevenshtein("", "abc", 3)).toBe(3);
     expect(damerauLevenshtein("abc", "", 3)).toBe(3);
     expect(damerauLevenshtein("same", "same", 3)).toBe(0);
@@ -92,64 +92,64 @@ describe("damerauLevenshtein (OSA)", () => {
 
 describe("classifyNames", () => {
   it("case/whitespace only → fold", () => {
-    expect(classifyNames("Winnie Pelser", "winnie  pelser", 2, []))
+    expect(classifyNames("John Smith", "john  smith", 2, []))
       .toEqual({ kind: "fold", distance: 0 });
   });
 
   it("seq-suffix only → seq", () => {
-    expect(classifyNames("Winnie Pelser", "Winnie Pelser 2", 2, []))
+    expect(classifyNames("John Smith", "John Smith 2", 2, []))
       .toEqual({ kind: "seq", distance: 0 });
   });
 
   it("alias tokens → alias (without them: edit or nothing)", () => {
     const g = [["jr", "junior"]];
-    expect(classifyNames("W. Pelser", "W. Pelser Junior", 1, g))
+    expect(classifyNames("J. Smith", "J. Smith Junior", 1, g))
       .toEqual({ kind: "alias", distance: 0 });
     // without aliases " Jr" is a 3-char insertion: below max=2, fine at 3
-    expect(classifyNames("W. Pelser", "W. Pelser Jr", 2, [])).toBeNull();
-    expect(classifyNames("W. Pelser", "W. Pelser Jr", 3, [])?.kind).toBe("edit");
+    expect(classifyNames("J. Smith", "J. Smith Jr", 2, [])).toBeNull();
+    expect(classifyNames("J. Smith", "J. Smith Jr", 3, [])?.kind).toBe("edit");
   });
 
   it("single-edit misspelling → edit, two-edit respects the max", () => {
-    expect(classifyNames("Winnie Pelser", "Winnie Pelsar", 2, []))
+    expect(classifyNames("John Smith", "John Smyth", 2, []))
       .toEqual({ kind: "edit", distance: 1 });
-    // pelserr is ONE insertion — distance 1; a real 2-edit pair:
-    expect(classifyNames("Winnie Pelser", "Winnie Pelserr", 2, []))
+    // smithh is ONE insertion — distance 1; a real 2-edit pair:
+    expect(classifyNames("John Smith", "John Smithh", 2, []))
       .toEqual({ kind: "edit", distance: 1 });
-    expect(classifyNames("Winnie Pelser", "Winnie Pelsherr", 2, []))
+    expect(classifyNames("John Smith", "John Smythh", 2, []))
       .toEqual({ kind: "edit", distance: 2 });
-    expect(classifyNames("Winnie Pelser", "Winnie Pelsherr", 1, [])).toBeNull();
+    expect(classifyNames("John Smith", "John Smythh", 1, [])).toBeNull();
     // transposition counts as 1 (#88 rationale)
-    expect(classifyNames("Winnie Pelser", "Winnie Pelsre", 1, []))
+    expect(classifyNames("John Smith", "John Smiht", 1, []))
       .toEqual({ kind: "edit", distance: 1 });
   });
 
   it("unrelated names → null", () => {
-    expect(classifyNames("Winnie Pelser", "Koos Kat", 3, [])).toBeNull();
+    expect(classifyNames("John Smith", "Koos Kat", 3, [])).toBeNull();
   });
 });
 
 describe("clusterPersons", () => {
   it("clusters case/seq variants of one name into a single cluster", () => {
-    const cs = clusterPersons(persons("Winnie Pelser", "WINNIE PELSER", "Winnie Pelser 2", "Koos Kat"));
+    const cs = clusterPersons(persons("John Smith", "JOHN SMITH", "John Smith 2", "Koos Kat"));
     expect(cs).toHaveLength(1);
     expect(cs[0].members.map((m) => m.name)).toEqual(
-      ["Winnie Pelser", "WINNIE PELSER", "Winnie Pelser 2"]);
-    expect(cs[0].label).toBe("Winnie Pelser"); // first member by id
-    expect(cs[0].key).toBe("winnie pelser");
+      ["John Smith", "JOHN SMITH", "John Smith 2"]);
+    expect(cs[0].label).toBe("John Smith"); // first member by id
+    expect(cs[0].key).toBe("john smith");
     expect(cs[0].edges).toHaveLength(3); // every pair linked
   });
 
   it("default distance 2 catches two-edit misspellings; distance 1 does not", () => {
-    // "Pelserr" is a single insertion (distance 1) — a real two-edit pair:
-    // pelser -> pelsherr = insert h, insert r
-    const cs2 = clusterPersons(persons("Winnie Pelser", "Winnie Pelsherr"));
+    // "Smithh" is a single insertion (distance 1) — a real two-edit pair:
+    // smith -> smythh = substitute y, insert h
+    const cs2 = clusterPersons(persons("John Smith", "John Smythh"));
     expect(cs2).toHaveLength(1);
     expect(cs2[0].edges[0]).toMatchObject({ kind: "edit", distance: 2 });
-    const cs1 = clusterPersons(persons("Winnie Pelser", "Winnie Pelsherr"), { distance: 1 });
+    const cs1 = clusterPersons(persons("John Smith", "John Smythh"), { distance: 1 });
     expect(cs1).toHaveLength(0);
     // a single insertion clusters even at the strictest distance
-    expect(clusterPersons(persons("Winnie Pelser", "Winnie Pelserr"), { distance: 1 })).toHaveLength(1);
+    expect(clusterPersons(persons("John Smith", "John Smithh"), { distance: 1 })).toHaveLength(1);
   });
 
   it("clamps an out-of-range configured distance", () => {
@@ -172,21 +172,21 @@ describe("clusterPersons", () => {
   });
 
   it("a chain that exceeds the max still clusters via the bridge", () => {
-    // pels~pelse(1), pelse~pelserr(2), pels~pelserr(3 > max 2 → no edge)
-    const cs = clusterPersons(persons("pels", "pelse", "pelserr"));
+    // smih~smith(1), smith~smithth(2), smih~smithth(3 > max 2 → no edge)
+    const cs = clusterPersons(persons("smih", "smith", "smithth"));
     expect(cs).toHaveLength(1);
     expect(cs[0].members).toHaveLength(3);
     expect(cs[0].edges.map((e) => `${e.a}-${e.b}`)).toEqual(["1-2", "2-3"]);
   });
 
   it("excludes Unknown* importer clusters (Unknown7 ~ Unknown8 would be distance 1)", () => {
-    expect(clusterPersons(persons("Unknown7", "Unknown8", "Winnie", "Winni"))).toHaveLength(1);
+    expect(clusterPersons(persons("Unknown7", "Unknown8", "John", "Johh"))).toHaveLength(1);
     const cs = clusterPersons(persons("Unknown7", "Unknown8"));
     expect(cs).toHaveLength(0);
   });
 
   it("suffix aliases group Jr/Junior only when enabled (default off)", () => {
-    const ps = persons("Winnie Pelser", "Winnie Pelser Junior");
+    const ps = persons("John Smith", "John Smith Junior");
     expect(clusterPersons(ps)).toHaveLength(0); // distance 3 > 2
     const cs = clusterPersons(ps, { suffixAliases: [["jr", "junior"]] });
     expect(cs).toHaveLength(1);
@@ -195,7 +195,7 @@ describe("clusterPersons", () => {
 
   it("zero-face members are kept but contribute nothing (issue spec)", () => {
     nextId = 1;
-    const ps = [person("Winnie Pelser", 3), { ...person("Winnie Pelser 2"), counts: { total: 0, provisional: 0, confirmed: 0, rejected: 0 } }];
+    const ps = [person("John Smith", 3), { ...person("John Smith 2"), counts: { total: 0, provisional: 0, confirmed: 0, rejected: 0 } }];
     const cs = clusterPersons(ps);
     expect(cs[0].members.map((m) => m.counts.total)).toEqual([3, 0]);
   });
@@ -209,6 +209,6 @@ describe("clusterPersons", () => {
   });
 
   it("singletons are never returned", () => {
-    expect(clusterPersons(persons("Winnie Pelser", "Koos Kat", "Bart Nelles"))).toHaveLength(0);
+    expect(clusterPersons(persons("John Smith", "Koos Kat", "Bart Nelles"))).toHaveLength(0);
   });
 });

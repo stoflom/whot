@@ -34,7 +34,7 @@ class WebKitElement(webdriver.remote.webelement.WebElement):
 
     WebKitWebDriver's getElementText is unreliable (returns '' or a
     fragment where innerText is correct — observed on the person tree:
-    `.tree-name` → '' while innerText → 'Marianne Lombard'). innerText
+    `.tree-name` → '' while innerText → 'John Smith'). innerText
     via the wire protocol is exact and is what Firefox's `.text`
     returns anyway, so route `.text` through it.
     """

@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 6.1** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 6.3** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -108,7 +108,7 @@ after import).
   `kind` ∈ `sidecars|lightroom|digikam`.
 - `persons(id, name UNIQUE, created_at, harvest_run_id)`.
 - `person_groups(person_id, path, source_id, harvest_run_id)` — `|`-paths
-  (`People|Friends|Pelsers`), one leaf-name person per path, same shape as
+  (`People|Friends|Smiths`), one leaf-name person per path, same shape as
   `faces.db.person_groups`.
 - `person_refs(person_id, kind, ref, source_id, harvest_run_id)` — external
   identity references: digiKam recognition UUIDs, Lightroom keyword UUIDs
@@ -190,8 +190,8 @@ blank lines ignored, plain prefix rewrite — **no globbing**:
 
 ```
 # legacy root                       -> local root
-D:/images/PicFiles                  = /run/media/stoflom/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
-D:/LIVE                             = /run/media/stoflom/Seagate Expansion Drive/LIVE
+D:/images/PicFiles                  = /run/media/testuser/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
+D:/LIVE                             = /run/media/testuser/Seagate Expansion Drive/LIVE
 ```
 
 `parse_lr_roots` and the digiKam name-size resolution consult the map
@@ -394,13 +394,13 @@ Per staging person with at least one accepted assignment:
      (gui-design §4.35: `provisional` faces ⇒ `New`, else `Accepted`),
      never left without a `person_groups` row.
 
-  `People|Family|Winnie Pelser` → `Family`; `People|Winnie Pelser` →
+  `People|Family|John Smith` → `Family`; `People|John Smith` →
   seated (§4.35). A trailing segment that does *not* equal the person's name
   is kept as-is (defensive: paths are capture, §8 H4 — never guessed).
 - Reuse an existing `faces.db` person **only** when its name matches *and*
   its group set matches the harvested set exactly (post-§9.4-correction
-  sets — so a harvested `Winnie Pelser` with `People|Family|Winnie
-  Pelser` correctly reuses a GUI person grouped `Family`). The script
+  sets — so a harvested `John Smith` with `People|Family|John
+  Smith` correctly reuses a GUI person grouped `Family`). The script
   never guesses identity; otherwise it creates a new person
   (`state='imported'`) and the user merges later via the GUI's assign
   semantics (§4.1).
@@ -416,8 +416,8 @@ Per staging person with at least one accepted assignment:
   **not** faceless — discarded faces are recoverable rows, and linking
   into a discarded cluster would resurrect identity by guesswork.
 - **Agreement is case-insensitive.** Person-name and
-  group-set comparisons `casefold`: `Winnie Pelser` = `winnie pelser` =
-  `WINNIE PELSER`; `family|Smith` = `Family|Smith`. Only the *stored*
+  group-set comparisons `casefold`: `John Smith` = `john smith` =
+  `JOHN SMITH`; `family|Smith` = `Family|Smith`. Only the *stored*
   spelling must be chosen, by fixed precedence — never synthesised:
   1. **whot wins** — a person/group matching case-insensitively already
      exists ⇒ reuse it, keep **whot's** capitalization (the user's
@@ -429,13 +429,13 @@ Per staging person with at least one accepted assignment:
      recognition → digiKam → Lightroom).
   The folding is the importer's (Python `casefold`) — never SQL:
   `faces.db persons.name` UNIQUE and `=` are case-sensitive (SQLite
-  BINARY), so `winnie pelser` and `Winnie Pelser` can legitimately
+  BINARY), so `john smith` and `John Smith` can legitimately
   coexist in whot today; a case-variant pair left by earlier runs is
   cleaned up by the user via the GUI, not by this script.
   The §9.8 own-generation recognition (`<name> N` + `state='imported'`)
   compares the same case-insensitively.
 - On a name collision the new person gets the smallest free seq suffix:
-  `Winnie Pelser 2`, `Winnie Pelser 3`, …
+  `John Smith 2`, `John Smith 3`, …
 
 ### 9.5 UnknownN cluster merge (follow-on to §9.3)
 

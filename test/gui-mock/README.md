@@ -15,7 +15,7 @@ without running the Rust backend or touching the real database.
 
 | file | role |
 | --- | --- |
-| `dump_snap.py` | read-only dump of `data/faces.db` → `snap.json` (gitignored) |
+| `dump_snap.py` | sanitized dump of `data/faces.db` → `snap.json` (gitignored): no personal names, surnames, notes or home paths survive (see Sanitization); `--raw` for a debugging dump |
 | `mock.js` | in-memory `window.__TAURI_INTERNALS__` emulator (command list in the file header) |
 | `server.py` | serves `dist/`, rewrites `index.html` to load `mock.js` before the app bundle; serves `/snap.json` |
 | `webkit_tester.py` | the WebKitGTK driver: Selenium `Remote` → system `WebKitWebDriver`, `.text`/occlusion fixes (see Fidelity notes) |
@@ -25,7 +25,7 @@ without running the Rust backend or touching the real database.
 
 ```sh
 npm run build            # dist/ must be current
-python3 test/gui-mock/dump_snap.py
+python3 test/gui-mock/dump_snap.py   # sanitized snapshot -> snap.json (see Sanitization)
 python3 test/gui-mock/server.py &     # default http://127.0.0.1:8123/
 python3 test/gui-mock/gui_check.py    # WebKitGTK (default): exit 0 iff all 64 checks pass (C1–C63, C17 retired, + R1–R2)
 WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox instead
@@ -48,6 +48,14 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
 - The binary image batch returns a tiny shared JPEG standing in for the
   DB blobs — layout and interaction
   checks only, never pixel checks.
+- The check suite is **corpus-agnostic**: no check hardcodes a person
+  id or name. C23 (D&D moves one membership) discovers its scenario in
+  the loaded snapshot — a person whose memberships contain a nested
+  pair (`P` + `P|X`) plus a sibling branch `P|Y` with another member —
+  and exercises the same contract on the discovered paths; with no
+  such person in the corpus it records a vacuous pass-with-caveat, as
+  the other discovery-based checks do (so any sanitized-or-raw dump,
+  any group vocabulary, works).
 - `person_face_clusters` mirrors the backend's single-linkage clustering
   (cosine similarity, distance = 1 − sim, default threshold 0.40) over the
   person's non-rejected, non-discarded faces.
@@ -63,6 +71,44 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
   `window.__MOCK_IMPORT__` exposes the live slot to checks.
 - Mock state is in-memory and per page-load: every navigation reloads
   `snap.json`, so checks are independent and the real DB is never written.
+
+## Sanitization (the snapshot carries no personal data, #236)
+
+`dump_snap.py` sanitizes its output **by default** — `snap.json` may be
+shared freely, and no real name, surname, note or user-home path may
+appear in it. `--raw` dumps the snapshot unsanitized for local
+debugging fidelity; **never commit or share a `--raw` dump**. The
+sanitizer is a pure function (`sanitize_snap`) with these rules and
+invariants (pinned by `test/test_sanitize_snap.py`):
+
+- `persons.name`: every real-name person → `John Smith{n}` (id order;
+  `UnknownN` and the system person `Rejected` are structural and stay).
+- `person_groups.path`: every non-reserved segment → a generic
+  `Group{n}`, one generic **per distinct segment** (first-seen order) —
+  injective, so the tree's branch shape and ordering are unchanged and
+  the sanitized corpus never merges two different branches into one.
+  The reserved status seats (`Accepted`, `New`, `Rejected`) stay.
+- `faces.name`: rebuilt from the mapped person name with the same
+  `name[-description]-seq` formula the mock's renumber uses, so labels
+  stay coherent before **and** after any renumber.
+- `persons.note` and free-text `faces.description`: name-bearing words
+  replaced via a dictionary built from the real-name tokens + the
+  original segment names (plus a small curated list for stray personal
+  words, e.g. `Dawid`) → the neutral word `person`.
+- `images.primary_path` / `imports.path`: only the home component
+  rewritten (`/home/stoflom/…` → `/home/tester/…`), plus **directory
+  segments carrying a person-name word** → one `Dir{n}` per distinct
+  segment (injective, first-seen in the images' id order; imports
+  inherit the same segment map — the annotator used personal names as
+  directory labels). Filenames stay; so does the generic directory
+  structure. Every dynamic check (C34, C63's filename walk, the path
+  filter) discovers these branches by path, and each path remains
+  consistent within the snapshot; the branches' alpha-sort may shift
+  for the renamed segments.
+- Invariants: deterministic across runs, identity-preserving (same
+  distinct name always → same generic name), order-preserving (no sort
+  order changes), counts and ids untouched, and the scan gate: no
+  real-name token survives in the serialized JSON.
 
 ## Requirements
 
@@ -91,8 +137,9 @@ Manual poking: open http://127.0.0.1:8123/ in any browser.
 
 - `selenium` + `webdriver-manager` (geckodriver auto-downloaded) and a
   `firefox` binary on PATH (true headless — no display needed).
-- The `firefox-testing` skill at `/home/stoflom/.pi/agent/skills/firefox-testing`
-  (imported only for this driver; adjust the path if the skill moves).
+- The `firefox-testing` skill, resolvable from the environment:
+  `WHOT_FIREFOX_SKILL` overrides the path; the documented default is
+  `~/.pi/agent/skills/firefox-testing` (imported only for this driver).
 
 ## WebKit quirks the tester papers over
 

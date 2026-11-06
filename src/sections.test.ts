@@ -164,11 +164,11 @@ describe("sectionsForImage (image detail, §4.24)", () => {
 
   it("the group default keeps the person's path, never a status seat (#153/#178)", () => {
     const s = snap(
-      [person(3, "Anna", { total: 1 }, ["Family|Rossouw|gen1"])],
+      [person(3, "Anna", { total: 1 }, ["Family|Smith|gen1"])],
       [face({ image: 9, person: 3 })],
     );
     const out = sectionsForImage(s, new Map(s.persons.map((p) => [p.id, p])), 9, "all");
-    expect(out[0].ruleDefaultGroup).toBe("Family|Rossouw|gen1");
+    expect(out[0].ruleDefaultGroup).toBe("Family|Smith|gen1");
     // a New-seat person's seat is never prefiled into a group field
     const st = snap(
       [person(4, "Unknown9", { total: 1 }, ["New"])],

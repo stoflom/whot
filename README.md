@@ -155,8 +155,8 @@ scripts at one text file — `PATH_MAP=config/pathmap.txt` in `.env`, or
 
 ```text
 # legacy root                = local root
-D:/images/PicFiles           = /run/media/stoflom/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
-D:/LIVE                      = /run/media/stoflom/Seagate Expansion Drive/LIVE
+D:/images/PicFiles           = /run/media/testuser/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
+D:/LIVE                      = /run/media/testuser/Seagate Expansion Drive/LIVE
 !D:/LIVE/PICTURES/PicFiles/SourcePictures   # deliberately ignored (not in scope)
 ```
 

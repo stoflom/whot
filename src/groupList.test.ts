@@ -14,8 +14,8 @@ import {
 
 describe("applyGroupOps (#172, §4.38)", () => {
   it("no ops = the committed memberships, in order", () => {
-    expect(applyGroupOps(["Family|Lombard", "Friends|PHS"], [])).toEqual([
-      "Family|Lombard",
+    expect(applyGroupOps(["Family|Smith", "Friends|PHS"], [])).toEqual([
+      "Family|Smith",
       "Friends|PHS",
     ]);
   });
@@ -55,8 +55,8 @@ describe("the #233 display rule — seats are never displayed groups", () => {
   });
 
   it("adding a real group onto a seated person shows ONLY the new group (the seat is replaced in the preview — filing replaces the seat, §4.35)", () => {
-    expect(applyGroupOps(["New"], [{ from: "", to: "Family|Lombards" }])).toEqual(
-      ["Family|Lombards"]
+    expect(applyGroupOps(["New"], [{ from: "", to: "Family|Smiths" }])).toEqual(
+      ["Family|Smiths"]
     );
   });
 
@@ -123,7 +123,7 @@ describe("stageRemove (#172, §4.38)", () => {
   it("refuses a status seat (§4.35 — the row's × is disabled)", () => {
     expect(stageRemove([], ["New"], "New")).toBeNull();
     expect(isSeat("Accepted")).toBe(true);
-    expect(isSeat("Family|Lombard")).toBe(false);
+    expect(isSeat("Family|Smith")).toBe(false);
   });
 
   it("× on a not-yet-committed add just forgets that add", () => {
@@ -177,7 +177,7 @@ describe("stageRehome (#172, §4.38)", () => {
 
 describe("validPath (#165 parity)", () => {
   it("accepts normal paths, refuses empty/reserved", () => {
-    expect(validPath("Family|Lombard")).toBe(true);
+    expect(validPath("Family|Smith")).toBe(true);
     expect(validPath("  Family  ")).toBe(true);
     expect(validPath("")).toBe(false);
     expect(validPath("Rejected")).toBe(false);
