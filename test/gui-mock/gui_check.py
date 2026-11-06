@@ -263,8 +263,37 @@ def dblclick(t, el):
     way, so the behaviour under test is unchanged.
     """
     t.execute_script(
-        "arguments[0].dispatchEvent(new MouseEvent('dblclick', {"
+        "arguments[0].dispatchEvent(new MouseEvent('dblclick', {" 
         "bubbles: true, cancelable: true, view: window}))", el)
+
+
+def modclick(t, key, el):
+    """Modifier+click via a DOM dispatch of the very event the handler
+    receives — the same accommodation as dblclick(): the real
+    ActionChains key_down(KEY).click().key_up(KEY) combo deadlocks the
+    X11 input forwarding on this GNOME/Xwayland stack (the perform()
+    never returns, or the session dies with 'Session terminated without
+    a reply'), wedging the whole automation session. The app reads the
+    modifier from the click event itself (e.shiftKey / e.ctrlKey), so
+    a dispatched MouseEvent with the flag set exercises the identical
+    selection logic."""
+    flag = "shiftKey" if str(key).upper().startswith("S") else "ctrlKey"
+    t.execute_script(
+        "arguments[0].dispatchEvent(new MouseEvent('click', {" 
+        "bubbles: true, cancelable: true, view: window, button: 0, "
+        + flag + ": true}))", el)
+
+
+def ctxclick(t, el):
+    """Right-click via a DOM dispatch of the very event the handler
+    receives — the same accommodation as dblclick()/modclick(): the
+    real ActionChains context_click deadlocks the X11 input forwarding
+    on this GNOME/Xwayland stack ('Session terminated without a
+    reply'), wedging the whole automation session. React's
+    onContextMenu receives the identical contextmenu event either way."""
+    t.execute_script(
+        "arguments[0].dispatchEvent(new MouseEvent('contextmenu', {"
+        "bubbles: true, cancelable: true, view: window, button: 2}))", el)
 
 
 # #214 — the review grid mounts its sections incrementally (the App's
@@ -508,7 +537,7 @@ def c5_q4_stage_model(t):
     time.sleep(0.5)
     edit_and_apply(t, "GuiCheck Q4")
     # in-context selection change: NO dialog, stage survives, sel applies
-    AC(t.driver).key_down(Keys.SHIFT).click(cards[1]).key_up(Keys.SHIFT).perform()
+    modclick(t, Keys.SHIFT, cards[1])
     time.sleep(1.0)
     mid = {
         "dialog": q4_dialog(t), "strip": strip_text(t),
@@ -903,9 +932,8 @@ def c30_bar_accept_selection_over_stage(t):
     # two cards selected → dialog scope Selection → stage the description
     t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['a']}']").click()
     time.sleep(0.4)
-    AC(t.driver).key_down(Keys.CONTROL).click(
-        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['b']}']")
-    ).key_up(Keys.CONTROL).perform()
+    modclick(t, Keys.CONTROL,
+             t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['b']}']"))
     time.sleep(0.4)
     t.find_element(By.CSS_SELECTOR,
                    f".face-card[data-face-id='{pick['a']}'] .card-edit").click()
@@ -1219,7 +1247,7 @@ def c9_actions_above_typeahead(t):
     AC(t.driver).send_keys(Keys.ESCAPE).perform()
     time.sleep(0.6)
     group_ok = None
-    AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, ".tree-person")).perform()
+    ctxclick(t, t.find_element(By.CSS_SELECTOR, ".tree-person"))
     time.sleep(0.6)
     items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
              if "Move to group" in b.text]
@@ -1288,7 +1316,7 @@ def c11_merge_focuses_target(t):
                if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["source"])
     js(t, "arguments[0].scrollIntoView({block: 'center'})", src)
     time.sleep(0.4)
-    AC(t.driver).context_click(src).perform()
+    ctxclick(t, src)
     time.sleep(0.6)
     items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
              if "into" in b.text and "Merge" in b.text]
@@ -1436,9 +1464,8 @@ def c12_face_drag_merges_into_person(t):
     fid1, fid2 = str(pick["want"][0]), str(pick["want"][1])
     t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid1}']").click()
     time.sleep(0.4)
-    AC(t.driver).key_down(Keys.CONTROL).click(
-        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid2}']")
-    ).key_up(Keys.CONTROL).perform()
+    modclick(t, Keys.CONTROL,
+             t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid2}']"))
     time.sleep(0.6)
     # tag the target row for a reliable selector
     js(t, "document.querySelector(arguments[0])?.setAttribute('data-gc', '1')",
@@ -1609,7 +1636,7 @@ def c13_face_drag_copies_description(t):
         other_card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['other']}']")
         js(t, "arguments[0].scrollIntoView({block: 'center'})", other_card)
         time.sleep(0.3)
-        AC(t.driver).key_down(Keys.CONTROL).click(other_card).key_up(Keys.CONTROL).perform()
+        modclick(t, Keys.CONTROL, other_card)
         time.sleep(0.5)
     drag = drag_face(t, f".face-card[data-face-id='{pick['source']}']",
                      f".face-card[data-face-id='{pick['target']}']")
@@ -2081,12 +2108,14 @@ def c26_rolls_path_filter(t):
 
 
 def c27_center_toolbar_view_matrix(t):
-    """#163 (v3.63/v3.64): the centre toolbar is view-scoped — Rolls
-    renders NO toolbar at all (nav cluster + Description/Accuracy seg
-    both gone; the grid gets the pane's full height) and ←/→ person
-    stepping is inert there (stepPerson always lands in the person view
-    — it used to yank a rolls browser away); Review keeps the nav
-    cluster without the seg; the person view keeps both (seg = §4.9)."""
+    """#163 (v3.63/v3.64): the centre toolbar is view-scoped — browsing
+    Rolls renders NO toolbar at all (nav cluster + Description/Accuracy
+    seg both gone; the grid gets the pane's full height; #235/rule 46
+    adds the one exception: a FULL image open in Rolls, C63) and ←/→
+    person stepping is inert there (stepPerson always lands in the
+    person view — it used to yank a rolls browser away); Review keeps
+    the nav cluster without the seg; the person view keeps both (seg =
+    §4.9)."""
     fresh(t)  # lands on Review
     def bar():
         return js(t, "return document.querySelector('.center-toolbar') != null")
@@ -2881,14 +2910,14 @@ def c34_rolls_branch_thumbnails(t):
     time.sleep(0.4)
     sel_one = pane_state()["selected"]
     t2 = thumb(1)
-    AC(t.driver).key_down(Keys.CONTROL).click(t2).key_up(Keys.CONTROL).perform()
+    modclick(t, Keys.CONTROL, t2)
     time.sleep(0.4)
     c = pane_state()
     two_ids = js(t, r"""
       return [...document.querySelectorAll('.rolls-thumbs .img-thumb.selected')]
         .map(b => window.__MOCK_SNAP.images.find(x => x.primary_path === b.title)?.id);
     """)
-    AC(t.driver).context_click(t2).perform()
+    ctxclick(t, t2)
     time.sleep(0.6)
     rot_items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
                  if "Rotate 90° CW" in b.text]
@@ -3595,9 +3624,8 @@ def c39_rename_seated_person(t):
     merge_c = None
     if cpick:
         select_person(cpick["srcId"])
-        AC(t.driver).context_click(
-            t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{cpick['srcId']}']")
-        ).perform()
+        ctxclick(t, t.find_element(By.CSS_SELECTOR,
+                 f".tree-person[data-person-id='{cpick['srcId']}']"))
         time.sleep(0.6)
         items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
                  if "into" in b.text and "Merge" in b.text]
@@ -3967,18 +3995,18 @@ def c42_edit_label_everywhere(t):
     dialog_ok = opened == "Edit" and not js(t, "return !!document.querySelector('.overlay .dialog')")
 
     # ── the face context menu: single scope, then a 2-face multi ──────
-    AC(t.driver).context_click(
-        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[0]}']")).perform()
+    ctxclick(t, t.find_element(By.CSS_SELECTOR,
+             f".face-card[data-face-id='{ids[0]}']"))
     time.sleep(0.6)
     single = menu_texts()
     close_menu()
     # the single-phase click left {ids[0]} selected — ctrl-click adds the
     # second card (a plain click would TOGGLE it off)
-    AC(t.driver).key_down(Keys.CONTROL).click(
-        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[1]}']")).key_up(Keys.CONTROL).perform()
+    modclick(t, Keys.CONTROL,
+             t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[1]}']"))
     time.sleep(0.4)
-    AC(t.driver).context_click(
-        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{ids[1]}']")).perform()
+    ctxclick(t, t.find_element(By.CSS_SELECTOR,
+             f".face-card[data-face-id='{ids[1]}']"))
     time.sleep(0.6)
     multi = menu_texts()
     close_menu()
@@ -4040,10 +4068,9 @@ def c43_single_only_menu_items(t):
     time.sleep(0.3)
     t.find_element(By.CSS_SELECTOR, c0).click()
     time.sleep(0.4)
-    AC(t.driver).key_down(Keys.CONTROL).click(
-        t.find_element(By.CSS_SELECTOR, c1)).key_up(Keys.CONTROL).perform()
+    modclick(t, Keys.CONTROL, t.find_element(By.CSS_SELECTOR, c1))
     time.sleep(0.4)
-    AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, c1)).perform()
+    ctxclick(t, t.find_element(By.CSS_SELECTOR, c1))
     time.sleep(0.6)
     a_multi = item("Open full image")
     a_scope = item("Accept")          # scope-wide: enabled in BOTH states
@@ -4055,7 +4082,7 @@ def c43_single_only_menu_items(t):
     close_menu()
     t.find_element(By.CSS_SELECTOR, c0).click()      # plain click replaces → {c0}
     time.sleep(0.4)
-    AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, c0)).perform()
+    ctxclick(t, t.find_element(By.CSS_SELECTOR, c0))
     time.sleep(0.6)
     a_single = item("Open full image")
     close_menu()
@@ -4116,9 +4143,9 @@ def c43_single_only_menu_items(t):
         thumb(0).click()          # plain click selects ONE
         time.sleep(0.4)
         t2 = thumb(1)
-        AC(t.driver).key_down(Keys.CONTROL).click(t2).key_up(Keys.CONTROL).perform()
+        modclick(t, Keys.CONTROL, t2)
         time.sleep(0.4)
-        AC(t.driver).context_click(t2).perform()
+        ctxclick(t, t2)
         time.sleep(0.6)
         b_open = item("Open image")
         b_full = item("Open full image (focused)")
@@ -4130,7 +4157,7 @@ def c43_single_only_menu_items(t):
         close_menu()
         thumb(0).click()                  # back to a single selection
         time.sleep(0.4)
-        AC(t.driver).context_click(thumb(0)).perform()
+        ctxclick(t, thumb(0))
         time.sleep(0.6)
         b_open_s = item("Open image")
         b_full_s = item("Open full image (focused)")
@@ -4162,10 +4189,9 @@ def c43_single_only_menu_items(t):
         time.sleep(0.3)
         t.find_element(By.CSS_SELECTOR, r0).click()   # single
         time.sleep(0.6)
-        AC(t.driver).key_down(Keys.CONTROL).click(
-            t.find_element(By.CSS_SELECTOR, r1)).key_up(Keys.CONTROL).perform()
+        modclick(t, Keys.CONTROL, t.find_element(By.CSS_SELECTOR, r1))
         time.sleep(0.4)
-        AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, r1)).perform()
+        ctxclick(t, t.find_element(By.CSS_SELECTOR, r1))
         time.sleep(0.6)
         c_open = item("Open person")
         c_ren = item("Rename…")
@@ -4183,7 +4209,7 @@ def c43_single_only_menu_items(t):
         close_menu()
         t.find_element(By.CSS_SELECTOR, r0).click()   # back to single
         time.sleep(0.6)
-        AC(t.driver).context_click(t.find_element(By.CSS_SELECTOR, r0)).perform()
+        ctxclick(t, t.find_element(By.CSS_SELECTOR, r0))
         time.sleep(0.6)
         c_open_s = item("Open person")
         c_ren_s = item("Rename…")
@@ -4273,8 +4299,8 @@ def c44_rotate_image_cascades(t):
     time.sleep(0.8)
     t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']").click()  # single scope
     time.sleep(0.4)
-    AC(t.driver).context_click(
-        t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']")).perform()
+    ctxclick(t, t.find_element(By.CSS_SELECTOR,
+             f".face-card[data-face-id='{fid}']"))
     time.sleep(0.6)
     items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
              if b.text.strip() == "Rotate crop 90° CW"]
@@ -4347,9 +4373,9 @@ def c45_face_menu_add_group(t):
     # the two cards can sit far apart — AC clicks need b in the viewport
     js(t, "arguments[0].scrollIntoView({block:'center'})", card(pick["b"]))
     time.sleep(0.3)
-    AC(t.driver).key_down(Keys.CONTROL).click(card(pick["b"])).key_up(Keys.CONTROL).perform()
+    modclick(t, Keys.CONTROL, card(pick["b"]))
     time.sleep(0.4)
-    AC(t.driver).context_click(card(pick["b"])).perform()
+    ctxclick(t, card(pick["b"]))
     time.sleep(0.6)
     labels = js(t, r"""
       return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim());
@@ -4391,7 +4417,7 @@ def c45_face_menu_add_group(t):
     # single-person scope reads plain 'Add group…'
     card(pick["a"]).click()          # plain click replaces the selection
     time.sleep(0.4)
-    AC(t.driver).context_click(card(pick["a"])).perform()
+    ctxclick(t, card(pick["a"]))
     time.sleep(0.6)
     labels1 = js(t, r"""
       return [...document.querySelectorAll('.ctx-item')].map(x => x.textContent.trim());
@@ -5076,9 +5102,9 @@ def c50_merge_chips_pick_target(t):
                  if e.find_element(By.CSS_SELECTOR, ".tree-name").text.strip() == pick["b"]["name"])
     row_a.click()
     time.sleep(0.5)
-    AC(t.driver).key_down(Keys.CONTROL).click(row_b).key_up(Keys.CONTROL).perform()
+    modclick(t, Keys.CONTROL, row_b)
     time.sleep(0.5)
-    AC(t.driver).context_click(row_b).perform()
+    ctxclick(t, row_b)
     time.sleep(0.6)
     items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
              if "Merge" in b.text and "into" in b.text]
@@ -5228,7 +5254,7 @@ def c51_scope_switch_keeps_typed_fields(t):
     c2 = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick['fid2']}']")
     c1.click()
     time.sleep(0.5)
-    AC(t.driver).key_down(Keys.CONTROL).click(c2).key_up(Keys.CONTROL).perform()
+    modclick(t, Keys.CONTROL, c2)
     time.sleep(0.5)
     opened = js(t, r"""
       const c = document.querySelector(`.face-card[data-face-id='${arguments[0]}']`);
@@ -5463,7 +5489,7 @@ def c54_no_refs_in_ui_strings(t):
     if len(pick) >= 1 and row(pick[0]) is not None:
         row(pick[0]).click()
         time.sleep(0.5)
-        AC(t.driver).context_click(row(pick[0])).perform()
+        ctxclick(t, row(pick[0]))
         time.sleep(0.5)
         scan("person context menu")
         items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
@@ -5480,9 +5506,9 @@ def c54_no_refs_in_ui_strings(t):
     if len(pick) == 2 and row(pick[0]) and row(pick[1]):
         row(pick[0]).click()
         time.sleep(0.4)
-        AC(t.driver).key_down(Keys.CONTROL).click(row(pick[1])).key_up(Keys.CONTROL).perform()
+        modclick(t, Keys.CONTROL, row(pick[1]))
         time.sleep(0.4)
-        AC(t.driver).context_click(row(pick[1])).perform()
+        ctxclick(t, row(pick[1]))
         time.sleep(0.5)
         items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
                  if "Merge" in b.text and "into" in b.text]
@@ -6120,6 +6146,148 @@ def c62_one_ipc_transfer_per_action(t):
            f"(a verdict re-fetched the whole DB if these differ)")
 
 
+def c63_rolls_image_stepping(t):
+    """#235 (rule 46): in Rolls mode, a FULL IMAGE open carries the
+    centre's shared ‹ n/m › nav cluster — over the selected branch's
+    listed images (the right pane's own thumbnails, list and order):
+    › opens the next image in the film roll, ‹ the previous, ←/→ do the
+    same, the buttons disable at the list ends, and the mode stays
+    Rolls. Browsing (no image open) still renders no toolbar (#163)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
+    time.sleep(1.0)
+
+    browse_bar = js(t, "return document.querySelector('.center-toolbar') != null")
+
+    # a branch with 3–6 listed (Show → All) images — small enough to
+    # walk to the end of the roll, big enough to step on both sides
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const dirOf = (p) => { const i = p.lastIndexOf("/"); return i <= 0 ? "/" : p.slice(0, i); };
+      // Show → All lists EVERY image (viewFilters.listedImages) — the
+      // picker ran with the All filter set, so no per-face filtering here
+      const listed = new Set(snap.images.map((im) => im.id));
+      const base = (p) => { const i = p.lastIndexOf("/"); return i === -1 ? p : p.slice(i + 1); };
+      const by = new Map();
+      for (const im of snap.images) {
+        if (!listed.has(im.id)) continue;
+        const b = dirOf(im.primary_path);
+        if (!by.has(b)) by.set(b, []);
+        by.get(b).push(im);
+      }
+      for (const [b, ims] of by) {
+        if (ims.length < 3 || ims.length > 6) continue;
+        const paths = ims.slice()
+          .sort((x, y) => base(x.primary_path).localeCompare(base(y.primary_path)))
+          .map((x) => x.primary_path);
+        return {branch: b, paths: paths, m: paths.length};
+      }
+      return null;
+    """)
+    if pick is None:
+        record("C63 Rolls ‹ › steps the film roll (v5.0, rule 46)",
+               True, "no branch with 3–6 listed images — vacuous")
+        return
+
+    def drill(path):
+        """open every ancestor (click only when closed) and ALWAYS click
+        the LAST segment — a click toggles AND selects (#174), so an
+        already-open target still gets selected (C34's drill)"""
+        segs = [s for s in path.strip("/").split("/") if s]
+        for i, seg in enumerate(segs):
+            last = i == len(segs) - 1
+            state = js(t, r"""
+              const prefix = arguments[0], seg = arguments[1], last = arguments[2];
+              let container = document.querySelector('.rolls');
+              for (const p of prefix) {
+                const s = [...container.children].find(x => x.classList.contains('roll') &&
+                  x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === p);
+                if (!s) return 'no-parent';
+                container = s.querySelector(':scope > .roll-children');
+                if (!container) return 'closed-parent';
+              }
+              const target = [...container.children].find(x => x.classList.contains('roll') &&
+                x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === seg);
+              if (!target) return 'not-found';
+              const isOpen = !!target.querySelector(':scope > .roll-children');
+              if (last || !isOpen) target.querySelector(':scope > .roll-header').click();
+              return 'ok';
+            """, segs[:i], seg, last)
+            time.sleep(0.6)
+            if state != "ok":
+                return False
+        return True
+
+    if not drill(pick["branch"]):
+        record("C63 Rolls ‹ › steps the film roll (v5.0, rule 46)",
+               False, f"drill to {pick['branch']} failed")
+        return
+
+    def bar_state():
+        return js(t, r"""
+          const tl = document.querySelector('.center-toolbar .toolbar-left');
+          const btns = tl ? [...tl.querySelectorAll('button.ghost')] : [];
+          return {
+            bar: !!tl,
+            pos: document.querySelector('.center-toolbar .nav-pos')?.textContent ?? null,
+            prev: btns.length ? !btns[0].disabled : null,
+            next: btns.length > 1 ? !btns[1].disabled : null,
+            meta: document.querySelector('.image-detail .image-meta')?.textContent ?? null,
+            tab: document.querySelector('.topbar nav .active')?.textContent.split(/\s+/)[0] ?? null,
+          };
+        """)
+
+    def step_btn(idx):
+        js(t, "document.querySelectorAll('.center-toolbar .toolbar-left button')[arguments[0]]?.click();", idx)
+        time.sleep(1.0)
+
+    # open the first image of the roll (thumbnail double-click)
+    th = t.find_element(By.CSS_SELECTOR, f".img-thumb[title='{pick['paths'][0]}']")
+    th.click()
+    time.sleep(0.4)
+    dblclick(t, th)
+    time.sleep(1.2)
+    s1 = bar_state()
+    step_btn(1)  # › → the next image
+    s2 = bar_state()
+    # ←/→ step the open image too — blur the button first (a focused
+    # button keeps its native key semantics, the shortcut guard)
+    js(t, "document.activeElement?.blur();")
+    AC(t.driver).send_keys(Keys.ARROW_RIGHT).perform()
+    time.sleep(1.0)
+    s3 = bar_state()
+    step_btn(0)  # ‹ → back
+    s4 = bar_state()
+    # walk to the end of the roll
+    while js(t, "return !document.querySelectorAll('.center-toolbar .toolbar-left button')[1]?.disabled"):
+        step_btn(1)
+    sN = bar_state()
+
+    m = pick["m"]
+    def on(s, path):
+        return s["meta"] is not None and path in s["meta"]
+    ok = (
+        browse_bar is False
+        and s1["bar"] is True and s1["pos"] == f"1/{m}"
+        and s1["prev"] is False and s1["next"] is True and on(s1, pick["paths"][0])
+        and s1["tab"] == "Rolls"
+        and s2["pos"] == f"2/{m}" and on(s2, pick["paths"][1])
+        and s3["pos"] == f"3/{m}" and on(s3, pick["paths"][2])
+        and s4["pos"] == f"2/{m}" and on(s4, pick["paths"][1])
+        and sN["pos"] == f"{m}/{m}" and sN["next"] is False and sN["prev"] is True
+        and on(sN, pick["paths"][m - 1])
+        and sN["tab"] == "Rolls"
+    )
+    record("C63 Rolls ‹ › steps the film roll (v5.0, rule 46)", ok,
+           f"browse bar={browse_bar} (want False); branch={pick['branch']} m={m}; "
+           f"open1={s1['pos']} (prev/next {s1['prev']}/{s1['next']}, want False/True, want {1}/{m}) "
+           f"next={s2['pos']} want 2/{m}; key→={s3['pos']} want 3/{m}; "
+           f"prev={s4['pos']} want 2/{m}; end={sN['pos']} want {m}/{m} "
+           f"(next {sN['next']} want False); tab={sN['tab']} want Rolls; "
+           f"paths={pick['paths'][:3]}…")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -6127,7 +6295,8 @@ def main():
     holder = {"t": install_grid_grow(Tester(headless=True))}
     holder["t"].start()
     holder["t"].set_window_size(1600, 1000)
-    for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review, c62_one_ipc_transfer_per_action):
+    for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review, c62_one_ipc_transfer_per_action,
+      c63_rolls_image_stepping):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)

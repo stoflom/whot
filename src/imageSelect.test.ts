@@ -1,7 +1,13 @@
 // #174 (gui-design §4.39) — image selection over the branch thumbnails.
 // Run: npm test (vitest run)
 import { describe, expect, it } from "vitest";
-import { byFilename, clickImage, emptyImageSel, imageScope } from "./imageSelect";
+import {
+  byFilename,
+  clickImage,
+  emptyImageSel,
+  imageScope,
+  imageStepTarget,
+} from "./imageSelect";
 
 describe("byFilename (#174)", () => {
   it("orders by basename", () => {
@@ -72,5 +78,38 @@ describe("imageScope (§4.14 over images)", () => {
   it("an invoked thumb outside the selection scopes to just that thumb", () => {
     expect(imageScope(branchSel, inBranch, 1)).toEqual([1]);
     expect(imageScope(emptyImageSel(), inBranch, 1)).toEqual([1]);
+  });
+});
+
+// #235 (rule 46) — film-roll image stepping over the branch's display list.
+describe("imageStepTarget (#235)", () => {
+  const list = [10, 20, 30, 40, 50];
+
+  it("steps to the neighbour in the list's own order (dir 1 forward, -1 back)", () => {
+    expect(imageStepTarget(list, 10, 1)).toBe(20);
+    expect(imageStepTarget(list, 40, 1)).toBe(50);
+    expect(imageStepTarget(list, 30, -1)).toBe(20);
+    expect(imageStepTarget(list, 20, -1)).toBe(10);
+  });
+
+  it("the list ends are no-ops — no wrap (the buttons disable there)", () => {
+    expect(imageStepTarget(list, 10, -1)).toBeNull();
+    expect(imageStepTarget(list, 50, 1)).toBeNull();
+  });
+
+  it("an open image not in the list is a no-op (off-branch open, or the Show filter dropped it)", () => {
+    expect(imageStepTarget(list, 99, 1)).toBeNull();
+    expect(imageStepTarget(list, 99, -1)).toBeNull();
+  });
+
+  it("no open image, empty list — no target", () => {
+    expect(imageStepTarget(list, null, 1)).toBeNull();
+    expect(imageStepTarget([], 1, 1)).toBeNull();
+    expect(imageStepTarget([], null, -1)).toBeNull();
+  });
+
+  it("a single-image roll has no neighbours either way", () => {
+    expect(imageStepTarget([7], 7, 1)).toBeNull();
+    expect(imageStepTarget([7], 7, -1)).toBeNull();
   });
 });
