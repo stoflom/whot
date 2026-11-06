@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 6.2** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 6.3** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -190,8 +190,8 @@ blank lines ignored, plain prefix rewrite — **no globbing**:
 
 ```
 # legacy root                       -> local root
-D:/images/PicFiles                  = /run/media/stoflom/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
-D:/LIVE                             = /run/media/stoflom/Seagate Expansion Drive/LIVE
+D:/images/PicFiles                  = /run/media/testuser/Seagate Expansion Drive/LIVE/PICTURES/PicFiles
+D:/LIVE                             = /run/media/testuser/Seagate Expansion Drive/LIVE
 ```
 
 `parse_lr_roots` and the digiKam name-size resolution consult the map
