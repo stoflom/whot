@@ -722,7 +722,7 @@ def map_lr_path(catalog_root: str | None, path_from_root: str | None,
 
 
 def _lr_keyword_paths(con2: sqlite3.Connection) -> dict[int, str]:
-    """id_local -> 'People|Friends|Pelsers|Winnie Pelser', for person keywords.
+    """id_local -> 'People|Friends|Smiths|John Smith', for person keywords.
 
     The walk is over *every* keyword, not just person ones, so the path
     reaches the top of the tree (a person-only walk stops at the first
