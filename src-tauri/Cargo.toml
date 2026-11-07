@@ -1,6 +1,6 @@
 [package]
 name = "whotapp"
-version = "5.5.1"
+version = "5.5.2"
 description = "WhoT Face Manager"
 authors = ["stoflom"]
 edition = "2024"

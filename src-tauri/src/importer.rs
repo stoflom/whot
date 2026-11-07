@@ -16,8 +16,6 @@ const IMAGE_SUFFIXES: [&str; 14] = [
     ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".pef", ".dng", ".cr2", ".cr3", ".nef",
     ".arw", ".rw2", ".orf", // ".heic"/".avif" are NOT the script's — never probe them
 ];
-/// the script's THRESHOLD_DEFAULT (import_roll.py) — the GUI's default too
-pub const THRESHOLD_DEFAULT: f64 = 0.40;
 /// the line buffer never grows without bound: a chatty --recursive scan
 /// of a huge tree must not eat the GUI's memory (oldest lines dropped)
 const MAX_LINES: usize = 5000;

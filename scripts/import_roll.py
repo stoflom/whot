@@ -368,7 +368,10 @@ def _resize_jpeg(img, long_edge: int, quality: int = 88) -> bytes:
     if scale < 1.0:
         img = cv2.resize(img, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
-    assert ok
+    # #252: an explicit raise — the old `assert ok` vanishes under `python -O`
+    # and would fail later as an opaque AttributeError on `buf.tobytes()`
+    if not ok:
+        raise ValueError("cv2.imencode(.jpg) failed")
     return buf.tobytes()
 
 
@@ -548,11 +551,6 @@ def _next_unknown_number_for(names: Iterable[str]) -> int:
     instead of raising (#46)."""
     nums = [int(m.group(1)) for n in names if (m := _UNKNOWN_NUM.match(n))]
     return max(nums, default=0) + 1
-
-
-def _next_unknown_number(unknowns: list[PersonStub]) -> int:
-    """Next free UnknownN over stubs (kept for callers holding stubs only)."""
-    return _next_unknown_number_for(u.name for u in unknowns)
 
 
 # ---------------------------------------------------------------- storage

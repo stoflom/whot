@@ -796,28 +796,6 @@ pub fn image_thumb_bytes(paths: &Paths, image_id: i64) -> Result<Option<Vec<u8>>
         .query_row("SELECT thumbnail FROM images WHERE id = ?", params![image_id], |r| r.get(0))?)
 }
 
-/// #212/#227 — the image-batch wire format (mirrored by src/imageBatch.ts
-/// and test/gui-mock/mock.js): `"WHOTIMG\x01" | u32 LE count | count ×
-/// { i64 id, u32 off, u32 len } | blobs` — ONE binary response carries
-/// many images. Rows without a blob simply do not appear.
-pub fn encode_image_batch(rows: &[(i64, Vec<u8>)]) -> Vec<u8> {
-    let blob_len: usize = rows.iter().map(|(_, b)| b.len()).sum();
-    let mut out = Vec::with_capacity(12 + rows.len() * 16 + blob_len);
-    out.extend_from_slice(b"WHOTIMG\x01");
-    out.extend_from_slice(&(rows.len() as u32).to_le_bytes());
-    let mut offset = 0usize;
-    for (id, bytes) in rows {
-        out.extend_from_slice(&id.to_le_bytes());
-        out.extend_from_slice(&(offset as u32).to_le_bytes());
-        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-        offset += bytes.len();
-    }
-    for (_, bytes) in rows {
-        out.extend_from_slice(bytes);
-    }
-    out
-}
-
 /// #227 — the byte cap on one batch's blob payload. A `preview` batch
 /// (full-image bytes; the frontend coalesces up to 500 ids) must not
 /// balloon the response to 50–100 MB and 2–3× in transient copies. A
@@ -1853,9 +1831,12 @@ pub fn set_face_descriptions(paths: &Paths, face_ids: &[i64], raw: &str) -> Resu
     let tx = con.transaction()?;
     let desc = normalize_description(raw);
     let mut touched: Vec<i64> = Vec::new();
+    // #252: O(1) membership — the old `touched.contains` was O(n) per face
+    // over the whole batch (O(n²) on a large --all description write)
+    let mut touched_set: HashSet<i64> = HashSet::new();
     for face_id in face_ids {
         if let Some(pid) = set_face_description_tx(&tx, *face_id, &desc)? {
-            if !touched.contains(&pid) {
+            if touched_set.insert(pid) {
                 touched.push(pid);
             }
         }
