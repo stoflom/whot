@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.3** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1692,7 +1692,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      refresh — the new faces appear in the rolls tree by the normal
      external-change rule; a non-zero exit or a kill leaves the captured
      output on screen for diagnosis (the error text rule §4.26 applies).
-     Closing the pane does not kill a running import (it is an
+     The poll chain **survives App re-renders** (#247): the
+     `onImported` callback App hands the pane is stable (memoized), so
+     any re-render while the pane is open cannot restart the poll and
+     lose the `running → exit 0` observation. Closing the pane does not
+     kill a running import (it is an
      independent process); Start/Stop stay reachable by reopening the
      pane on the same directory.
 

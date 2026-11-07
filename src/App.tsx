@@ -355,6 +355,14 @@ export default function App() {
     const v = await api.getDataVersion();
     if (v !== snapVersionRef.current) await refresh();
   }, [refresh]);
+  // #247: the import pane restarts its poll chain whenever `onImported`'s
+  // identity changes — an inline arrow re-created every render would drop
+  // the poll's `prevRunning` memory mid-run and miss the clean-exit
+  // snapshot refresh, so the callback is stable
+  const onImported = useCallback(
+    () => void refresh().catch(() => {}),
+    [refresh]
+  );
 
   useEffect(() => {
     refresh().catch(async (e) => {
@@ -2929,7 +2937,7 @@ export default function App() {
             <ImportPane
               dir={importDir}
               onClose={() => setImportDir(null)}
-              onImported={() => void refresh().catch(() => {})}
+              onImported={onImported}
             />
           ) : mode === "rolls" && imageId == null ? (
             // #174 (§4.39): browsing the hierarchy → the selected
