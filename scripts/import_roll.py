@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 
 import cli_console  # shared header/status/quiet console (scripts-design §10)
+import dbutil       # shared .env / read-only / coverage / seat helpers
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_TAG = "insightface:buffalo_l"
@@ -90,32 +91,6 @@ TIFF_SUFFIXES = {".tif", ".tiff"}
 ICON_LONG_EDGE = 256              # thumbnails (req 3.3)
 PREVIEW_LONG_EDGE = 1600
 FACE_CROP_LONG_EDGE = 512
-
-
-# ---------------------------------------------------------------- env (.env)
-
-def load_env(path: Path) -> dict[str, str]:
-    """Parse KEY=VALUE lines with ${VAR} references; no external dependency."""
-    raw: dict[str, str] = {}
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        raw[key.strip()] = val.strip().strip('"').strip("'")
-    for _ in range(4):                      # resolve nested ${VAR}
-        for k, v in raw.items():
-            if "${" in v:
-                for ref, rv in raw.items():
-                    v = v.replace("${" + ref + "}", rv)
-                raw[k] = v
-    # refs not defined in the file (e.g. ${HOME}) fall back to the process
-    # environment; unresolvable refs stay literal (#15)
-    for k, v in raw.items():
-        if "${" in v:
-            raw[k] = re.sub(r"\$\{(\w+)\}",
-                            lambda m: os.environ.get(m.group(1), m.group(0)), v)
-    return raw
 
 
 def check_schema(con: sqlite3.Connection, db_path: Path) -> None:
@@ -710,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ui = cli_console.Console(quiet=args.quiet)
 
-    env = load_env(PROJECT_ROOT / ".env")
+    env = dbutil.load_env(PROJECT_ROOT / ".env")
     db_path = PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
 
     if args.dry_run:

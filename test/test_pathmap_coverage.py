@@ -13,8 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from pathmap import (apply_path_map, is_excluded, local_roots,  # noqa: E402
                     parse_path_map)
-import harvest_legacy as hl  # noqa: E402
-import import_harvested as ih  # noqa: E402
+import dbutil  # noqa: E402
 
 
 SAMPLE = """
@@ -173,23 +172,18 @@ class CoverageThresholdTests(unittest.TestCase):
     """§8.6: >20% unusable => warning percent, else None (#83)."""
 
     def test_below_threshold_is_none(self):
-        self.assertIsNone(hl.coverage_pct(1, 10))     # exactly 10%? no: 1/10=10%
-        self.assertIsNone(hl.coverage_pct(2, 10))     # exactly 20% — healthy edge
-        self.assertIsNone(hl.coverage_pct(0, 1000))
-        self.assertIsNone(hl.coverage_pct(0, 0))      # empty run: no warning
+        self.assertIsNone(dbutil.coverage_pct(1, 10))     # exactly 10%? no: 1/10=10%
+        self.assertIsNone(dbutil.coverage_pct(2, 10))     # exactly 20% — healthy edge
+        self.assertIsNone(dbutil.coverage_pct(0, 1000))
+        self.assertIsNone(dbutil.coverage_pct(0, 0))      # empty run: no warning
 
     def test_above_threshold_returns_percent(self):
-        self.assertAlmostEqual(hl.coverage_pct(3, 10), 30.0)
-        self.assertAlmostEqual(hl.coverage_pct(17816 + 632, 18703), 98.6, places=1)
-
-    def test_import_matches_harvest(self):
-        """Both scripts share the threshold logic (§8.6)."""
-        self.assertEqual(hl.UNUSABLE_THRESHOLD, ih.UNUSABLE_THRESHOLD)
-        self.assertEqual(hl.coverage_pct(5, 10), ih.coverage_pct(5, 10))
+        self.assertAlmostEqual(dbutil.coverage_pct(3, 10), 30.0)
+        self.assertAlmostEqual(dbutil.coverage_pct(17816 + 632, 18703), 98.6, places=1)
 
     def test_custom_threshold(self):
-        self.assertIsNone(hl.coverage_pct(1, 10, threshold=0.20))
-        self.assertAlmostEqual(hl.coverage_pct(3, 10, threshold=0.25), 30.0)
+        self.assertIsNone(dbutil.coverage_pct(1, 10, threshold=0.20))
+        self.assertAlmostEqual(dbutil.coverage_pct(3, 10, threshold=0.25), 30.0)
 
 
 if __name__ == "__main__":

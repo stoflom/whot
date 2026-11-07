@@ -44,10 +44,10 @@ import re
 import sqlite3
 import sys
 import time
-import urllib.parse
 from pathlib import Path
 
 import cli_console  # shared header/status/quiet console (scripts-design §10)
+import dbutil       # shared .env / read-only / coverage / seat helpers
 import pathmap      # legacy path-map file (scripts-design §8.6, #85)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -64,17 +64,6 @@ UNKNOWN_NAME_RE = re.compile(r"^Unknown\d+$")
 # main() swaps in the -q-aware instance (scripts-design §10.7)
 _CONSOLE = cli_console.Console()
 
-UNUSABLE_THRESHOLD = 0.20      # >20% unusable staging faces => loud warning (#83)
-
-
-def coverage_pct(unusable: int, total: int,
-                 threshold: float = UNUSABLE_THRESHOLD) -> float | None:
-    """Share of unusable staging faces in percent, or None while healthy
-    (§8.6).  Pure function — threshold logic testable without a run."""
-    if total <= 0 or unusable * (1.0 / threshold) <= total:
-        return None
-    return 100.0 * unusable / total
-
 
 def log(msg: str) -> None:
     _CONSOLE.status(msg)
@@ -83,33 +72,6 @@ def log(msg: str) -> None:
 def now() -> str:
     """UTC, same convention as import_roll.py (design #40)."""
     return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-
-
-# ---------------------------------------------------------------------- env
-
-def load_env(path: Path) -> dict[str, str]:
-    """Parse KEY=VALUE lines with ${VAR} references; no external dependency."""
-    raw: dict[str, str] = {}
-    if not path.exists():
-        return raw
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        raw[key.strip()] = val.strip().strip('"').strip("'")
-    for _ in range(4):                      # resolve nested ${VAR}
-        for k, v in raw.items():
-            if "${" in v:
-                for ref, rv in raw.items():
-                    v = v.replace("${" + ref + "}", rv)
-                raw[k] = v
-    for k, v in raw.items():                # then references to the real
-        if "${" in v:                       # environment (${HOME}, ${USER})
-            for ref, rv in os.environ.items():
-                v = v.replace("${" + ref + "}", rv)
-            raw[k] = v
-    return raw
 
 
 # ---------------------------------------------------------- pure geometry (§9.2/9.3)
@@ -220,16 +182,6 @@ def next_free_name_ci(taken_cf: set[str], name: str) -> str:
     return f"{name} {n}"
 
 
-# ---------------------------------------------------------------- connections
-
-def open_ro(db_path: Path, immutable: bool = False) -> sqlite3.Connection:
-    uri = "file:" + urllib.parse.quote(str(db_path)) + "?mode=ro" \
-        + ("&immutable=1" if immutable else "")
-    con = sqlite3.connect(uri, uri=True)
-    con.row_factory = sqlite3.Row
-    return con
-
-
 def check_version(con: sqlite3.Connection, want: str, what: str) -> None:
     row = con.execute("SELECT version FROM schema_version").fetchone()
     got = row[0] if row else None
@@ -251,7 +203,7 @@ def make_target_copy(faces_db: Path) -> Path:
     while target.exists():
         n += 1
         target = faces_db.parent / f"faces-{stamp}-{n}.db"
-    src = open_ro(faces_db)
+    src = dbutil.open_ro(faces_db)
     try:
         src.execute("VACUUM INTO ?", (str(target),))
     finally:
@@ -799,31 +751,15 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
     # every person this run touched — a groupless person gets its seat, a
     # seated person's seat re-derives from the faces it has left; a real
     # group (or the system person's `Rejected`) is never touched.
-    seats = ("New", "Accepted", "Rejected")
     # destinations + shell appendees + CLAIM ORIGINS (a claim takes faces
     # away — their seat must re-derive, §4.35: New → Accepted etc.)
     touched = (set(person_id_of.values()) | set(plan.get("shell_groups", {}))
                | claim_origins)
+    # #251: the per-person seat derivation now lives in dbutil (ONE copy,
+    # shared with annotation_snapshot) — must_exist skips a person the
+    # shell sweep above deleted
     for pid in sorted(touched):
-        if not dbcon.execute("SELECT 1 FROM persons WHERE id=?", (pid,)).fetchone():
-            continue                       # deleted by the sweep above
-        rows = [r[0] for r in dbcon.execute(
-            "SELECT path FROM person_groups WHERE person_id=?", (pid,))]
-        if rows and "Rejected" in rows:
-            continue                       # the system person is never re-seated
-        has_new = dbcon.execute(
-            "SELECT EXISTS(SELECT 1 FROM faces WHERE person_id=?"
-            " AND link_status='provisional')", (pid,)).fetchone()[0]
-        seat = "New" if has_new else "Accepted"
-        if not rows:
-            dbcon.execute("INSERT INTO person_groups(person_id, path) VALUES(?,?)",
-                          (pid, seat))
-        elif all(r in seats for r in rows) and seat not in rows:
-            # insert-first: the fresh seat lands before the stale one drops
-            dbcon.execute("INSERT OR IGNORE INTO person_groups(person_id, path)"
-                          " VALUES(?,?)", (pid, seat))
-            dbcon.execute("DELETE FROM person_groups WHERE person_id=? AND path!=?",
-                          (pid, seat))
+        dbutil.reseat_person(dbcon, pid, must_exist=True)
 
     # primary backfill (§9.5 v2.1, #80): the §4.5 machine rule — the same
     # statement as import_roll.assign_missing_primaries (duplicated,
@@ -878,7 +814,7 @@ def main(argv=None) -> int:
         ui.error("error: --min-overlap must be in (0, 1]")
         return 1
 
-    env = load_env(PROJECT_ROOT / ".env")
+    env = dbutil.load_env(PROJECT_ROOT / ".env")
 
     faces_db = Path(args.faces_db).expanduser() if args.faces_db \
         else PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
@@ -914,10 +850,10 @@ def main(argv=None) -> int:
         ui.error(f"error: faces.db not found: {faces_db}")
         return 1
 
-    stcon = open_ro(args.staging)
+    stcon = dbutil.open_ro(args.staging)
     try:
         check_version(stcon, STAGING_SCHEMA_VERSION, "harvest staging")
-        dbcon_src = open_ro(faces_db)
+        dbcon_src = dbutil.open_ro(faces_db)
         try:
             check_version(dbcon_src, FACES_SCHEMA_VERSION, "faces.db")
         finally:
@@ -925,7 +861,7 @@ def main(argv=None) -> int:
 
         rep = Report()
         if args.dry_run:
-            dbcon = open_ro(faces_db)
+            dbcon = dbutil.open_ro(faces_db)
             target = None
             ui.status(f"DRY RUN — no copy, no writes (source: {faces_db})")
         else:
@@ -965,7 +901,7 @@ def main(argv=None) -> int:
     staging_total = rep.counters.get("staging_faces", 0)
     unusable = (rep.counters.get("hash-missing", 0) +
                 rep.counters.get("image-not-in-db", 0))
-    pct = coverage_pct(unusable, staging_total)
+    pct = dbutil.coverage_pct(unusable, staging_total)
     if pct is not None:
         ui.error(f"WARNING: {pct:.0f}% of staging faces unusable"
                  f" ({unusable} of {staging_total}): hash-missing or not in"

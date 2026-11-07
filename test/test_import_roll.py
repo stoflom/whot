@@ -25,6 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
+import dbutil  # noqa: E402
 import import_roll as ir  # noqa: E402
 
 
@@ -60,7 +61,7 @@ class LoadEnvTest(unittest.TestCase):
             "not-a-assignment\n"
         )
         try:
-            env = ir.load_env(p)
+            env = dbutil.load_env(p)
         finally:
             p.unlink()
         self.assertEqual(env["A"], "one")
@@ -72,7 +73,7 @@ class LoadEnvTest(unittest.TestCase):
         os.environ["WHOT_TEST_PROC_VAR"] = "procval"
         p = write_env("X=${WHOT_TEST_PROC_VAR}/pics\nY=${WHOT_UNDEFINED_42}/x\n")
         try:
-            env = ir.load_env(p)
+            env = dbutil.load_env(p)
         finally:
             p.unlink()
             del os.environ["WHOT_TEST_PROC_VAR"]

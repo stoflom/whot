@@ -46,6 +46,7 @@ import time
 from pathlib import Path
 
 import cli_console                    # shared header/status/quiet console (§10)
+import dbutil                         # shared .env / read-only / coverage / seat
 import annotation_snapshot as snap    # shared derive/backfill/refcrop helpers
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -98,16 +99,6 @@ def backup(con: sqlite3.Connection, db: Path, ui: cli_console.Console) -> Path:
         dest.unlink(missing_ok=True)
         sys.exit(f"backup failed (missing or empty: {dest}) — nothing was changed")
     return dest
-
-
-def seat_for(con: sqlite3.Connection, person_id: int) -> str:
-    """§4.35 seat derivation: any provisional face ⇒ `New`, else `Accepted`.
-    (Every rejected face is on the system person by the time this runs.)"""
-    row = con.execute(
-        "SELECT EXISTS(SELECT 1 FROM faces WHERE person_id = ?"
-        "               AND link_status = 'provisional')",
-        (person_id,)).fetchone()
-    return "New" if row[0] else "Accepted"
 
 
 def ensure_rejected_person(con: sqlite3.Connection, create: bool) -> int:
@@ -176,7 +167,7 @@ def seat_groupless(con: sqlite3.Connection) -> tuple[int, int]:
             "                   WHERE g.person_id = p.id)"
             " ORDER BY p.id").fetchall():
         con.execute("INSERT INTO person_groups(person_id, path) VALUES (?, ?)",
-                    (pid, seat_for(con, pid)))
+                    (pid, dbutil.seat_for(con, pid)))
         seat_rows += 1
     return unknown_rows, seat_rows
 

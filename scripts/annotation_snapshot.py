@@ -36,6 +36,7 @@ import time
 from pathlib import Path
 
 import cli_console  # shared header/status/quiet console (scripts-design §10)
+import dbutil       # shared .env / read-only / coverage / seat helpers
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # must match database/schema.sql and scripts/import_roll.py / db.rs
@@ -45,28 +46,8 @@ FORMAT = 1
 
 # ---------------------------------------------------------------- helpers
 
-def load_env(path: Path) -> dict[str, str]:
-    """Minimal .env reader (mirrors import_roll.load_env, stdlib-only)."""
-    raw: dict[str, str] = {}
-    if not path.is_file():
-        return raw
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        raw[key.strip()] = val.strip().strip('"').strip("'")
-    for _ in range(4):
-        for k, v in raw.items():
-            if "${" in v:
-                for ref, rv in raw.items():
-                    v = v.replace("${" + ref + "}", rv)
-                raw[k] = v
-    return raw
-
-
 def default_db() -> Path:
-    env = load_env(PROJECT_ROOT / ".env")
+    env = dbutil.load_env(PROJECT_ROOT / ".env")
     return PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
 
 
@@ -113,7 +94,7 @@ def normalize_group_path(path: str) -> str:
 def restore_refcrop_n() -> int:
     """refcrop_n from whotrc.json when present (default 5, like db.rs)."""
     try:
-        env = load_env(PROJECT_ROOT / ".env")
+        env = dbutil.load_env(PROJECT_ROOT / ".env")
         cfg = json.loads((PROJECT_ROOT / env.get("CONFIG_FILE", "config/whotrc.json")).read_text())
         return max(1, int(cfg.get("refcrop_n", 5)))
     except (OSError, ValueError, json.JSONDecodeError):
@@ -199,7 +180,7 @@ def is_known(name: str | None) -> bool:
 # ---------------------------------------------------------------- export
 
 def do_export(db: Path) -> dict:
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con = dbutil.open_ro(db)
     schema = detect_schema(con)
 
     persons = []
@@ -420,24 +401,10 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
         # the restore touched — groupless gets its seat, a seat-only
         # person re-derives from the faces it now holds; a real group (or
         # the system person's `Rejected`) is never touched. Insert-first.
-        seats = ("New", "Accepted", "Rejected")
+        # #251: the per-person seat derivation now lives in dbutil (ONE
+        # copy, shared with import_harvested)
         for pid in sorted(set(restored.values())):
-            rows = [r[0] for r in con.execute(
-                "SELECT path FROM person_groups WHERE person_id = ?", (pid,))]
-            if rows and "Rejected" in rows:
-                continue                   # the system person is never re-seated
-            has_new = con.execute(
-                "SELECT EXISTS(SELECT 1 FROM faces WHERE person_id = ?"
-                "               AND link_status = 'provisional')", (pid,)).fetchone()[0]
-            seat = "New" if has_new else "Accepted"
-            if not rows:
-                con.execute("INSERT INTO person_groups(person_id, path) VALUES (?, ?)",
-                            (pid, seat))
-            elif all(r in seats for r in rows) and seat not in rows:
-                con.execute("INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, ?)",
-                            (pid, seat))
-                con.execute("DELETE FROM person_groups WHERE person_id = ? AND path != ?",
-                            (pid, seat))
+            dbutil.reseat_person(con, pid)
 
         for p in data["persons"]:
             if not p.get("primary"):

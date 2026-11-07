@@ -24,6 +24,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import cli_console  # noqa: E402
+import dbutil  # noqa: E402
 import annotation_snapshot as ansi  # noqa: E402
 import harvest_legacy as hl  # noqa: E402
 import import_harvested as ih  # noqa: E402
@@ -32,31 +33,24 @@ import import_roll as ir  # noqa: E402
 REAL_ROOT = ir.PROJECT_ROOT        # captured before any test patches it (#94)
 
 # ---- local-config isolation (#112): hl.main()/ih.main() read the real
-# project .env, so the operator's PATH_MAP (a present file, a missing file,
-# any content) must never decide a console-contract test's outcome.
-def _strip_path_map(module):
-    orig = module.load_env
-
-    def _load_env(path):
-        env = orig(path)
-        env.pop("PATH_MAP", None)
-        return env
-
-    return orig, _load_env
+# project .env (now via dbutil.load_env), so the operator's PATH_MAP (a
+# present file, a missing file, any content) must never decide a
+# console-contract test's outcome.
+_ORIG_LOAD_ENV = dbutil.load_env
 
 
-_HL_LOAD_ENV, _HL_LOAD_ENV_NO_PM = _strip_path_map(hl)
-_IH_LOAD_ENV, _IH_LOAD_ENV_NO_PM = _strip_path_map(ih)
+def _load_env_no_pm(path):
+    env = _ORIG_LOAD_ENV(path)
+    env.pop("PATH_MAP", None)
+    return env
 
 
 def setUpModule() -> None:
-    hl.load_env = _HL_LOAD_ENV_NO_PM
-    ih.load_env = _IH_LOAD_ENV_NO_PM
+    dbutil.load_env = _load_env_no_pm
 
 
 def tearDownModule() -> None:
-    hl.load_env = _HL_LOAD_ENV
-    ih.load_env = _IH_LOAD_ENV
+    dbutil.load_env = _ORIG_LOAD_ENV
 
 
 def run_captured(fn, *args, **kw):

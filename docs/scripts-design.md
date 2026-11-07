@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 6.5** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 6.6** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -583,6 +583,26 @@ stderr (§10.4).
 A module-level default instance keeps the existing `log()` helpers in
 `harvest_legacy.py` / `import_harvested.py` working unchanged for
 library callers (tests); `main()` swaps in the configured instance.
+
+### 10.8 Shared DB helpers
+
+`scripts/dbutil.py` — the stdlib-only helpers every script used to carry
+in its own (drifted) copy, now ONE copy each:
+
+- `load_env(path)` — the `.env` reader (KEY=VALUE, nested `${VAR}`, then
+  real-environment fallback; a missing file yields `{}`, never raises).
+- `open_ro(path, immutable=False)` — the read-only source connection
+  (URL-quoted URI so a `#`/`?` can't truncate it; `immutable` for the
+  read-only archive).
+- `UNUSABLE_THRESHOLD` / `coverage_pct(unusable, total)` — the §8.6
+  >20% unusable warning.
+- `seat_for(con, person_id)` / `reseat_person(con, person_id,
+  must_exist=…)` — the §4.35 seat derivation and insert-first
+  re-seating (the system person's `Rejected` is never touched).
+
+Scripts do `import dbutil` and call `dbutil.X` (not `from dbutil import
+X`) so the tests patch a single home. Same shared-module precedent as
+`cli_console.py`.
 
 ### 9.8 Idempotent re-runs
 

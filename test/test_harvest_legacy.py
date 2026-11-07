@@ -18,16 +18,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
+import dbutil  # noqa: E402
 import harvest_legacy as hl  # noqa: E402
 import pathmap  # noqa: E402
 
-# ---- local-config isolation (#112): main() reads the real project .env, so
-# the operator's PATH_MAP would rewrite the fixtures' D:/LIVE paths and
-# defeat the "nothing mapped" coverage scenarios (or hard-error when the
-# referenced file is missing).  Local config must never decide a test's
-# outcome; tests exercise the path map explicitly (pathmap.parse_path_map /
-# harvest(path_map=...)), never through .env.
-_ORIG_LOAD_ENV = hl.load_env
+# ---- local-config isolation (#112): main() reads the real project .env
+# (now via dbutil.load_env), so the operator's PATH_MAP would rewrite the
+# fixtures' D:/LIVE paths and defeat the "nothing mapped" coverage
+# scenarios (or hard-error when the referenced file is missing).  Local
+# config must never decide a test's outcome; tests exercise the path map
+# explicitly (pathmap.parse_path_map / harvest(path_map=...)), never
+# through .env.
+_ORIG_LOAD_ENV = dbutil.load_env
 
 
 def _load_env_without_pathmap(path):
@@ -37,11 +39,11 @@ def _load_env_without_pathmap(path):
 
 
 def setUpModule() -> None:
-    hl.load_env = _load_env_without_pathmap
+    dbutil.load_env = _load_env_without_pathmap
 
 
 def tearDownModule() -> None:
-    hl.load_env = _ORIG_LOAD_ENV
+    dbutil.load_env = _ORIG_LOAD_ENV
 
 MWG_ELEMENT = """<x:xmpmeta><rdf:RDF><rdf:Description>
 <mwg-rs:Regions>
@@ -232,7 +234,7 @@ class ParserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             envf = Path(td) / ".env"
             envf.write_text("A=${HOME}/pics\nB=${A}/deep\nC=plain\n")
-            got = hl.load_env(envf)
+            got = dbutil.load_env(envf)
         self.assertEqual(got["A"], f"{os.environ['HOME']}/pics")
         self.assertEqual(got["B"], f"{os.environ['HOME']}/pics/deep")
         self.assertEqual(got["C"], "plain")

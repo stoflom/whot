@@ -64,10 +64,10 @@ import re
 import sqlite3
 import sys
 import time
-import urllib.parse
 from pathlib import Path
 
 import cli_console  # shared header/status/quiet console (scripts-design §10)
+import dbutil       # shared .env / read-only / coverage / seat helpers
 import pathmap      # legacy path-map file (scripts-design §8.6, #85)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -94,8 +94,6 @@ TAG_SEP = "|"
 # module-level console: library callers (tests) get plain status output;
 # main() swaps in the -q-aware instance (scripts-design §10.7)
 _CONSOLE = cli_console.Console()
-
-UNUSABLE_THRESHOLD = 0.20      # >20% unusable rows => loud warning (#83)
 
 
 def unmapped_breakdown(entries: list[tuple[str, str]],
@@ -126,17 +124,6 @@ def unmapped_breakdown(entries: list[tuple[str, str]],
         s["count"] += 1
         s["in_scope"] += int(in_scope)
     return roots
-
-
-def coverage_pct(unusable: int, total: int,
-                 threshold: float = UNUSABLE_THRESHOLD) -> float | None:
-    """Share of unusable rows in percent, or None while healthy (#8.6).
-
-    Pure function so the threshold logic is testable without a harvest.
-    """
-    if total <= 0 or unusable * (1.0 / threshold) <= total:
-        return None
-    return 100.0 * unusable / total
 
 
 def log(msg: str) -> None:
@@ -234,31 +221,6 @@ class Hasher:
 
 
 # ---------------------------------------------------------------------- env
-
-def load_env(path: Path) -> dict[str, str]:
-    """Parse KEY=VALUE lines with ${VAR} references; no external dependency."""
-    raw: dict[str, str] = {}
-    if not path.exists():
-        return raw
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        raw[key.strip()] = val.strip().strip('"').strip("'")
-    for _ in range(4):                      # resolve nested ${VAR}
-        for k, v in raw.items():
-            if "${" in v:
-                for ref, rv in raw.items():
-                    v = v.replace("${" + ref + "}", rv)
-                raw[k] = v
-    for k, v in raw.items():                # then references to the real
-        if "${" in v:                       # environment (${HOME}, ${USER})
-            for ref, rv in os.environ.items():
-                v = v.replace("${" + ref + "}", rv)
-            raw[k] = v
-    return raw
-
 
 # ------------------------------------------------- sidecar XMP parse (H1 read)
 
@@ -382,17 +344,6 @@ def read_text(path: Path) -> str | None:
 
 class StagingError(RuntimeError):
     """A staging-DB lifecycle violation (exists, version, schema)."""
-
-
-def open_ro(db_path: Path, immutable: bool = False) -> sqlite3.Connection:
-    """Read-only connection to a source DB (H1). `immutable` also forbids
-    the journal dance next to the file — required for the Lightroom catalog,
-    which is checkpointed and lives on the read-only archive."""
-    uri = "file:" + urllib.parse.quote(str(db_path)) + "?mode=ro" \
-        + ("&immutable=1" if immutable else "")
-    con = sqlite3.connect(uri, uri=True)
-    con.row_factory = sqlite3.Row
-    return con
 
 
 class Staging:
@@ -843,7 +794,7 @@ def harvest_recognition(st: Staging, db_path: Path, src_id: int,
         stats["identities"] = 0
         stats["recognition_refs"] = 0
         return set()
-    con2 = open_ro(db_path)
+    con2 = dbutil.open_ro(db_path)
     names: set[str] = set()
     n_refs = 0
     try:
@@ -891,7 +842,7 @@ def harvest_digikam_core(st: Staging, db_path: Path, stats: dict,
         log(f"  (digikam core db not found: {db_path})")
         stats["dktags"] = 0
         return
-    con2 = open_ro(db_path)
+    con2 = dbutil.open_ro(db_path)
     try:
         paths = _digikam_tag_paths(con2)
         known_l = {n.lower() for n in known}
@@ -917,7 +868,7 @@ def harvest_digikam_faces(st: Staging, db_path: Path, src_id: int,
         log(f"  (digikam core db not found: {db_path})")
         stats["dk_faces"] = 0
         return
-    con2 = open_ro(db_path)
+    con2 = dbutil.open_ro(db_path)
     n = n_dup = 0
     resolved: dict[str, int] = {}
     try:
@@ -995,7 +946,7 @@ def harvest_lightroom_catalog(st: Staging, catalog: Path,
         log(f"  (lightroom catalog not found: {catalog})")
         stats["lr_faces"] = 0
         return set()
-    con2 = open_ro(catalog, immutable=True)
+    con2 = dbutil.open_ro(catalog, immutable=True)
     known: set[str] = set()
     n_persons = n_paths = n_refs = n_groups = 0
     n_faces = n_dup = 0
@@ -1325,7 +1276,7 @@ def _dry_scan(images_dirs: list[Path], digikam_db: Path,
                     if p != "People":
                         names.add(p.rsplit(TAG_SEP, 1)[-1])
     if recognition_db.exists():
-        con2 = open_ro(recognition_db)
+        con2 = dbutil.open_ro(recognition_db)
         try:
             ids = {r[0] for r in con2.execute("SELECT id FROM Identities")}
             for iid, attr, val in con2.execute(
@@ -1335,7 +1286,7 @@ def _dry_scan(images_dirs: list[Path], digikam_db: Path,
         finally:
             con2.close()
     if lightroom_catalog and lightroom_catalog.exists():
-        con2 = open_ro(lightroom_catalog, immutable=True)
+        con2 = dbutil.open_ro(lightroom_catalog, immutable=True)
         try:
             kw = {r[0]: (r[1], r[2]) for r in con2.execute(
                 "SELECT id_local, name, parent FROM AgLibraryKeyword "
@@ -1347,7 +1298,7 @@ def _dry_scan(images_dirs: list[Path], digikam_db: Path,
         finally:
             con2.close()
     if digikam_db.exists():
-        con2 = open_ro(digikam_db)
+        con2 = dbutil.open_ro(digikam_db)
         try:
             paths = _digikam_tag_paths(con2)
             stats["digikam_tag_leaves"] = len({p.rsplit(TAG_SEP, 1)[-1]
@@ -1424,7 +1375,7 @@ def main(argv=None) -> int:
                  " (nothing is written, so there is nothing to resume)")
         return 1
 
-    env = load_env(PROJECT_ROOT / ".env")
+    env = dbutil.load_env(PROJECT_ROOT / ".env")
 
     def env_path(key: str) -> Path | None:
         v = env.get(key)
@@ -1555,7 +1506,7 @@ def main(argv=None) -> int:
     unusable = lr_in_scope + dk_unknown
     total_rows = unusable + lr_out + stats.get("lr_faces", 0) + \
         stats.get("dk_faces", 0) + stats.get("dk_faces_dup", 0)
-    pct = coverage_pct(unusable, total_rows)
+    pct = dbutil.coverage_pct(unusable, total_rows)
     if pct is not None:
         scope_note = ("" if index_available else
                       " (no resolution index: in-scope split unavailable,"
