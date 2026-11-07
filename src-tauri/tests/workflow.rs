@@ -1137,6 +1137,9 @@ fn has_schema_probes_usable_database_185() {
     assert!(db::has_schema(&p), "the fixture is usable");
     std::fs::remove_file(&p.db).unwrap();
     assert!(!db::has_schema(&p), "a missing file is not a database");
+    // #252: the probe is read-only — it must NOT create the file as a
+    // side effect (the old Connection::open left an empty faces.db behind)
+    assert!(!p.db.exists(), "the probe must not create a missing database");
     // an empty file — Connection::open creates exactly this on a failed
     // first load, so file-existence alone must never gate the offer
     std::fs::write(&p.db, b"").unwrap();

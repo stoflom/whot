@@ -55,6 +55,19 @@ fn build_args_create_db_dry_run_refused() {
     assert_eq!(a[0], "--create-db");
 }
 
+/// #252: the threshold arrives raw from the IPC — NaN/inf/negative/>1 are
+/// refused up front instead of failing deep inside the child process.
+#[test]
+fn build_args_threshold_out_of_range_refused() {
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.5] {
+        let e = build_args(&opts(false, false, false, bad, false, false)).unwrap_err();
+        assert!(e.contains("--threshold"), "expected a threshold error, got: {e}");
+    }
+    // the inclusive bounds are accepted
+    assert!(build_args(&opts(false, false, false, 0.0, false, false)).is_ok());
+    assert!(build_args(&opts(false, false, false, 1.0, false, false)).is_ok());
+}
+
 /// #169: the probe walks RECURSIVELY — a level-2 image opens the pane —
 /// hidden directories are skipped, non-image files don't count, and
 /// file/missing paths are false

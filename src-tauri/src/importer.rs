@@ -42,6 +42,12 @@ pub fn build_args(opts: &ImportOptions) -> Result<Vec<String>, String> {
     if opts.create_db && opts.dry_run {
         return Err("--create-db cannot be combined with --dry-run (creation is a write)".into());
     }
+    // #252: the threshold arrives raw from the IPC (f64) — a NaN/inf/negative
+    // or >1 value would only fail deep inside the child Python process. The
+    // range check rejects NaN/inf too (their comparisons are false).
+    if !(0.0..=1.0).contains(&opts.threshold) {
+        return Err(format!("--threshold must be in [0, 1] (got {})", opts.threshold));
+    }
     let mut args: Vec<String> = Vec::new();
     if opts.dry_run {
         args.push("--dry-run".into());
