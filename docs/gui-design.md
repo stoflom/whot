@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.3** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.4** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2063,7 +2063,11 @@ clusters and reference crops *in parallel* with the verdict IPC. The
 cluster and refcrop effects consume a prefetched entry only when the
 target person's §213 data signature is unchanged at consumption
 time; a failed prefetch never surfaces — the normal fetch path covers
-it.
+it. The cluster and refcrop fetches are themselves **staleness-guarded**
+(v5.4, #246): each effect's cleanup revokes its in-flight IPC, so a
+fetch of the previous person can never land after the switch, and a
+failed refcrop fetch surfaces as an error like every other fetch
+instead of rendering an empty strip.
 
 **46. (v5.0, #235) Film-roll image stepping in Rolls.**
 

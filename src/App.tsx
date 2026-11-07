@@ -468,6 +468,7 @@ export default function App() {
   // when this person's clustering inputs move (the #211 backend cache
   // catches the repeated reads)
   useEffect(() => {
+    let live = true;                  // #246: the fetch dies with the deps
     if (
       mode === "person" &&
       personId != null &&
@@ -485,17 +486,25 @@ export default function App() {
       }
       api
         .personFaceClusters(personId, clusterThreshold)
-        .then(setClusters)
-        .catch((e) => setError(String(e)));
+        .then((groups) => {
+          if (live) setClusters(groups);   // #246: stale fetches never land
+        })
+        .catch((e) => {
+          if (live) setError(String(e));
+        });
     } else {
       setClusters(null);
     }
+    return () => {      // #246: a person switch / view change revokes any
+      live = false;     // in-flight fetch — person A's clusters can never
+    };                  // render in person B's view
   }, [mode, personId, personSig, clusterGroup, clusterThreshold]);
 
   // refcrops for the detail pane. #213: keyed on the person-data
   // signature + the pin epoch (pin changes are invisible to the
   // snapshot, so doRefcrop/paneRemoveRefcrop bump the epoch)
   useEffect(() => {
+    let live = true;                  // #246: the fetch dies with the deps
     if (personId == null || !personSig) {
       setRefcrops([]);
       return;
@@ -507,7 +516,19 @@ export default function App() {
       setRefcrops(hit.value as Refcrop[]);
       return;
     }
-    api.getRefcrops(personId).then(setRefcrops).catch(() => setRefcrops([]));
+    api
+      .getRefcrops(personId)
+      .then((crops) => {
+        if (live) setRefcrops(crops); // #246: stale fetches never land
+      })
+      .catch((e) => {
+        // #246: errors surface like every other fetch — an emptied strip
+        // that pretends "no refcrops" hides a broken fetch
+        if (live) setError(String(e));
+      });
+    return () => {
+      live = false;
+    };
   }, [personId, personSig, refcropEpoch]);
 
   // #25 — Esc closes the double-click image split
