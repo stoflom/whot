@@ -28,6 +28,16 @@ export default function GroupDialog({
   options,
 }: Props) {
   useOwnsKeyboard(); // #138
+  // #248: the topmost overlay owns Esc — a field-level onEscape covers
+  // only the typeahead, so Esc must work from the dialog body too
+  // (ConfirmDialog/FaceMergeDialog idiom)
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCancel]);
   const [path, setPath] = useState(defaultPath);
   useEffect(() => setPath(defaultPath), [defaultPath]);
   // #67/#92: group paths are structural — the default selects them whole.

@@ -10,6 +10,15 @@ interface Props {
 
 export default function SettingsPopover({ settings, onSave, onClose }: Props) {
   useOwnsKeyboard(); // #138 (the shortcut guard never saw this popover)
+  // #248: the topmost overlay owns Esc — the popover had no field-level
+  // escape at all, so Esc was dead until focus left the inputs
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onClose]);
   const [threshold, setThreshold] = useState(settings.cluster_threshold);
   const [refcropN, setRefcropN] = useState(settings.refcrop_n);
   useEffect(() => {

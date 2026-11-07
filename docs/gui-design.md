@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.4** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.5** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1391,7 +1391,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - Accept never touches rejected faces (claiming is an assignment,
       §4.35; §4.2 plain accept never un-rejects). Esc closes layers in
       order: dropdown → menus and dialogs → preview-undo → cancel field
-      edit → split.
+      edit → split. **Every owning modal installs its own
+      window-level Escape handler** (v5.5, #248): the field-level
+      `onEscape` covers only its input, so a dialog without the listener
+      leaves Esc dead once focus leaves the fields — ConfirmDialog,
+      FaceMergeDialog, MergeIntoDialog, EditDialog, GroupDialog and
+      SettingsPopover all carry it. The typeahead field declares its
+      combobox role over the listbox (`role=combobox`, `aria-expanded`,
+      `aria-controls`, `aria-activedescendant`) for the same sweep.
 31. **Render-performance contract** ⇒ Review mode must stay
     interactive over thousands of cards (4116 faces, ~1061 sections,
     ~56k DOM nodes in the default review view):

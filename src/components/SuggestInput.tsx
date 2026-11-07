@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useId } from "react";
 import type {
   FocusEvent as ReactFocusEvent,
   KeyboardEvent as ReactKeyboardEvent,
@@ -80,6 +80,12 @@ export default function SuggestInput({
 
   const listOpen = open && matches.length > 0;
 
+  // #248: the combobox ARIA wiring — the listbox existed, the input
+  // never declared it, so ATs saw a bare text field while a list hung
+  // off it
+  const listId = useId();
+  const hiId = listOpen && hi >= 0 ? `${listId}-opt-${hi}` : undefined;
+
   // #92 append mode: caret after the prefill once focus lands
   useEffect(() => {
     if (!caretEnd) return;
@@ -159,6 +165,11 @@ export default function SuggestInput({
         placeholder={placeholder}
         title={title}
         autoFocus={autoFocus}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={listOpen}
+        aria-controls={listId}
+        aria-activedescendant={hiId}
         onChange={(e) => {
           onChange(e.target.value);
           setOpen(true);
@@ -170,10 +181,11 @@ export default function SuggestInput({
         onBlur={onBlur}
       />
       {listOpen && (
-        <ul className="typeahead-list" role="listbox">
+        <ul className="typeahead-list" id={listId} role="listbox">
           {matches.map((o, i) => (
             <li
               key={`${o.label ?? o.value}\u0000${o.hint ?? ""}\u0000${i}`}
+              id={`${listId}-opt-${i}`}
               role="option"
               aria-selected={i === hi}
               className={i === hi ? "hi" : undefined}

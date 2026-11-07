@@ -68,6 +68,16 @@ export default function EditDialog({
 }: Props) {
   // header-open has no card scope (count 0) — never open on an empty scope
   useOwnsKeyboard(); // #138
+  // #248: the topmost overlay owns Esc — the field-level onEscape covers
+  // only the typeaheads/desc input, so Esc must work from the dialog
+  // body too (ConfirmDialog/FaceMergeDialog idiom)
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCancel]);
   const [scope, setScope] = useState<StageScope>(
     counts[defaultScope] > 0
       ? defaultScope
