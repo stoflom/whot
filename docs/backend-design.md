@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.14** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.15** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -153,11 +153,16 @@ person) — see `docs/schema-design.md` §5.
   in the webview), the frontend coalesces each render-commit's image
   requests into one call per kind and caches the URLs by
   `face_id`/`image_id` (content is immutable; per-kind LRU caps revoke
-  evicted Blob URLs). `get_refcrops` derives its filenames at read from
-  the face and carries no pixels (rows are metadata since schema v1.8,
-  #210) — the detail strip loads crops through the same pipeline.
-  `open_image` is the exception: it writes `images.preview` to a temp
-  file and hands it to the opener plugin (gui-design §3).
+  evicted Blob URLs). The batch's two passes (lengths, then bytes) run
+  in **one read transaction** — a single snapshot, so a concurrent
+  importer commit can't land between them and misalign the frame
+  offsets (the importer is a separate process; the pool mutex only
+  serialises in-process commands, #245). `get_refcrops` derives its
+  filenames at read from the face and carries no pixels (rows are
+  metadata since schema v1.8, #210) — the detail strip loads crops
+  through the same pipeline. `open_image` is the exception: it writes
+  `images.preview` to a temp file and hands it to the opener plugin
+  (gui-design §3).
 - `person_face_clusters` computes, per appearance group, single-linkage
   clusters around the primary face (gui-design §4.9) — read-only
   display aid, threshold from the caller (default 0.40).

@@ -860,14 +860,20 @@ pub fn image_batch_bytes_capped(
     let mut sorted: Vec<i64> = ids.to_vec();
     sorted.sort_unstable();
     sorted.dedup();
-    let con = connect(paths)?;
+    let mut con = connect(paths)?;
+    // #245: both passes run in ONE transaction — a single read snapshot,
+    // so a concurrent importer commit can't land between the length
+    // pass and the byte pass and misalign the WHOTIMG frame offsets
+    // (the importer is a separate process; the pool mutex only serialises
+    // in-process commands)
+    let tx = con.transaction()?;
     // pass 1 — lengths only, grouped so a huge selection never outgrows
     // the SQL string budget; a cap hit defers the rest (strict prefix)
     let mut served: Vec<(i64, u32)> = Vec::new();
     let mut total = 0usize;
     'lengths: for chunk in sorted.chunks(500) {
         let list = ids_list(chunk);
-        let mut st = con.prepare(&format!(
+        let mut st = tx.prepare(&format!(
             "SELECT id, length({col}) FROM {table} WHERE id IN ({list}) AND {col} IS NOT NULL ORDER BY id"
         ))?;
         let rows: Vec<(i64, i64)> = st
@@ -904,7 +910,7 @@ pub fn image_batch_bytes_capped(
     let served_ids: Vec<i64> = served.iter().map(|(id, _)| *id).collect();
     for chunk in served_ids.chunks(500) {
         let list = ids_list(chunk);
-        let mut st = con.prepare(&format!(
+        let mut st = tx.prepare(&format!(
             "SELECT {col} FROM {table} WHERE id IN ({list}) AND {col} IS NOT NULL ORDER BY id"
         ))?;
         for row in st.query_map([], |r| r.get::<_, Vec<u8>>(0))? {
@@ -912,6 +918,8 @@ pub fn image_batch_bytes_capped(
             out.extend_from_slice(&blob);
         }
     }
+    // read-only: the commit only ends the snapshot (no writes were made)
+    tx.commit()?;
     Ok(out)
 }
 
