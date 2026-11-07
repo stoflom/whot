@@ -1101,7 +1101,14 @@ fn recompute_person(con: &Connection, person_id: i64, settings: &Settings) -> Re
     recompute_refcrops(con, person_id, settings.refcrop_n)
 }
 
+/// The `IN (...)` placeholder for a NON-EMPTY id slice. Callers must guard
+/// against an empty slice — an empty one would emit `IN ()`, which is
+/// invalid SQL (#249: every current caller guards, this makes the
+/// contract explicit). The assert fires in test/debug builds so a future
+/// unguarded caller fails loudly and locally, not as a cryptic SQL error
+/// deep in the query.
 fn ids_list(ids: &[i64]) -> String {
+    debug_assert!(!ids.is_empty(), "ids_list: empty slice emits invalid `IN ()` — guard the caller");
     ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",")
 }
 
@@ -1748,12 +1755,21 @@ pub fn rotate_face(paths: &Paths, face_id: i64, delta: i64) -> Result<Delta> {
     let d = ((delta % 360) + 360) % 360;
     // #219 — the stamp before the write, for drift detection.
     let v1 = data_version(paths)?;
-    let con = connect(paths)?;
-    let cur: i64 = con
+    let mut con = connect(paths)?;
+    // #249 — the read+write must be ONE transaction. The old bare
+    // query_row + execute left a lost-update window: a concurrent importer
+    // write landing between the read and the update was silently
+    // overwritten (the `rotation` column is the geometric key the importer
+    // lands harvested angles in). A deferred tx that reads then writes
+    // fails with SQLITE_BUSY on a stale snapshot instead of overwriting it
+    // — the same guarantee `rotate_image` / `rotate_image_tx` already had.
+    let tx = con.transaction()?;
+    let cur: i64 = tx
         .query_row("SELECT rotation FROM faces WHERE id = ?", params![face_id], |r| r.get(0))
         .context("face not found")?;
     let next = (cur + d) % 360;
-    con.execute("UPDATE faces SET rotation = ? WHERE id = ?", params![next, face_id])?;
+    tx.execute("UPDATE faces SET rotation = ? WHERE id = ?", params![next, face_id])?;
+    tx.commit()?;
     // #219 — only this face's crop rotation changes.
     delta_after(paths, &*con, v1, &[], &[], &[face_id], &[], Vec::new())
 }
@@ -2478,10 +2494,90 @@ pub struct AppearanceGroup {
 /// clearing — the GUI only ever asks for the anchored person's clusters;
 /// the map is a per-process working set, not a store.
 struct ClusterCache {
+    /// #249 — recency order: front = most-recently-used, back = evicted
+    /// first. The old full-clear on the 257th distinct key degenerated to
+    /// recompute-every-time once more than 256 persons were browsed; the
+    /// LRU keeps the hot set.
+    order: Vec<(PathBuf, i64, u64)>,
     map: HashMap<(PathBuf, i64, u64), (String, Vec<AppearanceGroup>, usize)>,
 }
 const CLUSTER_CACHE_MAX: usize = 256;
 static CLUSTER_CACHE: Mutex<Option<ClusterCache>> = Mutex::new(None);
+
+impl ClusterCache {
+    /// promote `key` to most-recently-used (a served cache hit).
+    fn touch(&mut self, key: &(PathBuf, i64, u64)) {
+        if let Some(pos) = self.order.iter().position(|k| k == key) {
+            let k = self.order.remove(pos);
+            self.order.insert(0, k);
+        }
+    }
+    /// insert/replace, keeping at most `CLUSTER_CACHE_MAX` entries (LRU):
+    /// a new key is pushed to the front and the coldest is evicted; a
+    /// recompute of an existing key (stale fingerprint) just promotes it.
+    fn put(
+        &mut self,
+        key: (PathBuf, i64, u64),
+        val: (String, Vec<AppearanceGroup>, usize),
+    ) {
+        let is_new = !self.map.contains_key(&key);
+        self.map.insert(key.clone(), val);
+        if is_new {
+            self.order.insert(0, key);
+            if self.order.len() > CLUSTER_CACHE_MAX {
+                if let Some(cold) = self.order.pop() {
+                    self.map.remove(&cold);
+                }
+            }
+        } else {
+            self.touch(&key);
+        }
+    }
+}
+
+#[cfg(test)]
+mod cluster_cache_tests {
+    use super::{AppearanceGroup, ClusterCache};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn key(i: i64) -> (PathBuf, i64, u64) {
+        (PathBuf::from("/tmp"), i, 0u64)
+    }
+    fn val(i: i64) -> (String, Vec<AppearanceGroup>, usize) {
+        (format!("{i}"), Vec::new(), 0)
+    }
+
+    /// #249 — a full cache evicts the coldest entry, not everything: a
+    /// recently-touched entry survives, a never-touched one goes.
+    #[test]
+    fn evicts_cold_not_hot() {
+        let mut c = ClusterCache { order: Vec::new(), map: HashMap::new() };
+        for i in 0..256i64 {
+            c.put(key(i), val(i));
+        }
+        assert_eq!(c.map.len(), 256);
+        // promote key 0 to most-recently-used
+        c.touch(&key(0));
+        // a new key overflows -> evicts the coldest (key 1; key 0 is hot)
+        c.put(key(999), val(999));
+        assert_eq!(c.map.len(), 256);
+        assert!(c.map.contains_key(&key(0)), "hot entry survives");
+        assert!(!c.map.contains_key(&key(1)), "cold entry evicted");
+        assert!(c.map.contains_key(&key(999)), "new entry present");
+    }
+
+    /// #249 — a recompute of an existing key (stale fingerprint) replaces
+    /// the value and promotes it, without adding a duplicate order entry.
+    #[test]
+    fn recompute_promotes_not_duplicates() {
+        let mut c = ClusterCache { order: Vec::new(), map: HashMap::new() };
+        c.put(key(5), val(5));
+        c.put(key(5), val(5)); // stale-fingerprint recompute of the same key
+        assert_eq!(c.order.len(), 1, "no duplicate order entry");
+        assert_eq!(c.map[&key(5)].0, "5");
+    }
+}
 
 fn cluster_lock() -> Result<std::sync::MutexGuard<'static, Option<ClusterCache>>> {
     CLUSTER_CACHE.lock().map_err(|_| anyhow!("cluster cache lock poisoned"))
@@ -2549,12 +2645,19 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
     let fp = cluster_fingerprint(&faces);
     {
         let mut guard = cluster_lock()?;
-        let cache = guard.get_or_insert_with(|| ClusterCache { map: HashMap::new() });
-        if let Some((old, out, hits)) = cache.map.get_mut(&key) {
-            if *old == fp {
-                *hits += 1;
-                return Ok(out.clone());
+        let cache = guard.get_or_insert_with(|| ClusterCache { order: Vec::new(), map: HashMap::new() });
+        // clone the result out before touching — the get_mut borrow must
+        // end before the mutable touch (E0499)
+        let hit: Option<Vec<AppearanceGroup>> = match cache.map.get_mut(&key) {
+            Some(entry) if entry.0 == fp => {
+                entry.2 += 1;
+                Some(entry.1.clone())
             }
+            _ => None,
+        };
+        if let Some(out) = hit {
+            cache.touch(&key);
+            return Ok(out);
         }
     }
     let primary = faces.iter().find(|(_, _, p, _)| *p).map(|(id, _, _, _)| *id)
@@ -2651,11 +2754,8 @@ pub fn person_face_clusters(paths: &Paths, person_id: i64, threshold: f64) -> Re
         .collect();
     // #211: remember the result under its input fingerprint
     if let Ok(mut guard) = cluster_lock() {
-        let cache = guard.get_or_insert_with(|| ClusterCache { map: HashMap::new() });
-        if cache.map.len() >= CLUSTER_CACHE_MAX {
-            cache.map.clear();
-        }
-        cache.map.insert(key, (fp, out.clone(), 0));
+        let cache = guard.get_or_insert_with(|| ClusterCache { order: Vec::new(), map: HashMap::new() });
+        cache.put(key, (fp, out.clone(), 0));
     }
     Ok(out)
 }

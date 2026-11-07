@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.15** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.16** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -130,11 +130,23 @@ Every mutating command follows the same shape (gui-design §4.8):
 The stale-shell sweep (gui-design §4.27) rides the writers that can
 empty a person — `snapshot()` itself is a pure read (#208).
 
+**Read-modify-write atomicity:** the rotation commands
+(`rotate_image`, `rotate_images`, `rotate_face`) read a `rotation` column
+and write back `current + delta`. The read and the write stay in **one
+deferred transaction** (#249): `rotate_face`'s old bare `query_row` +
+`execute` left a lost-update window — a concurrent importer write landing
+between the read and the update was silently overwritten (the `rotation`
+column is the geometric key the importer lands harvested angles in,
+§7). A deferred tx that reads then writes instead fails with
+`SQLITE_BUSY` on a stale snapshot, so the update is never lost silently.
+
 Helpers: `affected_persons()` collects the person ids a mutation
 touched (before *and* after — moves have an origin and a destination),
 `recompute_person()` is the per-person bundle of steps 3. Helper SQL is
 built with `ids_list()` for `IN (…)`, so id lists never interpolate user
-text.
+text. `ids_list()` takes a **non-empty** slice — an empty one would emit
+`IN ()` (invalid SQL), so every caller guards and a `debug_assert!` makes
+the contract loud in test/debug builds if a future caller forgets (#249).
 
 **NULL-safety contract:** derived-state queries must tolerate absent
 derived values (`primary_face_id IS NULL` on a fresh or harvested
@@ -165,7 +177,12 @@ person) — see `docs/schema-design.md` §5.
   (gui-design §3).
 - `person_face_clusters` computes, per appearance group, single-linkage
   clusters around the primary face (gui-design §4.9) — read-only
-  display aid, threshold from the caller (default 0.40).
+  display aid, threshold from the caller (default 0.40). Results are
+  cached per `(db, person, threshold)` behind the input fingerprint
+  (#211); the cache is **LRU** (#249) — a full clear on the 257th
+  distinct key degenerated to recompute-every-time once more than 256
+  persons were browsed, so the coldest entry (least-recently-used) is
+  evicted instead and the hot set is retained.
 
 ## 6. Embeddings math
 
