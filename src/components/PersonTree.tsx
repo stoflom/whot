@@ -21,6 +21,51 @@ import GroupDialog from "./GroupDialog";
 // indexes it once per (tree, persons, filter) change
 import { indexTree, type TreeNode } from "../treeIndex";
 
+// #255: the APG tree key pattern shared by branch nodes and person rows —
+// Enter/Space activate (branch toggle / person select), Up/Down move focus
+// among the visible items (DOM order == display order), Right expands a
+// branch, Left collapses it or climbs to the parent branch. Items are
+// found by their `data-tree-key`; the focused one owns its keys
+// (`data-owns-keys`) so App's global arrow-step guard bails out.
+function treeItemKey(
+  e: React.KeyboardEvent,
+  key: string,
+  isBranch: boolean,
+  expanded: boolean,
+  onActivate: () => void,
+  onToggle: () => void,
+  parentKey: string | null
+) {
+  const items = () =>
+    Array.from(document.querySelectorAll<HTMLElement>("[data-tree-key]"));
+  const focusKey = (k: string | null) => {
+    if (k == null) return;
+    const el = items().find((h) => h.getAttribute("data-tree-key") === k);
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ block: "nearest" });
+    }
+  };
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    onActivate();
+  } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const list = items();
+    const idx = list.findIndex((h) => h.getAttribute("data-tree-key") === key);
+    focusKey(
+      list[idx + (e.key === "ArrowDown" ? 1 : -1)]?.getAttribute("data-tree-key") ?? null
+    );
+  } else if (e.key === "ArrowRight") {
+    e.preventDefault();
+    if (isBranch && !expanded) onToggle();
+  } else if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    if (isBranch && expanded) onToggle();
+    else focusKey(parentKey);
+  }
+}
+
 interface Props {
   /** #223: the App-built tree (built once per treePersons change) — the
       pane no longer rebuilds it per render */
@@ -86,7 +131,10 @@ function PersonRow({
   rot,
   dropTarget,
   groupPath,
+  tabbable,
   onSelect,
+  onFocus,
+  onKeyDown,
   onStartRename,
   onRename,
   onRenameCancel,
@@ -109,10 +157,14 @@ function PersonRow({
   dropTarget: boolean;
   /** #223: the row's branch path ('|' form) — the person-drag src (#157) */
   groupPath: string;
+  /** #255: the roving tabindex — only the focused row is tabbable */
+  tabbable: boolean;
   /** #223: id-carrying handlers with ONE shared identity (the pane's
       rowHandlers memo) — the per-row closures that defeated memo() are
       gone; the row binds its own id at the DOM boundary */
   onSelect: (id: number, e: ReactMouseEvent) => void;
+  onFocus: (id: number) => void;
+  onKeyDown: (id: number, e: React.KeyboardEvent) => void;
   onStartRename: (id: number) => void;
   onRename: (id: number, name: string) => void;
   onRenameCancel: (id: number) => void;
@@ -193,8 +245,15 @@ function PersonRow({
   return (
     <button
       data-person-id={person.id} // #76: cursor hit-test for ←/→ stepping
+      data-tree-key={`p:${person.id}`}
+      data-owns-keys
+      role="treeitem"
+      aria-selected={selected}
+      tabIndex={tabbable ? 0 : -1}
       className={cls}
       onClick={(e) => onSelect(person.id, e)}
+      onFocus={() => onFocus(person.id)}
+      onKeyDown={(e) => onKeyDown(person.id, e)}
       onDoubleClick={() => !system && onStartRename(person.id)}
       onContextMenu={(e) => onContextMenu(person.id, e)}
       draggable={!renaming && !system}
@@ -272,6 +331,9 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
     faceDragRef?.current != null && faceDragRef.current.length > 0;
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // #255: the roving-tabindex focus — exactly one visible item (branch
+  // node or person row) is tabbable; arrows move it (treeItemKey)
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
   // #215: the filter input stays crisp — the (heavier) row filtering
   // trails a frame behind the keystrokes instead of blocking them
   const deferredFilter = useDeferredValue(filter);
@@ -281,6 +343,17 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
   // of running the two recursive subtreeMatch walks and the recursive
   // countPersons sums per node (O(n·depth) → O(n) total, once)
   const treeIdx = useMemo(() => indexTree(tree, byId, deferredFilter), [tree, byId, deferredFilter]);
+
+  // #255: keep exactly one visible item tabbable — seed the first item on
+  // mount, and if a focus move / re-render leaves `focusedKey` pointing at
+  // an item that no longer renders, fall back to the first visible one
+  useEffect(() => {
+    const items = Array.from(document.querySelectorAll<HTMLElement>("[data-tree-key]"));
+    if (items.length === 0) return;
+    const alive =
+      focusedKey != null && items.some((h) => h.getAttribute("data-tree-key") === focusedKey);
+    if (!alive) setFocusedKey(items[0].getAttribute("data-tree-key"));
+  }, [focusedKey, tree, persons, deferredFilter]);
 
   const matches = (p: Person) =>
     f === "" ||
@@ -419,6 +492,24 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
       faceDragRef?.current != null && faceDragRef.current.length > 0;
     return {
       onSelect: (id: number, e: ReactMouseEvent) => onSelectRef.current(id, e),
+      // #255: the row's keyboard home — focus moves the roving tabindex,
+      // arrows/Enter run the APG tree pattern (the parent branch is the
+      // row's nearest .tree-node ancestor, read from the DOM)
+      onFocus: (id: number) => setFocusedKey(`p:${id}`),
+      onKeyDown: (id: number, e: React.KeyboardEvent) => {
+        const el = e.currentTarget as HTMLElement;
+        const parentKey =
+          el.closest(".tree-node")?.getAttribute("data-tree-key") ?? null;
+        treeItemKey(
+          e,
+          `p:${id}`,
+          false,
+          false,
+          () => onSelectRef.current(id),
+          () => {},
+          parentKey
+        );
+      },
       onStartRename: (id: number) => setRenamingId(id),
       onRename: (id: number, name: string) => onRenameRef.current(id, name),
       onRenameCancel: (_id: number) => setRenamingId(null),
@@ -535,7 +626,22 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
             system ? ` status-${node.name.toLowerCase()}` : ""
           }`}
           style={{ paddingLeft: 8 + depth * 14 }}
+          // #255: APG tree branch — roving tabindex, Enter/Space + Left/Right
+          // toggle, Up/Down move focus, Left on a collapsed branch climbs
+          role="treeitem"
+          aria-expanded={collapsible ? !isCollapsed : undefined}
+          tabIndex={focusedKey === `b:${path}` ? 0 : -1}
+          data-tree-key={`b:${path}`}
+          data-owns-keys
           onClick={() => (collapsible ? toggle(path) : undefined)}
+          onFocus={() => setFocusedKey(`b:${path}`)}
+          onKeyDown={(e) => {
+            const el = e.currentTarget as HTMLElement;
+            const parentKey =
+              el.parentElement?.closest(".tree-node")?.getAttribute("data-tree-key") ??
+              null;
+            treeItemKey(e, `b:${path}`, true, !isCollapsed, () => toggle(path), () => toggle(path), parentKey);
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -575,6 +681,7 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
                   renaming={renamingId === p.id}
                   rot={primaryRot.get(p.id) ?? 0}
                   groupPath={groupPath}
+                  tabbable={focusedKey === `p:${p.id}`}
                   {...rowHandlers}
                   dropTarget={dropPerson === p.id}
                 />
@@ -624,7 +731,10 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
           ▦ Review — {reviewCount} pending
         </button>
       </div>
-      {renderNode(tree, 0, "", "")}
+      {/* #255: the APG tree — branch nodes + person rows are the treeitems */}
+      <div role="tree" aria-label="persons and groups">
+        {renderNode(tree, 0, "", "")}
+      </div>
       {menu && (
         <ContextMenu
           menu={{

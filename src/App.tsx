@@ -95,7 +95,7 @@ import {
 } from "./sections";
 // §4.44 stage 2 (#206): the pane layout rules + the #191 click-pair
 // guard — pure/co-tested, App owns only the wiring
-import { usePaneSizes } from "./paneState";
+import { usePaneSizes, clampRollCenterFor } from "./paneState";
 import { useClickPairGuard } from "./clickPair";
 // §4.44 + #222 (F-H3): the review-verdict callbacks — the #98 identity
 // rule lives in the hook (person anchor read via refs), co-tested
@@ -221,6 +221,32 @@ export default function App() {
   // co-tested clamp rule); App keeps the named handles it always had
   const { paneSizes, setPaneSizes, rollCenterPx, setRollCenter, startDrag } =
     usePaneSizes(rollsBrowse);
+  // #255: keyboard resize for the pane dividers (the mouse drag is
+  // startDrag; the arrows step the SAME size the drag clamps to). The
+  // divider owns its keys (data-owns-keys) so the global arrow-step
+  // guard above bails while it is focused.
+  const dividerKey = (
+    e: React.KeyboardEvent,
+    edge: "left" | "right"
+  ) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const right = e.key === "ArrowRight";
+    if (edge === "left") {
+      setPaneSizes((s) => ({ ...s, left: Math.min(Math.max(s.left + (right ? 20 : -20), 160), 480) }));
+      return;
+    }
+    if (rollsBrowse) {
+      // #174/§4.39: while browsing the centre|right divider drives the
+      // centre width, not the right pane
+      setRollCenter((rc) =>
+        clampRollCenterFor((rc ?? paneSizes.left) + (right ? -20 : 20), window.innerWidth, paneSizes.left)
+      );
+      return;
+    }
+    setPaneSizes((s) => ({ ...s, right: Math.min(Math.max(s.right + (right ? -20 : 20), 200), 560) }));
+  };
   const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   // #53 (§4.17): most recently selected card — Ctrl-G's fallback target
@@ -2158,7 +2184,10 @@ export default function App() {
           tgt.tagName === "SELECT" || tgt.isContentEditable ||
           // #96: Enter/Space activate a focused button natively — never
           // double them with the shortcuts below
-          tgt.tagName === "BUTTON")
+          tgt.tagName === "BUTTON" ||
+          // #255: a focused a11y control (tree node / roll header / pane
+          // divider) owns its own keys — never step/accept behind it
+          tgt.hasAttribute("data-owns-keys"))
       )
         return;
       // an open modal dialog owns the keyboard (Q8 stack): never act
@@ -2657,9 +2686,15 @@ export default function App() {
         </aside>
         <div
           className="v-divider"
+          role="separator"
+          aria-orientation="vertical"
+          aria-valuetext={`${paneSizes.left}px`}
+          tabIndex={0}
+          data-owns-keys
+          onKeyDown={(e) => dividerKey(e, "left")}
           onMouseDown={startDrag("left")}
           onDoubleClick={() => setPaneSizes((s) => ({ ...s, left: 250 }))}
-          title="drag to resize, double-click to reset"
+          title="drag to resize, double-click to reset, arrow keys to adjust"
         />
 
         <main
@@ -2933,6 +2968,12 @@ export default function App() {
 
         <div
           className="v-divider"
+          role="separator"
+          aria-orientation="vertical"
+          aria-valuetext={`${rollsBrowse ? rollCenterPx : paneSizes.right}px`}
+          tabIndex={0}
+          data-owns-keys
+          onKeyDown={(e) => dividerKey(e, "right")}
           onMouseDown={startDrag("right")}
           onDoubleClick={() => {
             // #174/§4.39: while browsing Rolls the divider owns the
@@ -2942,8 +2983,8 @@ export default function App() {
           }}
           title={
             rollsBrowse
-              ? "drag to resize the centre (10–70% of the window), double-click to reset"
-              : "drag to resize, double-click to reset"
+              ? "drag to resize the centre (10–70% of the window), double-click to reset, arrow keys to adjust"
+              : "drag to resize, double-click to reset, arrow keys to adjust"
           }
         />
         <aside

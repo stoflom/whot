@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.5** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.6** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1399,6 +1399,27 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       SettingsPopover all carry it. The typeahead field declares its
       combobox role over the listbox (`role=combobox`, `aria-expanded`,
       `aria-controls`, `aria-activedescendant`) for the same sweep.
+     - **Structural keyboard reach (v5.6, #255)**: the three
+       mouse-only controls now speak the WAI-ARIA tree/separator
+       pattern so keyboard users can reach them:
+       - The **person tree** (branch nodes *and* person rows) is a
+         `role=tree` of `role=treeitem`s — branches carry
+         `aria-expanded`, rows `aria-selected`, and a **roving
+         tabindex** keeps exactly one item in the tab sequence.
+         `Enter`/`Space` activate (toggle / select), `↑`/`↓` move focus
+         among the visible items (DOM order == display order), `→`
+         expands a branch, `←` collapses it or climbs to the parent.
+       - The **Rolls branch headers** follow the same tree pattern
+         (`role=tree` / `role=treeitem` / `aria-expanded` / roving
+         tabindex); `Enter`/`Space` toggles *and* selects, `←` on a
+         collapsed branch climbs to its parent.
+       - The **pane dividers** are `role=separator` (vertical) with a
+         keyboard resize: `←`/`→` step the same clamped range the mouse
+         drag uses (`aria-valuetext` reports the live width).
+       - Each of these marks itself **`data-owns-keys`**, and App's
+         global arrow-step / letter guard bails out on a focused
+         `data-owns-keys` element — so a focused tree node, roll header
+         or divider never double-fires person-stepping behind it.
 31. **Render-performance contract** ⇒ Review mode must stay
     interactive over thousands of cards (4116 faces, ~1061 sections,
     ~56k DOM nodes in the default review view):

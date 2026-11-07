@@ -57,6 +57,52 @@ interface BranchProps {
   visible: Map<DirNode, DirNode[]>;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
+  /** #255: the roving-tabindex focus — only this header is tabbable */
+  focusedPath: string | null;
+  onFocusPath: (path: string) => void;
+}
+
+// #255: the APG tree key pattern for a branch header — Enter/Space act
+// (the same as the click), Up/Down move focus among the visible headers
+// (DOM order == display order), Right expands, Left collapses or climbs.
+function branchKey(
+  e: React.KeyboardEvent,
+  path: string,
+  absPath: string,
+  open: boolean,
+  onToggle: (path: string) => void,
+  onSelect: (path: string) => void
+) {
+  const headers = () =>
+    Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"].roll-header'));
+  const focusPath = (target: string | null) => {
+    if (target == null) return;
+    const el = headers().find((h) => h.getAttribute("data-path") === target);
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ block: "nearest" });
+    }
+  };
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    onToggle(path);
+    onSelect(absPath);
+  } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const list = headers();
+    const idx = list.findIndex((h) => h.getAttribute("data-path") === absPath);
+    focusPath(list[idx + (e.key === "ArrowDown" ? 1 : -1)]?.getAttribute("data-path") ?? null);
+  } else if (e.key === "ArrowRight") {
+    e.preventDefault();
+    if (!open) onToggle(path);
+  } else if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    if (open) onToggle(path);
+    else {
+      const parent = absPath.slice(0, absPath.lastIndexOf("/"));
+      focusPath(parent === "" ? "/" : parent);
+    }
+  }
 }
 
 function BranchView({
@@ -69,6 +115,8 @@ function BranchView({
   visible,
   onToggle,
   onSelect,
+  focusedPath,
+  onFocusPath,
 }: BranchProps) {
   const open = openSet.has(path);
   const t = totals.get(node)!;
@@ -77,12 +125,19 @@ function BranchView({
     <section className="roll">
       <header
         className={absPath === selected ? "roll-header selected" : "roll-header"}
+        role="treeitem"
+        aria-expanded={open}
+        tabIndex={focusedPath === absPath ? 0 : -1}
+        data-path={absPath}
+        data-owns-keys
         onClick={() => {
           // #174/§4.39: one click toggles AND selects — the selected
           // branch's direct images land in the right pane
           onToggle(path);
           onSelect(absPath);
         }}
+        onFocus={() => onFocusPath(absPath)}
+        onKeyDown={(e) => branchKey(e, path, absPath, open, onToggle, onSelect)}
       >
         <span className="roll-arrow">{open ? "▾" : "▸"}</span>
         <span className="roll-path" title={path}>
@@ -106,6 +161,8 @@ function BranchView({
               visible={visible}
               onToggle={onToggle}
               onSelect={onSelect}
+              focusedPath={focusedPath}
+              onFocusPath={onFocusPath}
             />
           ))}
         </div>
@@ -136,6 +193,9 @@ function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage,
   // branches start collapsed — the user drills in (#161); open state is
   // display-only, keyed on the '/'-joined segment path
   const [openSet, setOpenSet] = useState<Set<string>>(new Set());
+  // #255: the roving-tabindex focus for the branch headers — the first
+  // visible branch is tabbable, arrows move it (branchKey)
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const toggle = useCallback((path: string) => {
     setOpenSet((prev) => {
       const next = new Set(prev);
@@ -144,6 +204,20 @@ function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage,
       return next;
     });
   }, []);
+
+  // #255: keep exactly one visible header tabbable — seed the first on
+  // mount, and if an expand/collapse / re-render leaves `focusedPath`
+  // pointing at a header that no longer renders, fall back to the first
+  // visible one. (The selector is scoped to `.roll-header`, so the
+  // PersonTree's items never leak in even with both panes mounted.)
+  useEffect(() => {
+    const headers = Array.from(document.querySelectorAll<HTMLElement>(".roll-header"));
+    if (headers.length === 0) return;
+    const alive =
+      focusedPath != null &&
+      headers.some((h) => h.getAttribute("data-path") === focusedPath);
+    if (!alive) setFocusedPath(headers[0].getAttribute("data-path"));
+  }, [focusedPath, openSet, totals, visible]);
 
   // #162: the pinned path-filter row — committed on Enter or by the
   // folder picker, validated against the snapshot (no fs IPC for a
@@ -234,7 +308,7 @@ function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage,
         // are in the right pane (the root is the default selection)
         <div className="empty">nothing to show</div>
       ) : (
-        <div className="rolls">
+        <div className="rolls" role="tree" aria-label="image folders">
           {roots.map((c) => (
             <BranchView
               key={c.name}
@@ -247,6 +321,8 @@ function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage,
               visible={visible}
               onToggle={toggle}
               onSelect={onSelect}
+              focusedPath={focusedPath}
+              onFocusPath={setFocusedPath}
             />
           ))}
         </div>
