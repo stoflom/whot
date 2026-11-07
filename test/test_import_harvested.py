@@ -2,7 +2,7 @@
 
 Run: python3 -m unittest discover -s test
 Builds a fixture faces.db from database/schema.sql and a harvest staging DB
-via harvest_legacy (schema v1.1) — no local data, no archive access.
+via harvest_legacy (schema v1.2) — no local data, no archive access.
 Covers invariants J1-J5: copy-only writes, exact-BLAKE3 image identity,
 provisional-only links (unless --overwrite), IoU matching in decode space
 (incl. inversion mapping), whole-cluster merges on unanimous evidence,
@@ -49,7 +49,7 @@ H2 = "b" * 64                      # content hash of image 2 (staging only)
 
 
 def build_faces_db(path: Path) -> None:
-    """faces.db v1.6 fixture: two images, an UnknownN cluster, a known
+    """faces.db v1.9 fixture: two images, an UnknownN cluster, a known
     person, an unowned face."""
     con = sqlite3.connect(path)
     con.executescript(SCHEMA.read_text())

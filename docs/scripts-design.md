@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 6.4** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 6.5** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -285,7 +285,7 @@ and in bulk.
   participates only when its staging image's `content_hash` **equals**
   `faces.db images.content_hash`. No path or size fallbacks; staging rows
   without a hash (never certainly resolved, §8 H3) are report-only.
-- **J3 — only faces with geometry.** The staging schema (v1.1) contains
+- **J3 — only faces with geometry.** The staging schema (v1.2) contains
   only rectangles (§8.2); the importer refuses any other staging version.
 - **J4 — user work is untouchable by default.** Only faces that are
   `link_status='provisional'` **and** `state != 'discarded'` may receive a

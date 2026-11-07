@@ -12,7 +12,7 @@ or faces, never adds detections.  Invariants:
   J2  image identity is the BLAKE3 hash, exactly: a harvested face
       participates only when staging images.content_hash EQUALS
       faces.db images.content_hash.  No path/size fallbacks.
-  J3  only faces with geometry (the staging schema is v1.1; other
+  J3  only faces with geometry (the staging schema is v1.2; other
       versions are refused).
   J4  only faces that are link_status='provisional' AND state != 'discarded'
       receive a person — unless --overwrite, which makes every face
@@ -851,7 +851,7 @@ def main(argv=None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("staging", type=Path,
-                    help="harvest staging DB (§8, schema v1.1)")
+                    help="harvest staging DB (§8, schema v1.2)")
     ap.add_argument("--faces-db", metavar="PATH", default=None,
                     help="source faces.db (default: FACES_DB from .env)")
     ap.add_argument("--min-overlap", type=float, default=0.50,
