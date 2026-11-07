@@ -317,6 +317,30 @@ class LifecycleTests(Fixture):
         self.assertEqual(self.faces_db.read_bytes(), before)
         self.assertEqual(list(self.base.glob("faces-*.db")), [])
 
+    def test_dry_run_rotated_staging_writes_nothing(self):
+        """#244: with EXIF rotations present, planning used to land them
+        inline — crashing the --dry-run on its read-only connection.
+        Rotations are now recorded in the plan, so the dry run completes
+        without writes and the real run still lands them (§9.2)."""
+        img = self.s_image(H1, rotation=90)
+        # RAW-space rectangle that maps exactly onto db face f1 at 90°
+        self.s_face(img, "John Smith", 10, 70, 20, 20)
+        self.con.commit()
+        before = self.faces_db.read_bytes()
+        ih.main([str(self.staging), "--faces-db", str(self.faces_db),
+                 "--dry-run"])
+        self.assertEqual(self.faces_db.read_bytes(), before)
+        self.assertEqual(list(self.base.glob("faces-*.db")), [])
+        # the real run still lands the rotation on the matched image
+        rc = ih.main([str(self.staging), "--faces-db", str(self.faces_db)])
+        self.assertEqual(rc, 0)
+        copy = sorted(self.base.glob("faces-*.db"))[0]
+        con = sqlite3.connect(copy)
+        rot = con.execute("SELECT rotation FROM images WHERE id=1"
+                          ).fetchone()[0]
+        con.close()
+        self.assertEqual(rot, 90)
+
 
 # ---------------------------------------------------------------- scenarios
 

@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 6.3** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 6.4** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -333,9 +333,12 @@ then the corner-origin rectangle is rotated:
 The same math is implemented once for the GUI (`src/rotation.ts`).
 The angle is also **landed on the matched `faces.db` image** —
 `UPDATE images SET rotation=… WHERE rotation=0` — first write wins, so a
-rotation the user already set in the GUI is never overridden. The
-hash-match that gates the import (J2) guarantees the file whose EXIF was
-read is byte-identical to the one the db image displays.
+rotation the user already set in the GUI is never overridden. The landing
+happens at **execution, not planning**: `plan_import` records only
+`(image-id, rotation)` pairs in the plan (#244), so planning itself stays
+write-free (§9.7) and a dry run over rotated staging images completes
+honestly. The hash-match that gates the import (J2) guarantees the file
+whose EXIF was read is byte-identical to the one the db image displays.
 
 ### 9.3 Matching — the per-face claim model
 

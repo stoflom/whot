@@ -403,6 +403,8 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
 
     Nothing here writes: the plan is executed against the target copy (or
     discarded by --dry-run), which keeps dry runs byte-for-byte honest.
+    The #118 EXIF rotations are likewise only recorded in the plan —
+    `execute_plan` lands them on the db images (#244).
 
     `rescues` (§8.6, #85) overlays hashes recovered by `rescue_hashes`
     onto the pathless/unhashed staging images before matching.
@@ -430,6 +432,7 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
     reported_missing: set[int] = set()
     reported_absent: set[int] = set()
     rotations_landed: set[int] = set()                # #118: db image ids
+    rotations: list[tuple[int, int]] = []             # #244: landed at execution
     for sf in sfaces:
         rep.add("staging_faces")
         img_row = images.get(sf["image_id"])
@@ -458,8 +461,7 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
         rot = (img_row or {}).get("rotation") or 0
         if rot and dbimg["id"] not in rotations_landed:
             rotations_landed.add(dbimg["id"])
-            dbcon.execute("UPDATE images SET rotation=? WHERE id=?"
-                          " AND rotation=0", (rot, dbimg["id"]))
+            rotations.append((dbimg["id"], rot))
         box = convert_box(sf["x"], sf["y"], sf["w"], sf["h"], sf["unit"],
                           dbimg["width"], dbimg["height"],
                           dbimg["inversion"] or "none", rotation=rot)
@@ -672,7 +674,7 @@ def plan_import(stcon: sqlite3.Connection, dbcon: sqlite3.Connection,
                               "current": current})
     return {"new_persons": new_persons, "reused": reused,
             "moves": moves, "cluster_deletes": cluster_deletes,
-            "shell_groups": shell_groups}
+            "shell_groups": shell_groups, "rotations": rotations}
 
 
 # ------------------------------------------------------------------ execution
@@ -681,6 +683,14 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
     """Run the plan against the (copy of the) faces DB, one transaction."""
     now_ts = now()
     person_id_of: dict[tuple, int] = {}
+
+    # #118 / #244: the EXIF display rotations recorded during planning land
+    # on the matched db images here — first write wins (`WHERE rotation=0`),
+    # so a user-set GUI rotation is never overridden. Planning itself stayed
+    # write-free, so a --dry-run never touches a db.
+    for dbid, rot in plan.get("rotations", []):
+        dbcon.execute("UPDATE images SET rotation=? WHERE id=?"
+                      " AND rotation=0", (rot, dbid))
 
     def resolve_person(kind, key) -> int:
         """Get-or-create the target person; counters here, not in planning:
