@@ -802,15 +802,21 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   padding: 0.5rem 0.5rem 0.3rem;
   background: var(--panel);
 }
-/* #261 (gui-design 6.0): the left-pane top bar — roll controls, Merge
-   Similar, then the search input (flex) + Clear (✕) */
+/* #261 (gui-design 6.1): the left-pane top bar — two rows: row 1 the
+   search input (flex) + Clear (✕); row 2 the roll controls + Merge
+   Similar */
 .tree-tools {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 2px;
   margin-bottom: 0.3rem;
 }
-.tree-tools .tree-filter { flex: 1; margin-bottom: 0; min-width: 0; }
+.tree-filter-row, .tree-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.tree-filter-row .tree-filter { flex: 1; margin-bottom: 0; min-width: 0; }
 .tree-tools button { font-size: 0.9rem; padding: 0.1rem 0.45rem; flex: none; }
 
 /* reference groups per appearance (v1.3 §4.6) */

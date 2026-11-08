@@ -698,34 +698,17 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
 
   return (
     <div className="person-tree">
-      {/* gui-design 6.0 / #261: the left-pane top bar — roll controls,
-          Merge Similar, then the search input (flex) + Clear (✕). The
-          old *Review — N pending* button is gone: the top bar's status
-          totals beside the lock (§4.41) show the pending count. */}
+      {/* gui-design 6.1 / #261: the left-pane top bar — two rows: the
+          search input (flex) + Clear (✕) on top, then the roll
+          controls + Merge Similar. The old *Review — N pending* button
+          is gone: the top bar's status totals beside the lock (§4.41)
+          show the pending count. */}
       <div className="tree-header">
         <div className="tree-tools">
-          <button
-            className="ghost"
-            onClick={rollUpAll}
-            disabled={f !== ""}
-            title={f !== "" ? "Clear the search filter first" : "Collapse (roll up) all branches"}
-          >
-            ⌃
-          </button>
-          <button className="ghost" onClick={rollDownAll} title="Expand (roll down) all branches">
-            ⌄
-          </button>
-          {/* §4.28 + #88: the merge-similar dialog — the title stays
-              reference-free (§4.43) */}
-          <button
-            className="ghost merge-open"
-            onClick={onOpenMerge}
-            title="Merge Similar Persons — find and combine near-identical names"
-          >
-            ⧉ merge similar
-          </button>
-          <input
-            className="tree-filter"
+          {/* gui-design 6.1: row 1 — search input + Clear (✕) */}
+          <div className="tree-filter-row">
+            <input
+              className="tree-filter"
             placeholder="search persons…"
             title="Filter the tree by person name or group"
             value={filter}
@@ -748,15 +731,39 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
                 ],
               });
             }}
-          />
-          <button
-            className="ghost"
-            onClick={() => onFilter("")}
-            disabled={filter === ""}
-            title="Clear the search filter"
-          >
-            ✕
-          </button>
+            />
+            <button
+              className="ghost"
+              onClick={() => onFilter("")}
+              disabled={filter === ""}
+              title="Clear the search filter"
+            >
+              ✕
+            </button>
+          </div>
+          {/* gui-design 6.1: row 2 — roll controls + Merge Similar */}
+          <div className="tree-actions-row">
+            <button
+              className="ghost"
+              onClick={rollUpAll}
+              disabled={f !== ""}
+              title={f !== "" ? "Clear the search filter first" : "Collapse (roll up) all branches"}
+            >
+              ⌃
+            </button>
+            <button className="ghost" onClick={rollDownAll} title="Expand (roll down) all branches">
+              ⌄
+            </button>
+            {/* §4.28 + #88: the merge-similar dialog — the title stays
+                reference-free (§4.43) */}
+            <button
+              className="ghost merge-open"
+              onClick={onOpenMerge}
+              title="Merge Similar Persons — find and combine near-identical names"
+            >
+              ⧉ merge similar
+            </button>
+          </div>
         </div>
       </div>
       {clearMenu && (
