@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 7.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 7.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -177,7 +177,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     counters. Clicking a header expands/collapses **and selects** the
     branch (its direct images land in the right pane); branches
     start collapsed, listed alphabetically by segment (images by
-    filename). **The centre renders no thumbnails** (§4.39):
+    filename). The **open state is session state** (like the root and
+    the branch selection): opening a roll's grid unmounts the pane, and
+    returning shows the tree the way it was (#265). **The centre renders no thumbnails** (§4.39):
     clicking a branch header both toggles the branch **and selects it**,
     and the selected
     branch's images appear as thumbnails in the **right pane** (direct
