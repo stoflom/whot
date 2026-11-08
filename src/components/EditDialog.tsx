@@ -242,7 +242,7 @@ export default function EditDialog({
             className="input-desc"
             value={desc}
             placeholder={ph("desc") ?? "e.g. beard|glasses"}
-            title="Face description — free text; empty clears it. Start with + to ADD tags to the current ones (e.g. +beard → beard|glasses), no duplicates"
+            title="Face description — free text; empty clears it. Start with | to ADD tags to the current ones (e.g. |beard → beard|glasses), no duplicates"
             onChange={(e) => {
               setDesc(e.target.value);
               setTouched((t) => ({ ...t, desc: true }));
