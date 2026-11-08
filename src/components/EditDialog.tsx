@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
 import PathTypeahead from "./PathTypeahead";
+import SuggestInput from "./SuggestInput";
 import GroupListEditor from "./GroupListEditor";
 import { applyGroupOps, type GroupOp } from "../groupList";
 import type { SuggestOption } from "./SuggestInput";
@@ -39,6 +40,9 @@ interface Props {
   prefills: Record<StageScope, Prefill>;
   persons: Person[];
   pathOptions: SuggestOption[];
+  /** #262 (§4.21): the existing description tags — type-ahead options
+      for the Description field (most-used first, count as hint) */
+  descOptions: SuggestOption[];
   onDone: (r: EditResult) => void;
   /** #124: commit the verdict on the scope now */
   onReject: (scope: StageScope) => void;
@@ -62,6 +66,7 @@ export default function EditDialog({
   prefills,
   persons,
   pathOptions,
+  descOptions,
   onDone,
   onReject,
   onCancel,
@@ -131,12 +136,6 @@ export default function EditDialog({
 
   const done = (kind: EditResult["kind"]) =>
     onDone({ kind, scope, values: { name, group, desc }, touched, groupOps });
-
-  const enter = (e: React.KeyboardEvent) => {
-    e.stopPropagation();
-    if (e.key === "Enter") done("accept");
-    if (e.key === "Escape") onCancel();
-  };
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
@@ -238,16 +237,31 @@ export default function EditDialog({
         )}
         <label>
           Description
-          <input
+          {/* #262 (§4.21): type-ahead over the existing description
+              tags — free text stays free text, suggestions only assist.
+              queryFor strips the leading `|` add-mode prefix so `|beard`
+              still matches; a pick keeps it (|b → |beard). */}
+          <SuggestInput
             className="input-desc"
             value={desc}
             placeholder={ph("desc") ?? "e.g. beard|glasses"}
             title="Face description — free text; empty clears it. Start with | to ADD tags to the current ones (e.g. |beard → beard|glasses), no duplicates"
-            onChange={(e) => {
-              setDesc(e.target.value);
+            options={descOptions}
+            select="none"
+            queryFor={(v) => (v.trim().startsWith("|") ? v.trim().slice(1) : v)}
+            onChange={(v) => {
+              setDesc(v);
               setTouched((t) => ({ ...t, desc: true }));
             }}
-            onKeyDown={enter}
+            // the pick is a discrete event after the re-render, so the
+            // closure's desc IS the pre-pick value (the functional form
+            // would see onChange's already-updated state and lose the
+            // add-mode prefix)
+            onPick={(o) =>
+              setDesc(desc.trim().startsWith("|") ? `|${o.value}` : o.value)
+            }
+            onSubmit={() => done("accept")}
+            onEscape={onCancel}
           />
         </label>
       </div>

@@ -57,6 +57,7 @@ import {
 } from "./viewFilters";
 import { stepBase } from "./stepFlow";
 import { groupPathOptions } from "./components/PathTypeahead";
+import { descTagOptions } from "./descTags";
 import {
   addTokens,
   buildStage,
@@ -1467,6 +1468,9 @@ export default function App() {
   // #97/#98: one suggestion source per snapshot — stable identity
   const personOptions = useMemo(() => snap?.persons ?? [], [snap]);
   const pathOptions = useMemo(() => groupPathOptions(personOptions), [personOptions]);
+  // #262 (§4.21): the description tag vocabulary — distinct tokens of
+  // the snapshot's face descriptions (pure, co-tested in descTags.ts)
+  const descOptions = useMemo(() => descTagOptions(snap?.faces ?? []), [snap]);
 
   // #135/#136 (rule 34) + #260: the face-drag machine — one hook owns the
   // state/refs and the five identity-stable grid handlers (co-tested in
@@ -2878,6 +2882,7 @@ export default function App() {
           prefills={edit.prefills}
           persons={personOptions}
           pathOptions={pathOptions}
+          descOptions={descOptions}
           onDone={(r) => {
             const ids =
               r.scope === "card"

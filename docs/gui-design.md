@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 6.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 7.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -868,19 +868,29 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       user already typed one).
     - **Every value field suggests**: the name
       typeahead (existing persons, `UnknownN` excluded, pick = merge
-      target) and the group-path suggestions (no `ungrouped` quick-pick
+      target), the group-path suggestions (no `ungrouped` quick-pick
       — an empty input seats, §4.35 — and a status seat is never
-      suggested as a path, §4.35/#233)
-      live wherever a value is typed: **the §4.24 Edit dialog** (name
-      and group; description stays free text), the detail-pane
+      suggested as a path, §4.35/#233) and the **description tag
+      suggestions** live wherever a value is typed: **the §4.24 Edit
+      dialog** (name, group and description), the detail-pane
       Name/Group, the tree inline rename, `GroupDialog` and the merge
       dialog's bulk-group field — the grid's own fields are labels.
       One shared widget backs all of it (options + label +
       hint — navigation/Enter/Esc behave identically everywhere); a
       pick never counts as leaving (mousedown keeps focus), and
       click-away still commits where fields stayed inline. Free text
-      stays plain: descriptions, notes, the tree filter, the alias
-      list, settings numbers.
+      stays plain: notes, the tree filter, the alias list, settings
+      numbers.
+    - **Description typeahead** (#262): the Edit dialog's Description
+      field suggests the **existing description tags** — the distinct
+      tokens of the snapshot's face descriptions (split on `|`,
+      trimmed, empties dropped), **most-used first, ties by name**,
+      the usage count as the row hint (substring match, max 8 — the
+      shared widget's contract). Pure frontend over `get_snapshot`, no
+      backend path. Picking inserts the tag for the typed text; in the
+      §4.24 **`|` add mode** the leading `|` is stripped for matching
+      and a pick **keeps it** (`|b` → pick `beard` → `|beard`). The
+      field stays free text — suggestions assist, they never restrict.
 22. **Keyboard shortcut set** ⇒ shortcuts act on the
     selection, or on the hovered/last-selected card when nothing is
     selected (the Ctrl-G rule): **Ctrl-G** toggles the section **under
