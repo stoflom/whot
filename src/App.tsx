@@ -13,7 +13,7 @@ import * as api from "./api";
 import type { AppearanceGroup, Delta, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
-import GroupDialog from "./components/GroupDialog";
+import AddGroupDialog from "./components/AddGroupDialog";
 import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
@@ -3096,22 +3096,15 @@ export default function App() {
         />
       )}
       {/* #165/§4.35 (status seats) + §4.16 (add vs replace) — the
-          body stays reference-free (§4.43) */}
+          body stays reference-free (§4.43); #256 — the shared
+          AddGroupDialog (title/body/normalization live in ONE place) */}
       {faceAddGroup && (
-        <GroupDialog
+        <AddGroupDialog
+          ids={faceAddGroup.ids}
+          persons={snap?.persons ?? []}
           options={pathOptions}
-          title={
-            faceAddGroup.ids.length > 1
-              ? `Add a group to ${faceAddGroup.ids.length} persons`
-              : `Add a group to '${personsById.get(faceAddGroup.ids[0])?.name ?? "?"}'`
-          }
-          body="Adds this path as ANOTHER group — every current group of the person(s) is kept (a person can belong to several); a status seat, if any, is dropped instead. Faces and names are untouched."
-          defaultPath=""
-          submitLabel="add group"
-          onSubmit={(path) => {
-            const ids = faceAddGroup.ids;
+          onSubmit={(ids, norm) => {
             setFaceAddGroup(null);
-            const norm = path.split("|").map((s) => s.trim()).filter(Boolean).join("|");
             if (norm && ids.length > 0) addPersonsToGroup(ids, norm);
           }}
           onCancel={() => setFaceAddGroup(null)}

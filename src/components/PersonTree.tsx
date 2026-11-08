@@ -11,11 +11,12 @@ import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
 import { groupPathOptions } from "./PathTypeahead";
-import { firstRealGroup } from "../groupList";
+import { firstRealGroup, normalizeGroupPath } from "../groupList";
 import { rotStyle } from "../rotation";
 import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
 import GroupDialog from "./GroupDialog";
+import AddGroupDialog from "./AddGroupDialog";
 // #223 (F-M1/F-M2): the tree structure and its queries are pure
 // (treeIndex.ts, co-tested) — the pane receives the App-built tree and
 // indexes it once per (tree, persons, filter) change
@@ -874,61 +875,62 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
       )}
       {/* #165/§4.35 (status seats) + §4.16 (add vs replace) — the
           dialog bodies stay reference-free (§4.43) */}
-      {groupDialog && (
+      {/* #256 — the "add-group" kind is the shared AddGroupDialog
+          (title/body/normalization in ONE place); the other two stay.
+          #165/§4.35 (status seats) + §4.16 (add vs replace) — the
+          dialog bodies stay reference-free (§4.43) */}
+      {groupDialog && groupDialog.kind !== "add-group" && (
         <GroupDialog
           options={pathOptions}
           title={
             groupDialog.kind === "rename-branch"
               ? "Rename / move group"
-              : groupDialog.kind === "add-group"
-                ? groupDialog.ids.length > 1
-                  ? `Add a group to ${groupDialog.ids.length} persons`
-                  : `Add a group to '${byId.get(groupDialog.ids[0])?.name ?? "?"}'`
-                : groupDialog.ids.length > 1
-                  ? `Move ${groupDialog.ids.length} persons to a group`
-                  : "Move person to a group"
+              : groupDialog.ids.length > 1
+                ? `Move ${groupDialog.ids.length} persons to a group`
+                : "Move person to a group"
           }
           body={
             groupDialog.kind === "rename-branch"
               ? "The whole branch — including sub-branches — follows to the new path. " +
                 "Empty = everybody falls to their status seat."
-            : groupDialog.kind === "add-group"
-              ? "Adds this path as ANOTHER group — every current group of the person(s) " +
-                "is kept (a person can belong to several); a status seat, if any, " +
-                "is dropped instead. Faces and names are untouched."
-            : "Replaces each person's group path (empty = their status seat). " +
-              "Faces and names are untouched."
+              : // #233 (§4.35 display rule) lives in the defaultPath below
+                "Replaces each person's group path (empty = their status seat). " +
+                "Faces and names are untouched."
           }
           defaultPath={
             groupDialog.kind === "rename-branch"
               ? groupDialog.path
-              : groupDialog.kind === "add-group"
-                ? ""
-                // #233 (§4.35 display rule): the prefill is the person's
-                // first REAL group — a status seat never shows as the
-                // current group
-                : firstRealGroup(byId.get(groupDialog.ids[0])?.groups ?? [])
+              // #233 (§4.35 display rule): the prefill is the person's
+              // first REAL group — a status seat never shows as the
+              // current group
+              : firstRealGroup(byId.get(groupDialog.ids[0])?.groups ?? [])
           }
           submitLabel={
-            groupDialog.kind === "rename-branch"
-              ? "move group"
-              : groupDialog.kind === "add-group"
-                ? "add group"
-                : "move"
+            groupDialog.kind === "rename-branch" ? "move group" : "move"
           }
           onSubmit={(path) => {
             const d = groupDialog;
             setGroupDialog(null);
             if (d.kind === "rename-branch") {
-              // compare normalised (#42): whitespace-only edits are a no-op
-              const norm = path.split("|").map((s) => s.trim()).filter(Boolean).join("|");
+              // compare normalised (#42 via #256's normalizeGroupPath):
+              // whitespace-only edits are a no-op
+              const norm = normalizeGroupPath(path);
               if (norm !== d.path) onRenameGroup(d.path, norm);
-            } else if (d.kind === "add-group") {
-              const norm = path.split("|").map((s) => s.trim()).filter(Boolean).join("|");
-              if (norm && d.ids.length > 0) onAddGroup(d.ids, norm);
             } else {
               onMovePersons(d.ids, path);
             }
+          }}
+          onCancel={() => setGroupDialog(null)}
+        />
+      )}
+      {groupDialog?.kind === "add-group" && (
+        <AddGroupDialog
+          ids={groupDialog.ids}
+          persons={persons}
+          options={pathOptions}
+          onSubmit={(ids, norm) => {
+            setGroupDialog(null);
+            if (norm && ids.length > 0) onAddGroup(ids, norm);
           }}
           onCancel={() => setGroupDialog(null)}
         />

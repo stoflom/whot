@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.6** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.7** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -781,8 +781,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     and are listed in the settings popover.
 18. **Add group…** ⇒ context menu of **person
     rows** (*add group…*; multi-select: *add group to N persons…*): a
-    `GroupDialog` (empty prefill, §4.21 wholesale-select) whose submit
-    **adds** the typed path as another membership via
+    shared **`AddGroupDialog` (#256)** — one component for every host —
+    over `GroupDialog` (empty prefill, §4.21 wholesale-select): the
+    title/body/add semantics and the submit normalization (#42,
+    `normalizeGroupPath`) are defined in ONE place; the host closes the
+    dialog and dispatches. The submit **adds** the typed path as another membership via
     `move_persons_between_groups(ids, '', path)` (§4.16 — `INSERT OR
     IGNORE`, every other membership kept; *Move to group…* keeps the
     replace-all semantics beside it). The group can never be empty (the
@@ -796,7 +799,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **The same entry lives in the FACE context menu**: when the
     effective scope's faces belong to **N distinct persons** the menu
     offers *Add group…* / *Add group to N persons…*, opening the same
-    `GroupDialog` with the add semantics over those persons — a set of
+    shared `AddGroupDialog` (#256) with the add semantics over those
+    persons — a set of
     photos (person cards, a cluster, a full image) can be filed under a
     branch straight from the face domain; unowned faces count for
     nothing and an all-unowned scope leaves the entry disabled.

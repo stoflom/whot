@@ -45,6 +45,17 @@ export function renameGroupFor(p: Person | undefined): string {
   return isSeat(g) ? "" : g;
 }
 
+/** #256 — the ONE definition of the dialog-submit group-path
+    normalization (#42): trim every '|' segment and drop the empties;
+    all-empty collapses to "". Pure. */
+export function normalizeGroupPath(path: string): string {
+  return path
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join("|");
+}
+
 /** the backend's validate_group_path, client-side (refuse before staging) */
 export function validPath(path: string): boolean {
   const p = path.trim();

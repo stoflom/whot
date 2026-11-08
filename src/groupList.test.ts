@@ -5,6 +5,7 @@ import {
   applyGroupOps,
   firstRealGroup,
   isSeat,
+  normalizeGroupPath,
   realGroups,
   stageAdd,
   stageRemove,
@@ -45,6 +46,23 @@ describe("applyGroupOps (#172, §4.38)", () => {
         { from: "B", to: "" },
       ])
     ).toEqual(["A"]);
+  });
+});
+
+describe("normalizeGroupPath (#256) — the one dialog-submit normalization (#42)", () => {
+  it("trims each '|' segment and drops the empties", () => {
+    expect(normalizeGroupPath("  family  | smiths  ")).toBe("family|smiths");
+    expect(normalizeGroupPath("family||smiths| ")).toBe("family|smiths");
+  });
+
+  it("all-empty collapses to \"\"", () => {
+    expect(normalizeGroupPath("  ")).toBe("");
+    expect(normalizeGroupPath("|| |")).toBe("");
+    expect(normalizeGroupPath("")).toBe("");
+  });
+
+  it("a clean path passes through unchanged", () => {
+    expect(normalizeGroupPath("family|smiths")).toBe("family|smiths");
   });
 });
 
