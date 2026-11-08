@@ -14,7 +14,7 @@ import { groupPathOptions } from "./PathTypeahead";
 import { firstRealGroup, normalizeGroupPath } from "../groupList";
 import { rotStyle } from "../rotation";
 import ConfirmDialog from "./ConfirmDialog";
-import ContextMenu from "./ContextMenu";
+import ContextMenu, { type MenuState } from "./ContextMenu";
 import GroupDialog from "./GroupDialog";
 import AddGroupDialog from "./AddGroupDialog";
 // #260: the shared "is a face drag live" predicate (faceDrop.ts) — the
@@ -77,12 +77,10 @@ interface Props {
   tree: TreeNode;
   persons: Person[];
   selectedId: number | null;
-  reviewCount: number;
   /** filter text is owned by App — the toolbar person-stepping needs the
       same visible order the tree renders (#31) */
   filter: string;
   onFilter: (v: string) => void;
-  onReview: () => void;
   onSelect: (id: number, e?: ReactMouseEvent) => void;
   /** multi-selection for bulk actions (#35): ctrl/cmd-click toggles,
       shift-click extends over the visible order */
@@ -281,7 +279,7 @@ function PersonRow({
 // own values moved
 const MemoPersonRow = memo(PersonRow);
 
-function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, onReview, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onAddGroup, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces }: Props) {
+function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onAddGroup, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces }: Props) {
   // #135: a face drag ending without a drop (Esc, drop outside) must
   // clear the merge-target highlight — the drag state itself lives in
   // App, only the highlight is ours
@@ -290,6 +288,9 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
   }, [faceDragIds]);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: number } | null>(null);
+  // #261: the filter input's context menu — a *Clear* entry beside the ✕
+  // button (gui-design 6.0)
+  const [clearMenu, setClearMenu] = useState<MenuState | null>(null);
   const [branchMenu, setBranchMenu] = useState<{
     x: number;
     y: number;
@@ -697,6 +698,10 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
 
   return (
     <div className="person-tree">
+      {/* gui-design 6.0 / #261: the left-pane top bar — roll controls,
+          Merge Similar, then the search input (flex) + Clear (✕). The
+          old *Review — N pending* button is gone: the top bar's status
+          totals beside the lock (§4.41) show the pending count. */}
       <div className="tree-header">
         <div className="tree-tools">
           <button
@@ -710,13 +715,6 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
           <button className="ghost" onClick={rollDownAll} title="Expand (roll down) all branches">
             ⌄
           </button>
-          <input
-            className="tree-filter"
-            placeholder="filter by name or group…"
-            title="Filter the tree by person name or group"
-            value={filter}
-            onChange={(e) => onFilter(e.target.value)}
-          />
           {/* §4.28 + #88: the merge-similar dialog — the title stays
               reference-free (§4.43) */}
           <button
@@ -726,12 +724,44 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
           >
             ⧉ merge similar
           </button>
+          <input
+            className="tree-filter"
+            placeholder="search persons…"
+            title="Filter the tree by person name or group"
+            value={filter}
+            onChange={(e) => onFilter(e.target.value)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setClearMenu({
+                x: e.clientX,
+                y: e.clientY,
+                groups: [
+                  {
+                    items: [
+                      {
+                        label: "Clear",
+                        disabled: filter === "",
+                        onClick: () => onFilter("")
+                      },
+                    ],
+                  },
+                ],
+              });
+            }}
+          />
+          <button
+            className="ghost"
+            onClick={() => onFilter("")}
+            disabled={filter === ""}
+            title="Clear the search filter"
+          >
+            ✕
+          </button>
         </div>
-        <button className={`tree-review${selectedId === null ? " selected" : ""}`} onClick={onReview}
-          title="Open the Review view — all unreviewed (provisional) faces, UnknownN first">
-          ▦ Review — {reviewCount} pending
-        </button>
       </div>
+      {clearMenu && (
+        <ContextMenu menu={clearMenu} onClose={() => setClearMenu(null)} />
+      )}
       {/* #255: the APG tree — branch nodes + person rows are the treeitems */}
       <div role="tree" aria-label="persons and groups">
         {renderNode(tree, 0, "", "")}

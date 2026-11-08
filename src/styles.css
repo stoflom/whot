@@ -209,8 +209,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 /* ---------------------------------------------------------------- tree */
 
 .person-tree { display: flex; flex-direction: column; gap: 0.25rem; }
-.tree-filter { margin-bottom: 0.4rem; }
-.tree-review { text-align: left; margin-bottom: 0; }
 
 .tree-node {
   display: flex;
@@ -804,7 +802,8 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   padding: 0.5rem 0.5rem 0.3rem;
   background: var(--panel);
 }
-/* tree roll up/down controls (#24), rolls left + filter right (#78) */
+/* #261 (gui-design 6.0): the left-pane top bar — roll controls, Merge
+   Similar, then the search input (flex) + Clear (✕) */
 .tree-tools {
   display: flex;
   align-items: center;
