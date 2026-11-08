@@ -42,22 +42,23 @@ export function buildStage(
   if (touched.name && name) stage.name = name;
   if (touched.group) stage.group = values.group;
   if (touched.desc) {
-    // #231 (§4.24): a `+` add-mode value with no tokens is a no-op — it
-    // never stages (a literal `+` must not reach the writer)
+    // #231/#263 (§4.24): a `|` add-mode value with no tokens is a no-op —
+    // it never stages (a literal leading `|` must not reach the writer)
     const d = values.desc.trim();
-    if (!(d.startsWith("+") && addTokens(values.desc).length === 0))
+    if (!(d.startsWith("|") && addTokens(values.desc).length === 0))
       stage.desc = values.desc;
   }
   if (stage.name == null && stage.group == null && stage.desc == null) return null;
   return stage;
 }
 
-/** #231 (§4.24): the add-mode tokens of a `+`-prefixed description value
-    — the value minus the `+`, split on `|`, trimmed, empties dropped.
-    A non-`+` value yields no tokens (plain replace semantics). */
+/** #231/#263 (§4.24): the add-mode tokens of a `|`-prefixed description
+    value — the value minus the leading `|`, split on `|`, trimmed,
+    empties dropped. A value without a leading `|` yields no tokens
+    (plain replace semantics). */
 export function addTokens(desc: string): string[] {
   const v = desc.trim();
-  if (!v.startsWith("+")) return [];
+  if (!v.startsWith("|")) return [];
   return v
     .slice(1)
     .split("|")

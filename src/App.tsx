@@ -2886,7 +2886,7 @@ export default function App() {
                   ? edit.group
                   : [...selRef.current];
             setEdit(null);
-            // #231 (§4.24): a `+` add-mode description expands per face
+            // #231/#263 (§4.24): a `|` add-mode description expands per face
             // against its displayed value (staged overlay over
             // committed); faces the add leaves unchanged drop out
             const st = buildStage(ids, r.values, r.touched);
