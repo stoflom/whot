@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.11** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 6.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -116,25 +116,32 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   dialog or drop can produce them — and their branches carry no menu and
   are not drop targets; the persons inside them are ordinary rows.
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
-  rejected). The tree's header — **roll up/down buttons on the left,
-  filter box on the right, then the Review button** — is **pinned flush
-  to the top of the pane** while the list scrolls (one sticky
-  block whose panel background covers the full pane width and the
-  pane's top padding, so no text can show through above or beside it).
-  The filter matches **person name and/or
+  rejected). The tree's header — the **left pane's top bar** — is
+  **two rows**: the **first row is the person filter (search) input
+  filling the row's width, with a Clear (✕) button at its right end**;
+  the **second row is the ⌃/⌄ roll up/down buttons and the *Merge
+  Similar* button** (§4.28) — **pinned flush to the top of the pane**
+  while the list scrolls (one sticky block whose panel background
+  covers the full pane width and the pane's top padding, so no text
+  can show through above or beside it). The left pane carries **no *Review* button**: the top bar's
+  status totals beside the lock (§4.41) already show the pending
+  count, and Review is entered from the top-bar mode selector. The
+  filter matches **person name and/or
   group path** (case-insensitive substring); tree stays hierarchical
-  below the match.
+  below the match. **Clearing** the filter is available as the ✕
+  button *and* as a *Clear* entry in the input's context menu.
   Within every branch, persons are ordered by **face count, most first**
   (ties broken by name, then id — deterministic, no sort toggle);
   sub-branches keep their order. The stepping shortcuts and the
   selection ranges therefore follow this display order.
   Branches **roll up/down** by clicking their header (any branch holding
   persons or sub-branches, arrows reflect state) and all at once via
-  **⌃ roll-up / ⌄ roll-down** controls beside the filter. The collapsed set
+  the **⌃ roll-up / ⌄ roll-down** buttons at the left of the top bar.
+  The collapsed set
   is display-only: filtering auto-expands matching paths while a filter is
-  active without mutating it, and the previous roll-up state applies again
-  when the filter is cleared. Rolled-up branch counts always include the
-  hidden descendants.
+  active without mutating it, and the previous roll-up state applies
+  again when the filter is cleared (✕ button or *Clear* menu entry).
+  Rolled-up branch counts always include the hidden descendants.
 - **Modes** (the top-bar selector): `Review · Rolls · Person` are
   proper **modes**, not tabs over one layout — the selector is the mode
   switch and each mode owns its centre panel and the default content of
@@ -1145,7 +1152,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
     **Three equivalent entry points**, all feeding one confirmation
     dialog:
-    - *review dialog* (tree-header button): cluster list with member
+    - *review dialog* (the left-pane top bar's *Merge Similar*
+      button): cluster list with member
       facts (face counts, group paths, `state='imported'` badge,
       created_at), multi-select, `Merge into…` / bulk group / bulk
       rename;
@@ -1915,8 +1923,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      (`provisional`) through the ordinary filter path (§4.10: faces the
      new filter hides leave the selection and their staged ops drop)
      and the select renders **disabled** — on every entry
-     into Review (the top-bar *Review* button, the tree's *Review*
-     action, the post-delete fallback, and the initial load) and for
+     into Review (the top-bar *Review* button, the post-delete
+     fallback, and the initial load) and for
      as long as Review stays active. If the entering anchor holds no
      new face, the **position guard** first advances to the next person
      in the step list that does (forward, else the first such person;

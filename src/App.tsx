@@ -993,15 +993,6 @@ export default function App() {
 
   // #215: the remaining stable pane handlers (the memo(pane) identity
   // rule — see gridHandlers below)
-  const reviewTab = useCallback(
-    () =>
-      confirmContext(() => {
-        setMode("review");
-        setImageId(null);
-        setSplitImageId(null); // #55 (§4.19): explicit navigation ends focus mode
-      }),
-    [confirmContext]
-  );
   const renameGroupCmd = useCallback(
     (oldPath: string, newPath: string) => mutate(() => api.renameGroup(oldPath, newPath)),
     [mutate]
@@ -2423,10 +2414,8 @@ export default function App() {
             persons={treePersons}
             primaryRot={primaryRot}
             selectedId={personId}
-            reviewCount={pendingCount}
             filter={filter}
             onFilter={setFilter}
-            onReview={reviewTab}
             onSelect={handleTreeSelect}
             selectedIds={selPersons}
             onRemovePersons={doRemovePersons}
