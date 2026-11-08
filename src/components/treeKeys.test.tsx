@@ -171,7 +171,10 @@ describe("RollsPane APG tree (#255)", () => {
   ];
   const faces = [face(1, 1), face(2, 2), face(3, 3)];
 
-  const renderRolls = (onSelect: (path: string) => void) =>
+  const renderRolls = (
+    onSelect: (path: string) => void,
+    openSet: Set<string> = new Set()
+  ) =>
     render(
       <RollsPane
         images={images}
@@ -182,6 +185,9 @@ describe("RollsPane APG tree (#255)", () => {
         onOpenImage={() => {}}
         selected=""
         onSelect={onSelect}
+        // #265: the open state is session state owned by App
+        openSet={openSet}
+        onToggle={() => {}}
         onImportDir={() => {}}
       />
     );
