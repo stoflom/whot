@@ -1,10 +1,10 @@
-// #261 (gui-design 6.0) — the left-pane top bar re-org: the header is
-// ⌃/⌄ roll controls, the *Merge Similar* button, then the person filter
-// (search) input filling the remaining width with a Clear (✕) button at
-// its right end. The old *Review — N pending* button is gone (the top
-// bar's status totals beside the lock, §4.41, show the pending count).
-// Clearing the filter is available as the ✕ button *and* as a *Clear*
-// entry in the input's context menu.
+// #261 (gui-design 6.1) — the left-pane top bar re-org: the header is
+// two rows — row 1 the person filter (search) input filling the row's
+// width with a Clear (✕) button at its right end; row 2 the ⌃/⌄ roll
+// controls and the *Merge Similar* button. The old *Review — N pending*
+// button is gone (the top bar's status totals beside the lock, §4.41,
+// show the pending count). Clearing the filter is available as the ✕
+// button *and* as a *Clear* entry in the input's context menu.
 // Run: npm test (vitest run; jsdom pragma — a mounted component)
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,17 +58,17 @@ const renderTree = (filter = "", onFilter: (v: string) => void = vi.fn()) =>
   );
 
 describe("left-pane top bar (#261, gui-design 6.0)", () => {
-  it("renders roll controls, Merge Similar, the search input and the ✕", () => {
+  it("renders two rows: search + ✕ on top, roll controls + Merge below", () => {
     renderTree();
     const tools = document.querySelector(".tree-tools")!;
-    const kids = Array.from(tools.children) as HTMLElement[];
-    const tags = kids.map((k) => k.tagName);
-    expect(tags).toEqual(["BUTTON", "BUTTON", "BUTTON", "INPUT", "BUTTON"]);
-    expect(kids[0].textContent).toBe("⌃");
-    expect(kids[1].textContent).toBe("⌄");
-    expect(kids[2].textContent).toBe("⧉ merge similar");
-    expect((kids[3] as HTMLInputElement).placeholder).toBe("search persons…");
-    expect(kids[4].textContent).toBe("✕");
+    const rows = Array.from(tools.children) as HTMLElement[];
+    expect(rows.map((r) => r.className)).toEqual(["tree-filter-row", "tree-actions-row"]);
+    const row1 = Array.from(rows[0].children) as HTMLElement[];
+    const row2 = Array.from(rows[1].children) as HTMLElement[];
+    expect(row1.map((k) => k.tagName)).toEqual(["INPUT", "BUTTON"]);
+    expect((row1[0] as HTMLInputElement).placeholder).toBe("search persons…");
+    expect(row1[1].textContent).toBe("✕");
+    expect(row2.map((k) => k.textContent)).toEqual(["⌃", "⌄", "⧉ merge similar"]);
   });
 
   it("no longer renders the *Review — N pending* button", () => {
@@ -111,7 +111,7 @@ describe("left-pane top bar (#261, gui-design 6.0)", () => {
 
   it("the ⌃ roll-up button stays disabled while a filter is active", () => {
     renderTree("al");
-    const rollUp = document.querySelector(".tree-tools")!.children[0] as HTMLButtonElement;
+    const rollUp = document.querySelector(".tree-actions-row")!.children[0] as HTMLButtonElement;
     expect(rollUp.disabled).toBe(true);
   });
 });
