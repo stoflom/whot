@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 7.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 8.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -41,7 +41,7 @@ user:
 All panes re-sync after every mutation.
 
 Non-goals: deleting faces (persons *can* be removed — §4.13; their
-faces become rejected and join the system person `Rejected`, §4.35), editing embeddings, multi-group
+faces become rejected and join the `RejectedN` cluster persons, §4.35), editing embeddings, multi-group
 membership UI (one group path per person), i18n. (Moving faces between
 persons by drag & drop is a feature — rule 34.)
 
@@ -111,7 +111,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   row, so the virtual `Ungrouped`/`Unknown` branches and the `Unknown`
   group value are gone. The importer seeds `New` for every `UnknownN`
   it creates; accepting re-seats an unfiled person to `Accepted`; every
-  rejected face lives on the system person `Rejected` (seat `Rejected`).
+  rejected face lives on a `RejectedN` cluster person (seat `Rejected`) —
+  one per similarity cluster, §4.35.
   The three status paths are reserved segments (§4.16) — no typed path,
   dialog or drop can produce them — and their branches carry no menu and
   are not drop targets; the persons inside them are ordinary rows.
@@ -329,8 +330,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   branches** (`New`/`Accepted`/`Rejected`) offer **no** branch
   menu — they are system furniture (§4.35), and bulk actions target
   real branches only. Unknown cleanup needs **no button**: rejecting a
-  face moves it off its `UnknownN` onto
-  the system person `Rejected`, so a fully-decided `UnknownN` is already
+  face moves it off its `UnknownN` onto a
+  `RejectedN` cluster person, so a fully-decided `UnknownN` is already
   a zero-face shell that §4.27's stale-shell sweep deletes on every
   read. The reference-set
   pane exposes **Remove person** as a button, and **Update person**
@@ -389,8 +390,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   selection/operations as Review.
 - **Right pane — person detail** (when a person is selected): name (editable
   for known persons), group path (editable, `|`-separated; empty ⇒
-  the person's status seat, §4.35 — and read-only for the system person
-  `Rejected`), note, primary-face picker, refcrops list.
+  the person's status seat, §4.35 — and read-only for a `RejectedN`
+  cluster person), note, primary-face picker, refcrops list.
   **The avatar click opens the primary face's image**: the large
   avatar *is* the primary face, and clicking it opens the **full-image
   focus mode** for that face's image (the same `confirmContext` →
@@ -493,11 +494,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    - After any assignment the person enters the importer's *known corpus*
      automatically (name not `Unknown*` + confirmed faces); corpus entries
      are per `(person, description)` — see §4.12.
-2. **Reject** ⇒ `link_status='rejected'` **and the face moves onto the
-   system person `Rejected`** (group `Rejected`, created on demand —
+2. **Reject** ⇒ `link_status='rejected'` **and the face moves onto its
+   `RejectedN` cluster person** (seat `Rejected`, created on demand —
    §4.35): the assignment is deemed invalid, so the face leaves the person
-   it was on; `seq`/`name` re-derive against `Rejected` (§4.7) and the
-   origin person is recomputed (primary/refcrops/seat, §4.5/§4.6/§4.35).
+   it was on; the face's embedding is matched (single-linkage, cosine ≥
+   `cluster_threshold`) against the existing `RejectedN` faces — faces
+   rejected in the same batch cluster among themselves — and the face joins
+   the matching `RejectedN` or starts a fresh one; `seq`/`name` re-derive
+   against that person (§4.7) and the origin person is recomputed
+   (primary/refcrops/seat, §4.5/§4.6/§4.35).
    Rejected faces: excluded from similarity grouping, primary-face
    eligibility, refcrops and importer corpora, and **visible only under
    `Show → Rejected`** (§4.10). **Exit is assignment alone — the claim
@@ -605,9 +610,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     section, image grids and full-image rectangles, the review grid, the
     **left-pane person presence** — a person holding no face that
     matches the filter leaves the tree (set Show back to All to list
-    everyone again, including the faceless shells; the system person
-    `Rejected` is listed **only** under `Show → Rejected`, never under
-    `All` — §4.35) — the
+    everyone again, including the faceless shells; the `RejectedN`
+    cluster persons are listed **only** under `Show → Rejected`, never
+    under `All` — §4.35) — the
     **Rolls path tree** — an image holding no face that matches
     the filter is dropped from its branch and a branch left without a
     listing image is pruned entirely (raw branch counts stay, so the
@@ -629,8 +634,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     **Review special case**: `All`/`Provisional` show the pending set
     (provisional — the default review), `Accepted` shows
     confirmed faces, `Rejected` shows the reject bin — every rejected
-    face on the one system person `Rejected` (§4.35), so it renders as a
-    single section to **assign from**; Accept is inert there (§4.2).
+    face on its `RejectedN` cluster person (§4.35), so it renders as one
+    section **per cluster** to **assign from**; Accept is inert there
+    (§4.2).
 11. **Full-image annotation** ⇒ every full-size image draws one rectangle
     per visible face from `faces.x/y/w/h` against the canonical
     `images.width/height` coordinate space, percentage-scaled so it stays
@@ -652,8 +658,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     still cluster into new `UnknownN` persons.
 13. **Removing a person** ⇒ `remove_persons(person_ids)`, one
     transaction per call: every face of each person becomes
-    `link_status='rejected'` and **moves to the system person `Rejected`**
-    (§4.2/§4.35 — every path that rejects a face lands it there, so no
+    `link_status='rejected'` and **moves to its `RejectedN` cluster
+    person** (§4.2/§4.35 — every path that rejects a face lands it in a
+    cluster, so no
     writer ever leaves a face unowned; `faces.person_id` stays nullable in
     the DDL but is never written `NULL`), and the person row is deleted —
     `person_groups` and `person_refcrops` cascade, any *other* person's
@@ -663,8 +670,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     un-rejects and moves them). With `face_filter` set to anything but
     `Rejected` (§4.10) the removed faces vanish
     immediately (the image-detail grid shows no *unassigned* section — no
-    unowned faces exist). The system
-    person `Rejected` itself **cannot be removed** (§4.35). Available from
+    unowned faces exist). The `RejectedN` cluster
+    persons themselves **cannot be removed** (§4.35). Available from
     the person-tile context menu (also for a
     multi-selection), the reference-set pane and — batched — from tree
     branch menus (§3).
@@ -776,8 +783,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     exist or their counts. A person renders under **every** listed path
     (see §3); further groups stay visible in the row tooltip.
     A branch whose listed persons are all filtered out disappears with
-    them; the system person `Rejected` is listed only under
-    `Show → Rejected` (§4.35), so its branch is invisible under every
+    them; the `RejectedN` cluster persons are listed only under
+    `Show → Rejected` (§4.35), so their branch is invisible under every
     other setting.
 17. **Selection accelerators** ⇒ Ctrl/⌘-click on a face-card body
     toggles that card in the selection — the tree's idiom, mirrored
@@ -1135,15 +1142,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       — the copyability rule above applies to them only.
 27. **Stale-shell sweep** ⇒ every **writer that can empty a person** —
     the §4.1 assign/merge and the §4.2/§4.35 reject-move — deletes
-    persons matching `name LIKE 'Unknown%'` with **zero faces** in its
-    transaction (leftovers from pre-v1.9 runs and external writers are
-    swept by the next such write; `UnknownN`s emptied when the
-    reject-move of §4.2/§4.35 took their last face are swept
-    immediately). The read path is pure: `get_snapshot()` never writes
+    persons matching `name LIKE 'Unknown%'` **or a `RejectedN`**
+    (`^Rejected\d+$`) with **zero faces** in its transaction (leftovers
+    from pre-v1.9 runs and external writers are swept by the next such
+    write; `UnknownN`s emptied when the reject-move of §4.2/§4.35 took
+    their last face are swept immediately, and a `RejectedN` fully
+    **claimed** — every face assigned away — is swept the same way;
+    §4.35). The read path is pure: `get_snapshot()` never writes
     (#208). Named persons are never swept: an empty *named* person is a
-    legitimate future assignment target — and the system person
-    `Rejected` is **never swept** either (created on demand, reused by
-    the next reject; §4.35). The sweep is one statement, cheap and
+    legitimate future assignment target. The sweep is one statement, cheap and
     idempotent.
 28. **Merge Similar Persons** ⇒ a triage workflow for same-name
     duplicates (the importer's deliberate `X 2` generations, §9.4 of
@@ -1157,9 +1164,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     edit, so the commonest typo class counts as "1 diff". Optional
     **suffix aliases** (`merge_suffix_aliases`, whotrc, default off) —
     equivalence groups (`J,Jr,Junior`) stripped before comparing.
-    **`Unknown*` persons are excluded from detection** (`Unknown7` vs
-    `Unknown8` is distance 1) and refused as merge targets (§4.1
-    `validate_person_name` already enforces the latter server-side).
+    **`Unknown*` and `RejectedN` persons are excluded from detection**
+    (`Unknown7` vs `Unknown8` is distance 1; `RejectedN` are
+    writer-owned cluster bins, §4.35) and refused as merge targets
+    (§4.1 `validate_person_name` already enforces the latter
+    server-side).
     Each cluster carries per-pair **link evidence** (same-after-fold /
     seq-suffix / distance-N / suffix-alias) because single-linkage
     chains (A~B, B~C ⇒ {A,B,C} even if A⊀C) must stay explainable.
@@ -1590,7 +1599,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
          mirrors it. The `faceDragIds` prop remains for highlight/clear
          bookkeeping only.
 
-35. **Status groups & the system person `Rejected`** ⇒ groups stay
+35. **Status groups & the `RejectedN` cluster persons** ⇒ groups stay
     a plain organisational attribute — a dumb `person_groups.path` whose
     sole job is shaping the tree (§4.16). The review states carry
     *meaningful default values* **without making group stateful**:
@@ -1645,25 +1654,42 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       `New`, and existing
       seat-holders that receive new provisional faces re-seat to `New`;
       the harvest importer seats its groupless persons by the same rule.
-    - **Reject re-homes the face** (§4.2): every path that writes
-      `link_status='rejected'` — the Reject actions and
-      `remove_persons` — moves the face onto the **system person
-      `Rejected`** in the same transaction (`seq`/`name` re-derived per
+    - **Reject re-homes the face into a cluster** (§4.2): every path
+      that writes `link_status='rejected'` — the Reject actions and
+      `remove_persons` — moves the face onto its **`RejectedN` cluster
+      person** in the same transaction (`seq`/`name` re-derived per
       §4.7, origin person recomputed), so **every rejected face in the
-      database lives on `Rejected`**, ordinary persons hold only
+      database lives on a `RejectedN`**, ordinary persons hold only
       `provisional`/`confirmed` faces, and no writer ever produces an
       unowned face (`faces.person_id` stays nullable in the DDL but is
       never `NULL`).
-    - **The system person `Rejected`**: created on demand; its seat row
-      is always `Rejected` (the one derivation it never re-evaluates);
-      the name is reserved in `validate_person_name` (exact match, like
-      the `Unknown*` rule); it is **never renamed, moved, re-grouped,
-      merged (source or target), removed, or D&D-dropped-onto** (§4.13
-      guards its removal; §4.34 guards the drop); it has no primary and
-      no refcrops (every face it owns is rejected, so §4.5/§4.6
-      eligibility excludes them). It is listed in the tree **only under
-      `Show → Rejected`** and only while it holds faces (§4.10) —
-      invisible under every other setting.
+    - **The `RejectedN` cluster persons** (#266): one per similarity
+      cluster of rejected faces — the insightface association that
+      created the face's original cluster is preserved in the reject
+      bin. **Cluster resolution at reject time** (no schema change):
+      the face's `face_embeddings` vector is **single-linkage
+      greedy-matched** (cosine ≥ `cluster_threshold`, whotrc, default
+      0.4 — the importer's and the §4.9 grouping's same parameter)
+      against the faces of the existing `RejectedN` persons, and faces
+      rejected in the same batch cluster among themselves by the same
+      rule; a face matching nothing — including one **with no
+      embedding** (legacy, #41) — starts a fresh `RejectedN`. Each
+      person: state `created`, seat row always `Rejected` (the one
+      derivation it never re-evaluates); listed in the tree **only
+      under `Show → Rejected`** and only while it holds faces (§4.10) —
+      invisible under every other setting. The **names are reserved**
+      in `validate_person_name` as the family `^Rejected\d+$`
+      (the `Unknown*` analogue; the exact name `Rejected` stays
+      reserved) and are numbered collision-free over the existing
+      names, so a swept `RejectedN` number is never reused while its
+      row exists and gaps are harmless. A `RejectedN` is **writer
+      owned**: never renamed, moved, re-grouped, merged (source or
+      target), removed, or D&D-dropped-onto (§4.13 guards its removal;
+      §4.34 guards the drop); it has no primary and no refcrops
+      (every face it owns is rejected, so §4.5/§4.6 eligibility
+      excludes them). A `RejectedN` emptied by **claims** is **swept**
+      (§4.27 extends the stale-shell sweep to the family) — the faces
+      came back, so the bin goes.
     - **Claim is the only exit from `rejected`**: an assignment that
       includes rejected faces un-rejects them (`link_status='confirmed'`)
       and moves them to its target — plain **Accept never un-rejects**
@@ -1672,14 +1698,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       (rule bar *Edit…*, context menu, Edit dialog committed with a
       name) are the way back — reachable only while `Show = Rejected`
       (§4.10), so no bulk operation can claim by accident.
-    - **Data fix**: `scripts/fix_status_groups.py` upgrades a v1.6
+    - **Data fixes**: `scripts/fix_status_groups.py` upgrades a v1.6
       database **in place** (backup first; verified; refuses anything
-      but `1.6`): creates `Rejected`, moves every rejected face — owned
-      and unowned — onto it, rewrites the `Unknown` rows to derived
+      but `1.6`): creates the reject home, moves every rejected face —
+      owned and unowned — onto it, rewrites the `Unknown` rows to derived
       seats, seats any groupless person,
       recomputes the primaries/refcrops touched by the moves, asserts the
       invariant, and bumps `schema_version` to `1.7`. A fresh database
-      built from `database/schema.sql` needs none of this.
+      built from `database/schema.sql` needs none of this. **Legacy
+      split (#266)**: a one-shot, idempotent fix retires the single
+      system person `Rejected` — its faces are split into `RejectedN`
+      clusters by the same reject-time resolution (faces with no
+      embedding each take a singleton cluster), then the person row is
+      deleted; a database without it (fresh builds, dev drop-and-
+      recreate) skips it.
 
 36. **Rolls import pane** ⇒ importing a fresh roll must not
    require the terminal: the Rolls path filter (§3) doubles as the
@@ -1839,7 +1871,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      styled like it — it performs the same action as the commit above
      (pending name first, then the staged group ops; with nothing
      staged and no pending name it is an informed no-op, never an
-     error). The system person `Rejected` sees the list **read-only**
+     error). A `RejectedN` cluster person sees the list **read-only**
      (no ×, no add, no inline edit — §4.35) and no Update button.
    - **The Edit dialog fronts the same list**: whenever the
      dialog's **Name field holds a known person's name** (typed or
