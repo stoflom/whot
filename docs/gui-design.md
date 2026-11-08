@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.9** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.10** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2069,7 +2069,16 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   `sectionsRef`, and every further App extraction (keyboard layer,
   menus, hooks) MUST preserve the latest-value ref pattern — an
   extraction that churns the memoised grid identities is wrong even
-  when its behaviour looks right.
+  when its behaviour looks right. The sweep continues in v5.10 (#259):
+  the commit engine §4.24's IPC side — the #77 op routing (what one
+  staged op becomes: assign_person + the F2 group part, the
+  group-only per-distinct-owner batch, one batched description
+  command), the whole-run plan (the F5 gap-proof resume list, the
+  claimed flag, the displayed scope), the group-op owners (the #181
+  fresh-delta-first owner scan) and the accept routing (the #165
+  rejected-only gate, the #188 mode lock, the §4.30 anchor) — is the
+  co-tested pure core `src/commit.ts`; App binds it to the IPC and
+  applies the deltas in plan order.
 
 **45. (v4.2, #234) Optimistic verdict acknowledgement.**
 

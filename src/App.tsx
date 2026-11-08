@@ -21,6 +21,14 @@ import { faceIdsOf } from "./nameCluster";
 import { personDataSig } from "./personSig";
 import { PrefetchCache } from "./prefetch";
 import {
+  ownersForGroupOps,
+  planCommit,
+  planStageOps,
+  remainingAfterFailure,
+  reviewScope,
+  routeAccept,
+} from "./commit";
+import {
   flipLinkStatus,
   restoreLinkStatus,
   type Verdict,
@@ -1634,27 +1642,32 @@ export default function App() {
   // focus mode route to the plain accept (context only ever moves by the
   // user's own hand there). The plan comes from the pre-accept sections,
   // which stay valid across the refresh — see reviewFlow.ts.
+  // #259: the gate + mode routing + advance dance are the pure
+  // routeAccept/reviewScope (commit.ts, co-tested); App binds the mark,
+  // the verdict mutate and the focus follow in the same order.
   const acceptAndNext = useCallback(
     async (ids: number[], claimed = false) => {
       if (!snap) return;
+      const route = routeAccept(
+        mode,
+        ids,
+        facesById,
+        claimed,
+        lastSelRef.current,
+        hoverRef.current,
+        sections
+      );
       // #165/§4.35: plain accept never un-rejects — a rejected-only scope
       // is inert with guidance (commitPending passes claimed=true after a
       // staged NAME assignment has already done the claiming)
-      if (
-        !claimed &&
-        ids.length > 0 &&
-        ids.every((id) => facesById.get(id)?.link_status === "rejected")
-      ) {
+      if (route.kind === "inert") {
         setInfo("assign a person to bring it back");
         return;
       }
-      // #188/§4.40 + reopened (gui-design v3.93): the lock is the mode —
-      // no any-view widening; the plain path applies only OUTSIDE Review
-      // (a focus/rolls split is then its own context). A split open IN
-      // Review is a zoom of the review: the verdict keeps the review
-      // path (mark + advance plan), and a drained person's advance
-      // closes the split and focuses the next face to review (§4.30)
-      if (mode !== "review") {
+      if (route.kind === "plain") {
+        // #188/§4.40 + reopened (gui-design v3.93): the lock is the mode —
+        // no any-view widening; the plain path applies only OUTSIDE Review
+        // (a focus/rolls split is then its own context)
         const ok = await verdictMutate(
           () => api.acceptFaces(ids),
           ids,
@@ -1665,12 +1678,7 @@ export default function App() {
         return;
       }
       markExhaust(); // #125: accepting may empty the current person
-      const anchor = lastSelRef.current ?? hoverRef.current ?? ids[0] ?? null;
-      const actedKey =
-        anchor == null
-          ? null
-          : sections.find((s) => s.faceIds.includes(anchor))?.key ?? null;
-      const plan = acceptAdvancePlan(sections, actedKey, ids);
+      const plan = acceptAdvancePlan(sections, route.actedKey, ids);
       // #140: the selection rewrite / scroll-to-next used to run
       // unconditionally — a failed accept (error toast from mutate) wiped
       // the selection and pointed the cursor at a plan built from
@@ -1689,14 +1697,14 @@ export default function App() {
       // clobber the exhaust hand-over on engines that flush this update
       // as its own commit (WebKit); see the helper's comment.
       focusActedUnlessNoop(ids, personId);
-      setSel(new Set(plan?.faceIds ?? []));
-      const first = plan?.faceIds[0];
-      if (first != null) {
+      const { selection, reveal } = reviewScope(plan);
+      setSel(new Set(selection));
+      if (reveal != null) {
         // #214: post-commit reveal — the layout effect below grows the
         // mounted prefix to the target section first, then scrolls
         // (replaces the frame-dependent double-rAF, which could never
         // reach an unmounted card)
-        setRevealFace(first);
+        setRevealFace(reveal);
       }
     },
     [
@@ -1814,40 +1822,26 @@ export default function App() {
   // accept-and-advance path; Esc/Undo revert (F1) and a selection change
   // while staged asks escape-or-accept (Q4). The dialog-opening half
   // (prefillFor/openEdit) lives above faceMenu, which needs it too.
+  // #259: the routing is the PURE plan (stage.ts-styled commit.ts,
+  // co-tested); App binds it to the IPC in plan order.
   const stageOps = useCallback(
     async (st: Stage): Promise<Delta[]> => {
-      const ids = st.faceIds;
       const deltas: Delta[] = [];
-      if (st.name != null) {
-        // #77 routing kept: the name path carries the group (create /
-        // UnknownN rename); an explicit group also lands when the target
-        // person pre-existed (F2: assign_person never touches its group)
-        const name = st.name.trim();
-        const target = [...personsById.values()].find((p) => p.name === name);
-        deltas.push(await api.assignPerson(ids, name, st.group ?? ""));
-        if (st.group != null && target) deltas.push(await api.setPersonGroup(target.id, st.group));
-      } else if (st.group != null) {
-        // group-only: set_person_group never validates names — filing an
-        // UnknownN cluster into a group without naming it stays possible
-        const pids = [
-          ...new Set(
-            ids
-              .map((id) => facesById.get(id)?.person_id)
-              .filter((p): p is number => p != null)
-          ),
-        ];
-        if (pids.length === 0) {
-          // #165: no writer ever leaves a face unowned — defensive only
-          setInfo("nothing to group — these faces have no person");
-        } else {
-          for (const pid of pids) deltas.push(await api.setPersonGroup(pid, st.group));
+      for (const a of planStageOps(st, facesById, personsById)) {
+        switch (a.kind) {
+          case "info":
+            setInfo(a.msg);
+            break;
+          case "assign":
+            deltas.push(await api.assignPerson(a.ids, a.name, a.group));
+            break;
+          case "setPersonGroup":
+            deltas.push(await api.setPersonGroup(a.personId, a.group));
+            break;
+          case "setDescription":
+            deltas.push(await api.setFaceDescriptions(a.ids, a.desc));
+            break;
         }
-      }
-      if (st.desc != null) {
-        // #209: one batched command — the sequential per-face seq
-        // re-assignment (§4.4, same reason as the old per-card edits)
-        // happens inside its transaction, in call order
-        deltas.push(await api.setFaceDescriptions(ids, st.desc));
       }
       return deltas;
     },
@@ -1859,18 +1853,14 @@ export default function App() {
       keys: selection or cursor-as-target, dialog: its chosen scope) — the
       staged set supplies the edits only; an empty scope falls back to the
       staged ids. The review advance anchors as before — last-selected,
-      hovered, first id) */
+      hovered, first id). #259: the plan (what runs at all, the claimed
+      flag, the scope, the resume-after-failure list) is the pure
+      commit.ts core; App binds the sequencing. */
   const commitPending = useCallback(
     async (all: Stage[], acceptIds?: number[], groupOps?: GroupOp[]) => {
-      const opsLive = (groupOps ?? []).length > 0;
-      // #181: a list-only Accept (nothing field-staged) still runs — the
-      // membership edits commit even when every field is untouched
-      if (all.length === 0 && !opsLive) return;
-      // #139: the whole set stays staged until the commit lands — the
-      // old code wiped it before the first write, so a mid-commit
-      // failure silently discarded every not-yet-applied op (§4.24
-      // 'Accept commits every op'; Q3 text is never dropped silently)
-      const union = [...new Set(all.flatMap((o) => o.faceIds))];
+      const plan = planCommit(all, acceptIds, groupOps);
+      if (!plan) return;
+      const { opsLive, claimed, acceptScope } = plan;
       // #219: collect the staged ops' deltas — they carry the fresh
       // face→owner mapping (the claim/merge moves faces between persons),
       // so the group ops below need no full snapshot re-fetch.
@@ -1889,34 +1879,20 @@ export default function App() {
         // everything after it stays staged and retryable — Accept again
         // re-runs the idempotent field writes and continues from here
         setError(`Accept stopped at op ${done + 1}/${all.length}: ${e}`);
-        setPending(all.slice(done));
+        setPending(remainingAfterFailure(all, done));
         await flush(); // #219: land the deltas that did apply
         return;
       }
-      // a staged NAME assignment already claimed rejected faces (#165) —
-      // the advance must not trip the rejected-only guard on stale state
-      const claimed = all.some((o) => (o.name ?? "").trim().length > 0);
       // #166: acceptance runs over the caller's displayed scope — the
       // staged set only staged the edits (empty scope ⇒ the staged ids)
-      const ids = acceptIds && acceptIds.length > 0 ? acceptIds : union;
+      const ids = acceptScope;
       // #181 (§4.38): the dialog's group-LIST edits — the name has
       // landed, so the scope's faces now name the SURVIVING person (the
       // merge target when the name was taken, the renamed/created one
       // otherwise); the owner comes from the staged deltas (fresh) or the
       // pre-existing snap for untouched faces
       if (opsLive) {
-        const ownerOf = (faceId: number): number | null => {
-          for (let i = deltas.length - 1; i >= 0; i--) {
-            const f = deltas[i].faces?.find((x) => x.id === faceId);
-            if (f) return f.person_id ?? null;
-          }
-          return facesById.get(faceId)?.person_id ?? null;
-        };
-        const owners = [
-          ...new Set(
-            ids.map((id) => ownerOf(id)).filter((p): p is number => p != null)
-          ),
-        ];
+        const owners = ownersForGroupOps(ids, deltas, facesById);
         // #209: ONE call per op over ALL owners (the command is
         // per-person independent) — no refresh per call; the accept
         // below lands exactly one delta for the whole action. A failed
