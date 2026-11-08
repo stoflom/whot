@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 6.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 6.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -117,13 +117,13 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   are not drop targets; the persons inside them are ordinary rows.
   Leaves = persons (avatar, name, counts: total / provisional / confirmed /
   rejected). The tree's header — the **left pane's top bar** — is
-  **⌃/⌄ roll up/down buttons, then the *Merge Similar* button**
-  (§4.28), **then the person filter (search) input filling the
-  remaining width, with a Clear (✕) button at its right end** —
-  **pinned flush to the top of the pane** while the list scrolls (one
-  sticky block whose panel background covers the full pane width and
-  the pane's top padding, so no text can show through above or beside
-  it). The left pane carries **no *Review* button**: the top bar's
+  **two rows**: the **first row is the person filter (search) input
+  filling the row's width, with a Clear (✕) button at its right end**;
+  the **second row is the ⌃/⌄ roll up/down buttons and the *Merge
+  Similar* button** (§4.28) — **pinned flush to the top of the pane**
+  while the list scrolls (one sticky block whose panel background
+  covers the full pane width and the pane's top padding, so no text
+  can show through above or beside it). The left pane carries **no *Review* button**: the top bar's
   status totals beside the lock (§4.41) already show the pending
   count, and Review is entered from the top-bar mode selector. The
   filter matches **person name and/or
