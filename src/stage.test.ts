@@ -257,15 +257,17 @@ describe("stageSummary (dialog copy)", () => {
   });
 });
 
-describe("add mode `+` (#231, §4.24)", () => {
-  it("addTokens: only `+`-prefixed values yield tokens — split on |, trimmed, empties dropped", () => {
-    expect(addTokens("+beard")).toEqual(["beard"]);
-    expect(addTokens("+beard|glasses ")).toEqual(["beard", "glasses"]);
-    expect(addTokens("+ beard | |scarf")).toEqual(["beard", "scarf"]);
-    expect(addTokens("beard|+glasses")).toEqual([]); // prefix only at the start
+describe("add mode `|` (#231/#263, §4.24)", () => {
+  it("addTokens: only `|`-prefixed values yield tokens — split on |, trimmed, empties dropped", () => {
+    expect(addTokens("|beard")).toEqual(["beard"]);
+    expect(addTokens("|beard|glasses ")).toEqual(["beard", "glasses"]);
+    expect(addTokens("| beard | |scarf")).toEqual(["beard", "scarf"]);
+    expect(addTokens("beard||glasses")).toEqual([]); // prefix only at the start
     expect(addTokens("beard")).toEqual([]);
-    expect(addTokens("+")).toEqual([]);
+    expect(addTokens("|")).toEqual([]);
     expect(addTokens("")).toEqual([]);
+    // #263: the old `+` prefix is plain text again — no special meaning
+    expect(addTokens("+beard")).toEqual([]);
   });
 
   it("applyAdd: existing order kept, new tokens in typed order, NO duplicates", () => {
@@ -276,23 +278,23 @@ describe("add mode `+` (#231, §4.24)", () => {
     expect(applyAdd("  ", ["beard"])).toBe("beard"); // whitespace is not a token
   });
 
-  it("buildStage: a lone `+` (no tokens) never stages — the 'nothing to apply' path", () => {
+  it("buildStage: a lone `|` (no tokens) never stages — the 'nothing to apply' path", () => {
     expect(
-      buildStage([1], { name: " ", group: "", desc: "+" }, { name: true, group: false, desc: true })
+      buildStage([1], { name: " ", group: "", desc: "|" }, { name: true, group: false, desc: true })
     ).toBeNull();
     expect(
-      buildStage([1], { name: " ", group: "", desc: "+ | " }, { name: true, group: false, desc: true })
+      buildStage([1], { name: " ", group: "", desc: "| |" }, { name: true, group: false, desc: true })
     ).toBeNull();
-    // a `+` value WITH tokens still stages (the expansion happens at Apply)
+    // a `|` value WITH tokens still stages (the expansion happens at Apply)
     expect(
-      buildStage([1], { name: " ", group: "", desc: "+beard" }, { name: false, group: false, desc: true })
-    ).toEqual({ faceIds: [1], desc: "+beard" });
+      buildStage([1], { name: " ", group: "", desc: "|beard" }, { name: false, group: false, desc: true })
+    ).toEqual({ faceIds: [1], desc: "|beard" });
   });
 
   const shown = (map: Record<number, string>) => (id: number) => map[id] ?? "";
 
   it("expandAddStage: each face resolves against its displayed value; no-op faces drop out", () => {
-    const st: Stage = { faceIds: [1, 2, 3, 4], desc: "+beard" };
+    const st: Stage = { faceIds: [1, 2, 3, 4], desc: "|beard" };
     const d = shown({ 1: "beard", 2: "glasses", 3: "beard|glasses", 4: "" });
     expect(expandAddStage(st, d)).toEqual([
       { faceIds: [2], desc: "glasses|beard" },
@@ -302,19 +304,19 @@ describe("add mode `+` (#231, §4.24)", () => {
   });
 
   it("expandAddStage: a uniform result collapses to the original single stage", () => {
-    const st: Stage = { faceIds: [1, 2], desc: "+beard" };
+    const st: Stage = { faceIds: [1, 2], desc: "|beard" };
     expect(expandAddStage(st, shown({ 1: "", 2: "" }))).toEqual([
       { faceIds: [1, 2], desc: "beard" },
     ]);
   });
 
   it("expandAddStage: every face a no-op and no field part → null (nothing to apply)", () => {
-    const st: Stage = { faceIds: [1, 2], desc: "+beard" };
+    const st: Stage = { faceIds: [1, 2], desc: "|beard" };
     expect(expandAddStage(st, shown({ 1: "beard", 2: "beard|hat" }))).toBeNull();
   });
 
   it("expandAddStage: a name/group part rides its own stage over the full id set", () => {
-    const st: Stage = { faceIds: [1, 2], name: "Alice", desc: "+beard" };
+    const st: Stage = { faceIds: [1, 2], name: "Alice", desc: "|beard" };
     expect(expandAddStage(st, shown({ 1: "beard", 2: "glasses" }))).toEqual([
       { faceIds: [1, 2], name: "Alice" },
       { faceIds: [2], desc: "glasses|beard" },
@@ -322,7 +324,7 @@ describe("add mode `+` (#231, §4.24)", () => {
   });
 
   it("expandAddStage: a uniform add WITH a field part keeps the single-stage shape", () => {
-    const st: Stage = { faceIds: [1, 2], group: "Family", desc: "+beard" };
+    const st: Stage = { faceIds: [1, 2], group: "Family", desc: "|beard" };
     expect(expandAddStage(st, shown({ 1: "", 2: "" }))).toEqual([
       { faceIds: [1, 2], group: "Family", desc: "beard" },
     ]);
@@ -334,7 +336,7 @@ describe("add mode `+` (#231, §4.24)", () => {
   });
 
   it("expandAddStage: multi-token adds keep typed order after each face's own list", () => {
-    const st: Stage = { faceIds: [1, 2], desc: "+scarf|beard" };
+    const st: Stage = { faceIds: [1, 2], desc: "|scarf|beard" };
     expect(expandAddStage(st, shown({ 1: "beard", 2: "" }))).toEqual([
       { faceIds: [1], desc: "beard|scarf" },
       { faceIds: [2], desc: "scarf|beard" },
