@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 6.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 6.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -511,7 +511,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    (§4.2); and when the person holds no user-given group, the accept
    re-seats it `Accepted` (§4.35).
 4. **Description** ⇒ free text, spaces around `|` trimmed by the writer (a
-   `+`-prefixed dialog value is the §4.24 add mode — append to each face's
+   `|`-prefixed dialog value is the §4.24 add mode — append to each face's
    existing descriptors, no duplicates); the
    derived face label becomes `person.name-description-seq`. Editing a
    description **re-assigns the face's `seq`** to `MAX(others)+1` within its
@@ -961,16 +961,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       never silently discarded. The **group prefill is the person's
       first real group** — a status seat never prefills (a seated
       person's group field opens **empty** = ungrouped, §4.35/#233).
-    - **Description add mode (`+` prefix)**: a description value
-      starting with **+** is an *add*, not a replace — the tokens after
-      the **+** (split on `|`, spaces trimmed as usual) are **appended
-      to each scope face's own existing descriptors** in typed order,
-      and a token already present on a face is skipped (**no
-      duplicates**). Order is per-face: existing descriptors first, new
-      ones appended — a face that already carried a token is unchanged
-      by it, and the per-face `seq` reassignment / refcrop recompute of
-      §4 (Description) apply as for any description edit. A lone **+**
-      (no tokens) applies nothing ("nothing to apply" path). The mode
+    - **Description add mode (`|` prefix)**: a description value
+      starting with **|** is an *add*, not a replace — the tokens after
+      the leading **|** (split on `|`, spaces trimmed as usual) are
+      **appended to each scope face's own existing descriptors** in
+      typed order, and a token already present on a face is skipped
+      (**no duplicates**). `|` doubles as the add marker because it is
+      already the tag separator (#263, replacing the former `+` prefix
+      of #231 — `+` no longer has any special meaning). Order is
+      per-face: existing descriptors first, new ones appended — a face
+      that already carried a token is unchanged by it, and the per-face
+      `seq` reassignment / refcrop recompute of §4 (Description) apply
+      as for any description edit. A lone **|** (no tokens) applies
+      nothing ("nothing to apply" path). The mode
       works in **every scope** (Card adds to that card's own value) and
       is the way to tag a scope without re-typing its prefill — in
       particular a `various` placeholder, which is empty by design.
