@@ -19,6 +19,7 @@ import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
 import { personDataSig } from "./personSig";
+import { PrefetchCache } from "./prefetch";
 import {
   flipLinkStatus,
   restoreLinkStatus,
@@ -503,11 +504,13 @@ export default function App() {
     ) {
       // #234 (rule 45): a prefetched advance target — consume it only
       // when the person's data is unchanged since the prefetch
-      const hit = prefetchRef.current.get(
-        `c|${personId}|${clusterThreshold}`
+      const hit = prefetchRef.current.getClusters(
+        personId,
+        clusterThreshold,
+        personSig
       );
-      if (hit && hit.sig === personSig) {
-        setClusters(hit.value as AppearanceGroup[]);
+      if (hit) {
+        setClusters(hit);
         return;
       }
       api
@@ -537,9 +540,9 @@ export default function App() {
     }
     // #234 (rule 45): a prefetched advance target (see the cluster
     // effect) — the §213 signature guards against a changed person
-    const hit = prefetchRef.current.get(`r|${personId}`);
-    if (hit && hit.sig === personSig) {
-      setRefcrops(hit.value as Refcrop[]);
+    const hit = prefetchRef.current.getRefcrops(personId, personSig);
+    if (hit) {
+      setRefcrops(hit);
       return;
     }
     api
@@ -792,10 +795,10 @@ export default function App() {
   const personsByIdRef = useRef(personsById);
   personsByIdRef.current = personsById;
   // #234: prefetched advance-target data — consumed by the cluster/
-  // refcrop effects only when the target's §213 signature is unchanged
-  const prefetchRef = useRef(
-    new Map<string, { sig: string; value: unknown }>()
-  );
+  // refcrop effects only when the target's §213 signature is unchanged;
+  // #257: bounded + typed (an LruCache of a discriminated union — the
+  // `as` casts are gone)
+  const prefetchRef = useRef(new PrefetchCache());
   const prefetchTarget = useCallback((target: number) => {
     const s = snapRef.current;
     if (!s) return;
@@ -810,17 +813,14 @@ export default function App() {
       api
         .personFaceClusters(target, threshold)
         .then((clusters) => {
-          prefetchRef.current.set(`c|${target}|${threshold}`, {
-            sig,
-            value: clusters,
-          });
+          prefetchRef.current.setClusters(target, threshold, sig, clusters);
         })
         .catch(() => {}); // best-effort — the normal fetch covers a miss
     }
     api
       .getRefcrops(target)
       .then((refcrops) => {
-        prefetchRef.current.set(`r|${target}`, { sig, value: refcrops });
+        prefetchRef.current.setRefcrops(target, sig, refcrops);
       })
       .catch(() => {});
   }, []);

@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.7** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.8** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2092,6 +2092,11 @@ In Review mode, when a verdict is predicted to exhaust the anchored
 person (every face of the person under the current review status is
 acted upon), the app prefetches the advance target's similarity
 clusters and reference crops *in parallel* with the verdict IPC. The
+prefetch cache is a **bounded, typed store** (v5.8, #257): an LRU over
+one discriminated-union value type — clusters keyed `id|threshold`,
+refcrops keyed `id` — capped at the same limit as the rotated-image
+cache, so a long session evicts least-recently-used entries instead of
+growing unboundedly (an evicted entry costs one ordinary refetch). The
 cluster and refcrop effects consume a prefetched entry only when the
 target person's §213 data signature is unchanged at consumption
 time; a failed prefetch never surfaces — the normal fetch path covers
