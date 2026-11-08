@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { scanImportDir, type Face, type ImageRow } from "../api";
 import type { FaceFilter } from "../viewFilters";
@@ -28,6 +28,11 @@ interface Props {
   /** #174 (§4.39): the selected branch — ABSOLUTE path, session state in App */
   selected: string;
   onSelect: (path: string) => void;
+  /** #265: the open branches — '/'-joined segment paths, SESSION state
+      in App (like the root and the selection): opening a roll's grid
+      unmounts this pane, and returning must show the tree as it was */
+  openSet: Set<string>;
+  onToggle: (path: string) => void;
   /** #167 (§4.36): a not-yet-imported directory opens the import pane */
   onImportDir: (path: string) => void;
 }
@@ -171,7 +176,7 @@ function BranchView({
   );
 }
 
-function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, selected, onSelect, onImportDir }: Props) {
+function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, selected, onSelect, openSet, onToggle, onImportDir }: Props) {
   const tree = useMemo(() => buildTree(images, root), [images, root]);
 
   // per-image raw face counters + the Show-filter presence set (§4.10,
@@ -190,20 +195,9 @@ function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage,
     [tree, faceTotals, listed]
   );
 
-  // branches start collapsed — the user drills in (#161); open state is
-  // display-only, keyed on the '/'-joined segment path
-  const [openSet, setOpenSet] = useState<Set<string>>(new Set());
   // #255: the roving-tabindex focus for the branch headers — the first
   // visible branch is tabbable, arrows move it (branchKey)
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
-  const toggle = useCallback((path: string) => {
-    setOpenSet((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
 
   // #255: keep exactly one visible header tabbable — seed the first on
   // mount, and if an expand/collapse / re-render leaves `focusedPath`
@@ -319,7 +313,7 @@ function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage,
               selected={selected}
               totals={totals}
               visible={visible}
-              onToggle={toggle}
+              onToggle={onToggle}
               onSelect={onSelect}
               focusedPath={focusedPath}
               onFocusPath={setFocusedPath}

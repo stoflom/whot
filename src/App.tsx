@@ -58,6 +58,7 @@ import {
 import { stepBase } from "./stepFlow";
 import { groupPathOptions } from "./components/PathTypeahead";
 import { descTagOptions } from "./descTags";
+import { useScrollPlace } from "./scrollPlace";
 import {
   addTokens,
   buildStage,
@@ -157,6 +158,18 @@ export default function App() {
   // path, defaults to the root itself, re-validated when the root
   // changes (a selection outside the new root falls back to it)
   const [rollBranch, setRollBranch] = useState("/");
+  // #265: the open branches of the Rolls path hierarchy — session
+  // state like the root (RollsPane unmounts while a roll's grid is
+  // open; returning must show the tree the way it was)
+  const [rollOpenSet, setRollOpenSet] = useState<Set<string>>(new Set());
+  const toggleRollBranch = useCallback((path: string) => {
+    setRollOpenSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
   // #174 (§4.39): the right-pane thumbnail selection — the §4.23
   // anchor pattern over images; clears when the branch selection
   // changes (a different thumb set)
@@ -1121,19 +1134,13 @@ export default function App() {
     changeFaceFilter("provisional");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, snap]);
-  // #203 + reopened (gui-design v3.93, §4.40): Review keeps its scroll
-  // — the review grid's place is saved while the grid is on screen (the
-  // onScroll gate: not while the full image is open, whose container
-  // scroll is the focus view's own) and restored whenever the grid
-  // RETURNS — a mode re-entry or the full image closing — so the
-  // toolbar index and the visible place never disagree
-  const centerScrollRef = useRef<HTMLDivElement>(null);
-  const reviewScrollRef = useRef(0);
-  useLayoutEffect(() => {
-    if (mode !== "review" || splitImageId != null) return;
-    const el = centerScrollRef.current;
-    if (el) el.scrollTop = reviewScrollRef.current;
-  }, [mode, splitImageId]);
+  // #203 + reopened (gui-design v3.93, §4.40) + #264: the centre GRID
+  // keeps its scroll place in EVERY mode — the place is saved while the
+  // grid is on screen (the hook's gate: not while the full image is
+  // open, whose container scroll is the focus view's own) and restored
+  // whenever the grid RETURNS — a mode switch or the full image closing
+  // — so the toolbar index and the visible place never disagree
+  const centerScroll = useScrollPlace(mode, splitImageId == null);
   // #200 reopened (gui-design v3.93, §4.40): the tree re-anchor scroll —
   // layout effect (post-commit, pre-paint, no frame dependency); the
   // optional chain: a tree person without a review section (no face
@@ -1366,10 +1373,10 @@ export default function App() {
       confirmContext(() => {
         if (splitImageId != null) setSplitImageId(null);
         setImageId(id);
-        centerScrollRef.current?.scrollTo({ top: 0 });
+        centerScroll.ref.current?.scrollTo({ top: 0 });
       });
     },
-    [branchThumbs, imageId, splitImageId, confirmContext],
+    [branchThumbs, imageId, splitImageId, confirmContext, centerScroll.ref],
   );
 
   const imageAreaMenu = useCallback(
@@ -2567,15 +2574,8 @@ export default function App() {
               it scrolls, so no section content can ever pass above it */}
           <div
             className="center-scroll"
-            ref={centerScrollRef}
-            onScroll={(e) => {
-              // #203 + reopened (gui-design v3.93): only the review
-              // GRID's place is remembered — while the full image is
-              // open the container's scroll is the focus view's own
-              // and must never overwrite the grid's saved place
-              if (mode === "review" && splitImageId == null)
-                reviewScrollRef.current = e.currentTarget.scrollTop;
-            }}
+            ref={centerScroll.ref}
+            onScroll={centerScroll.onScroll}
           >
           <div className={splitRow ? "center-focus" : undefined}>
             {splitRow ? (
@@ -2664,6 +2664,10 @@ export default function App() {
               // right-pane thumbnails
               selected={rollBranch}
               onSelect={setRollBranch}
+              // #265: the open state — session state, survives the
+              // grid round-trip that unmounts the pane
+              openSet={rollOpenSet}
+              onToggle={toggleRollBranch}
               // #142: opening an image from the path filter is a full
               // view-context change and must honour the #123 drop-or-
               // accept dialog when a staged set is live
