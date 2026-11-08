@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.8** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.9** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1395,7 +1395,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     - Accept never touches rejected faces (claiming is an assignment,
       §4.35; §4.2 plain accept never un-rejects). Esc closes layers in
       order: dropdown → menus and dialogs → preview-undo → cancel field
-      edit → split. **Every owning modal installs its own
+      edit → split. The dispatcher and the Esc stack live in the
+      **`useAppKeys` hook** (v5.9, #258 — `src/appKeys.ts`, co-tested):
+      App binds it once where every input is in scope; the volatile
+      render values ride the one `input` object (the former
+      twice-written keyRef literal is gone), and every guard — the
+      typing/focus bail, `data-owns-keys` (#255), the #138
+      overlay-count bail, the #187 stale-window context-confirm bail —
+      is preserved exactly. **Every owning modal installs its own
       window-level Escape handler** (v5.5, #248): the field-level
       `onEscape` covers only its input, so a dialog without the listener
       leaves Esc dead once focus leaves the fields — ConfirmDialog,
