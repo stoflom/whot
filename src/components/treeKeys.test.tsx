@@ -96,10 +96,8 @@ describe("PersonTree APG tree (#255)", () => {
         tree={tree}
         persons={persons}
         selectedId={1}
-        reviewCount={0}
         filter=""
         onFilter={() => {}}
-        onReview={() => {}}
         onSelect={() => {}}
         selectedIds={new Set()}
         onRename={() => {}}
