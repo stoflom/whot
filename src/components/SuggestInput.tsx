@@ -43,6 +43,10 @@ interface Props {
   /** append prefill (#92): no select-all, caret placed at the end on
       mount — the user types after the '|' */
   caretEnd?: boolean;
+  /** #262: derive the match query from the field value (default: the
+      trimmed value) — the description field strips its leading `|`
+      add-mode prefix so `|beard` still matches the `beard` tag */
+  queryFor?: (value: string) => string;
 }
 
 const MAX_SUGGESTIONS = 8;
@@ -61,13 +65,14 @@ export default function SuggestInput({
   autoFocus,
   select = "auto",
   caretEnd = false,
+  queryFor,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1);
   const ref = useRef<HTMLInputElement>(null);
 
   const matches = useMemo(() => {
-    const q = value.trim().toLowerCase();
+    const q = (queryFor ? queryFor(value) : value).trim().toLowerCase();
     if (!q) return [];
     return options
       .filter(
@@ -76,7 +81,7 @@ export default function SuggestInput({
           o.value !== value, // exact match: the dropdown adds nothing
       )
       .slice(0, MAX_SUGGESTIONS);
-  }, [value, options]);
+  }, [value, options, queryFor]);
 
   const listOpen = open && matches.length > 0;
 
