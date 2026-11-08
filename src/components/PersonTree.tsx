@@ -17,6 +17,10 @@ import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
 import GroupDialog from "./GroupDialog";
 import AddGroupDialog from "./AddGroupDialog";
+// #260: the shared "is a face drag live" predicate (faceDrop.ts) — the
+// ONE definition App's grid handlers and this pane's person-row drop
+// targets both read (the #252 dup merge)
+import { faceDragLive } from "../faceDrop";
 // #223 (F-M1/F-M2): the tree structure and its queries are pure
 // (treeIndex.ts, co-tested) — the pane receives the App-built tree and
 // indexes it once per (tree, persons, filter) change
@@ -328,8 +332,8 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
   // ref (v3.33 fix: acceptance and the dropped payload come from the
   // ref, mirroring how the person-drag path reads dragRef); the state
   // view only drives the clear-on-end effect below
-  const liveFaceDrag = () =>
-    faceDragRef?.current != null && faceDragRef.current.length > 0;
+  // #260: the shared live-face-drag predicate (ONE definition, faceDrop.ts)
+  const liveFaceDrag = () => faceDragLive(faceDragRef?.current);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // #255: the roving-tabindex focus — exactly one visible item (branch
@@ -484,13 +488,9 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
   const dropFacesRef = useRef(onDropFaces);
   dropFacesRef.current = onDropFaces;
   const rowHandlers = useMemo(() => {
-    const clear = () => {
-      dragRef.current = null;
-      setDropPath(null);
-      setDropPerson(null);
-    };
-    const faceDragLive = () =>
-      faceDragRef?.current != null && faceDragRef.current.length > 0;
+    // #260: `clearDrag` (the shared tree-drag clear, above) and
+    // `liveFaceDrag` (the shared face-drag predicate, above) are the
+    // single definitions — no local dups
     return {
       onSelect: (id: number, e: ReactMouseEvent) => onSelectRef.current(id, e),
       // #255: the row's keyboard home — focus moves the roving tabindex,
@@ -533,7 +533,7 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", `${ids.length} person(s)`); // firefox needs data
       },
-      onDragEnd: clear,
+      onDragEnd: clearDrag,
       // #88 (§4.28): dragging persons ONTO a person row = merge into it —
       // a new drop-target type beside #50's branch/Ungrouped drops. #135
       // (rule 34) adds the same row as a target for FACE drags from the
@@ -549,7 +549,7 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
           if (dropPersonRef.current !== id) setDropPerson(id);
           return;
         }
-        if (faceDragLive()) {
+        if (liveFaceDrag()) {
           // #135: face payload — person rows accept (ref-checked at
           // event time, v3.33)
           e.preventDefault();
@@ -560,7 +560,7 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
       },
       onDragLeave: (id: number) => {
         if (
-          (dragRef.current?.kind === "persons" || faceDragLive()) &&
+          (dragRef.current?.kind === "persons" || liveFaceDrag()) &&
           dropPersonRef.current === id
         ) {
           setDropPerson(null);
@@ -572,7 +572,7 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
           e.preventDefault();
           e.stopPropagation();
           const ids = d.ids;
-          clear();
+          clearDrag();
           // validation + confirmation live in App (shared with
           // menu/dialog, §4.28)
           mergeIntoRef.current(ids, id);
@@ -583,7 +583,7 @@ function PersonTree({ tree, persons, selectedId, reviewCount, filter, onFilter, 
           // #135: face payload → face-level merge (ref at drop time, v3.33)
           e.preventDefault();
           e.stopPropagation();
-          clear();
+          clearDrag();
           dropFacesRef.current?.(faces, id);
         }
       },

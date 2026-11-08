@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { faceDragPayload, faceMergePlan } from "./faceDrop";
+import { faceDragLive, faceDragPayload, faceMergePlan } from "./faceDrop";
 
 // rule 34 (#135/#136) — the drag-payload rule and the face-level merge
 // plan are pure: the GUI-mock harness drives the full DOM flow, these
@@ -77,5 +77,17 @@ describe("faceMergePlan (#135)", () => {
   it("unknown face ids in the payload are ignored", () => {
     const plan = faceMergePlan([1, 999], 30, faces, persons);
     expect(plan.movers).toEqual([1]);
+  });
+});
+
+// #260 — the shared "is a face drag live" predicate (ONE definition for
+// App's grid handlers and the tree's person-row drop targets)
+describe("faceDragLive (#260) — the shared live-drag predicate", () => {
+  it("a non-empty payload is live; null / empty / undefined are not", () => {
+    expect(faceDragLive([1, 2])).toBe(true);
+    expect(faceDragLive([1])).toBe(true);
+    expect(faceDragLive(null)).toBe(false);
+    expect(faceDragLive([])).toBe(false);
+    expect(faceDragLive(undefined)).toBe(false);
   });
 });

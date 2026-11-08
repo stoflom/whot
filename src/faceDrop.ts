@@ -22,6 +22,17 @@ export function faceDragPayload(
   return selected.has(dragId) && selected.size > 1 ? [...selected] : [dragId];
 }
 
+/** #135 (rule 34) + #260: is a face drag LIVE (a non-empty payload)?
+    The ONE definition App's grid handlers and the tree's person-row
+    drop targets both read (the #252 dup merge): a drop must not depend
+    on a React re-render having landed mid-drag, so both sides check the
+    ref's payload at event time through this. */
+export function faceDragLive(
+  payload: number[] | null | undefined,
+): boolean {
+  return payload != null && payload.length > 0;
+}
+
 /** the face-level merge plan for a drop onto a person row (#135) */
 export interface FaceMergePlan {
   /** faces that actually move — the payload minus the target's own */

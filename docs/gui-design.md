@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 5.10** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 5.11** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2078,7 +2078,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   fresh-delta-first owner scan) and the accept routing (the #165
   rejected-only gate, the #188 mode lock, the §4.30 anchor) — is the
   co-tested pure core `src/commit.ts`; App binds it to the IPC and
-  applies the deltas in plan order.
+  applies the deltas in plan order. The sweep concludes in v5.11 (#260):
+  the centre pane's face-drag machine (rule 34 / §4.16) — the live
+  payload + drop-target state, the refs that mirror them, and the five
+  grid handlers — is the co-tested hook `src/useFaceDrag.ts`, and the
+  "is a face drag live" predicate App's grid and the tree's person-row
+  drop targets both read is the ONE pure `faceDragLive` in
+  `faceDrop.ts` (the two inline dups are gone). Identity per #98: the
+  ref-driven handlers never churn; the snapshot-reading pair churns
+  only with `facesById` — the old `gridHandlers` memo's rate.
 
 **45. (v4.2, #234) Optimistic verdict acknowledgement.**
 

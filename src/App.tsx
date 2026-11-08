@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
@@ -20,6 +19,7 @@ import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
 import { personDataSig } from "./personSig";
 import { PrefetchCache } from "./prefetch";
+import { useFaceDrag } from "./useFaceDrag";
 import {
   ownersForGroupOps,
   planCommit,
@@ -44,7 +44,7 @@ import {
   exhaustAdvanceTarget,
   verdictAdvanceTarget,
 } from "./reviewFlow";
-import { faceDragPayload, faceMergePlan } from "./faceDrop";
+import { faceMergePlan } from "./faceDrop";
 import { useAppKeys } from "./appKeys";
 import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
@@ -267,15 +267,11 @@ export default function App() {
   const [mergeInto, setMergeInto] = useState<
     { sourceIds: number[]; targetId?: number } | null
   >(null);
-  // #135/#136 (rule 34): face drag & drop — the payload is App-owned
-  // (the drag starts in the centre pane and may land in the left pane).
-  // Refs mirror the state so the (identity-stable) grid handlers read
-  // the live values without taking state into their dependency lists:
-  // a drag must not churn the grid memo while it is in flight.
-  const [faceDrag, setFaceDrag] = useState<number[] | null>(null);
-  const faceDragRef = useRef<number[] | null>(null);
-  const [faceDropTarget, setFaceDropTarget] = useState<number | null>(null);
-  const faceDropTargetRef = useRef<number | null>(null);
+  // #135/#136 (rule 34) + #260: face drag & drop — the machine is the
+  // co-tested `useFaceDrag` hook (below): the payload + drop-target
+  // state, the refs that mirror them, and the five grid handlers. A
+  // drag must not churn the grid memo while it is in flight, so the
+  // handlers read the live values through refs (the #98 identity rule).
   // #135: a face drag dropped on a person row — face-level merge
   // confirmation (the §4.28 person-level dialog moves whole persons)
   const [faceMerge, setFaceMerge] = useState<
@@ -1481,6 +1477,23 @@ export default function App() {
   const personOptions = useMemo(() => snap?.persons ?? [], [snap]);
   const pathOptions = useMemo(() => groupPathOptions(personOptions), [personOptions]);
 
+  // #135/#136 (rule 34) + #260: the face-drag machine — one hook owns the
+  // state/refs and the five identity-stable grid handlers (co-tested in
+  // useFaceDrag.test.tsx). Placed after facesById/mutate so the handlers
+  // read the current snapshot; the grid memo below re-binds only when
+  // facesById does (same churn the old inline handlers had).
+  const {
+    faceDrag,
+    faceDropTarget,
+    faceDragRef,
+    onFaceDragStart,
+    onFaceDragEnd,
+    onFaceDragOver,
+    onFaceDragLeave,
+    onFaceDropOnCard,
+    clearFaceDrag,
+  } = useFaceDrag(selRef, stagedIdxRef, facesById, mutate);
+
   // #177 (§4.42): the accept path behind the ✓ — bound through a ref
   // so this early memo (#98 identity rule) keeps a stable callback
   const acceptFlowRef = useRef<(ids: number[]) => void>(() => {});
@@ -1525,65 +1538,19 @@ export default function App() {
     onEditCard: (id: number) =>
       openEdit(actionScope(id).length > 1 ? "selection" : "card", { card: id }),
     onEditGroup: (ids: number[]) => openEdit("group", { group: ids }),
-    // #135/#136 (rule 34): face drag & drop — the live payload is read
-    // from refs so these identities (and thus the grid memo) never churn
-    // while a drag is in flight
-    onFaceDragStart: (id: number, e: ReactDragEvent) => {
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", `face ${id}`); // Firefox needs data
-      // rule 34: the whole selection when the card is part of one
-      const payload = faceDragPayload(selRef.current, id);
-      faceDragRef.current = payload;
-      setFaceDrag(payload);
-    },
-    onFaceDragEnd: () => {
-      faceDragRef.current = null;
-      faceDropTargetRef.current = null;
-      setFaceDrag(null);
-      setFaceDropTarget(null);
-    },
-    onFaceDragOver: (id: number, e: ReactDragEvent) => {
-      if (!faceDragRef.current) return;
-      // #136: the copy source is what the card SHOWS — a live staged
-      // value when one is staged on it, else the committed one (#224:
-      // an O(1) index read)
-      const staged = stagedIdxRef.current.get(id);
-      const desc = (staged?.desc ?? facesById.get(id)?.description ?? "").trim();
-      if (!desc) return; // nothing to copy — not a target (Q3)
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      if (faceDropTargetRef.current !== id) {
-        faceDropTargetRef.current = id;
-        setFaceDropTarget(id);
-      }
-    },
-    onFaceDragLeave: (id: number) => {
-      if (faceDropTargetRef.current === id) {
-        faceDropTargetRef.current = null;
-        setFaceDropTarget(null);
-      }
-    },
-    onFaceDropOnCard: (id: number, e: ReactDragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const payload = faceDragRef.current;
-      faceDragRef.current = null;
-      faceDropTargetRef.current = null;
-      setFaceDrag(null);
-      setFaceDropTarget(null);
-      if (!payload) return;
-      const staged = stagedIdxRef.current.get(id); // #224: O(1) lookup
-      const desc = (staged?.desc ?? facesById.get(id)?.description ?? "").trim();
-      if (!desc) return; // double guard — the browser would not have dropped
-      const ids = payload.filter((x) => x !== id); // its own desc is a no-op
-      if (ids.length === 0) return;
-      // one mutate = one refresh; link_status is untouched (a text edit).
-      // #209: one batched command instead of one call per dragged face
-      void mutate(() => api.setFaceDescriptions(ids, desc));
-    },
+    // #135/#136 (rule 34) + #260: the face-drag handlers are the
+    // identity-stable callbacks from useFaceDrag (co-tested) — they read
+    // the live payload through refs, so the grid memo never churns while
+    // a drag is in flight
+    onFaceDragStart,
+    onFaceDragEnd,
+    onFaceDragOver,
+    onFaceDragLeave,
+    onFaceDropOnCard,
   }), [facesById, personsById, faceMenu, toggle, selectOnly, rangeSelect,
       toggleMany, doPrimary, doRefcrop, doReject, actionScope, openEdit,
-      confirmContext, mutate]);
+      confirmContext, mutate, onFaceDragStart, onFaceDragEnd, onFaceDragOver,
+      onFaceDragLeave, onFaceDropOnCard]);
 
   // one section per person over an image's faces — the Rolls image
   // detail and the #55 focus-mode film roll share it (§4.44: the rule
@@ -2202,11 +2169,9 @@ export default function App() {
   // face-level dialog (whole-person merges use the §4.28 one)
   const onFacesDropped = useCallback(
     (faceIds: number[], targetId: number) => {
-      // the drag is over — clear the payload and highlights (App side)
-      faceDragRef.current = null;
-      faceDropTargetRef.current = null;
-      setFaceDrag(null);
-      setFaceDropTarget(null);
+      // the drag is over — clear the payload and highlights (App side,
+      // the shared clear from useFaceDrag, #260)
+      clearFaceDrag();
       if (!snap) return;
       const target = personsById.get(targetId);
       if (!target) return;
@@ -2228,7 +2193,7 @@ export default function App() {
       }
       setFaceMerge({ faceIds: plan.movers, targetId });
     },
-    [snap, personsById],
+    [snap, personsById, clearFaceDrag],
   );
 
   const confirmFaceMerge = useCallback(async () => {
