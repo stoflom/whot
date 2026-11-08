@@ -68,6 +68,7 @@ describe("overlay Esc (#248) — the topmost overlay owns the keyboard", () => {
         prefills={{ card: empty, group: empty, selection: empty }}
         persons={[]}
         pathOptions={[]}
+        descOptions={[]}
         onDone={() => {}}
         onReject={() => {}}
         onCancel={onCancel}
