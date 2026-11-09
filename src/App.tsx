@@ -13,7 +13,8 @@ import type { AppearanceGroup, Delta, Face, ImageRow, Person, Refcrop, Settings,
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import AddGroupDialog from "./components/AddGroupDialog";
-import { CopyButton, ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
+import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
+import { FullImageBar } from "./components/FullImageBar";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
@@ -2358,6 +2359,12 @@ export default function App() {
     () => (imgRow ? snap?.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f)) ?? [] : []),
     [snap, imgRow, faceVisible]
   );
+  // #275 (gui-design v11.3) — a full image is up on either surface: the
+  // card-double-click split (focus pane) or the Rolls image detail.
+  // While it is, the centre's own toolbar does not render: the single
+  // bar above the image carries the mode's nav cluster instead
+  const fullImageOpen =
+    splitRow != null || (mode === "rolls" && imageId != null && imgRow != null);
 
   if (noDb) {
     // #185 (§4.36): no usable database — the first-run screen owns the
@@ -2562,11 +2569,11 @@ export default function App() {
           {/* #163 (v3.64): browsing Rolls renders no centre toolbar at
               all — no nav cluster (person stepping always lands in
               Person — it used to yank a rolls browser away), no seg
-              (§4.9); the grid gets the pane's full height. #235 (rule
-              46): a FULL IMAGE open in Rolls is the one exception —
-              the toolbar returns carrying the film-roll ‹ n/m ›
-              cluster (stepImage over the branch's listed images) */}
-          {mode !== "rolls" || imageId != null ? (
+              (§4.9); the grid gets the pane's full height. #275 (rule
+              46 refined): a FULL IMAGE is up with its OWN single bar —
+              path, the mode's ‹ n/m › cluster, rotation, close/back —
+              so no centre toolbar renders while one is open */}
+          {!fullImageOpen && (mode !== "rolls" || imageId != null) ? (
           <div className="center-toolbar">
             <span className="toolbar-left">
               {mode === "rolls" ? (
@@ -2672,43 +2679,36 @@ export default function App() {
               // this image's faces; the regular grid returns when the mode
               // ends (×/Esc, §4.15 selection move, explicit navigation)
               <div className="focus-pane">
-                <div className="focus-top">
-                  {/* #268: the ORIGINAL file's full path (truncated to
-                      fit, full text on hover) — never the /tmp copy */}
-                  <span className="focus-path" title={splitRow.primary_path}>
-                    {splitRow.primary_path}
-                  </span>
-                  <CopyButton text={splitRow.primary_path} />
-                  <span className="dim">
-                    {splitRow.width}×{splitRow.height} · {splitRow.state}
-                    {splitRow.rotation ? ` · rotated ${splitRow.rotation}°` : ""}
-                  </span>
-                  {/* #122: the stored display rotation — button twin of the
-                      context-menu entries (rotate once, it sticks) */}
-                  <button
-                    className="ghost"
-                    onClick={() => rotateImg(splitRow.id, 90)}
-                    title="Rotate 90° clockwise (stored)"
-                  >
-                    ⟳
-                  </button>
-                  <button
-                    className="ghost"
-                    onClick={() => rotateImg(splitRow.id, -90)}
-                    title="Rotate 90° counter-clockwise (stored)"
-                  >
-                    ⟲
-                  </button>
-                  <button
-                    className="ghost"
-                    onClick={() =>
-                      confirmContext(() => setSplitImageId(null)) // #123
-                    }
-                    title="close (Esc)"
-                  >
-                    ×
-                  </button>
-                </div>
+                {/* #275: the ONE full-image bar (focus surface) — the
+                    person stepper keeps its #76/#194 fallback rules;
+                    the #123 dialog lives in stepPerson/close */}
+                <FullImageBar
+                  img={splitRow}
+                  step={stepPerson}
+                  canPrev={
+                    stepIds.length > 0 &&
+                    (stepIdx === -1 || stepIdx > 0)
+                  }
+                  canNext={
+                    stepIds.length > 0 &&
+                    (stepIdx === -1 || stepIdx < stepIds.length - 1)
+                  }
+                  total={stepIds.length}
+                  pos={stepIdx}
+                  stepNoun="person"
+                  onRotate={(d) => rotateImg(splitRow.id, d)}
+                  close={
+                    <button
+                      className="ghost"
+                      onClick={() =>
+                        confirmContext(() => setSplitImageId(null)) // #123
+                      }
+                      title="close (Esc)"
+                    >
+                      ×
+                    </button>
+                  }
+                />
                 <div className="focus-image">
                   <FaceOverlay
                     imageId={splitRow.id}
@@ -2769,23 +2769,33 @@ export default function App() {
             />
           ) : mode === "rolls" && imageId != null && imgRow ? (
             <div className="image-detail">
-              <div className="image-detail-top">
-                <button className="secondary" onClick={() => setImageId(null)}>
-                  ← rolls
-                </button>
-                <div className="image-meta">
-                  {/* #268: the ORIGINAL file's full path (truncated to
-                      fit, full text on hover) — never the /tmp copy */}
-                  <div className="image-meta-path">
-                    <span title={imgRow.primary_path}>{imgRow.primary_path}</span>
-                    <CopyButton text={imgRow.primary_path} />
-                  </div>
-                  <div className="dim">
-                    {imgRow.width}×{imgRow.height} · {imgRow.state}
-                    {imgRow.rtype ? ` · ${imgRow.rtype}` : ""}
-                  </div>
-                </div>
-              </div>
+              {/* #275: the ONE full-image bar (Rolls detail surface) —
+                  the film-roll image stepper (rule 46); the #123
+                  dialog lives in stepImage */}
+              <FullImageBar
+                img={imgRow}
+                rtype={imgRow.rtype}
+                step={stepImage}
+                canPrev={
+                  branchThumbs.images.length > 0 &&
+                  imgStepIdx !== -1 &&
+                  imgStepIdx > 0
+                }
+                canNext={
+                  branchThumbs.images.length > 0 &&
+                  imgStepIdx !== -1 &&
+                  imgStepIdx < branchThumbs.images.length - 1
+                }
+                total={branchThumbs.images.length}
+                pos={imgStepIdx}
+                stepNoun="image"
+                onRotate={(d) => rotateImg(imgRow.id, d)}
+                close={
+                  <button className="secondary" onClick={() => setImageId(null)}>
+                    ← rolls
+                  </button>
+                }
+              />
               <div className="image-preview">
                 <FaceOverlay
                   imageId={imgRow.id}
