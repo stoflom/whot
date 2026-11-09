@@ -3,7 +3,7 @@
 // as "no blob", and an all-missing batch costs exactly one IPC call.
 // Run: npm test (vitest run)
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { facePreview, splitImageBatch } from "./api";
+import { facePreview, openImage, splitImageBatch } from "./api";
 import { encodeImageBatch } from "./imageBatch";
 
 // the Tauri invoke is mocked at the module boundary; append any promises
@@ -78,5 +78,23 @@ describe("facePreview re-request loop (#227)", () => {
     expect(b).toBeNull();
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke.mock.calls[0][1]).toMatchObject({ kind: "face", ids: [990, 991] });
+  });
+});
+
+// #268 — openImage returns the backend's status string: "" when the
+// ORIGINAL was opened, a non-empty fallback message when the original
+// was not found and a temp copy was opened instead (the caller shows
+// that as a quiet info toast).
+describe("openImage (#268 status contract)", () => {
+  it("resolves the status string and invokes open_image by id", async () => {
+    invoke.mockResolvedValueOnce("");
+    expect(await openImage(7)).toBe("");
+    expect(invoke).toHaveBeenCalledWith("open_image", { imageId: 7 });
+  });
+
+  it("passes the fallback status through untouched", async () => {
+    const msg = "original image not found at its recorded paths — opened a temporary copy (7)";
+    invoke.mockResolvedValueOnce(msg);
+    expect(await openImage(7)).toBe(msg);
   });
 });
