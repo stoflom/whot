@@ -341,6 +341,7 @@ describe("imageAreaMenuGroups", () => {
       faces: [],
       openInViewer: noOp,
       rollImportId: null,
+      openRoll: noOp,
       openRollPath: noOp,
       rotateImage: (id, delta) => { rotated = [id, delta]; },
       changeSel: noOp,
@@ -353,12 +354,45 @@ describe("imageAreaMenuGroups", () => {
     expect(item(withFaces, "Select all faces")!.disabled).toBe(false);
   });
 
+  it("'Open roll' sits above 'Open roll path', greys on never-imported, opens the image's branch (#274)", () => {
+    const inp: ImageAreaMenuInput = {
+      imageId: 42,
+      faces: [],
+      openInViewer: noOp,
+      rollImportId: null,
+      openRoll: noOp,
+      openRollPath: noOp,
+      rotateImage: noOp,
+      changeSel: noOp,
+    };
+    const g = imageAreaMenuGroups(inp);
+    const roll = item(g, "Open roll")!;
+    const rollPath = item(g, "Open roll path")!;
+    // placement: 'Open roll' directly above 'Open roll path'
+    const flat = g.flatMap((grp) => grp.items);
+    expect(flat.indexOf(roll)).toBe(flat.indexOf(rollPath) - 1);
+    // both gate on the import
+    expect(roll.disabled).toBe(true);
+    expect(rollPath.disabled).toBe(true);
+    let opened: number | null = null;
+    const withRoll = imageAreaMenuGroups({
+      ...inp,
+      rollImportId: 7,
+      openRoll: (i) => { opened = i; },
+    });
+    const entry = item(withRoll, "Open roll")!;
+    expect(entry.disabled).toBe(false);
+    entry.onClick();
+    expect(opened).toBe(42); // the invoked image (its branch is derived)
+  });
+
   it("'Open roll path' greys on a never-imported image and opens the roll otherwise (#272)", () => {
     const inp: ImageAreaMenuInput = {
       imageId: 42,
       faces: [],
       openInViewer: noOp,
       rollImportId: null,
+      openRoll: noOp,
       openRollPath: noOp,
       rotateImage: noOp,
       changeSel: noOp,
@@ -369,7 +403,7 @@ describe("imageAreaMenuGroups", () => {
       ...inp,
       rollImportId: 7,
       openRollPath: (i) => { roll = i; },
-    });
+    }); // openRoll stays the fixture no-op
     const entry = item(withRoll, "Open roll path")!;
     expect(entry.disabled).toBe(false);
     entry.onClick();
