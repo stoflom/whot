@@ -68,4 +68,31 @@ describe("Edit dialog description type-ahead (#262, §4.21)", () => {
     fireEvent.change(descInput(), { target: { value: "beard" } });
     expect(screen.queryByRole("option")).toBeNull();
   });
+
+  // #270: compounds build incrementally — the match is the CURRENT
+  // token (after the last |), a pick replaces only that token
+  it("typing a second token matches over that token only", () => {
+    renderDialog(options);
+    fireEvent.change(descInput(), { target: { value: "beard|g" } });
+    expect(screen.getByRole("option", { name: /glasses/ })).toBeTruthy();
+    // the first token's tag is not re-offered for the second token
+    expect(screen.queryByRole("option", { name: /beard/ })).toBeNull();
+  });
+
+  it("a pick replaces only the current token (prefix kept)", () => {
+    renderDialog(options);
+    fireEvent.change(descInput(), { target: { value: "beard|g" } });
+    fireEvent.mouseDown(screen.getByRole("option", { name: /glasses/ }));
+    expect(descInput().value).toBe("beard|glasses");
+  });
+
+  it("the full flow: b → beard, then |g → glasses → beard|glasses", () => {
+    renderDialog(options);
+    fireEvent.change(descInput(), { target: { value: "b" } });
+    fireEvent.mouseDown(screen.getByRole("option", { name: /beard/ }));
+    expect(descInput().value).toBe("beard");
+    fireEvent.change(descInput(), { target: { value: "beard|g" } });
+    fireEvent.mouseDown(screen.getByRole("option", { name: /glasses/ }));
+    expect(descInput().value).toBe("beard|glasses");
+  });
 });
