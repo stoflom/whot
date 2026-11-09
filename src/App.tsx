@@ -155,6 +155,10 @@ export default function App() {
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
   const [rollRoot, setRollRoot] = useState("/");
+  // #274: latest-value ref — the menu callback reads it without churning
+  // its identity (the #228 rule)
+  const rollRootRef = useRef(rollRoot);
+  rollRootRef.current = rollRoot;
   // #174 (§4.39): the selected branch of the Rolls path hierarchy —
   // session state like the root (survives mode switches): absolute
   // path, defaults to the root itself, re-validated when the root
@@ -1392,6 +1396,45 @@ export default function App() {
     [branchThumbs, imageId, splitImageId, confirmContext, centerScroll.ref],
   );
 
+  // #274 — full image → Rolls mode with the path tree opened and
+  // selected at the image's own branch (the dir-of-primary_path rule,
+  // §4.22): the end state of clicking *Rolls* and expanding the tree
+  // down to that branch. A root that would exclude the branch falls
+  // back to the whole tree; every ancestor of the branch (relative
+  // segment paths — the openSet keys) joins the open set, so the tree
+  // is fully expanded at the target. Explicit navigation ends focus
+  // (§4.15): the #123 dialog guards the context change.
+  const openRollBranch = useCallback(
+    (id: number) =>
+      confirmContext(() => {
+        const img = snapRef.current?.images.find((i) => i.id === id);
+        if (!img) return;
+        const k = img.primary_path.lastIndexOf("/");
+        const branch = k <= 0 ? "/" : img.primary_path.slice(0, k);
+        const root = rollRootRef.current;
+        const effRoot =
+          root === "/" || branch.startsWith(`${root}/`) ? root : "/";
+        if (effRoot !== root) changeRollRoot(effRoot);
+        if (branch !== "/") {
+          const rel =
+            effRoot === "/" ? branch : branch.slice(effRoot.length + 1);
+          setRollOpenSet((prev) => {
+            const next = new Set(prev);
+            for (let p = rel; p !== ""; ) {
+              next.add(p);
+              const j = p.lastIndexOf("/");
+              p = j <= 0 ? "" : p.slice(0, j);
+            }
+            return next;
+          });
+        }
+        setRollBranch(branch);
+        setMode("rolls");
+        setImageId(null);
+        if (splitImageId != null) setSplitImageId(null);
+      }),
+    [confirmContext, changeRollRoot, splitImageId]
+  );
   const imageAreaMenu = useCallback(
     (e: ReactMouseEvent, imageId: number) => {
       if (!snap) return;
@@ -1411,6 +1454,9 @@ export default function App() {
         // #272: the surface image's importing roll (null = never imported)
         rollImportId:
           snap.images.find((i) => i.id === imageId)?.last_import_id ?? null,
+        // #274: Rolls mode with the tree opened at the image's branch
+        // (the #123 dialog lives in openRollBranch)
+        openRoll: openRollBranch,
         // #272 (gui-design v11.1): the image's own directory in the file
         // manager — a stale directory reaches the error toast (#144)
         openRollPath: (imageId) =>
@@ -1421,7 +1467,7 @@ export default function App() {
     },
     // #228 (F-L4): sel read via selRef — the callback identity must not
     // churn per face selection (it re-renders memo(RollsThumbs))
-    [snap, faceVisible, openMenu, rotateImg, changeSel]
+    [snap, faceVisible, openMenu, rotateImg, changeSel, openRollBranch]
   );
 
   const imageMenu = useCallback(

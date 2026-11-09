@@ -265,6 +265,9 @@ export interface ImageAreaMenuInput {
   /** #272: the image's importing roll (last_import_id), or null when
       never imported — the entry stays greyed out */
   rollImportId: number | null;
+  /** #274: Rolls mode with the tree opened + the image's branch
+      selected (view-context change, #123) */
+  openRoll: (imageId: number) => void;
   /** #272 (gui-design v11.1): the image's own directory (parent of
       primary_path) in the file manager (#144) */
   openRollPath: (imageId: number) => void;
@@ -283,6 +286,16 @@ export function imageAreaMenuGroups(inp: ImageAreaMenuInput): MenuGroup[] {
           // dangers silently — errors reach the error toast (#132)
           label: "Open in system viewer",
           onClick: () => inp.openInViewer(inp.imageId),
+        },
+        {
+          // #274: Rolls mode with the path tree opened and selected at
+          // the image's own branch (the §4.22 dir-of-primary_path rule)
+          // — greyed out while the image was never imported
+          label: "Open roll",
+          disabled: inp.rollImportId == null,
+          onClick: () => {
+            if (inp.rollImportId != null) inp.openRoll(inp.imageId);
+          },
         },
         {
           // #272 (gui-design v11.1): the image's own directory in the
