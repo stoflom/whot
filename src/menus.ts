@@ -166,6 +166,11 @@ export interface ThumbMenuInput {
   rotateImages: (ids: number[], delta: number) => void;
   /** the system viewer — rejections reach the error toast (#144) */
   openInViewer: (imageId: number) => void;
+  /** #272: the images of the branch that have a roll (id →
+      last_import_id) — the never-imported ones are skipped */
+  rollImport: ReadonlyMap<number, number>;
+  /** #272: the roll's directory in the file manager (#144) */
+  openRollPath: (importId: number) => void;
   doAccept: (ids: number[]) => void;
   changeSel: (next: Set<number>) => void;
 }
@@ -176,6 +181,8 @@ export function thumbMenuGroups(inp: ThumbMenuInput): MenuGroup[] {
   // the selection when the invoked thumb is part of it, else just
   // that thumb (§4.14); stale ids (outside the branch) are dropped
   const scope = imageScope(imgSel, inBranch, image.id);
+  // #272: the scope images that actually have a roll, in scope order
+  const rollOpen = scope.filter((id) => inp.rollImport.has(id));
   const many = scope.length > 1;
   const faces = inp.faces;
   const pending = faces.filter((f) => f.link_status === "provisional").map((f) => f.id);
@@ -211,6 +218,16 @@ export function thumbMenuGroups(inp: ThumbMenuInput): MenuGroup[] {
             for (const id of scope) inp.openInViewer(id);
           },
         },
+        {
+          // #272: the importing roll's directory in the file manager —
+          // never-imported images skip, so the (N) suffix counts the
+          // images that actually open (zero = greyed out)
+          label: rollOpen.length > 1 ? `Open roll path (${rollOpen.length})` : "Open roll path",
+          disabled: rollOpen.length === 0,
+          onClick: () => {
+            for (const id of rollOpen) inp.openRollPath(inp.rollImport.get(id)!);
+          },
+        },
       ],
     },
     {
@@ -241,6 +258,11 @@ export interface ImageAreaMenuInput {
   faces: Face[];
   /** the system viewer (#144) */
   openInViewer: (imageId: number) => void;
+  /** #272: the image's importing roll (last_import_id), or null when
+      never imported — the entry stays greyed out */
+  rollImportId: number | null;
+  /** #272: the roll's directory in the file manager (#144) */
+  openRollPath: (importId: number) => void;
   /** #122: the stored display rotation (EXIF key, #118) */
   rotateImage: (imageId: number, delta: number) => void;
   changeSel: (next: Set<number>) => void;
@@ -256,6 +278,15 @@ export function imageAreaMenuGroups(inp: ImageAreaMenuInput): MenuGroup[] {
           // dangers silently — errors reach the error toast (#132)
           label: "Open in system viewer",
           onClick: () => inp.openInViewer(inp.imageId),
+        },
+        {
+          // #272: the roll's directory in the file manager — greyed out
+          // while the image was never imported
+          label: "Open roll path",
+          disabled: inp.rollImportId == null,
+          onClick: () => {
+            if (inp.rollImportId != null) inp.openRollPath(inp.rollImportId);
+          },
         },
         {
           // #122: stored display rotation (EXIF key, #118)

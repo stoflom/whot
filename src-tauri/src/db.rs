@@ -965,6 +965,19 @@ pub fn resolve_image_open_path(paths: &Paths, image_id: i64) -> Result<Option<St
         .find(|p| std::path::Path::new(p).exists()))
 }
 
+/// #272 — the roll directory recorded for an import (`imports.path`);
+/// `None` for an unknown id.
+pub fn roll_dir(paths: &Paths, import_id: i64) -> Result<Option<String>> {
+    let con = connect(paths)?;
+    Ok(con
+        .query_row(
+            "SELECT path FROM imports WHERE id = ?",
+            params![import_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 // ---------------------------------------------------------------- derived state
 
 /// Derived face label: `person.name[-description]-seq` (design §4.7).

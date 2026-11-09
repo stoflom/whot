@@ -105,6 +105,27 @@ async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String,
     ))
 }
 
+/// #272 — 'Open roll path' (gui-design §3 context menus): the roll's
+/// directory (`imports.path`) opens in the system file manager through
+/// the same opener plugin as `open_image`. A stale (moved/deleted) roll
+/// directory is a rejection like `open_image`'s (#144) — the caller's
+/// error toast names the path.
+#[tauri::command]
+async fn open_roll(state: State<'_, AppState>, import_id: i64) -> Result<(), String> {
+    let paths = state.paths()?;
+    let p = db::roll_dir(paths, import_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("roll {import_id} is not recorded"))?;
+    if !std::path::Path::new(&p).exists() {
+        return Err(format!("roll directory no longer exists: {p}"));
+    }
+    tauri_plugin_opener::open_path(p.clone(), None::<&str>)
+        .map_err(|e| e.to_string())?;
+    // diagnostic line in the spirit of #144 (which path was opened)
+    eprintln!("[open_roll] roll {import_id}: opened {p}");
+    Ok(())
+}
+
 #[tauri::command]
 async fn person_face_clusters(
     state: State<'_, AppState>,
@@ -329,6 +350,7 @@ pub fn run() {
             get_image_batch,
             get_refcrops,
             open_image,
+            open_roll,
             person_face_clusters,
             assign_person,
             accept_faces,
