@@ -189,9 +189,11 @@ export const getRefcrops = (personId: number) =>
     string is the fallback status (original not found → temp copy
     opened) for the caller's info toast. (#33 legacy: temp copy only) */
 export const openImage = (imageId: number) => invoke<string>("open_image", { imageId });
-/** #272 — 'Open roll path': the roll's directory in the system file
-    manager (a stale directory is a rejection for the error toast, #144) */
-export const openRoll = (importId: number) => invoke<void>("open_roll", { importId });
+/** #272 (gui-design v11.1) — 'Open roll path': the directory CONTAINING
+    the image file (parent of primary_path — a recursive roll import may
+    place it below the roll root) in the system file manager (a stale
+    directory is a rejection for the error toast, #144) */
+export const openRoll = (imageId: number) => invoke<void>("open_roll", { imageId });
 export const personFaceClusters = (personId: number, threshold: number) =>
   invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
 export const getSettings = () => invoke<Settings>("get_settings");

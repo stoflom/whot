@@ -169,8 +169,10 @@ export interface ThumbMenuInput {
   /** #272: the images of the branch that have a roll (id →
       last_import_id) — the never-imported ones are skipped */
   rollImport: ReadonlyMap<number, number>;
-  /** #272: the roll's directory in the file manager (#144) */
-  openRollPath: (importId: number) => void;
+  /** #272 (gui-design v11.1): the image's own directory (parent of
+      primary_path — recursive roll imports place it below the roll
+      root) in the file manager (#144) */
+  openRollPath: (imageId: number) => void;
   doAccept: (ids: number[]) => void;
   changeSel: (next: Set<number>) => void;
 }
@@ -219,13 +221,15 @@ export function thumbMenuGroups(inp: ThumbMenuInput): MenuGroup[] {
           },
         },
         {
-          // #272: the importing roll's directory in the file manager —
-          // never-imported images skip, so the (N) suffix counts the
-          // images that actually open (zero = greyed out)
+          // #272 (gui-design v11.1): each image's own directory in the
+          // file manager (a recursive roll import puts it in a
+          // subdirectory below the roll root) — never-imported images
+          // skip, so the (N) suffix counts the images that actually
+          // open (zero = greyed out)
           label: rollOpen.length > 1 ? `Open roll path (${rollOpen.length})` : "Open roll path",
           disabled: rollOpen.length === 0,
           onClick: () => {
-            for (const id of rollOpen) inp.openRollPath(inp.rollImport.get(id)!);
+            for (const id of rollOpen) inp.openRollPath(id);
           },
         },
       ],
@@ -261,8 +265,9 @@ export interface ImageAreaMenuInput {
   /** #272: the image's importing roll (last_import_id), or null when
       never imported — the entry stays greyed out */
   rollImportId: number | null;
-  /** #272: the roll's directory in the file manager (#144) */
-  openRollPath: (importId: number) => void;
+  /** #272 (gui-design v11.1): the image's own directory (parent of
+      primary_path) in the file manager (#144) */
+  openRollPath: (imageId: number) => void;
   /** #122: the stored display rotation (EXIF key, #118) */
   rotateImage: (imageId: number, delta: number) => void;
   changeSel: (next: Set<number>) => void;
@@ -280,12 +285,14 @@ export function imageAreaMenuGroups(inp: ImageAreaMenuInput): MenuGroup[] {
           onClick: () => inp.openInViewer(inp.imageId),
         },
         {
-          // #272: the roll's directory in the file manager — greyed out
-          // while the image was never imported
+          // #272 (gui-design v11.1): the image's own directory in the
+          // file manager (a recursive roll import puts it in a
+          // subdirectory below the roll root) — greyed out while the
+          // image was never imported
           label: "Open roll path",
           disabled: inp.rollImportId == null,
           onClick: () => {
-            if (inp.rollImportId != null) inp.openRollPath(inp.rollImportId);
+            if (inp.rollImportId != null) inp.openRollPath(inp.imageId);
           },
         },
         {

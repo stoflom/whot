@@ -1411,10 +1411,10 @@ export default function App() {
         // #272: the surface image's importing roll (null = never imported)
         rollImportId:
           snap.images.find((i) => i.id === imageId)?.last_import_id ?? null,
-        // #272: roll directory in the file manager — a stale directory
-        // reaches the error toast (#144)
-        openRollPath: (imp) =>
-          api.openRoll(imp).catch((err) => setError(String(err))),
+        // #272 (gui-design v11.1): the image's own directory in the file
+        // manager — a stale directory reaches the error toast (#144)
+        openRollPath: (imageId) =>
+          api.openRoll(imageId).catch((err) => setError(String(err))),
         rotateImage: rotateImg,
         changeSel,
       }));
@@ -1457,10 +1457,10 @@ export default function App() {
             .filter((i) => i.last_import_id != null)
             .map((i): [number, number] => [i.id, i.last_import_id as number])
         ),
-        // #272: roll directories in the file manager — a stale directory
-        // reaches the error toast (#144)
-        openRollPath: (imp) =>
-          api.openRoll(imp).catch((err) => setError(String(err))),
+        // #272 (gui-design v11.1): each image's own directory in the
+        // file manager — a stale directory reaches the error toast (#144)
+        openRollPath: (imageId) =>
+          api.openRoll(imageId).catch((err) => setError(String(err))),
         doAccept,
         changeSel,
       }));
