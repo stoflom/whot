@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 9.3** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 10.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -372,7 +372,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the **open in system viewer** entry (the Rust `open_image` command
   opens the **first actual location** of the original image — never a
   temp copy while one is reachable — and hands that path to the opener
-  plugin) and the rotate entries (§4.32).
+  plugin), the **open roll path** entry (the Rust `open_roll` command
+  hands the importing roll's directory — `imports.path` — to the opener
+  plugin, i.e. the system file manager; greyed out while the image was
+  never imported) and the rotate entries (§4.32).
   **`open_image` opens the original, not a copy (#268)**: the command
   resolves the image's recorded locations — `images.primary_path` first,
   then the `image_paths` alias set (schema-design §3) — and opens the
@@ -1534,8 +1537,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       Controls: **⟲/⟳ buttons** on the focus mode's pinned header row
       and **context-menu entries** on the image (“Rotate 90°
       counter-clockwise / clockwise”) — these complete the image's WhoT
-      context menu (§3: system viewer, rotate; not the webview default
-      menu). Persisted by `rotate_image(image_id,
+      context menu (§3: system viewer, roll path, rotate; not the
+      webview default menu). Persisted by `rotate_image(image_id,
       ±90)`; the snapshot carries the angle and the renderer applies
       `transform: rotate(⟨angle⟩deg)` from it — rotate once, it sticks.
       **A rotation of the IMAGE cascades the same delta to every crop
@@ -1961,10 +1964,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
        of the selection the scope is the whole selection, otherwise
        just that thumb (the §4.14 scope rule). It carries `Open image`
        (the invoked thumb — greyed out for a multi-scope, §4.14),
-       `Rotate 90° CW` / `Rotate 90° CCW` and `Open in system viewer`
-       (all:
+       `Rotate 90° CW` / `Rotate 90° CCW`, `Open in system viewer` and
+       `Open roll path` (all:
        applied to **each image of the scope**, one command per image in
-       order — rotations batch into one refresh), plus the existing
+       order — rotations batch into one refresh; roll path skips the
+       never-imported images and counts the opened ones in its `(N)`
+       suffix, greyed out when none have a roll), plus the existing
        faces-of-this-image entries (invoked thumb).
    - **Selection lifecycle**: the image selection clears when the
      branch selection changes (a different thumb set); it survives

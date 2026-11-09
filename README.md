@@ -345,8 +345,13 @@ rules are `docs/gui-design.md` §4, architecture is
 - `get_refcrops(person_id) → [{seq, description, pinned, face_id, filename}]
   grouped by appearance (§4.6)` — metadata rows; the crop pixels load
   through `get_image_batch("face", …)` (#210/#212)
-- `open_image(image_id) → ()` — write `images.preview` to a unique temp
-  file and open it with the system viewer (opener plugin; §3 context menus)
+- `open_image(image_id) → ()` — open the image's **first actual
+  location** (primary, then alias set) with the system viewer; the
+  unique temp copy of `images.preview` is the fallback when none exists
+  (opener plugin; gui-design §3)
+- `open_roll(import_id) → ()` — open the roll's directory
+  (`imports.path`) in the system file manager (opener plugin;
+  gui-design §3 context menus)
 - `person_face_clusters(person_id, threshold) →
   [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
   similarity clusters inside each (§4.9)
