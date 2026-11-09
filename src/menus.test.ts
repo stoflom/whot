@@ -87,7 +87,6 @@ const faceCb = {
 
 const thumbCb = {
   openImageInView: noOp,
-  openFocused: noOp,
   rotateImages: noOp,
   openInViewer: noOp,
   doAccept: noOp,
@@ -253,7 +252,6 @@ describe("thumbMenuGroups (#174/§4.39, #182)", () => {
   it("the single-thumb scope keeps the plain labels", () => {
     const g = thumbMenuGroups(single);
     expect(item(g, "Open image")!.disabled).toBe(false);
-    expect(item(g, "Open full image (focused)")!.disabled).toBe(false);
     expect(item(g, "Rotate 90° CW")).toBeTruthy();
     expect(item(g, "Open in system viewer")).toBeTruthy();
   });
@@ -265,7 +263,6 @@ describe("thumbMenuGroups (#174/§4.39, #182)", () => {
       inBranch: new Set([1, 2, 3]),
     });
     expect(item(g, "Open image")!.disabled).toBe(true);
-    expect(item(g, "Open full image (focused)")!.disabled).toBe(true);
     expect(item(g, "Rotate 90° CW (3)")).toBeTruthy();
     expect(item(g, "Open in system viewer (3)")).toBeTruthy();
   });
