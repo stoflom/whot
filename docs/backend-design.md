@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.16** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.17** (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -173,9 +173,13 @@ person) — see `docs/schema-design.md` §5.
   serialises in-process commands, #245). `get_refcrops` derives its
   filenames at read from the face and carries no pixels (rows are
   metadata since schema v1.8, #210) — the detail strip loads crops
-  through the same pipeline. `open_image` is the exception: it writes
-  `images.preview` to a temp file and hands it to the opener plugin
-  (gui-design §3).
+  through the same pipeline. `open_image` is the exception (#268): it
+  first resolves the image's **recorded locations** — `images.primary_path`
+  then the `image_paths` alias set — and hands the **first path that
+  exists on disk** to the opener plugin. Only when none exists does it fall
+  back to writing `images.preview` to a unique, magic-sniffed temp file and
+  handing that to the opener plugin, returning a short status string the
+  frontend surfaces as a quiet info toast (gui-design §3).
 - `person_face_clusters` computes, per appearance group, single-linkage
   clusters around the primary face (gui-design §4.9) — read-only
   display aid, threshold from the caller (default 0.40). Results are

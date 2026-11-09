@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 8.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 9.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -256,6 +256,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   click toggles the face's selection **and moves the right pane to that
   face's person (§4.37)** — and on opening a full image the right
   pane follows the opening face's person.
+  **The header shows where the original lives (#268)**: both full-image
+  headers — the focus mode's pinned header row (§4.19) and the Rolls
+  image-detail header — display the image's **full `primary_path`**
+  (truncated to fit, full text in the hover tooltip) with a **Copy**
+  button (the §4.26 clipboard rule). The path is the original file's
+  location — never the `/tmp` viewer-fallback copy (above).
 - **Card double-click — full-image focus** (§4.19): double-clicking a
   face card opens the center pane's **focus mode**: the annotated full
   image spans the pane's full width (height-fitted, §4.11 overlay)
@@ -363,9 +369,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   menu's entries ("open image in new window", …) are not functional inside
   Tauri, so image areas intercept `contextmenu` and offer a WhoT menu —
   the **open in system viewer** entry (the Rust `open_image` command
-  writes the BLOB to a temp file and hands it to the opener plugin) and
-  the rotate entries (§4.32).
-  **The `open_image` temp file is unique and magic-sniffed**:
+  opens the **first actual location** of the original image — never a
+  temp copy while one is reachable — and hands that path to the opener
+  plugin) and the rotate entries (§4.32).
+  **`open_image` opens the original, not a copy (#268)**: the command
+  resolves the image's recorded locations — `images.primary_path` first,
+  then the `image_paths` alias set (schema-design §3) — and opens the
+  **first path that exists on disk** (a location can be stale: the alias
+  set is append-only, §7.1). Only when **no** recorded location exists
+  (the original was moved/deleted, or the image is BLOB-only) does it
+  fall back to writing the preview BLOB to a temp file and handing it to
+  the opener plugin, and it then raises a quiet **info** toast (#132)
+  naming the original paths it looked at. The `/tmp` temp path is never
+  shown in the right pane — it is a viewer fallback, not a location of the
+  original.
+  **The `open_image` temp file (fallback only) is unique and magic-sniffed**:
   the name `whot-image-{image_id}-{pid}-{unix_nanos}.jpg` is unique per
   open — the same image opened twice never clobbers the first viewer's
   still-loading file, and the path cannot be pre-squatted by another
