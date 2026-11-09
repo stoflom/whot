@@ -89,6 +89,8 @@ const thumbCb = {
   openImageInView: noOp,
   rotateImages: noOp,
   openInViewer: noOp,
+  rollImport: new Map<number, number>(),
+  openRollPath: noOp,
   doAccept: noOp,
   changeSel: noOp,
 };
@@ -267,6 +269,26 @@ describe("thumbMenuGroups (#174/§4.39, #182)", () => {
     expect(item(g, "Open in system viewer (3)")).toBeTruthy();
   });
 
+  it("'Open roll path' opens each scope roll, skips the never-imported, counts the rest (#272)", () => {
+    const opened: number[] = [];
+    const g = thumbMenuGroups({
+      ...single,
+      imgSel: { sel: new Set([1, 2, 3]), anchor: 1 },
+      inBranch: new Set([1, 2, 3]),
+      rollImport: new Map([[1, 7], [3, 9]]), // 2 was never imported
+      openRollPath: (imp) => { opened.push(imp); },
+    });
+    const entry = item(g, "Open roll path (2)")!;
+    expect(entry.disabled).toBe(false);
+    entry.onClick();
+    expect(opened).toEqual([7, 9]); // scope order, 2 skipped
+  });
+
+  it("greys 'Open roll path' while none of the scope has a roll (#272)", () => {
+    const g = thumbMenuGroups({ ...single, rollImport: new Map() });
+    expect(item(g, "Open roll path")!.disabled).toBe(true);
+  });
+
   it("drops stale ids outside the branch from the scope (§4.39)", () => {
     const g = thumbMenuGroups({
       ...single,
@@ -318,6 +340,8 @@ describe("imageAreaMenuGroups", () => {
       imageId: 42,
       faces: [],
       openInViewer: noOp,
+      rollImportId: null,
+      openRollPath: noOp,
       rotateImage: (id, delta) => { rotated = [id, delta]; },
       changeSel: noOp,
     };
@@ -327,5 +351,28 @@ describe("imageAreaMenuGroups", () => {
     expect(rotated).toEqual([42, -90]);
     const withFaces = imageAreaMenuGroups({ ...inp, faces: [face()] });
     expect(item(withFaces, "Select all faces")!.disabled).toBe(false);
+  });
+
+  it("'Open roll path' greys on a never-imported image and opens the roll otherwise (#272)", () => {
+    const inp: ImageAreaMenuInput = {
+      imageId: 42,
+      faces: [],
+      openInViewer: noOp,
+      rollImportId: null,
+      openRollPath: noOp,
+      rotateImage: noOp,
+      changeSel: noOp,
+    };
+    expect(item(imageAreaMenuGroups(inp), "Open roll path")!.disabled).toBe(true);
+    let roll: number | null = null;
+    const withRoll = imageAreaMenuGroups({
+      ...inp,
+      rollImportId: 7,
+      openRollPath: (i) => { roll = i; },
+    });
+    const entry = item(withRoll, "Open roll path")!;
+    expect(entry.disabled).toBe(false);
+    entry.onClick();
+    expect(roll).toBe(7);
   });
 });
