@@ -300,6 +300,29 @@ fn env_process_fallback() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// #273 — the viewer keys default to empty (system default) when
+/// absent from whotrc.json and round-trip when set.
+#[test]
+fn settings_viewer_keys_default_and_roundtrip() {
+    let p = fixture_paths("viewers");
+    // legacy whotrc.json without the viewer keys
+    std::fs::write(
+        &p.config,
+        r#"{ "cluster_threshold": 0.5, "refcrop_n": 3 }"#,
+    )
+    .unwrap();
+    let mut s = db::get_settings(&p).unwrap();
+    assert_eq!(s.image_viewer, "", "missing key = system default viewer");
+    assert_eq!(s.directory_viewer, "", "missing key = system default manager");
+    s.image_viewer = "eog".into();
+    s.directory_viewer = "thunar".into();
+    db::set_settings(&p, s).unwrap();
+    let s2 = db::get_settings(&p).unwrap();
+    assert_eq!(s2.image_viewer, "eog", "must round-trip");
+    assert_eq!(s2.directory_viewer, "thunar", "must round-trip");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #99 — face_filter defaults to all when the key is absent (the retired
 /// show_rejected key is ignored), both new keys round-trip, and the UI's
 /// "accepted" vocabulary parses as Confirmed via serde alias.

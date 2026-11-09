@@ -44,6 +44,8 @@ const settings = (over: Partial<Settings> = {}): Settings => ({
   cluster_group: "accuracy",
   merge_name_distance: 2,
   merge_suffix_aliases: [],
+  image_viewer: "",
+  directory_viewer: "",
   ...over,
 });
 

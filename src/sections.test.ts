@@ -86,6 +86,8 @@ function snap(persons: Person[], faces: Face[]): Snapshot {
       cluster_group: "accuracy",
       merge_name_distance: 1,
       merge_suffix_aliases: [],
+    image_viewer: "",
+    directory_viewer: "",
     },
   };
 }

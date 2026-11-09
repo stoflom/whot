@@ -48,6 +48,8 @@ describe("overlay Esc (#248) — the topmost overlay owns the keyboard", () => {
           cluster_group: "accuracy",
           merge_name_distance: 2,
           merge_suffix_aliases: [],
+          image_viewer: "",
+          directory_viewer: "",
         }}
         onSave={() => {}}
         onClose={onClose}

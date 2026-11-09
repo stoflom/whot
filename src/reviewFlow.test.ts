@@ -181,6 +181,8 @@ describe("verdictAdvanceTarget (#234)", () => {
       cluster_group: "accuracy",
       merge_name_distance: 2,
       merge_suffix_aliases: [],
+    image_viewer: "",
+    directory_viewer: "",
     },
   };
   // a second scenario for the status-dependent predicate: person 3's
@@ -205,6 +207,8 @@ describe("verdictAdvanceTarget (#234)", () => {
       cluster_group: "accuracy",
       merge_name_distance: 2,
       merge_suffix_aliases: [],
+      image_viewer: "",
+      directory_viewer: "",
     },
   };
   const stepIds = [3, 8, 5];

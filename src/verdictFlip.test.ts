@@ -48,6 +48,8 @@ function snapOf(faces: Face[]): Snapshot {
       cluster_group: "accuracy",
       merge_name_distance: 2,
       merge_suffix_aliases: [],
+    image_viewer: "",
+    directory_viewer: "",
     },
   };
 }
