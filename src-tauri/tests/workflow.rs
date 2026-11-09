@@ -114,16 +114,16 @@ fn full_workflow() {
     assert_eq!(f5.description.as_deref(), Some("beard|glasses"));
     assert!(f5.name.starts_with("Carol-beard|glasses-"), "{}", f5.name);
 
-    // 3) reject / claim roundtrip (#165 §4.2/§4.3/§4.35): reject re-homes
-    //    the face onto the system person, plain accept never un-rejects,
-    //    an assignment claims it back
+    // 3) reject / claim roundtrip (#165/#266 §4.2/§4.3/§4.35): reject
+    //    re-homes the face onto a RejectedN cluster person, plain accept
+    //    never un-rejects, an assignment claims it back
     db::set_link_status(&p, &[5], "rejected").unwrap();
     let s = db::snapshot(&p).unwrap();
     let f5 = s.faces.iter().find(|f| f.id == 5).unwrap();
     assert_eq!(f5.link_status, "rejected");
-    let rej = s.persons.iter().find(|x| x.name == "Rejected").unwrap();
-    assert_eq!(f5.person_id, Some(rej.id), "reject re-homes onto the system person");
-    assert_eq!(rej.groups, vec!["Rejected".to_string()], "the system seat");
+    let rej = s.persons.iter().find(|x| x.name == "Rejected1").unwrap();
+    assert_eq!(f5.person_id, Some(rej.id), "reject re-homes onto a RejectedN cluster person");
+    assert_eq!(rej.groups, vec!["Rejected".to_string()], "the cluster seat");
     assert!(s.persons.iter().find(|x| x.name == "Carol").unwrap().primary_face_id != Some(5));
     db::set_link_status(&p, &[5], "confirmed").unwrap();
     let s = db::snapshot(&p).unwrap();
@@ -599,10 +599,10 @@ fn clusters_tolerate_null_primary() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// §4.13/#35/#165 — remove_persons: faces rejected AND re-homed onto the
-/// system person `Rejected` (no writer detaches a face anymore), person
-/// and its groups/refcrops deleted, other persons untouched; a later
-/// assignment claims the faces back.
+/// §4.13/#35/#165/#266 — remove_persons: faces rejected AND re-homed
+/// into RejectedN cluster persons (no writer detaches a face anymore),
+/// person and its groups/refcrops deleted, other persons untouched; a
+/// later assignment claims the faces back.
 #[test]
 fn remove_persons_rejects_and_rehomes() {
     let p = fixture_paths("remove");
@@ -613,11 +613,12 @@ fn remove_persons_rejects_and_rehomes() {
     let s = db::snapshot(&p).unwrap();
     assert!(s.persons.iter().all(|x| x.id != 1), "person 1 must be gone");
     assert!(s.persons.iter().any(|x| x.id == 3), "other persons untouched");
-    let rej = s.persons.iter().find(|x| x.name == "Rejected")
-        .expect("the system person exists");
+    // faces 1/2/6 are mutually similar (cos .9/.8 ≥ 0.4) ⇒ one cluster bin
+    let rej = s.persons.iter().find(|x| x.name == "Rejected1")
+        .expect("the cluster person exists");
     for f in s.faces.iter().filter(|f| [1, 2, 6].contains(&f.id)) {
         assert_eq!(f.link_status, "rejected", "face {} must be rejected", f.id);
-        assert_eq!(f.person_id, Some(rej.id), "face {} homes on Rejected (#165)", f.id);
+        assert_eq!(f.person_id, Some(rej.id), "face {} homes on Rejected1 (#266)", f.id);
     }
     // refcrops went with the person
     assert!(db::get_refcrops(&p, 1).unwrap().is_empty());
@@ -1014,7 +1015,7 @@ fn rename_group_clash_merges_193() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// #165 / §4.35 — reserved person name, the system person's guards, the
+/// #165/#266 / §4.35 — reserved person names, the RejectedN guards, the
 /// claim rule and the seat derivation in one pass.
 #[test]
 fn status_seats_and_system_person_guards_165() {
@@ -1023,15 +1024,17 @@ fn status_seats_and_system_person_guards_165() {
     assert!(db::assign_person(&p, &[1, 2], "Rejected", "").is_err());
     assert!(db::set_person_name(&p, 1, "Rejected").is_err());
     assert!(db::set_person_name(&p, 1, "rejected").is_err(), "case-insensitive (#165)");
+    assert!(db::set_person_name(&p, 1, "Rejected1").is_err(), "the family is reserved (#266)");
+    assert!(db::assign_person(&p, &[1, 2], "Rejected7", "").is_err(), "the family is reserved (#266)");
 
-    // reject re-homes onto the system person, created on demand
+    // reject re-homes onto a RejectedN cluster person, created on demand
     db::set_link_status(&p, &[1], "rejected").unwrap();
     let s = db::snapshot(&p).unwrap();
-    let rej = s.persons.iter().find(|x| x.name == "Rejected").expect("system person");
+    let rej = s.persons.iter().find(|x| x.name == "Rejected1").expect("cluster person");
     assert_eq!(rej.groups, vec!["Rejected".to_string()], "the fixed seat");
     assert_eq!(s.faces.iter().find(|f| f.id == 1).unwrap().person_id, Some(rej.id));
 
-    // the system person is guarded everywhere
+    // the cluster person is guarded everywhere
     assert!(db::set_person_name(&p, rej.id, "Nope").is_err());
     assert!(db::set_person_group(&p, rej.id, "x").is_err());
     assert!(db::move_persons_to_group(&p, &[rej.id], "x").is_err());
@@ -1048,17 +1051,18 @@ fn status_seats_and_system_person_guards_165() {
     assert_eq!(f1.person_id, Some(clara.id));
     assert_eq!(f1.link_status, "confirmed", "assignment claims (#165)");
     assert_eq!(clara.groups, vec!["Accepted".to_string()], "empty input seats (#165)");
-    // emptied but never deleted: the system person is reused by the next reject
+    // emptied by claims ⇒ swept (the stale-shell sweep covers the family,
+    // §4.27/#266)
     assert!(
-        s.persons.iter().any(|x| x.name == "Rejected"),
-        "the emptied system person survives (never swept, §4.35)"
+        !s.persons.iter().any(|x| x.name == "Rejected1"),
+        "the emptied RejectedN is swept (§4.27/#266)"
     );
     db::set_link_status(&p, &[6], "rejected").unwrap();
     let s = db::snapshot(&p).unwrap();
     assert_eq!(
-        s.persons.iter().filter(|x| x.name == "Rejected").count(),
+        s.persons.iter().filter(|x| x.name == "Rejected1").count(),
         1,
-        "recreated, not duplicated"
+        "the number is reused once the old row is swept"
     );
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
@@ -1550,13 +1554,13 @@ fn delta_remove_persons_reports_removed_219() {
     assert!(!d.drifted);
     assert_eq!(d.version, db::data_version(&p).unwrap());
     assert_eq!(d.removed, vec![2], "the deleted person id is reported");
-    // the re-homed face is in the delta (now rejected, on `Rejected`)
+    // the re-homed face is in the delta (now rejected, on `Rejected1`)
     let faces = d.faces.as_ref().unwrap();
     let f3 = faces.iter().find(|f| f.id == 3).unwrap();
     assert_eq!(f3.link_status, "rejected");
-    // the `Rejected` person row is present (the re-home target)
+    // the `Rejected1` person row is present (the re-home target)
     let persons = d.persons.as_ref().unwrap();
-    assert!(persons.iter().any(|x| x.name == "Rejected"), "Rejected in the delta");
+    assert!(persons.iter().any(|x| x.name == "Rejected1"), "Rejected1 in the delta");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
@@ -1638,6 +1642,15 @@ fn counting_trace(sql: &str) {
 /// connection so the counting window below only sees the batch itself.
 fn seed_faces(db_path: &std::path::Path, person_id: i64, first_id: i64, descs: &[&str]) {
     let con = Connection::open(db_path).unwrap();
+    // #266: the shared identity embedding [1.0, 0, 0, 0] — every seeded
+    // face decodes to the same unit-length vector (matching face 1's
+    // identity vector in the base fixture), so a reject batch over them
+    // joins ONE RejectedN cluster bin (§4.35), keeping the per-(bin,
+    // description) seq-group assertions face-count-independent
+    let blob: Vec<u8> = [1.0f32, 0.0, 0.0, 0.0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
     for (i, desc) in descs.iter().enumerate() {
         con.execute(
             "INSERT INTO faces(id, image_id, x, y, w, h, person_id, link_status, state, origin,
@@ -1654,6 +1667,11 @@ fn seed_faces(db_path: &std::path::Path, person_id: i64, first_id: i64, descs: &
                 i as i64 + 1,
                 desc,
             ],
+        ).unwrap();
+        con.execute(
+            "INSERT INTO face_embeddings(face_id, model, dim, vector, created_at)
+             VALUES (?, 'insightface:buffalo_l', 4, ?, '2026-10-15T00:00:00')",
+            rusqlite::params![first_id + i as i64, blob.clone()],
         ).unwrap();
     }
 }
@@ -1703,41 +1721,47 @@ fn reject_batch_no_per_face_scaling_220() {
     );
 }
 
-/// #220 — set-based seq assignment keeps the gap-proof F5 semantics across
-/// MULTIPLE description groups in one batch: each (Rejected, key) group
-/// numbers from its own pre-batch MAX, positions in id order, names per
-/// §4.7 — and groups not in the batch are untouched.
+/// #220/#266 — set-based seq assignment keeps the gap-proof F5 semantics
+/// across MULTIPLE description groups in one batch, per cluster bin:
+/// each (RejectedN, key) group numbers from its own pre-batch MAX,
+/// positions in id order, names per §4.7 — and groups/bins not in the
+/// batch are untouched.
 #[test]
 fn reject_multigroup_seq_monotonic_220() {
     let p = fixture_paths("seqmono220");
-    // pre-state: faces 1 (Unknown1) and 4 (Unknown3) already rejected ⇒
-    // Rejected's '' group holds seqs 1,2
+    // pre-state: faces 1 (Unknown1) and 4 (Unknown3) already rejected —
+    // dissimilar embeddings (cos 0) ⇒ TWO separate cluster bins
     db::set_link_status(&p, &[1, 4], "rejected").unwrap();
-    let rej: i64 = {
+    let rej1: i64 = {
         let con = db::connect(&p).unwrap();
-        con.query_row("SELECT id FROM persons WHERE name = 'Rejected'", [], |r| r.get(0)).unwrap()
+        con.query_row("SELECT id FROM persons WHERE name = 'Rejected1'", [], |r| r.get(0)).unwrap()
     };
-    // Rejected already has an 'a'-group face (seq 1); Unknown2 has three
-    // 'b' faces and one 'a' face — reject the four in ONE batch
+    let rej2: i64 = {
+        let con = db::connect(&p).unwrap();
+        con.query_row("SELECT id FROM persons WHERE name = 'Rejected2'", [], |r| r.get(0)).unwrap()
+    };
+    // Rejected1 already has an 'a'-group face (seq 1); Unknown2 has three
+    // 'b' faces and one 'a' face whose embeddings match face 1 — reject
+    // the four in ONE batch (they all join Rejected1)
     let con = Connection::open(&p.db).unwrap();
     con.execute(
         "INSERT INTO faces(id, image_id, x, y, w, h, person_id, link_status, state, origin,
                            description, name, seq, confidence, detected_in_import_id,
                            created_at, description_key)
          VALUES (201, 2, 500, 0, 10, 10, ?, 'rejected', 'detected', 'insightface',
-                 'a', 'Rejected-a-1', 1, 0.9, 1, '2026-10-15T00:00:00', 'a')",
-        rusqlite::params![rej],
+                 'a', 'Rejected1-a-1', 1, 0.9, 1, '2026-10-15T00:00:00', 'a')",
+        rusqlite::params![rej1],
     ).unwrap();
     seed_faces(&p.db, 2, 202, &["a", "b", "b", "b"]);
     db::set_link_status(&p, &[202, 203, 204, 205], "rejected").unwrap();
     // verify per group: seqs contiguous from the pre-batch MAX, id order,
-    // §4.7 names, and the untouched '' group keeps seqs 1,2
+    // §4.7 names, and the untouched '' group keeps its lone face
     let con = Connection::open(&p.db).unwrap();
     let mut st = con.prepare(
         "SELECT id, description_key, seq, name FROM faces
           WHERE person_id = ? ORDER BY description_key, id").unwrap();
     let rows: Vec<(i64, String, i64, String)> = st
-        .query_map(rusqlite::params![rej], |r| {
+        .query_map(rusqlite::params![rej1], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })
         .unwrap()
@@ -1750,15 +1774,28 @@ fn reject_multigroup_seq_monotonic_220() {
             .collect()
     };
     let empty = by_group("");
-    assert_eq!(empty, vec![(1, 1, "Rejected-1".into()), (4, 2, "Rejected-2".into())],
+    assert_eq!(empty, vec![(1, 1, "Rejected1-1".into())],
                "group not in the batch is untouched: {empty:?}");
     let a = by_group("a");
-    assert_eq!(a, vec![(201, 1, "Rejected-a-1".into()), (202, 2, "Rejected-a-2".into())],
+    assert_eq!(a, vec![(201, 1, "Rejected1-a-1".into()), (202, 2, "Rejected1-a-2".into())],
                "'a' continues from the pre-batch MAX: {a:?}");
     let b = by_group("b");
-    assert_eq!(b, vec![(203, 1, "Rejected-b-1".into()), (204, 2, "Rejected-b-2".into()),
-                       (205, 3, "Rejected-b-3".into())],
+    assert_eq!(b, vec![(203, 1, "Rejected1-b-1".into()), (204, 2, "Rejected1-b-2".into()),
+                       (205, 3, "Rejected1-b-3".into())],
                "'b' numbers 1..n in id order: {b:?}");
+    // the other bin is untouched by the batch
+    let mut st2 = con.prepare(
+        "SELECT id, description_key, seq, name FROM faces
+          WHERE person_id = ? ORDER BY id").unwrap();
+    let rows2: Vec<(i64, String, i64, String)> = st2
+        .query_map(rusqlite::params![rej2], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(rows2, vec![(4, String::new(), 1, "Rejected2-1".into())],
+               "the other bin is untouched: {rows2:?}");
     let names: std::collections::HashSet<&str> =
         rows.iter().map(|(_, _, _, n)| n.as_str()).collect();
     assert_eq!(names.len(), rows.len(), "no duplicate names after the batch");

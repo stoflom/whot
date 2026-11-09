@@ -185,6 +185,15 @@ describe("clusterPersons", () => {
     expect(cs).toHaveLength(0);
   });
 
+  it("excludes the reject-bin family RejectedN AND legacy Rejected (#266/§4.28/§4.35)", () => {
+    // Rejected1 ~ Rejected2 (distance 1) and Rejected ~ Rejected1 would
+    // cluster — all three are writer-owned bins, never merge material
+    expect(clusterPersons(persons("Rejected1", "Rejected2", "John", "Johh"))).toHaveLength(1);
+    expect(clusterPersons(persons("Rejected", "Rejected1"))).toHaveLength(0);
+    const cs = clusterPersons(persons("Rejected1", "Rejected2"));
+    expect(cs).toHaveLength(0);
+  });
+
   it("suffix aliases group Jr/Junior only when enabled (default off)", () => {
     const ps = persons("John Smith", "John Smith Junior");
     expect(clusterPersons(ps)).toHaveLength(0); // distance 3 > 2

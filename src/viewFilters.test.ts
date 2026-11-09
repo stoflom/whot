@@ -16,7 +16,8 @@ describe("personTreeMembers (#152, rewritten by #165)", () => {
     { id: 3, name: "Unknown3" }, // rejected only
     { id: 4, name: "Unknown4" }, // mixed
     { id: 5, name: "Ghost" }, // faceless shell
-    { id: 6, name: "Rejected" }, // the system person (#165/§4.35)
+    { id: 6, name: "Rejected" }, // the legacy system person (#165/§4.35)
+    { id: 7, name: "Rejected1" }, // a cluster bin (#266/§4.35)
   ];
   const faces = [
     { person_id: 1, link_status: "provisional" },
@@ -26,10 +27,11 @@ describe("personTreeMembers (#152, rewritten by #165)", () => {
     { person_id: 4, link_status: "confirmed" },
     { person_id: 4, link_status: "rejected" },
     { person_id: 6, link_status: "rejected" },
+    { person_id: 7, link_status: "rejected" },
     { person_id: null, link_status: "provisional" }, // unowned — no person to list
   ];
 
-  it("'all' (everything except rejected) keeps non-rejected holders + faceless shells, drops all-rejected persons and the system person", () => {
+  it("'all' (everything except rejected) keeps non-rejected holders + faceless shells, drops all-rejected persons and the reject-bin family", () => {
     expect(personTreeMembers(persons, faces, "all").map((p) => p.id)).toEqual([1, 2, 4, 5]);
   });
 
@@ -41,11 +43,11 @@ describe("personTreeMembers (#152, rewritten by #165)", () => {
     expect(personTreeMembers(persons, faces, "confirmed").map((p) => p.id)).toEqual([2, 4]);
   });
 
-  it("'rejected' lists every holder of a rejected face — incl. the system person", () => {
-    expect(personTreeMembers(persons, faces, "rejected").map((p) => p.id)).toEqual([3, 4, 6]);
+  it("'rejected' lists every holder of a rejected face — incl. the reject-bin persons", () => {
+    expect(personTreeMembers(persons, faces, "rejected").map((p) => p.id)).toEqual([3, 4, 6, 7]);
   });
 
-  it("an empty face set: 'all' still lists the faceless persons (never the system person); a status filter lists nobody", () => {
+  it("an empty face set: 'all' still lists the faceless persons (never the reject-bin family); a status filter lists nobody", () => {
     expect(personTreeMembers(persons, [], "provisional")).toEqual([]);
     expect(personTreeMembers(persons, [], "rejected")).toEqual([]);
     expect(personTreeMembers(persons, [], "all").map((p) => p.id)).toEqual([1, 2, 3, 4, 5]);

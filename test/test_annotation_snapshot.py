@@ -200,6 +200,70 @@ class RoundTripTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             ansi.do_restore(ansi.do_export(self.old), self.new)
 
+    def test_restore_keeps_rejectedn_cluster_bins_266(self):
+        """#266: a v8-era snapshot records each rejected face's cluster
+        bin owner (`RejectedN`); restore replays it — the insightface
+        cluster association travels through the snapshot. An EMPTY
+        recorded bin is swept (§4.27 extends to the family)."""
+        con = sqlite3.connect(self.old)
+        con.executescript(
+            "INSERT INTO persons(id, name, state, created_at) "
+            "VALUES (3, 'Rejected1', 'created', '" + NOW + "'),"
+            "       (4, 'Rejected2', 'created', '" + NOW + "'),"
+            "       (9, 'Rejected3', 'created', '" + NOW + "');"
+            "INSERT INTO person_groups(person_id, path) VALUES "
+            " (3, 'Rejected'), (4, 'Rejected'), (9, 'Rejected');"
+            # faces 3/4 rejected onto recorded cluster bins; face 2 too
+            "UPDATE faces SET person_id = 3, link_status = 'rejected', seq = 1, "
+            "name = 'Rejected1-1' WHERE id = 2;"
+            "UPDATE faces SET person_id = 4, link_status = 'rejected', seq = 1, "
+            "description = 'glasses', description_key = 'glasses', "
+            "name = 'Rejected2-glasses-1' WHERE id = 3;"
+            "UPDATE faces SET person_id = 4, link_status = 'rejected', seq = 2, "
+            "description = 'glasses', description_key = 'glasses', "
+            "name = 'Rejected2-glasses-2' WHERE id = 4;")
+        con.commit(); con.close()
+        data = ansi.do_export(self.old)
+        bins = [(p["name"], p["groups"]) for p in data["persons"]
+                if p["name"].startswith("Rejected")]
+        self.assertEqual(bins, [("Rejected1", ["Rejected"]),
+                                ("Rejected2", ["Rejected"]),
+                                ("Rejected3", ["Rejected"])],
+                         "the bins are exported as persons with their seat")
+        owners = {f["person"] for f in data["faces"] if f["link_status"] == "rejected"}
+        self.assertEqual(owners, {"Rejected1", "Rejected2"},
+                         "each rejected face records its cluster bin")
+        stats = ansi.do_restore(data, self.new)
+        self.assertEqual(stats["unmatched_faces"], 0)
+        con = sqlite3.connect(self.new)
+        for name, fid in [("Rejected1", 2), ("Rejected2", 3)]:
+            row = con.execute(
+                "SELECT p.name, f.name FROM faces f "
+                "JOIN persons p ON p.id = f.person_id WHERE f.id = ?",
+                (fid,)).fetchone()
+            expect = "Rejected1-glasses-1" if name == "Rejected1" else "Rejected2-glasses-1"
+            self.assertEqual(row, (name, expect),
+                             f"the bin association is preserved for {name}")
+        # per-bin per-group numbering restarts and stays contiguous
+        # (§4.7/§4.35/§4.28) regardless of the snapshot's face order
+        glass = con.execute(
+            "SELECT f.id, f.seq, f.name FROM faces f "
+            "JOIN persons p ON p.id = f.person_id "
+            "WHERE p.name = 'Rejected2' AND f.name LIKE 'Rejected2-glasses-%' "
+            "ORDER BY f.seq").fetchall()
+        self.assertEqual(glass, [(3, 1, "Rejected2-glasses-1"), (4, 2, "Rejected2-glasses-2")])
+        # the empty recorded bin is swept; the legacy-named single bin
+        # never appears in a v8-era restore that needs no legacy park
+        self.assertEqual(
+            con.execute(
+                "SELECT count(*) FROM persons WHERE name = 'Rejected3'").fetchone()[0],
+            0, "empty RejectedN bin swept (§4.27/#266)")
+        self.assertEqual(
+            con.execute(
+                "SELECT count(*) FROM persons WHERE name = 'Rejected'").fetchone()[0],
+            0, "no legacy bin is created when every face has a recorded bin")
+        con.close()
+
     def test_unmatched_face_is_reported_not_dropped(self):
         data = ansi.do_export(self.old)
         data["faces"].append({"hash": "b" * 64, "x": 0, "y": 0, "w": 10, "h": 10,
