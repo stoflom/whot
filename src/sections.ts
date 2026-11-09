@@ -17,6 +17,36 @@ import { renameGroupFor } from "./groupList";
 import { isRejectedBin } from "./personNames";
 import type { Section } from "./components/FaceGrid";
 
+/** #269 (§4.37 On entry): the person the right pane re-anchors on when
+    the Rolls image detail opens WITHOUT a face context (thumbnail
+    double-click, path-filter file entry, *Open image* menu) — the person
+    owning the image's first face crop: spatial reading order over the
+    visible crops (topmost `y`, then leftmost `x`, ties by face id — the
+    §4.11 crop rectangles in the canonical `images.width/height` space),
+    counting only the Show-filter-passing faces (§4.10). null = no
+    visible crop or the crop's `person_id` is NULL → keep the current
+    anchor (never cleared). */
+export function firstCropPerson(
+  snap: Snapshot | null,
+  imgId: number,
+  faceFilter: FaceFilter,
+): number | null {
+  if (!snap) return null;
+  let first: Face | null = null;
+  for (const f of snap.faces) {
+    if (f.image_id !== imgId) continue;
+    if (!matchesStatusFilter(f.link_status, faceFilter)) continue;
+    if (
+      first == null ||
+      f.y < first.y ||
+      (f.y === first.y && f.x < first.x) ||
+      (f.y === first.y && f.x === first.x && f.id < first.id)
+    )
+      first = f;
+  }
+  return first?.person_id ?? null;
+}
+
 /** the App view state that selects the section source. Declared here
     so the pure inputs stay structural — App keeps its own alias. */
 export type Mode = "review" | "rolls" | "person";

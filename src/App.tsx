@@ -103,6 +103,7 @@ import { faceMenuGroups, imageAreaMenuGroups, thumbMenuGroups } from "./menus";
 // identities (see the #98 rules there)
 import {
   buildSections,
+  firstCropPerson,
   sectionsForImage as sectionsForImageOf,
   sectionsPersonKey,
 } from "./sections";
@@ -1348,6 +1349,15 @@ export default function App() {
       setImgSel((s) => clickImage(s, branchThumbs.images.map((x) => x.id), id, mods)),
     [branchThumbs]
   );
+  // #269 (§4.37 On entry): a faceless Rolls image open re-anchors the
+  // right pane on the open image's first visible face crop (spatial
+  // reading order); null (no crop / NULL person) leaves the current
+  // anchor untouched. Reads snap + face filter through refs so the
+  // callback identity never churns (the #228 F-L4 rule).
+  const anchorFirstCrop = useCallback((id: number) => {
+    const pid = firstCropPerson(snapRef.current, id, faceFilterRef.current);
+    if (pid != null) setPersonId(pid);
+  }, []);
   // the thumbnail double-click / path-filter file entry: the #142 view-
   // context change behind the #123 drop-or-accept dialog
   const openThumb = useCallback(
@@ -1355,8 +1365,9 @@ export default function App() {
       confirmContext(() => {
         setMode("rolls");
         setImageId(id);
+        anchorFirstCrop(id); // #269 (§4.37): the right pane follows the first crop
       }),
-    [confirmContext]
+    [confirmContext, anchorFirstCrop]
   );
   // #235 (rule 46) — film-roll image stepping: ‹/› walk the selected
   // branch's listed images — the right pane's own thumbnails, list and
@@ -1423,6 +1434,7 @@ export default function App() {
           confirmContext(() => {
             setMode("rolls");
             setImageId(id);
+            anchorFirstCrop(id); // #269 (§4.37): the right pane follows the first crop
           }),
         openFocused: (id) => confirmContext(() => setSplitImageId(id)),
         rotateImages,
@@ -1439,7 +1451,7 @@ export default function App() {
     },
     // #228 (F-L4): sel/imgSel read via refs (see imageAreaMenu)
     [snap, branchThumbs, faceVisible, openMenu, confirmContext,
-     rotateImages, doAccept, changeSel]
+     rotateImages, doAccept, changeSel, anchorFirstCrop]
   );
 
   // ------------------------------------------------------------ sections
