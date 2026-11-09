@@ -6,7 +6,7 @@
 //   §4.35  the rejected section + the system person's empty rule default
 //   #155   the staged (§4.24) description drives the Description regroup
 import { describe, expect, it } from "vitest";
-import { buildSections, sectionsForImage, sectionsPersonKey } from "./sections";
+import { buildSections, firstCropPerson, sectionsForImage, sectionsPersonKey } from "./sections";
 import type { SectionInputs } from "./sections";
 import type { AppearanceGroup, Face, ImageRow, Person, Snapshot } from "./api";
 import { indexStagedSet } from "./stage";
@@ -20,13 +20,15 @@ function face(o: {
   status?: string;
   desc?: string | null;
   state?: string;
+  x?: number;
+  y?: number;
 }): Face {
   const id = o.id ?? nextId++;
   const f: Face = {
     id,
     image_id: o.image ?? 9,
     person_id: o.person ?? 1,
-    x: 0, y: 0, w: 1, h: 1,
+    x: o.x ?? 0, y: o.y ?? 0, w: 1, h: 1,
     name: "ignored",
     seq: 0,
     description: o.desc ?? null,
@@ -124,6 +126,71 @@ function build(over: Partial<SectionInputs> = {}) {
     ...over,
   });
 }
+
+// ---------------------------------------------------------------- §4.37
+
+describe("firstCropPerson (faceless Rolls open, #269/§4.37 On entry)", () => {
+  it("anchors the person of the topmost crop, ties by leftmost x then id", () => {
+    const s = snap(
+      [person(1, "Anna", { total: 2 }), person(2, "Bert", { total: 1 })],
+      [
+        // id 1 is leftmost but lower — the topmost crop (id 2) wins
+        face({ id: 1, person: 1, x: 0, y: 50 }),
+        face({ id: 2, person: 2, x: 40, y: 10 }),
+      ],
+    );
+    expect(firstCropPerson(s, 9, "all")).toBe(2);
+    // same y — the leftmost crop wins
+    const s2 = snap(
+      [person(1, "Anna", { total: 2 }), person(2, "Bert", { total: 1 })],
+      [
+        face({ id: 1, person: 1, x: 30, y: 10 }),
+        face({ id: 2, person: 2, x: 10, y: 10 }),
+      ],
+    );
+    expect(firstCropPerson(s2, 9, "all")).toBe(2);
+    // identical rectangles — the lower face id wins (deterministic)
+    const s3 = snap(
+      [person(1, "Anna", { total: 2 }), person(2, "Bert", { total: 1 })],
+      [
+        face({ id: 7, person: 2, x: 10, y: 10 }),
+        face({ id: 3, person: 1, x: 10, y: 10 }),
+      ],
+    );
+    expect(firstCropPerson(s3, 9, "all")).toBe(1);
+  });
+
+  it("counts only Show-filter-visible crops (§4.10)", () => {
+    const s = snap(
+      [person(1, "Anna", { total: 2 }), person(2, "Bert", { total: 1 })],
+      [
+        face({ id: 1, person: 1, status: "rejected", x: 0, y: 0 }),
+        face({ id: 2, person: 2, status: "confirmed", x: 0, y: 90 }),
+      ],
+    );
+    // All hides the topmost (rejected) crop → the confirmed one anchors
+    expect(firstCropPerson(s, 9, "all")).toBe(2);
+    // Rejected shows only the topmost crop
+    expect(firstCropPerson(s, 9, "rejected")).toBe(1);
+  });
+
+  it("null: other image's faces are ignored; no visible crop; NULL person", () => {
+    const s = snap(
+      [person(1, "Anna", { total: 1 })],
+      [
+        face({ id: 1, person: 1, image: 4, x: 0, y: 0 }),
+        face({ id: 2, person: null, image: 9, x: 0, y: 0, status: "rejected" }),
+      ],
+    );
+    expect(firstCropPerson(s, 9, "all")).toBeNull();
+    // the crop is visible but unassigned (legacy NULL person_id)
+    const s2 = snap([person(1, "Anna", { total: 1 })], [
+      face({ id: 2, person: null, image: 9, x: 0, y: 0 }),
+    ]);
+    expect(firstCropPerson(s2, 9, "all")).toBeNull();
+    expect(firstCropPerson(null, 9, "all")).toBeNull();
+  });
+});
 
 // ---------------------------------------------------------------- §4.24
 
