@@ -747,10 +747,11 @@ def execute_plan(dbcon: sqlite3.Connection, plan: dict, rep: Report) -> None:
     if cur.rowcount:
         rep.add("importer_shells_deleted", cur.rowcount)
 
-    # #165 / gui-design §4.35: the group invariant + seat derivation for
-    # every person this run touched — a groupless person gets its seat, a
-    # seated person's seat re-derives from the faces it has left; a real
-    # group (or the system person's `Rejected`) is never touched.
+    # #165 / #266 / gui-design §4.35: the group invariant + seat derivation
+    # for every person this run touched — a groupless person gets its
+    # seat, a seated person's seat re-derives from the faces it has left;
+    # a real group (or a reject-bin person's `Rejected` seat) is never
+    # touched.
     # destinations + shell appendees + CLAIM ORIGINS (a claim takes faces
     # away — their seat must re-derive, §4.35: New → Accepted etc.)
     touched = (set(person_id_of.values()) | set(plan.get("shell_groups", {}))

@@ -7,6 +7,7 @@
 // ops in the same order against the surviving person.
 
 import type { Person } from "./api";
+import { isRejectedBin } from "./personNames";
 
 export interface GroupOp {
   from: string;
@@ -34,14 +35,15 @@ export const realGroups = (groups: string[]): string[] =>
 export const firstRealGroup = (groups: string[]): string =>
   realGroups(groups)[0] ?? "";
 
-/** #153 (+ #165/§4.35, #178/§4.1) — the group argument for every
+/** #153 (+ #165/§4.35, #178/§4.1, #266) — the group argument for every
     rename-style person assign: a filed person keeps their group path,
-    the system person's seat never prefills a group field, and a STATUS
+    a reject-bin person's seat never prefills a group field (the
+    `RejectedN` family is writer-owned, §4.35), and a STATUS
     SEAT is never passed either (assign_person validates the path up
     front) — "" derives the seat by state instead. Pure; the section
     derivations (sections.ts) use it for the rule bar defaults. */
 export function renameGroupFor(p: Person | undefined): string {
-  const g = p && p.name !== "Rejected" ? p.groups[0] ?? "" : "";
+  const g = p && !isRejectedBin(p.name) ? p.groups[0] ?? "" : "";
   return isSeat(g) ? "" : g;
 }
 

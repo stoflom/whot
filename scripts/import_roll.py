@@ -597,8 +597,8 @@ def store_image(con: sqlite3.Connection, plan: ImportPlan, pairs, unknowns, impo
                      det.embedding.astype("<f4").tobytes(), now))
     # #165 / gui-design §4.35: provisional faces landed on these persons —
     # a seated person (no user-given group) re-seats to `New`; a filed
-    # person's rows are never touched (the system person's seat can't be
-    # in play: `Rejected` is never an import target).
+    # person's rows are never touched (a reject-bin seat can't be
+    # in play: the `RejectedN` family is never an import target, #266).
     for pid in {ensure_person(con, stub, unknowns) for _, stub in pairs}:
         con.execute(
             "UPDATE person_groups SET path = 'New'"

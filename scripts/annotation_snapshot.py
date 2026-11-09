@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 import time
@@ -294,46 +295,62 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
     def key_of(rec: dict) -> tuple:
         return (rec["hash"], rec["x"], rec["y"], rec["w"], rec["h"])
 
-    def ensure_rejected_person() -> int:
-        """#165/§4.35: the system person `Rejected` + its seat, on demand."""
-        row = con.execute("SELECT id FROM persons WHERE name = 'Rejected'").fetchone()
+    def ensure_rejected_bin(name: str | None) -> tuple[int, str]:
+        """#165/§4.35/#266: resolve the reject-bin person owner for a
+        restored rejected face. A recorded `RejectedN` (v8.0-era export)
+        is the face's recorded CLUSTER bin — created on demand (seat row
+        `Rejected`) if the persons pass did not already recreate it. The
+        exact name `Rejected` (or no recorded owner at all — pre-#165
+        snapshots) parks on the LEGACY single bin, which db.rs's
+        reject-time split (#266) retires at the next reject write; the
+        legacy-vs-squatter guard from #165 still applies."""
+        if name is None:
+            name = "Rejected"          # also the legacy bin's name
+        is_legacy = name.casefold() == "rejected"
+        row = con.execute("SELECT id FROM persons WHERE name = ?", (name,)).fetchone()
         if row:
-            # never silently adopt a legacy person squatting the reserved
-            # name — the system person is seat-only + rejected-faces-only
-            seats, others = con.execute(
-                "SELECT COALESCE(SUM(path IN ('New','Accepted','Rejected')),0),"
-                " COUNT(*) FROM person_groups WHERE person_id = ?", (row[0],)).fetchone()
-            bad = con.execute(
-                "SELECT COUNT(*) FROM faces WHERE person_id = ?"
-                " AND link_status != 'rejected'", (row[0],)).fetchone()[0]
-            if others > seats or bad:
-                sys.exit(
-                    f"a legacy person named 'Rejected' conflicts with the system "
-                    f"person (#165): {others} group row(s), {bad} non-rejected "
-                    f"face(s) — rename it (in the target DB or the snapshot) first")
+            if is_legacy:
+                # never silently adopt a legacy person squatting the reserved
+                # name — the system person is seat-only + rejected-faces-only
+                seats, others = con.execute(
+                    "SELECT COALESCE(SUM(path IN ('New','Accepted','Rejected')),0),"
+                    " COUNT(*) FROM person_groups WHERE person_id = ?", (row[0],)).fetchone()
+                bad = con.execute(
+                    "SELECT COUNT(*) FROM faces WHERE person_id = ?"
+                    " AND link_status != 'rejected'", (row[0],)).fetchone()[0]
+                if others > seats or bad:
+                    sys.exit(
+                        f"a legacy person named 'Rejected' conflicts with the system "
+                        f"person (#165): {others} group row(s), {bad} non-rejected "
+                        f"face(s) — rename it (in the target DB or the snapshot) first")
             con.execute(
                 "INSERT OR IGNORE INTO person_groups(person_id, path) VALUES (?, 'Rejected')",
                 (row[0],))
-            return row[0]
+            return row[0], name
         pid = con.execute(
             "INSERT INTO persons(name, state, created_at)"
-            " VALUES ('Rejected', 'created', ?)", (now,)).lastrowid
+            " VALUES (?, 'created', ?)", (name, now)).lastrowid
         con.execute("INSERT INTO person_groups(person_id, path) VALUES (?, 'Rejected')",
                     (pid,))
-        return pid
+        return pid, name
 
-    def park_rejected(fid: int, desc: str | None) -> None:
-        """#165/§4.35: home a rejected face on the system person, seq/name
-        re-derived per §4.7 — the snapshot's recorded person is moot."""
-        rej = ensure_rejected_person()
+    def park_rejected(fid: int, desc: str | None, owner: str | None) -> None:
+        """#165/§4.35/#266: home a rejected face on its reject-bin owner
+        (`RejectedN` cluster bin when the snapshot recorded one — the
+        insightface cluster association travels through the snapshot —
+        else the legacy single bin), seq/name re-derived per §4.7; the
+        recorded description travels with the face (like the §4.1
+        assignment branch below — the seq grouping keys on it)."""
+        rej, name = ensure_rejected_bin(owner)
         seq = con.execute(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM faces "
             "WHERE person_id = ? AND description_key = ?",   # v1.9 (#220)
             (rej, desc or "")).fetchone()[0]
         con.execute(
-            "UPDATE faces SET person_id = ?, seq = ?, link_status = 'rejected', name = ? "
+            "UPDATE faces SET person_id = ?, seq = ?, link_status = 'rejected', "
+            "description = ?, description_key = ?, name = ? "
             "WHERE id = ?",
-            (rej, seq, derive_name("Rejected", desc, seq), fid))
+            (rej, seq, desc, desc or "", derive_name(name, desc, seq), fid))
 
     stats = {"persons": 0, "faces": 0, "unmatched_faces": 0,
              "moved_faces": 0, "primary": 0, "pins": 0, "unmatched_pins": 0,
@@ -372,10 +389,17 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
                 continue
             pname = f.get("person")
             if f.get("link_status") == "rejected":
-                # #165/§4.35: a restored rejected face homes on the system
-                # person `Rejected` (seq/name re-derived) — wherever the
-                # pre-#165 snapshot says it used to live
-                park_rejected(fid, f.get("description"))
+                # #165/§4.35/#266: a restored rejected face homes on its
+                # reject-bin owner (seq/name re-derived) — its recorded
+                # cluster bin `RejectedN` when the snapshot recorded one
+                # (v8.0-era exports), else the legacy single bin
+                REJECTED_BIN_RE = r"^rejected\d*$"
+                owner = (
+                    pname
+                    if pname and re.match(REJECTED_BIN_RE, pname, re.IGNORECASE)
+                    else None
+                )
+                park_rejected(fid, f.get("description"), owner)
                 stats["moved_faces"] += 1
             elif pname in restored:
                 con.execute(
@@ -443,14 +467,18 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
         # the derived-state maintenance the GUI would otherwise do on the
         # first mutation — machine primary + refcrops for each restored
         # person (after the pins, so pinned rows keep their seq slots), then
-        # delete the UnknownN shells the restore emptied.
+        # delete the UnknownN shells AND the RejectedN cluster bins the
+        # restore emptied (#266 — same sweep rule as db.rs §4.27; the
+        # legacy single bin `Rejected` is never swept, its split is the
+        # backend's one-shot fix).
         n = restore_refcrop_n()
         for pid in restored.values():
             backfill_primary(con, pid)
         for pid in restored.values():
             stats["refcrops"] += recompute_refcrops(con, pid, n)
         cur = con.execute(
-            "DELETE FROM persons WHERE name LIKE 'Unknown%' "
+            "DELETE FROM persons WHERE (name LIKE 'Unknown%' "
+            "OR name GLOB 'Rejected[0-9]*') "
             "AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)")
         stats["shells_deleted"] = cur.rowcount
 

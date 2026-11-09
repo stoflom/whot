@@ -9,6 +9,7 @@ import GroupListEditor from "./GroupListEditor";
 import type { SuggestOption } from "./SuggestInput";
 import { matchesStatusFilter, type FaceFilter } from "../viewFilters";
 import { selectAll } from "../autoText";
+import { isRejectedBin } from "../personNames";
 
 interface Props {
   person: Person | null;
@@ -129,7 +130,7 @@ function RefcropThumb({ faceId, rotation }: { faceId: number; rotation: number }
 
 function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson, onUpdate }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
-  const system = person.name === "Rejected"; // #165/§4.35
+  const system = isRejectedBin(person.name); // #165/§4.35, #266 family
   // #172/#173 (§4.38) — pane-local staging for the group list plus the
   // name/note drafts Update person commits; the staging resets whenever
   // the pane RE-ANCHORS (the person changes — tree select, any §4.37
@@ -190,12 +191,13 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
           <span>?</span>
         )}
       </div>
-      {/* #165/§4.35 — the system person Rejected: not renameable, its
-          group list not editable; the strings stay reference-free (§4.43) */}
+      {/* #165/§4.35/#266 — the reject-bin persons (RejectedN): not
+          renameable, their group list not editable; the strings stay
+          reference-free (§4.43) */}
       {system ? (
         <div className="dp-field">
           <span>Name</span>
-          <span className="dim">Rejected — the system person, not renameable</span>
+          <span className="dim">rejected cluster person — not renameable</span>
         </div>
       ) : (
         <Editable
@@ -210,7 +212,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
       {system ? (
         <div className="dp-field">
           <span>Groups</span>
-          <span className="dim">Rejected — the system seat, not editable</span>
+          <span className="dim">rejected cluster seat, not editable</span>
         </div>
       ) : (
         // #172 (§4.38) — the group LIST replaces the single field: every
@@ -269,14 +271,14 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
           Update person
         </button>
       )}
-      {/* #165/§4.35: the system person cannot be removed — the title
-          says so in product language (§4.43) */}
+      {/* #165/§4.35/#266: the reject-bin persons cannot be removed —
+          the title says so in product language (§4.43) */}
       <button
         className="bad dp-remove"
         title={
           system
-            ? "The system person cannot be removed"
-            : "Reject all this person's faces onto the Rejected system person and remove them (no undo)"
+            ? "A rejected cluster person cannot be removed"
+            : "Reject all this person's faces onto their rejected cluster and remove them (no undo)"
         }
         disabled={system}
         onClick={() => onRemovePerson?.(person.id)}

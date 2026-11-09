@@ -24,8 +24,8 @@ export interface Face {
   id: number;
   image_id: number;
   /** null never occurs since #165 — every writer homes its faces
-      (§4.13 re-homes removed persons' onto `Rejected`); kept nullable
-      only for legacy rows */
+      (§4.13 re-homes removed persons' faces into `RejectedN`
+      cluster persons, §4.35/#266); kept nullable only for legacy rows */
   person_id: number | null;
   x: number;
   y: number;
@@ -169,7 +169,8 @@ export const renameGroup = (oldPath: string, newPath: string) =>
   invoke<Delta>("rename_group", { oldPath, newPath });
 /** §4.16 (#50) — delete a branch: members (incl. sub-branches) fall to their status seats (#165, §4.35) */
 export const deleteGroup = (path: string) => invoke<Delta>("delete_group", { path });
-/** §4.13 (#35/#165) — reject + re-home faces onto `Rejected`, delete the person(s); no undo */
+/** §4.13/#35/#165/#266 — reject + re-home faces into their `RejectedN`
+    cluster persons, delete the person(s); no undo */
 export const removePersons = (personIds: number[]) =>
   invoke<Delta>("remove_persons", { personIds });
 export const addRefcrop = (personId: number, faceId: number) =>

@@ -4,6 +4,7 @@
 // rule, and the Description-mode grouping.
 
 import type { Face } from "./api";
+import { isRejectedBin } from "./personNames";
 
 /** whotrc `face_filter` — 'confirmed' is labelled **Accepted** in the UI */
 export type FaceFilter = "all" | "provisional" | "confirmed" | "rejected";
@@ -44,8 +45,9 @@ export function emptyStateHint(totalFaces: number, filter: FaceFilter): string {
     presence. Under 'all' — everything except rejected — a person is
     listed when it holds ≥ 1 non-rejected face, and faceless shells stay
     findable (#127/#128); a person whose faces are ALL rejected drops
-    out, which singles out the system person `Rejected` (§4.35: listed
-    only under Show → Rejected, and only while it holds faces).
+    out, which singles out the reject-bin persons `RejectedN`
+    (§4.35/#266: listed only under Show → Rejected, and only while they
+    hold faces).
     Under New/Accepted/Rejected only persons holding ≥ 1 face of that
     status survive — a person with no matching face leaves the tree while
     the badges of those that stay carry raw totals (#129). */
@@ -63,8 +65,8 @@ export function personTreeMembers<P extends { id: number; name?: string }>(
       if (f.link_status !== "rejected") withVisible.add(f.person_id);
     }
     return persons.filter((p) =>
-      p.name === "Rejected"
-        ? false // §4.35: never under All — Show → Rejected only
+      isRejectedBin(p.name ?? "")
+        ? false // §4.35/#266: never under All — Show → Rejected only
         : !withAny.has(p.id) || withVisible.has(p.id)
     );
   }

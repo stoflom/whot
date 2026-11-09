@@ -41,8 +41,9 @@ One line each; the DDL carries the columns.
   the seq-group key is indexable (v1.9, #220).
 - `face_embeddings` — one vector per `(face_id, model)`; storage in §6.
 - `persons` — name is unique and **reserved** at the edges: `UnknownN`
-  for importer clusters and the exact name `Rejected` for the system
-  person (gui-design §4.35); optional
+  for importer clusters and the `RejectedN` cluster-person family
+  (`^Rejected\d+$`, plus the retired exact name `Rejected` — #266,
+  gui-design §4.35); optional
   `primary_face_id` (nullable — see §5) with `primary_pinned`.
 - `person_groups` — `|`-paths, one row per membership; the person tree
   is *derived* from these paths (gui-design §3), never stored. **At least
@@ -205,12 +206,12 @@ gives the reason; every unmarked row is produced by the listed triggers.
 | --- | --- | --- | --- | --- |
 | — | — | `detected` | `provisional` | **roll import INSERT** (`store_image`) — both columns born fixed: `state='detected'`, status starts `provisional` (new cluster, joined cluster or known-person match alike) |
 | `detected` | `provisional` | `detected` | `confirmed` | **Accept** (§4.3); **Assignment/merge** (§4.1, person re-homes); **snapshot restore** applying a recorded `confirmed` |
-| `detected` | `provisional` | `detected` | `rejected` | **Reject** (§4.2 — re-homes onto person `Rejected`); **Remove person** (§4.13); **restore** of a recorded-rejected face |
+| `detected` | `provisional` | `detected` | `rejected` | **Reject** (§4.2 — re-homes onto its `RejectedN` cluster person, #266); **Remove person** (§4.13); **restore** of a recorded-rejected face |
 | `detected` | `confirmed` | `detected` | `rejected` | **Reject**; **Remove person**; **restore** of a recorded-rejected face |
 | `detected` | `confirmed` | `detected` | `provisional` | **Harvest claim `--overwrite`** (forces `provisional`; person re-homes) |
 | `detected` | `rejected` | `detected` | `provisional` | **Harvest claim `--overwrite`** — also moves the face *out* of the reject bin (claim-like) |
 | `detected` | `rejected` | `detected` | `confirmed` | **Assignment = the claim** (§4.35 — the only GUI exit from `rejected`); restore of a recorded-`confirmed` face over a rejected one |
-| `detected` | any | `detected` | recorded value | **Snapshot restore** (`annotation_snapshot`) — writes the recorded `link_status` + person move; recorded-rejected parks on `Rejected`; unmatched faces skipped |
+| `detected` | any | `detected` | recorded value | **Snapshot restore** (`annotation_snapshot`) — writes the recorded `link_status` + person move; recorded-rejected homes on its recorded `RejectedN` cluster bin (or the legacy bin — #266); unmatched faces skipped |
 | `detected` | `confirmed` | `detected` | `confirmed` | pair unchanged — **person re-homes** on assignment/merge; description/seq/name/rotation edits (derived/display only) |
 | `detected` | `provisional` | `detected` | `provisional` | pair unchanged — **harvest claim of a provisional face** (status kept; person re-homes) |
 | ✗ `imported`, `created`, `discarded` | any | same | — | **✗ NOT LOGICAL** — no writer ever sets `faces.state`; every INSERT passes `'detected'`; `discarded` exists only as a CHECK that eligibility filters tolerate (legacy/foreign rows) |
@@ -228,17 +229,17 @@ lives in the link column and in the row's existence.
 | — | — | `created` | seat-by-state / real path | **assignment creates a named person** — empty input ⇒ seat, given path ⇒ real |
 | — | — | `imported` | real path / seat | **harvest import creates** (staging groups, else the §9.4 seat pass) |
 | — | — | `created` | real path / seat | **snapshot restore creates** (recorded groups; groupless ⇒ seat pass) |
-| — | — | `created` | seat `Rejected` | **system person created on demand** — first Reject/Remove person, the data fix, or restore |
+| — | — | `created` | seat `Rejected` | **a reject-bin person created on demand** (#266) — first Reject/Remove person (per cluster resolution), restore of a recorded bin, or the legacy split |
 | `created`, `imported` | seat `New` | `created`, `imported` | seat `Accepted` | **last provisional leaves** — Accept of it, reject-move/claim/harvest-claim takes it, or restore's seat pass |
 | `created`, `imported` | seat `Accepted` | `created`, `imported` | seat `New` | **roll import matches** a new provisional onto a seated person (`store_image` re-seat) |
 | `created`, `imported` | seat … | `created`, `imported` | real path P | **filing replaces the seat** — assign-with-path, *Move to group…*, *Add group…*, D&D |
 | `created`, `imported` | real path P | `created`, `imported` | seat-by-state | **unfiling re-derives** — `delete_group` (last row), empty *Move to group…*, `rename_group → ""`, D&D-unfile |
 | `created`, `imported` | real P | `created`, `imported` | real P′ | **`rename_group`/move prefix rewrite** — path value changes, still a real link |
 | `created`, `imported` | any | — | — | **person deleted** — Remove person (§4.13), source emptied by assign/merge (§4.1 shell rule), sweeps (§4.27 `UnknownN`, harvest §9.8 `imported` shells, restore-end) |
-| `created` | seat `Rejected` | `created` | seat `Rejected` | **emptied by claims** — kept (never swept), invisible outside `Show → Rejected`, reused by the next reject; state unchanged |
+| `created` | seat `Rejected` | — row deleted | — | **emptied by claims** — swept (§4.27 extends to the family, #266), invisible outside `Show → Rejected`; the number is free again once the row is gone |
 | ✗ `created`, `imported` | ∅ (no rows) | — | — | **✗ NOT LOGICAL** — group invariant: ≥ 1 `person_groups` row (writer-enforced; pre-seating databases are migrated by `fix_status_groups.py`) |
 | ✗ — | a path on nobody | — | — | **✗ NOT LOGICAL** — orphan group row (FK `person_id → persons`) |
-| ✗ `imported` | seat `Rejected` | — | — | **✗ NOT LOGICAL** — the system person is always `'created'`: harvest never mints the reserved name (`taken_cf` guard), restore/fix insert `'created'` |
+| ✗ `imported` | seat `Rejected` | — | — | **✗ NOT LOGICAL** — the reject-bin persons are always `'created'`: harvest never mints the reserved family (`taken_cf` guard), restore/fix insert `'created'` |
 | ✗ (row deleted) | any path | — | — | **✗ NOT LOGICAL** — group rows die with the person (`ON DELETE CASCADE`) |
 
 ### 7.4 Cross-table invariants (also asserted by the fix script / writer guards)
@@ -246,15 +247,18 @@ lives in the link column and in the row's existence.
 - `path = 'New'` on a person whose §7.2 faces contain **zero
   `provisional`** is not logical — seat derivation re-evaluates at every
   mutation (`reseat`), including harvest claims of the origin's faces.
-- **Any non-rejected face on person `Rejected`** (`Rejected` +
-  `confirmed`/`provisional`) is not logical — guarded in
-  `ensure_rejected_person` (db.rs and annotation_snapshot), asserted by
-  the fix script; the reserved name is un-mintable in the importer.
-- **A user person named exactly `Rejected`** is not logical — reserved
-  in `validate_person_name`; a legacy squatter fails loudly at the first
-  reject/restore instead of being adopted.
+- **Any non-rejected face on a reject-bin person** (`RejectedN` family
+  or the retired exact `Rejected`, + `confirmed`/`provisional`) is not
+  logical (#266) — guarded in the reject writers, asserted by the fix
+  script; the reserved family is un-mintable in the importer.
+- **A user person named `RejectedN`** (`^Rejected\d+$`, case-insensitive)
+  is not logical — reserved in `validate_person_name` (#266); the exact
+  name `Rejected` stays reserved for the legacy bin, retired by the
+  one-shot split, never adopted silently.
 - Snapshot of the v1.7-era live database (counts drift with use): 2084
   images all `scanned`; 4116 faces all `detected` — 1733 confirmed /
-  1697 provisional / 686 rejected, all 686 on person `Rejected`;
-  0 groupless persons, 0 unowned faces.
+  1697 provisional / 686 rejected (all on the legacy bin `Rejected`
+  until #266's one-shot split files them into `RejectedN` clusters —
+  this observation predates #266); 0 groupless persons, 0 unowned
+  faces.
 

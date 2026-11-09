@@ -388,7 +388,8 @@ pub struct Face {
     pub id: i64,
     pub image_id: i64,
     /// NULL never occurs since #165 — every writer homes its faces
-    /// (§4.13 re-homes removed persons' onto `Rejected`); the column
+    /// (§4.13 re-homes removed persons' faces into `RejectedN` cluster
+    /// persons, §4.35/#266); the column
     /// stays nullable only for legacy rows
     pub person_id: Option<i64>,
     pub x: i64,
@@ -950,17 +951,21 @@ fn refresh_person_names(con: &Connection, person_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// §4.27 (#84) — the stale-shell sweep: zero-face `UnknownN` persons are
-/// leftovers no other code path revisits (assign/merge deletes the shells
-/// it empties itself; reject-moves empty them here). Named persons are
-/// never swept — an empty named person is a legitimate future assignment
-/// target — and the system person `Rejected` never matches this GLOB
-/// (§4.35: never swept). #208: the READ path is pure — the sweep rides
-/// the writers that can empty a person, so leftovers from external
-/// writers are swept at the next write instead of the next snapshot.
+/// §4.27 (#84, #266) — the stale-shell sweep: zero-face `UnknownN`
+/// persons are leftovers no other code path revisits (assign/merge
+/// deletes the shells it empties itself; reject-moves empty them here),
+/// and a `RejectedN` fully **claimed** — every face assigned away — is
+/// swept the same way (§4.35). Named persons are never swept — an empty
+/// named person is a legitimate future assignment target — and the
+/// legacy `Rejected` (no number) never matches this GLOB: it is retired
+/// by the one-shot split, not swept. #208: the READ path is pure — the
+/// sweep rides the writers that can empty a person, so leftovers from
+/// external writers are swept at the next write instead of the next
+/// snapshot.
 fn sweep_stale_shells(con: &Connection) -> Result<()> {
     con.execute(
-        "DELETE FROM persons WHERE name GLOB 'Unknown*'
+        "DELETE FROM persons
+           WHERE (name GLOB 'Unknown*' OR name GLOB 'Rejected[0-9]*')
            AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
         [],
     )?;
@@ -1161,7 +1166,10 @@ fn validate_person_name(name: &str) -> Result<()> {
         bail!("person names may not start with 'Unknown' (reserved for importer clusters)");
     }
     if name.eq_ignore_ascii_case("Rejected") {
-        bail!("the name 'Rejected' is reserved (#165: system person for rejected faces)");
+        bail!("the name 'Rejected' is reserved (#165: legacy system person for rejected faces)");
+    }
+    if is_rejected_cluster_name(name) {
+        bail!("the name '{name}' is reserved (#266: RejectedN cluster persons are writer-owned)");
     }
     Ok(())
 }
@@ -1179,7 +1187,8 @@ fn is_status_seat(path: &str) -> bool {
 
 /// §4.35 seat derivation: any provisional face ⇒ `New`, else `Accepted`
 /// (all confirmed — or none left). `Rejected` is never derived: it is
-/// the system person's own fixed seat.
+/// the reject-bin persons' own fixed seat (the `RejectedN` family,
+/// §4.35/#266).
 fn derive_seat(con: &Connection, person_id: i64) -> Result<&'static str> {
     let has_new: bool = con.query_row(
         "SELECT EXISTS(SELECT 1 FROM faces
@@ -1212,7 +1221,8 @@ fn ensure_seat(con: &Connection, person_id: i64) -> Result<()> {
 /// §4.35 — re-evaluate a seat holder's seat after its faces changed
 /// (accept/reject/import). No-op unless ALL of the person's rows are
 /// status seats: filing replaces the seat (§4.18), and a user-given
-/// group is never touched. The system person's seat is never derived.
+/// group is never touched. A reject-bin person's seat is never derived
+/// (§4.35/#266).
 fn reseat(con: &Connection, person_id: i64) -> Result<()> {
     let exists: bool = con.query_row(
         "SELECT EXISTS(SELECT 1 FROM persons WHERE id = ?)",
@@ -1223,7 +1233,7 @@ fn reseat(con: &Connection, person_id: i64) -> Result<()> {
         return Ok(()); // shells deleted by the same tx never get a seat
     }
     if is_system_person(con, person_id)? {
-        return Ok(()); // §4.35: `Rejected`'s seat is fixed
+        return Ok(()); // §4.35: a reject-bin person's seat is fixed
     }
     let (seats, total): (i64, i64) = con.query_row(
         "SELECT COALESCE(SUM(path IN ('New', 'Accepted', 'Rejected')), 0), COUNT(*)
@@ -1251,129 +1261,282 @@ fn reseat(con: &Connection, person_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// §4.35 — the system person `Rejected` (exact reserved name): created
-/// on demand by the reject paths; its seat row is always `Rejected`.
-fn ensure_rejected_person(con: &Connection) -> Result<i64> {
-    if let Some(id) = con
-        .query_row("SELECT id FROM persons WHERE name = 'Rejected'", [], |r| r.get(0))
-        .optional()?
-    {
-        // #165: never silently adopt a legacy person squatting the
-        // reserved name — the system person is seat-only and holds only
-        // rejected faces; fail loudly instead of corrupting the invariant
-        let (seats, others): (i64, i64) = con.query_row(
-            "SELECT COALESCE(SUM(path IN ('New', 'Accepted', 'Rejected')), 0), COUNT(*)
-               FROM person_groups WHERE person_id = ?1",
-            params![id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        let bad_faces: i64 = con.query_row(
-            "SELECT COUNT(*) FROM faces WHERE person_id = ?1 AND link_status != 'rejected'",
-            params![id],
-            |r| r.get(0),
-        )?;
-        if others > seats || bad_faces > 0 {
-            bail!(
-                "a legacy person named 'Rejected' conflicts with the system person (#165): \
-                 {others} group row(s) ({seats} seat(s)), {bad_faces} non-rejected face(s) — \
-                 rename that person before rejecting anything"
-            );
+/// #266 — the `RejectedN` cluster-person name family: `Rejected` +
+/// digits (case-insensitive, like the `Unknown*` rule). The exact name
+/// `Rejected` (no number) is the legacy system person, handled
+/// separately.
+fn is_rejected_cluster_name(name: &str) -> bool {
+    name.to_ascii_lowercase()
+        .strip_prefix("rejected")
+        .and_then(|rest| rest.parse::<u32>().ok())
+        .is_some()
+}
+
+/// #266 — the next collision-free `RejectedN` number: the max of the
+/// existing family numbers + 1 (the importer's `UnknownN` numbering
+/// rule — gaps left by swept persons are harmless).
+fn next_rejected_number(tx: &Connection) -> Result<i64> {
+    let mut st = tx.prepare("SELECT name FROM persons WHERE name GLOB 'Rejected[0-9]*'")?;
+    let rows: Vec<String> = st
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut max_n = 0i64;
+    for n in &rows {
+        if let Some(d) = n.to_ascii_lowercase().strip_prefix("rejected") {
+            if let Ok(v) = d.parse::<i64>() {
+                max_n = max_n.max(v);
+            }
         }
-        con.execute(
-            "INSERT OR IGNORE INTO person_groups (person_id, path) VALUES (?1, 'Rejected')",
-            params![id],
-        )?;
-        return Ok(id);
     }
-    con.execute(
+    Ok(max_n + 1)
+}
+
+/// #266 — a fresh `RejectedN` cluster person: state `created`, seat row
+/// `Rejected` (its one derivation — never re-evaluated, §4.35).
+fn create_rejected_person(tx: &Connection) -> Result<i64> {
+    let n = next_rejected_number(tx)?;
+    tx.execute(
         "INSERT INTO persons (name, state, created_at)
-         VALUES ('Rejected', 'created', datetime('now'))",
-        [],
+         VALUES (?1, 'created', datetime('now'))",
+        params![format!("Rejected{n}")],
     )?;
-    let id = con.last_insert_rowid();
-    con.execute(
+    let id = tx.last_insert_rowid();
+    tx.execute(
         "INSERT INTO person_groups (person_id, path) VALUES (?1, 'Rejected')",
         params![id],
     )?;
     Ok(id)
 }
 
-fn is_system_person(con: &Connection, person_id: i64) -> Result<bool> {
-    let name: Option<String> = con
-        .query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))
-        .optional()?;
-    Ok(name.as_deref() == Some("Rejected"))
-}
-
-/// §4.35 — the system person is never renamed, re-grouped or removed.
-fn guard_system_person(con: &Connection, person_id: i64) -> Result<()> {
-    if is_system_person(con, person_id)? {
-        bail!("'Rejected' is the system person for rejected faces (#165) and cannot be changed");
-    }
-    Ok(())
-}
-
-/// §4.2/§4.35 (#165) — the reject move: `link_status='rejected'` plus
-/// the re-home onto the system person `Rejected` (next free seq per
-/// (Rejected, description), name re-derived per §4.7), dropping stale
-/// pins at those faces (rejected faces are refcrop-ineligible, §4.6).
-/// Faces already home are skipped — re-rejecting is a no-op. Returns
-/// every person touched — the pre-move origins AND `Rejected` — sorted,
-/// so callers only recompute/reseat over that list.
-fn reject_and_rehome(tx: &Connection, face_ids: &[i64]) -> Result<Vec<i64>> {
-    let mut affected = affected_persons(tx, face_ids, None)?;
-    let mut ids: Vec<i64> = face_ids.to_vec();
-    ids.sort_unstable();
-    ids.dedup();
-    let rej = ensure_rejected_person(tx)?;
-    if !affected.contains(&rej) {
-        affected.push(rej);
-    }
-    let list = ids_list(&ids);
-    // #220 — seq assignment is SET-BASED per (Rejected, description_key)
-    // group: one statement per group instead of the per-face MAX+UPDATE
-    // loop (performance-review §3.2 B-M2). Gap-proof F5 semantics are
-    // preserved: base = the group's MAX before this batch, and each face
-    // takes base + its position (ROW_NUMBER in id order — the old loop
-    // walked the same sorted id order). The label follows the same seq,
-    // so the §4.7 shape (Rejected[-description]-seq) is unchanged.
-    let mut by_key: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+/// #266 — resolve each face's `RejectedN` target: single-linkage greedy
+/// matching (cosine ≥ threshold — the importer's and the §4.9
+/// grouping's same parameter) against the faces of the existing
+/// `RejectedN` persons, then against faces resolved earlier in the same
+/// batch; a face matching nothing — including one with no embedding
+/// (legacy, #41) — starts a fresh `RejectedN`. A non-finite cosine is
+/// no match evidence, like #149's NaN handling. Returns `(face_id,
+/// person_id)` in input order.
+fn resolve_rejected_clusters(
+    tx: &Connection,
+    face_ids: &[i64],
+    threshold: f64,
+) -> Result<Vec<(i64, i64)>> {
+    // every existing bin with all of its face vectors, one pass
+    let mut bins: BTreeMap<i64, Vec<Vec<f32>>> = BTreeMap::new();
     {
-        let mut st = tx.prepare(&format!(
-            "SELECT id, description_key FROM faces WHERE id IN ({list})
-              AND NOT (link_status = 'rejected' AND person_id = {rej})"
-        ))?;
-        let rows = st
-            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        let mut st = tx.prepare(
+            "SELECT f.person_id, e.vector FROM face_embeddings e
+              JOIN faces f ON f.id = e.face_id
+              WHERE e.model = ? AND f.person_id IN
+                  (SELECT id FROM persons WHERE name GLOB 'Rejected[0-9]*')",
+        )?;
+        let rows: Vec<(i64, Vec<u8>)> = st
+            .query_map(params![MODEL_TAG], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        for (fid, key) in rows {
-            by_key.entry(key).or_default().push(fid);
+        for (pid, blob) in rows {
+            if blob.len() % 4 != 0 {
+                // #45: a corrupt blob cannot match — treat it as no
+                // vector, never a panic
+                continue;
+            }
+            let v: Vec<f32> = blob
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c))
+                .collect();
+            bins.entry(pid).or_default().push(v);
         }
     }
-    for (key, fids) in by_key {
+    let batch_vecs = l2_vectors(tx, face_ids)?;
+    let mut out: Vec<(i64, i64)> = Vec::with_capacity(face_ids.len());
+    let mut assigned: Vec<(Vec<f32>, i64)> = Vec::new(); // this batch: (vector, target)
+    for (&fid, v) in face_ids.iter().zip(batch_vecs.iter()) {
+        let mut target: Option<i64> = None;
+        if !v.is_empty() {
+            for (pid, vecs) in bins.iter() {
+                if vecs.iter().any(|pv| !pv.is_empty() && cosine(v, pv) >= threshold) {
+                    target = Some(*pid);
+                    break;
+                }
+            }
+            if target.is_none() {
+                if let Some((_, t)) = assigned
+                    .iter()
+                    .find(|(pv, _)| !pv.is_empty() && cosine(v, pv) >= threshold)
+                {
+                    target = Some(*t);
+                }
+            }
+        }
+        let t = match target {
+            Some(t) => t,
+            None => create_rejected_person(tx)?,
+        };
+        assigned.push((v.clone(), t));
+        out.push((fid, t));
+    }
+    Ok(out)
+}
+
+/// #266 — apply the reject move to the resolved targets:
+/// `link_status='rejected'`, set-based seq per `(target,
+/// description_key)` (the #220 gap-proof F5 logic, parameterised per
+/// person), the §4.7 label from the target's name, and the stale
+/// refcrops of the moved faces dropped (rejected faces are
+/// refcrop-ineligible, §4.6).
+fn apply_reject_moves(tx: &Connection, assignments: &[(i64, i64)]) -> Result<()> {
+    if assignments.is_empty() {
+        return Ok(());
+    }
+    let tids: Vec<i64> = assignments.iter().map(|(_, t)| *t).collect();
+    let t_list = ids_list(&tids);
+    let mut names: HashMap<i64, String> = HashMap::new();
+    {
+        let mut st = tx.prepare(&format!("SELECT id, name FROM persons WHERE id IN ({t_list})"))?;
+        let rows: Vec<(i64, String)> = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        for (id, name) in rows {
+            names.insert(id, name);
+        }
+    }
+    let fids: Vec<i64> = assignments.iter().map(|(f, _)| *f).collect();
+    let f_list = ids_list(&fids);
+    let mut by_key: BTreeMap<(i64, String), Vec<i64>> = BTreeMap::new();
+    {
+        let mut st = tx.prepare(&format!("SELECT id, description_key FROM faces WHERE id IN ({f_list})"))?;
+        let rows: Vec<(i64, String)> = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let target_of: HashMap<i64, i64> = assignments.iter().map(|(f, t)| (*f, *t)).collect();
+        for (fid, key) in rows {
+            by_key.entry((target_of[&fid], key)).or_default().push(fid);
+        }
+    }
+    for ((pid, key), fids) in by_key {
         let fids_list = ids_list(&fids);
+        let pname = &names[&pid];
         tx.execute(
             &format!(
                 "WITH base AS (
                      SELECT COALESCE(MAX(seq), 0) AS m FROM faces
-                       WHERE person_id = {rej} AND description_key = ?1),
+                       WHERE person_id = {pid} AND description_key = ?1),
                   n AS (
                      SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn
                        FROM faces WHERE id IN ({fids_list}))
                  UPDATE faces SET
-                   person_id = {rej},
+                   person_id = {pid},
                    link_status = 'rejected',
                    seq = base.m + n.rn,
-                   name = 'Rejected-' || CASE WHEN ?1 = '' THEN ''
-                                              ELSE ?1 || '-' END
+                   name = ?2 || '-' || CASE WHEN ?1 = '' THEN ''
+                                             ELSE ?1 || '-' END
                         || (base.m + n.rn)
                  FROM n, base WHERE faces.id = n.id",
             ),
-            params![key],
+            params![key, pname],
         )?;
     }
-    tx.execute(&format!("DELETE FROM person_refcrops WHERE face_id IN ({list})"), [])?;
+    tx.execute(&format!("DELETE FROM person_refcrops WHERE face_id IN ({f_list})"), [])?;
+    Ok(())
+}
+
+/// #266 — the one-shot idempotent fix that retires the legacy single
+/// system person `Rejected`: its faces are split into `RejectedN`
+/// clusters by the same resolution (a face not already rejected is
+/// force-rejected — that state was an invariant breach already), the
+/// person row is deleted, and the caller's reseat pass rewrites the
+/// seats. Databases without the person (fresh builds, dev drop-and-
+/// recreate) skip it.
+fn split_legacy_rejected_person(tx: &Connection, threshold: f64) -> Result<()> {
+    let legacy: Option<i64> = tx
+        .query_row("SELECT id FROM persons WHERE name = 'Rejected'", [], |r| r.get(0))
+        .optional()?;
+    let Some(legacy) = legacy else {
+        return Ok(());
+    };
+    let mut st = tx.prepare("SELECT id FROM faces WHERE person_id = ?1")?;
+    let mut fids: Vec<i64> = st
+        .query_map(params![legacy], |r| r.get::<_, i64>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    fids.sort_unstable();
+    if !fids.is_empty() {
+        let assignments = resolve_rejected_clusters(tx, &fids, threshold)?;
+        apply_reject_moves(tx, &assignments)?;
+    }
+    tx.execute("DELETE FROM person_groups WHERE person_id = ?1", params![legacy])?;
+    tx.execute("DELETE FROM person_refcrops WHERE person_id = ?1", params![legacy])?;
+    tx.execute("DELETE FROM persons WHERE id = ?1", params![legacy])?;
+    Ok(())
+}
+
+/// #165/#266 — writer-owned persons: the legacy system person
+/// `Rejected` and the `RejectedN` cluster family.
+fn is_system_person(con: &Connection, person_id: i64) -> Result<bool> {
+    let name: Option<String> = con
+        .query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))
+        .optional()?;
+    Ok(matches!(
+        name.as_deref(),
+        Some(n) if n == "Rejected" || is_rejected_cluster_name(n)
+    ))
+}
+
+/// §4.35 — writer-owned persons are never renamed, re-grouped or removed.
+fn guard_system_person(con: &Connection, person_id: i64) -> Result<()> {
+    if is_system_person(con, person_id)? {
+        let name: String = con
+            .query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
+        bail!(
+            "'{name}' is writer-owned (the RejectedN cluster family, #266) and cannot be changed"
+        );
+    }
+    Ok(())
+}
+
+/// §4.2/§4.35 (#165, #266) — the reject move: `link_status='rejected'`
+/// plus the re-home onto each face's `RejectedN` cluster person (cluster
+/// resolution per the face's embedding, §4.35; seq/name re-derived per
+/// §4.7), dropping stale pins at those faces (rejected faces are
+/// refcrop-ineligible, §4.6). Faces already home are skipped —
+/// re-rejecting is a no-op. Returns every person touched — the pre-move
+/// origins AND the `RejectedN` targets — sorted, so callers only
+/// recompute/reseat over that list.
+fn reject_and_rehome(
+    tx: &Connection,
+    face_ids: &[i64],
+    threshold: f64,
+) -> Result<Vec<i64>> {
+    // #266: retire the legacy single bin first (idempotent no-op when
+    // absent)
+    split_legacy_rejected_person(tx, threshold)?;
+    let mut affected = affected_persons(tx, face_ids, None)?;
+    let mut ids: Vec<i64> = face_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(affected);
+    }
+    let list = ids_list(&ids);
+    // faces already home (rejected on a RejectedN) are skipped
+    let pending: Vec<i64> = {
+        let mut st = tx.prepare(&format!(
+            "SELECT id FROM faces WHERE id IN ({list})
+              AND NOT (link_status = 'rejected' AND person_id IN
+                       (SELECT id FROM persons WHERE name GLOB 'Rejected[0-9]*'))"
+        ))?;
+        st.query_map([], |r| r.get::<_, i64>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    if !pending.is_empty() {
+        let assignments = resolve_rejected_clusters(tx, &pending, threshold)?;
+        apply_reject_moves(tx, &assignments)?;
+        for (_, t) in &assignments {
+            affected.push(*t);
+        }
+    }
     affected.sort();
+    affected.dedup();
     Ok(affected)
 }
 
@@ -1571,11 +1734,13 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
         let mut pids: Vec<i64> = old_persons.iter().copied().collect();
         pids.sort();
         let p_list = ids_list(&pids);
-        // §4.35: the system person is never deleted — an emptied
-        // `Rejected` is an invisible shell (§4.10) the next reject reuses
+        // §4.35: writer-owned persons are never deleted here — the
+        // legacy `Rejected` is retired by the split, and an emptied
+        // `RejectedN` is swept by §4.27, not deleted by a merge
         let sys: HashSet<i64> = {
             let mut st = tx.prepare(&format!(
-                "SELECT id FROM persons WHERE id IN ({p_list}) AND name = 'Rejected'"
+                "SELECT id FROM persons WHERE id IN ({p_list})
+                  AND (name = 'Rejected' OR name GLOB 'Rejected[0-9]*')"
             ))?;
             st.query_map([], |r| r.get::<_, i64>(0))?
                 .collect::<std::result::Result<HashSet<_>, _>>()?
@@ -1631,11 +1796,12 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     )
 }
 
-/// §4.2/§4.3 (#165) — set the face verdict. `rejected` RE-HOMES every
-/// face onto the system person `Rejected` in the same transaction
-/// (seq/name re-derived per §4.7, §4.35); `confirmed` NEVER un-rejects —
-/// rejected faces are skipped: the claim rule (#165) makes an
-/// assignment the only exit from `rejected`.
+/// §4.2/§4.3 (#165/#266) — set the face verdict. `rejected` RE-HOMES
+/// every face into its `RejectedN` cluster person in the same
+/// transaction (cluster resolution per the face's embedding; seq/name
+/// re-derived per §4.7, §4.35); `confirmed` NEVER un-rejects — rejected
+/// faces are skipped: the claim rule (#165) makes an assignment the only
+/// exit from `rejected`.
 pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<Delta> {
     if !matches!(status, "confirmed" | "rejected") {
         bail!("bad status {status}");
@@ -1649,7 +1815,7 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
     let affected: Vec<i64> = if status == "rejected" {
-        reject_and_rehome(&tx, face_ids)?
+        reject_and_rehome(&tx, face_ids, settings.cluster_threshold)?
     } else {
         // §4.3/§4.35: accept skips rejected faces — never un-rejects
         tx.execute(
@@ -1921,10 +2087,11 @@ pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<Delt
     }
     let old_name: String =
         tx.query_row("SELECT name FROM persons WHERE id = ?", params![person_id], |r| r.get(0))?;
-    if old_name == "Rejected" {
-        // §4.35: the system person is never renamed (validate_person_name
-        // reserves the target name as well — this guards the source)
-        bail!("'Rejected' is the system person for rejected faces (#165) and cannot be renamed");
+    if old_name == "Rejected" || is_rejected_cluster_name(&old_name) {
+        // §4.35: writer-owned persons are never renamed
+        // (validate_person_name reserves the target name as well — this
+        // guards the source)
+        bail!("'{old_name}' is writer-owned (the RejectedN cluster family, #266) and cannot be renamed");
     }
     tx.execute("UPDATE persons SET name = ? WHERE id = ?", params![name.trim(), person_id])?;
     // (#165): the retired `Unknown` group rows are gone since v1.7 — a
@@ -2129,8 +2296,8 @@ pub fn delete_group(paths: &Paths, path: &str) -> Result<Delta> {
 /// §4.16 (#50/#165) — move persons to a (possibly new) group: each
 /// person's group path is replaced with the target; empty ⇒ the person
 /// falls to their status seat (§4.35). Works for any persons, wherever
-/// they live (rows in the status branches included — the system person
-/// itself is refused, §4.35). Faces, names, statuses, primaries untouched.
+/// they live (rows in the status branches included — writer-owned
+/// persons are refused, §4.35/#266). Faces, names, statuses, primaries untouched.
 pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> Result<Delta> {
     let ids: HashSet<i64> = person_ids.iter().copied().collect();
     if ids.is_empty() {
@@ -2154,8 +2321,8 @@ pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> 
     };
     let mut moved = 0;
     for (pid, pname) in present {
-        if pname == "Rejected" {
-            bail!("'Rejected' is the system person for rejected faces (#165) and cannot be changed");
+        if pname == "Rejected" || is_rejected_cluster_name(&pname) {
+            bail!("'{pname}' is writer-owned (the RejectedN cluster family, #266) and cannot be changed");
         }
         // insert-first: the final row (target, or the derived seat for
         // empty input) lands before the old rows drop — §4.35
@@ -2226,8 +2393,8 @@ pub fn move_persons_between_groups(
     };
     let mut moved = 0;
     for (pid, pname) in present {
-        if pname == "Rejected" {
-            bail!("'Rejected' is the system person for rejected faces (#165) and cannot be changed");
+        if pname == "Rejected" || is_rejected_cluster_name(&pname) {
+            bail!("'{pname}' is writer-owned (the RejectedN cluster family, #266) and cannot be changed");
         }
         if from != to {
             tx.execute(
@@ -2272,13 +2439,13 @@ pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<Delt
     delta_after(paths, &*con, v1, &[person_id], &[], &[], &[], Vec::new())
 }
 
-/// §4.13 (#35/#165) — remove unwanted persons: every face becomes
-/// `rejected` and JOINS the system person `Rejected` (§4.2/§4.35 — no
+/// §4.13 (#35/#165/#266) — remove unwanted persons: every face becomes
+/// `rejected` and JOINS a `RejectedN` cluster person (§4.2/§4.35 — no
 /// writer ever detaches a face anymore), stale foreign primary pointers
 /// are cleared, then the person row is deleted (its groups/refcrops go
 /// with it — the group invariant governs living persons only). Faces are
-/// never deleted. The system person itself can never be removed.
-/// One transaction for the whole batch; no undo.
+/// never deleted. Writer-owned persons (`Rejected`/`RejectedN`) can
+/// never be removed. One transaction for the whole batch; no undo.
 pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
     let ids: HashSet<i64> = person_ids.iter().copied().collect();
     if ids.is_empty() {
@@ -2300,8 +2467,8 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
             .collect::<std::result::Result<Vec<_>, _>>()?
     };
     for (_, pname) in &present {
-        if pname == "Rejected" {
-            bail!("'Rejected' is the system person for rejected faces (#165) and cannot be changed");
+        if pname == "Rejected" || is_rejected_cluster_name(pname) {
+            bail!("'{pname}' is writer-owned (the RejectedN cluster family, #266) and cannot be removed");
         }
     }
     if present.is_empty() {
@@ -2322,7 +2489,7 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
     };
     let mut touched: HashSet<i64> = HashSet::new();
     if !rehomed_faces.is_empty() {
-        touched.extend(reject_and_rehome(&tx, &rehomed_faces)?);
+        touched.extend(reject_and_rehome(&tx, &rehomed_faces, settings.cluster_threshold)?);
     }
     // #46: delete dependents explicitly instead of trusting the FK
     // cascade — a connection opened without foreign_keys=ON would
@@ -2336,7 +2503,7 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
         touched.remove(pid);
     }
     let touched: Vec<i64> = touched.into_iter().collect();
-    for pid in &touched { // the system person, in practice
+    for pid in &touched { // the RejectedN bins, in practice
         recompute_person(&tx, *pid, &settings)?;
         reseat(&tx, *pid)?;
     }

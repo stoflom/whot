@@ -86,10 +86,11 @@ is the 4-state `face_filter`, gui-design §4.10).
   at recreate instructions; never worked around (no
   migrations; `docs/schema-design.md` §5).
 - The derived-state machinery of `db.rs` (names, primaries, refcrops)
-  additionally owns the **status seats** and the **system person
-  `Rejected`** — behaviour rules in gui-design §4.35; both are
+  additionally owns the **status seats** and the **`RejectedN`
+  cluster-person family** (#266) — behaviour rules in gui-design §4.35; both are
   writer-maintained like the rest of the derived state (no triggers,
-  schema-design §4).
+  schema-design §4). The legacy single bin `Rejected` is retired by the
+  one-shot idempotent split that rides the reject writers.
 - Reads that only need one row batch use short-lived connections;
   mutations open one connection, run **one transaction** and commit.
 - All connections set `PRAGMA foreign_keys = ON` explicitly — the DDL's

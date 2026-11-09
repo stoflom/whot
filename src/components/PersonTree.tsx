@@ -21,6 +21,7 @@ import AddGroupDialog from "./AddGroupDialog";
 // ONE definition App's grid handlers and this pane's person-row drop
 // targets both read (the #252 dup merge)
 import { faceDragLive } from "../faceDrop";
+import { isRejectedBin } from "../personNames";
 // #223 (F-M1/F-M2): the tree structure and its queries are pure
 // (treeIndex.ts, co-tested) — the pane receives the App-built tree and
 // indexes it once per (tree, persons, filter) change
@@ -181,7 +182,7 @@ function PersonRow({
   onDrop: (id: number, e: React.DragEvent) => void;
 }) {
   const img = useFaceImage(person.primary_face_id);
-  const system = person.name === "Rejected"; // #165/§4.35
+  const system = isRejectedBin(person.name); // #165/§4.35, #266 family
   const [name, setName] = useState(person.name);
   useEffect(() => setName(person.name), [person.name, renaming]);
   const commit = () => {
@@ -190,10 +191,11 @@ function PersonRow({
     onRenameCancel(person.id);
   };
   const cls = `tree-person${selected ? " selected" : ""}${multi ? " multi-selected" : ""}${dropTarget ? " merge-target" : ""}`;
-  // #165: the system person Rejected — its tooltip states the way back
-  // in product language, reference-free (§4.43)
+  // #165: a reject-bin person's tooltip (legacy `Rejected` or a
+  // `RejectedN` cluster, §4.35/#266) states the way back in product
+  // language, reference-free (§4.43)
   const title = system
-    ? "Rejected — the system person for rejected faces; assignment is its only way out"
+    ? `${person.name} — a rejected cluster; assignment is its only way out`
     : `${person.groups.join(", ") || "(no group)"} — double-click to rename`;
   const inner = (
     <>
@@ -409,8 +411,9 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
       : [menu.id]
     : [];
   const branchIds = branchMenu ? collectSubtreeIds(branchMenu.node) : [];
-  // #165/§4.35: the system person offers no rename/move/file/merge/remove
-  const systemInMenu = menuTargets.some((id) => byId.get(id)?.name === "Rejected");
+  // #165/§4.35/#266: reject-bin persons offer no rename/move/file/
+  // merge/remove
+  const systemInMenu = menuTargets.some((id) => isRejectedBin(byId.get(id)?.name ?? ""));
   // #182/§4.14: the one-person-only entries grey out for a multi-scope
   const manyInMenu = menuTargets.length > 1;
 
@@ -522,8 +525,9 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
       },
       // #50: drag the person — or the whole selection when part of one
       onDragStart: (id: number, groupPath: string, e: React.DragEvent) => {
-        // #165/§4.35: the system person never drags (merge/move source)
-        if (byIdRef.current.get(id)?.name === "Rejected") return;
+        // #165/§4.35/#266: a reject-bin person never drags (a merge/move
+        // source)
+        if (isRejectedBin(byIdRef.current.get(id)?.name ?? "")) return;
         const sel = selectedIdsRef.current;
         const ids = sel.has(id) && sel.size > 1 ? [...sel] : [id];
         // #157 (v3.59): the dragged placement's branch path rides along —

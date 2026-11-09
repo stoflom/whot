@@ -8,7 +8,8 @@
 //   accept → faces with link_status != 'rejected' become 'confirmed'
 //            (accept never un-rejects)
 //   reject → faces with link_status != 'rejected' become 'rejected'
-//            (reject re-homes onto `Rejected` — the local flip does NOT
+//            (reject re-homes onto a `RejectedN` cluster person, §4.35/
+//            #266 — the local flip does NOT
 //            re-home: it only marks the status, so the card's badge and
 //            buttons respond at once. The authoritative delta moves the
 //            rows, re-derives names, reseats and backfills primaries.)

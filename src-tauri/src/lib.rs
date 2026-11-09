@@ -180,8 +180,8 @@ async fn set_person_note(state: State<'_, AppState>, person_id: i64, note: Strin
     db::set_person_note(state.paths()?, person_id, &note).map_err(|e| e.to_string())
 }
 
-/// §4.13 (#35/#165) — remove persons: reject + re-home their faces onto
-/// the system person `Rejected`, delete the row.
+/// §4.13/#35/#165/#266 — remove persons: reject + re-home their faces
+/// into their `RejectedN` cluster persons, delete the person row(s).
 /// §4.16 (#50) — move persons to a group (membership only).
 #[tauri::command]
 async fn move_persons_to_group(

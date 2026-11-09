@@ -11,6 +11,7 @@
 // A Python mirror is deliberately rejected: two implementations of one
 // rule is how they drift.
 import type { Person } from "./api";
+import { isRejectedBin } from "./personNames";
 
 /** how two names were judged similar */
 export type EvidenceKind = "fold" | "seq" | "alias" | "edit";
@@ -146,7 +147,9 @@ export function textToAliases(text: string): string[][] {
 /**
  * Cluster persons by normalized-name proximity (§4.28).
  * Excludes `Unknown*` persons (importer clusters: Unknown7 vs Unknown8 is
- * distance 1) — they are never merge material nor valid targets.
+ * distance 1) and the reject-bin family `RejectedN` (#266/§4.35: legacy
+ * `Rejected` included — writer-owned cluster bins are never merge
+ * material nor valid targets, §4.1 refuses them server-side anyway).
  * Zero-face persons are kept (listed, contribute no faces to a merge).
  */
 export function clusterPersons(
@@ -159,7 +162,10 @@ export function clusterPersons(
     .filter((g) => g.length > 0);
 
   const eligible = persons
-    .filter((p) => p.name.trim() !== "" && !UNKNOWN_RE.test(p.name.trim()))
+    .filter((p) => {
+      const name = p.name.trim();
+      return name !== "" && !UNKNOWN_RE.test(name) && !isRejectedBin(name);
+    })
     .slice()
     .sort((x, y) => x.id - y.id);
 

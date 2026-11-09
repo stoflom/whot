@@ -598,7 +598,8 @@ in its own (drifted) copy, now ONE copy each:
   >20% unusable warning.
 - `seat_for(con, person_id)` / `reseat_person(con, person_id,
   must_exist=…)` — the §4.35 seat derivation and insert-first
-  re-seating (the system person's `Rejected` is never touched).
+  re-seating (a reject-bin person's `Rejected` seat is never touched —
+  the `RejectedN` family, #266).
 
 Scripts do `import dbutil` and call `dbutil.X` (not `from dbutil import
 X`) so the tests patch a single home. Same shared-module precedent as

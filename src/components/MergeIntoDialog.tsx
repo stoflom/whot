@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
 import { realGroups } from "../groupList";
+import { isRejectedBin } from "../personNames";
 import { useOwnsKeyboard } from "../overlays";
 
 // Shared merge confirmation (#88, gui-design §4.28). All three entry
@@ -17,7 +18,8 @@ interface Props {
   sources: Person[];
   /** pre-filled target — the DnD drop person; user may still change it */
   defaultTarget?: Person | null;
-  /** all persons — typeahead suggestions (UnknownN excluded here) */
+  /** all persons — typeahead suggestions (UnknownN clusters and the
+      reject-bin family RejectedN excluded here — §4.28/§4.35, #266) */
   persons: Person[];
   onConfirm: (target: Person) => void;
   onCancel: () => void;
@@ -25,7 +27,12 @@ interface Props {
 
 export default function MergeIntoDialog({ sources, defaultTarget, persons, onConfirm, onCancel }: Props) {
   useOwnsKeyboard(); // #138
-  const candidates = persons.filter((p) => !UNKNOWN_RE.test(p.name));
+  // #266/§4.28: the reject-bin persons are refused as merge targets in
+  // the backend too (validate_person_name reserves the family) — the
+  // dialog mirrors that so the typeahead never offers them
+  const candidates = persons.filter(
+    (p) => !UNKNOWN_RE.test(p.name) && !isRejectedBin(p.name),
+  );
   const [name, setName] = useState(defaultTarget?.name ?? "");
   useEffect(() => {
     if (defaultTarget) setName(defaultTarget.name);

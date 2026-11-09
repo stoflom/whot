@@ -17,6 +17,7 @@ import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
+import { isRejectedBin } from "./personNames";
 import { personDataSig } from "./personSig";
 import { PrefetchCache } from "./prefetch";
 import { useFaceDrag } from "./useFaceDrag";
@@ -458,10 +459,10 @@ export default function App() {
   // #127/#128 → #152, #165 (§4.10): the face-status filter decides the
   // tree's person presence — All now means everything EXCEPT rejected:
   // persons holding ≥ 1 non-rejected face stay (plus the faceless
-  // shells, #127/#128), the system person `Rejected` never shows outside
-  // Show → Rejected (§4.35); New/Accepted/Rejected list only persons
-  // holding ≥ 1 face of that status; the listed badges stay raw totals
-  // (#129's badge rule — unchanged, only presence moved)
+  // shells, #127/#128), the reject-bin persons `RejectedN` never show
+  // outside Show → Rejected (§4.35/#266); New/Accepted/Rejected list
+  // only persons holding ≥ 1 face of that status; the listed badges
+  // stay raw totals (#129's badge rule — unchanged, only presence moved)
   const treePersons = useMemo(
     () => (snap ? personTreeMembers(snap.persons, snap.faces, faceFilter) : []),
     [snap, faceFilter],
@@ -1219,11 +1220,12 @@ export default function App() {
         (id) => {
           const f = facesById.get(id);
           const p = f?.person_id != null ? personsById.get(f.person_id) : undefined;
-          // #165/§4.35: the system person's reserved name/seat never
-          // prefills — a claim needs a typed name (untouched = no stage).
-          // #233 (§4.35 display rule): a status seat never prefills either
-          // — the group prefill is the person's first REAL group
-          const system = p?.name === "Rejected";
+          // #165/§4.35/#266: the reject-bin persons' reserved name/seat
+          // never prefills — a claim needs a typed name (untouched = no
+          // stage). #233 (§4.35 display rule): a status seat never
+          // prefills either — the group prefill is the person's first
+          // REAL group
+          const system = p != null && isRejectedBin(p.name);
           return {
             name: system ? "" : p?.name ?? "",
             group: system ? "" : firstRealGroup(p?.groups ?? []),
@@ -3052,11 +3054,12 @@ export default function App() {
               : "Remove person"
           }
           body={
-            // #165/§4.13: removal rejects the faces and joins them to
-            // the system person; they can be claimed again — the body
+            // #165/§4.13 informational copy, #266 wording: removal
+            // rejects the faces and files them onto their rejected
+            // cluster person; they can be claimed again — the body
             // stays reference-free (§4.43)
             `All faces of ${confirmRemove.length > 1 ? "these persons" : "this person"} ` +
-            `become rejected and join the system person Rejected; ` +
+            `become rejected and join a rejected cluster; ` +
             `${confirmRemove.length > 1 ? "the persons are" : "the person is"} deleted — ` +
             "the faces stay in the database and can be claimed again by " +
             "assigning them a person. This cannot be undone."

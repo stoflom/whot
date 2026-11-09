@@ -153,9 +153,10 @@ export default function EditDialog({
           <button className="secondary" onClick={onCancel}>
             cancel
           </button>
-          {/* #165/§4.35 + §4.2: rejected faces come back only via an
-              assignment; Reject moves the scope onto the system person
-              Rejected — the titles stay reference-free (§4.43) */}
+          {/* #165/§4.35 + §4.2, #266 wording: rejected faces come back
+              only via an assignment; Reject moves the scope onto a
+              rejected cluster person — the titles stay reference-free
+              (§4.43) */}
           <button
             className="warn"
             onClick={() => onReject(scope)}
@@ -163,7 +164,7 @@ export default function EditDialog({
             title={
               rejected[scope]
                 ? "already rejected — an assignment is the way back"
-                : "reject the scope now (moves the faces onto the Rejected system person)"
+                : "reject the scope now (moves the faces onto a rejected cluster person)"
             }
           >
             Reject

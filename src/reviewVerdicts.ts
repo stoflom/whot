@@ -96,7 +96,7 @@ export function useReviewVerdicts(inp: ReviewVerdictInputs) {
   // succeeds — and after markExhaust captured its pre-mutation mark —
   // so #148's mark comparison and the §4.30 hand-over are untouched;
   // reject reads the PRE-reject owner on purpose (the person the user
-  // acted on, never the system person)
+  // acted on, never the reject-bin person the delta names)
   const focusTarget = useCallback(
     (ids: number[]): number | null => {
       const first = [lastSelRef.current, hoverRef.current].find(

@@ -93,7 +93,8 @@ def reseat_person(con: sqlite3.Connection, person_id: int,
                   seats: tuple = SEATS, must_exist: bool = False) -> None:
     """Insert-first seat re-derivation for one person (#165/§4.35): a
     groupless person gets its seat, a seat-only person re-derives from the
-    faces it now holds; a real group (or the system person's `Rejected`) is
+    faces it now holds; a real group (or a reject-bin person's `Rejected`
+    seat — the `RejectedN` family, #266 —) is
     never touched. `must_exist` skips a person deleted earlier in the run
     (the importer's shell sweep)."""
     if must_exist and not con.execute(

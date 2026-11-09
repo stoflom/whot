@@ -14,6 +14,7 @@ import type { AppearanceGroup, Face, Person, Snapshot } from "./api";
 import { groupByDescription, matchesStatusFilter, type ClusterGroup, type FaceFilter } from "./viewFilters";
 import type { StagedEntry } from "./stage";
 import { renameGroupFor } from "./groupList";
+import { isRejectedBin } from "./personNames";
 import type { Section } from "./components/FaceGrid";
 
 /** the App view state that selects the section source. Declared here
@@ -218,9 +219,9 @@ export function buildSections(inp: SectionInputs): Section[] {
       title: p.name,
       subtitle: p.counts.total > byPerson.get(p.id)!.length ? `${p.counts.total} faces total` : undefined,
       faceIds: byPerson.get(p.id)!.map((f) => f.id),
-      // #165/§4.35: the system person's reserved name never prefills —
-      // committing a claim needs a typed name
-      ruleDefaultName: p.name === "Rejected" ? "" : p.name,
+      // #165/§4.35/#266: the reject-bin persons' reserved names never
+      // prefill — committing a claim needs a typed name
+      ruleDefaultName: isRejectedBin(p.name) ? "" : p.name,
       // #153: the rename keeps the person's current group path
       ruleDefaultGroup: renameGroupFor(p),
     }));
