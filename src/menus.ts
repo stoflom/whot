@@ -162,8 +162,6 @@ export interface ThumbMenuInput {
   sel: ReadonlySet<number>;
   /** the #142 full view-context open (confirmContext-wrapped) */
   openImageInView: (imageId: number) => void;
-  /** the #123 focus-mode open (confirmContext-wrapped) */
-  openFocused: (imageId: number) => void;
   /** #122/§4.39: one command per image of the scope, in order */
   rotateImages: (ids: number[], delta: number) => void;
   /** the system viewer — rejections reach the error toast (#144) */
@@ -194,13 +192,6 @@ export function thumbMenuGroups(inp: ThumbMenuInput): MenuGroup[] {
           // thumb out of a multi-scope
           disabled: many,
           onClick: () => inp.openImageInView(image.id),
-        },
-        {
-          // #123: opening focus mode is a view-context change
-          label: "Open full image (focused)",
-          // #182/§4.14: focus mode shows one image
-          disabled: many,
-          onClick: () => inp.openFocused(image.id),
         },
         // #122: stored display rotation (EXIF key, #118) — over the
         // whole scope (#174/§4.39), one command each in order

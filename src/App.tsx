@@ -1436,7 +1436,6 @@ export default function App() {
             setImageId(id);
             anchorFirstCrop(id); // #269 (§4.37): the right pane follows the first crop
           }),
-        openFocused: (id) => confirmContext(() => setSplitImageId(id)),
         rotateImages,
         // #268: non-empty return = original not found, temp copy opened —
         // quiet info toast (the success path is silent)
