@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 11.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 11.3** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -241,8 +241,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the Review and Rolls views, where it would change nothing. **Rolls
   while browsing renders no centre toolbar at all** (§4.38) — the grid
   gets the pane's full height; the one exception is rule 46: a full
-  image open in Rolls returns the toolbar carrying the film-roll nav
-  cluster. Review and Person keep the navigation cluster. The
+  image open carries **no separate centre toolbar at all** — its own
+  single header bar above the image carries the mode's nav cluster
+  (#275: Rolls steps the film roll's images, Person/Review step as the
+  mode steps — see *Full-image views* below). Review and Person grids
+  keep the centre navigation cluster. The
   toolbar is the center pane's **fixed header** (in the views that have
   one): the sections scroll
   beneath it in their own, shorter scroll area — nothing can scroll past
@@ -257,12 +260,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   face's person (§4.37)** — and on opening a full image the right
   pane follows the opening face's person (a faceless Rolls open: the
   image's first face crop, §4.37).
-  **The header shows where the original lives (#268)**: both full-image
-  headers — the focus mode's pinned header row (§4.19) and the Rolls
-  image-detail header — display the image's **full `primary_path`**
-  (truncated to fit, full text in the hover tooltip) with a **Copy**
-  button (the §4.26 clipboard rule). The path is the original file's
-  location — never the `/tmp` viewer-fallback copy (above).
+  **The header shows where the original lives (#268), in ONE bar
+  (#275)**: both full-image surfaces — the focus mode's pinned header
+  row (§4.19) and the Rolls image-detail header — are the **same single
+  bar** directly above the image (no stacked second toolbar): the
+  image's **full `primary_path`** (truncated to fit, full text in the
+  hover tooltip alongside the W×H · state · rotated dim facts) with a
+  **Copy** button (the §4.26 clipboard rule); the **mode-scoped ‹ n/m ›
+  nav cluster** — Rolls steps the film roll's images (rule 46), Person
+  steps persons, Review steps persons holding new faces under the
+  pinned Show filter; the **⟳/⟲ stored-rotation buttons** (§4.32 — both
+  surfaces now; previously only the split had them); and **close/back**
+  (×/Esc on the split, *← rolls* on the detail). The path is the
+  original file's location — never the `/tmp` viewer-fallback copy
+  (above). The Description/Accuracy seg stays with the **Person grid**
+  toolbar only — it does not move into the full-image bar.
 - **Card double-click — full-image focus** (§4.19): double-clicking a
   face card opens the center pane's **focus mode**: the annotated full
   image spans the pane's full width (height-fitted, §4.11 overlay)
