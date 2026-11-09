@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 11.1** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 11.2** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -372,7 +372,14 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the **open in system viewer** entry (the Rust `open_image` command
   opens the **first actual location** of the original image — never a
   temp copy while one is reachable — and hands that path to the opener
-  plugin), the **open roll path** entry (the Rust `open_roll` command
+  plugin), the **open roll** entry (#274, above *Open roll path*): a
+  full view-context change (#123) that switches to **Rolls mode** with
+  the path tree **opened and selected at the invoked image's own
+  branch** (the directory of its `primary_path`) — the same end state
+  as clicking *Rolls* and expanding the tree down to that branch, with
+  the grid listing the image among its siblings; greyed out while the
+  image was never imported, the same gating as *Open roll path*), the
+  **open roll path** entry (the Rust `open_roll` command
   hands the **directory containing the image file** — the parent of
   `images.primary_path` — to the opener plugin, i.e. the system file
   manager; greyed out while the image was never imported). Roll imports
