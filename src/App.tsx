@@ -13,7 +13,7 @@ import type { AppearanceGroup, Delta, Face, ImageRow, Person, Refcrop, Settings,
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import AddGroupDialog from "./components/AddGroupDialog";
-import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
+import { CopyButton, ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
@@ -1390,7 +1390,13 @@ export default function App() {
       openMenu(e, imageAreaMenuGroups({
         imageId,
         faces,
-        openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
+        // #268: non-empty return = original not found, temp copy opened —
+        // quiet info toast (the success path is silent)
+        openInViewer: (id) =>
+          api
+            .openImage(id)
+            .then((msg) => { if (msg) setInfo(msg); })
+            .catch((err) => setError(String(err))),
         rotateImage: rotateImg,
         changeSel,
       }));
@@ -1420,7 +1426,13 @@ export default function App() {
           }),
         openFocused: (id) => confirmContext(() => setSplitImageId(id)),
         rotateImages,
-        openInViewer: (id) => api.openImage(id).catch((err) => setError(String(err))),
+        // #268: non-empty return = original not found, temp copy opened —
+        // quiet info toast (the success path is silent)
+        openInViewer: (id) =>
+          api
+            .openImage(id)
+            .then((msg) => { if (msg) setInfo(msg); })
+            .catch((err) => setError(String(err))),
         doAccept,
         changeSel,
       }));
@@ -2587,9 +2599,12 @@ export default function App() {
               // ends (×/Esc, §4.15 selection move, explicit navigation)
               <div className="focus-pane">
                 <div className="focus-top">
-                  <span title={splitRow.primary_path}>
-                    {splitRow.primary_path.replace(/^.*\//, "") || splitRow.primary_path}
+                  {/* #268: the ORIGINAL file's full path (truncated to
+                      fit, full text on hover) — never the /tmp copy */}
+                  <span className="focus-path" title={splitRow.primary_path}>
+                    {splitRow.primary_path}
                   </span>
+                  <CopyButton text={splitRow.primary_path} />
                   <span className="dim">
                     {splitRow.width}×{splitRow.height} · {splitRow.state}
                     {splitRow.rotation ? ` · rotated ${splitRow.rotation}°` : ""}
@@ -2685,7 +2700,12 @@ export default function App() {
                   ← rolls
                 </button>
                 <div className="image-meta">
-                  <div>{imgRow.primary_path}</div>
+                  {/* #268: the ORIGINAL file's full path (truncated to
+                      fit, full text on hover) — never the /tmp copy */}
+                  <div className="image-meta-path">
+                    <span title={imgRow.primary_path}>{imgRow.primary_path}</span>
+                    <CopyButton text={imgRow.primary_path} />
+                  </div>
                   <div className="dim">
                     {imgRow.width}×{imgRow.height} · {imgRow.state}
                     {imgRow.rtype ? ` · ${imgRow.rtype}` : ""}

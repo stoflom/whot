@@ -925,6 +925,46 @@ pub fn image_preview_bytes(paths: &Paths, image_id: i64) -> Result<Option<Vec<u8
     Ok(preview.or(thumb))
 }
 
+/// #268 — the image's recorded locations, ordered for the system
+/// viewer: `primary_path` first, then the `image_paths` alias set
+/// (deduplicated; aliases in path order for determinism).
+pub fn image_open_paths(paths: &Paths, image_id: i64) -> Result<Vec<String>> {
+    let con = connect(paths)?;
+    let primary: Option<String> = con
+        .query_row(
+            "SELECT primary_path FROM images WHERE id = ?",
+            params![image_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .context("image not found")?;
+    let mut st = con
+        .prepare("SELECT path FROM image_paths WHERE image_id = ? ORDER BY path")?;
+    let mut out: Vec<String> = Vec::new();
+    if let Some(p) = primary {
+        out.push(p);
+    }
+    for row in st
+        .query_map(params![image_id], |r| r.get::<_, String>(0))?
+        .flatten()
+    {
+        if !out.contains(&row) {
+            out.push(row);
+        }
+    }
+    Ok(out)
+}
+
+/// #268 — the first recorded location that exists on disk (primary
+/// first, then the aliases — the alias set is append-only, so a
+/// recorded location can be stale); `None` when none exists (the
+/// image is BLOB-only or every original was moved/deleted).
+pub fn resolve_image_open_path(paths: &Paths, image_id: i64) -> Result<Option<String>> {
+    Ok(image_open_paths(paths, image_id)?
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists()))
+}
+
 // ---------------------------------------------------------------- derived state
 
 /// Derived face label: `person.name[-description]-seq` (design §4.7).

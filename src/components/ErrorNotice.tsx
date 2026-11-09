@@ -34,7 +34,9 @@ async function copyText(text: string): Promise<boolean> {
   return ok;
 }
 
-function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+/** #268: shared copy affordance — the §4.26 clipboard rule for any
+    piece of text the user may want to grab (error toasts, image paths). */
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [state, setState] = useState<"idle" | "ok" | "fail">("idle");
   const title = state === "ok" ? "copied!" : state === "fail" ? "copy failed — select the text and copy manually" : "copy to clipboard";
   return (

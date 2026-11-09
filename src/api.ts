@@ -179,8 +179,12 @@ export const removeRefcrop = (personId: number, faceId: number) =>
   invoke<Delta>("remove_refcrop", { personId, faceId });
 export const getRefcrops = (personId: number) =>
   invoke<Refcrop[]>("get_refcrops", { personId });
-/** write the preview to a temp file and open it in the system viewer (#33) */
-export const openImage = (imageId: number) => invoke("open_image", { imageId });
+/** #268: open the image's original (first recorded location that
+    exists) in the system viewer — the system viewer's title shows the
+    REAL path, never a `/tmp` copy. Returns "" on success; a non-empty
+    string is the fallback status (original not found → temp copy
+    opened) for the caller's info toast. (#33 legacy: temp copy only) */
+export const openImage = (imageId: number) => invoke<string>("open_image", { imageId });
 export const personFaceClusters = (personId: number, threshold: number) =>
   invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
 export const getSettings = () => invoke<Settings>("get_settings");

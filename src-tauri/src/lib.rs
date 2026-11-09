@@ -62,11 +62,24 @@ async fn get_refcrops(state: State<'_, AppState>, person_id: i64) -> Result<Vec<
     db::get_refcrops(state.paths()?, person_id).map_err(|e| e.to_string())
 }
 
-/// Full-image context menu (#33): write the BLOB to a temp file and open
-/// it with the system viewer — the webkit default menu entries don't work.
+/// Full-image context menu (#33): open the image with the system
+/// viewer — the webkit default menu entries don't work.
+///
+/// #268: the ORIGINAL is opened, not a copy — the first recorded
+/// location that exists on disk (`primary_path`, then the
+/// `image_paths` aliases, gui-design §3). The temp copy is the fallback
+/// for BLOB-only / moved originals; the Ok message (non-empty only in
+/// that branch) becomes the frontend's quiet info toast.
 #[tauri::command]
-async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<(), String> {
+async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String, String> {
     let paths = state.paths()?;
+    if let Some(p) = db::resolve_image_open_path(paths, image_id).map_err(|e| e.to_string())? {
+        tauri_plugin_opener::open_path(p.clone(), None::<&str>)
+            .map_err(|e| e.to_string())?;
+        // diagnostic line in the spirit of #144 (which path was opened)
+        eprintln!("[open_image] image {image_id}: opened original {p}");
+        return Ok(String::new());
+    }
     let bytes = db::image_preview_bytes(paths, image_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("image {image_id} has no preview"))?;
@@ -85,7 +98,11 @@ async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<(), Str
     let path = std::env::temp_dir().join(format!("whot-image-{image_id}-{}-{ns}.{ext}", std::process::id()));
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), None::<&str>)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // #268: the original is gone — tell the user (quiet info toast)
+    Ok(format!(
+        "original image not found at its recorded paths — opened a temporary copy ({image_id})"
+    ))
 }
 
 #[tauri::command]

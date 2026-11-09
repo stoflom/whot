@@ -521,6 +521,21 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .image-detail { display: flex; flex-direction: column; gap: 0.8rem; }
 .image-detail-top { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .image-meta { font-size: 0.9rem; }
+/* #268: the original's full path, truncated to fit (full text on
+   hover), with the shared Copy affordance beside it */
+.image-meta-path {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.image-meta-path span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 60vw;
+}
 .image-preview {
   max-height: 46vh;
   border-radius: var(--radius);
@@ -758,6 +773,9 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* #268: the full-path span must be able to shrink in the flex row
+   (flex items refuse to shrink below their content by default) */
+.focus-path { min-width: 0; }
 .focus-image {
   flex: none;
   display: flex;
