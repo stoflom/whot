@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 9.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 9.1** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -255,7 +255,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   `link_status`; hover highlights the rectangle and its card (bidirectional),
   click toggles the face's selection **and moves the right pane to that
   face's person (§4.37)** — and on opening a full image the right
-  pane follows the opening face's person.
+  pane follows the opening face's person (a faceless Rolls open: the
+  image's first face crop, §4.37).
   **The header shows where the original lives (#268)**: both full-image
   headers — the focus mode's pinned header row (§4.19) and the Rolls
   image-detail header — display the image's **full `primary_path`**
@@ -1817,15 +1818,19 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    the user hunting in the tree:
    - **On entry**: opening the **focus split** (card double-click or
      *Open full image* on a face) re-anchors the right pane on **the
-     person owning that face**; an image-context entry without a face
-     (the branch thumbnail's *Open image* / *Open full image (focused)*) —
-     like the thumbnail detail open — **keeps the current
+     person owning that face**; the branch thumbnail's *Open full image
+     (focused)* — a focus entry without a face — **keeps the current
      person**. Opening the **Rolls image detail**
      re-anchors on the opening face's person when the entry carries a
-     face context, and **keeps the current person** when it does not
-     (a thumbnail opened without a face context — there
-     is no person to follow; the pane shows whatever it showed, incl. its
-     empty state when none is anchored).
+     face context; an entry without one (the thumbnail open —
+     double-click, path-filter file entry, *Open image* menu) re-anchors
+     on **the person owning the image's first face crop**: spatial
+     reading order over the visible crops — topmost `y`, then leftmost
+     `x`, ties by face id (the §4.11 crop rectangles in the canonical
+     `images.width/height` space) — counting only the Show-filter-passing
+     faces (§4.10). No visible crop, or the crop's `person_id` is
+     `NULL`, **keeps the current person** (the pane shows whatever it
+     showed, incl. its empty state when none is anchored).
    - **On rectangle/crop click**: clicking a rect in either
      full-image surface — or a face card in the focus split's film
      roll below the image — switches the right pane to
