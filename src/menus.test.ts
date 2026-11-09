@@ -281,7 +281,7 @@ describe("thumbMenuGroups (#174/§4.39, #182)", () => {
     const entry = item(g, "Open roll path (2)")!;
     expect(entry.disabled).toBe(false);
     entry.onClick();
-    expect(opened).toEqual([7, 9]); // scope order, 2 skipped
+    expect(opened).toEqual([1, 3]); // image ids in scope order, 2 skipped
   });
 
   it("greys 'Open roll path' while none of the scope has a roll (#272)", () => {
@@ -373,6 +373,6 @@ describe("imageAreaMenuGroups", () => {
     const entry = item(withRoll, "Open roll path")!;
     expect(entry.disabled).toBe(false);
     entry.onClick();
-    expect(roll).toBe(7);
+    expect(roll).toBe(42); // the image's own id (gui-design v11.1)
   });
 });
