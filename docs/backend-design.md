@@ -71,8 +71,13 @@ src-tauri/tests/
 GUI settings are **not** in the database: `get_settings`/`set_settings`
 read and write `config/whotrc.json`
 (`{cluster_threshold, refcrop_n, face_filter, cluster_group,
-merge_name_distance, merge_suffix_aliases}` with defaults
-`0.40 / 5 / "all" / "accuracy" / 2 / []`), creating it on first write.
+merge_name_distance, merge_suffix_aliases, image_viewer,
+directory_viewer}` with defaults
+`0.40 / 5 / "all" / "accuracy" / 2 / [] / "" / ""`), creating it on
+first write. `image_viewer` / `directory_viewer` (#273) override the
+opener plugin's system default for the *Open in system viewer* /
+*Open roll path* entries (gui-design §3); empty means "system
+default".
 A legacy `show_rejected` key is ignored (unknown field — the setting
 is the 4-state `face_filter`, gui-design §4.10).
 

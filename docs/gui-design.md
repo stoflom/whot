@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 10.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 11.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -75,7 +75,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 `CONFIG_FILE` in `.env`):
 
 ```json
-{ "cluster_threshold": 0.40, "refcrop_n": 5, "face_filter": "all", "cluster_group": "accuracy" }
+{ "cluster_threshold": 0.40, "refcrop_n": 5, "face_filter": "all", "cluster_group": "accuracy", "image_viewer": "", "directory_viewer": "" }
 ```
 
 ## 3. Layout
@@ -395,6 +395,12 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   (JPEG default, PNG recognised), not hard-coded. The frontend handler
   routes a failure (no preview blob, viewer not found) through the
   standard error toast like every other mutation path.
+  **Viewer overrides (#273)**: `whotrc.json` may pin the programs instead
+  of the system defaults — `image_viewer` for the *Open in system
+  viewer* entry and `directory_viewer` for *Open roll path* (gui-design
+  §2); empty or absent keys fall back to the system default. A failure
+  to launch the configured program reaches the error toast naming the
+  program (#144).
 - **Resizable panes**: the two pane dividers (left|centre and
   centre|right) are draggable with clamps and double-click reset (session
   state);
