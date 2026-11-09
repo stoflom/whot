@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 9.2** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 9.3** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -705,7 +705,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     applied to a single one**: on the face side
     **★ set as primary**, **◈ add as reference**, **Rotate crop 90° …**
     and **Open full image** (focus mode shows one image); on the
-    thumbnail side **Open image** and **Open full image (focused)**; on
+    thumbnail side **Open image**; on
     the tree person menu **Open person**, **Rename…** (inline rename is
     single-person — the multi-scope has *Rename N persons to…*) and
     **Select their pending faces** (the move/add/merge/remove entries
@@ -1959,10 +1959,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
        browses the hierarchy.
      - the context menu opens on a thumb; if the thumb is part
        of the selection the scope is the whole selection, otherwise
-       just that thumb (the §4.14 scope rule). It carries `Open image`,
-       *Open full image (focused)* (both: the invoked thumb — greyed out
-       for a multi-scope, §4.14), `Rotate
-       90° CW` / `Rotate 90° CCW` and `Open in system viewer` (all:
+       just that thumb (the §4.14 scope rule). It carries `Open image`
+       (the invoked thumb — greyed out for a multi-scope, §4.14),
+       `Rotate 90° CW` / `Rotate 90° CCW` and `Open in system viewer`
+       (all:
        applied to **each image of the scope**, one command per image in
        order — rotations batch into one refresh), plus the existing
        faces-of-this-image entries (invoked thumb).
