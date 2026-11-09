@@ -73,9 +73,9 @@ async fn get_refcrops(state: State<'_, AppState>, person_id: i64) -> Result<Vec<
 #[tauri::command]
 async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String, String> {
     let paths = state.paths()?;
+    let settings = db::get_settings(paths).map_err(|e| e.to_string())?;
     if let Some(p) = db::resolve_image_open_path(paths, image_id).map_err(|e| e.to_string())? {
-        tauri_plugin_opener::open_path(p.clone(), None::<&str>)
-            .map_err(|e| e.to_string())?;
+        open_with(&settings.image_viewer, &p)?;
         // diagnostic line in the spirit of #144 (which path was opened)
         eprintln!("[open_image] image {image_id}: opened original {p}");
         return Ok(String::new());
@@ -97,12 +97,23 @@ async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String,
     let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) { "png" } else { "jpg" };
     let path = std::env::temp_dir().join(format!("whot-image-{image_id}-{}-{ns}.{ext}", std::process::id()));
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), None::<&str>)
-        .map_err(|e| e.to_string())?;
+    open_with(&settings.image_viewer, path.to_string_lossy().as_ref())?;
     // #268: the original is gone — tell the user (quiet info toast)
     Ok(format!(
         "original image not found at its recorded paths — opened a temporary copy ({image_id})"
     ))
+}
+
+/// #273 — hand `path` to the opener plugin: the configured program
+/// (whotrc.json `image_viewer` / `directory_viewer`, trimmed) when set,
+/// else the system default; a launch failure names the configured
+/// program (#144 — the caller's error toast).
+fn open_with(viewer: &str, path: &str) -> Result<(), String> {
+    let t = viewer.trim();
+    let app = if t.is_empty() { None } else { Some(t) };
+    tauri_plugin_opener::open_path(path, app).map_err(|e| {
+        if app.is_some() { format!("{e} (configured viewer: {t})") } else { e.to_string() }
+    })
 }
 
 /// #272 — 'Open roll path' (gui-design §3 context menus): the roll's
@@ -119,8 +130,8 @@ async fn open_roll(state: State<'_, AppState>, import_id: i64) -> Result<(), Str
     if !std::path::Path::new(&p).exists() {
         return Err(format!("roll directory no longer exists: {p}"));
     }
-    tauri_plugin_opener::open_path(p.clone(), None::<&str>)
-        .map_err(|e| e.to_string())?;
+    let settings = db::get_settings(paths).map_err(|e| e.to_string())?;
+    open_with(&settings.directory_viewer, &p)?;
     // diagnostic line in the spirit of #144 (which path was opened)
     eprintln!("[open_roll] roll {import_id}: opened {p}");
     Ok(())

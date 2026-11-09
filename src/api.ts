@@ -71,6 +71,10 @@ export interface Settings {
   merge_name_distance: number;
   /** #88: generational-suffix alias groups, e.g. [["J","Jr","Junior"]] */
   merge_suffix_aliases: string[][];
+  /** #273: the *Open in system viewer* program; "" = system default */
+  image_viewer: string;
+  /** #273: the *Open roll path* program; "" = system default manager */
+  directory_viewer: string;
 }
 export interface Snapshot {
   /** #208 — change stamp, read before the rows: equal on a probe ⇒

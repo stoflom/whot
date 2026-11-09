@@ -309,6 +309,15 @@ pub struct Settings {
     /// comparing. Default empty = off.
     #[serde(default)]
     pub merge_suffix_aliases: Vec<Vec<String>>,
+  /// #273 (gui-design §3) — the program for *Open in system viewer*;
+  /// empty/absent = the system default. serde default keeps existing
+  /// whotrc.json files loading.
+  #[serde(default)]
+  pub image_viewer: String,
+  /// #273 (gui-design §3) — the program for *Open roll path*;
+  /// empty/absent = the system default file manager.
+  #[serde(default)]
+  pub directory_viewer: String,
 }
 
 fn default_merge_name_distance() -> u32 {
@@ -324,6 +333,8 @@ impl Default for Settings {
             cluster_group: ClusterGroup::Accuracy,
             merge_name_distance: default_merge_name_distance(),
             merge_suffix_aliases: Vec::new(),
+            image_viewer: String::new(),
+            directory_viewer: String::new(),
         }
     }
 }
