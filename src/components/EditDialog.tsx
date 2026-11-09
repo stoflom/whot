@@ -5,6 +5,7 @@ import PathTypeahead from "./PathTypeahead";
 import SuggestInput from "./SuggestInput";
 import GroupListEditor from "./GroupListEditor";
 import { applyGroupOps, type GroupOp } from "../groupList";
+import { descApplyPick, descCurrentToken } from "../descTags";
 import type { SuggestOption } from "./SuggestInput";
 import { useOwnsKeyboard } from "../overlays";
 import type { Prefill, StageScope } from "../stage";
@@ -238,10 +239,12 @@ export default function EditDialog({
         )}
         <label>
           Description
-          {/* #262 (§4.21): type-ahead over the existing description
+          {/* #262/#270 (§4.21): type-ahead over the existing description
               tags — free text stays free text, suggestions only assist.
-              queryFor strips the leading `|` add-mode prefix so `|beard`
-              still matches; a pick keeps it (|b → |beard). */}
+              Matching runs over the CURRENT token (after the last `|`),
+              so compounds build incrementally (beard|s → side →
+              beard|side); a pick replaces only that token, so the
+              `|` add-mode prefix survives (|b → |beard). */}
           <SuggestInput
             className="input-desc"
             value={desc}
@@ -249,7 +252,7 @@ export default function EditDialog({
             title="Face description — free text; empty clears it. Start with | to ADD tags to the current ones (e.g. |beard → beard|glasses), no duplicates"
             options={descOptions}
             select="none"
-            queryFor={(v) => (v.trim().startsWith("|") ? v.trim().slice(1) : v)}
+            queryFor={descCurrentToken}
             onChange={(v) => {
               setDesc(v);
               setTouched((t) => ({ ...t, desc: true }));
@@ -257,10 +260,8 @@ export default function EditDialog({
             // the pick is a discrete event after the re-render, so the
             // closure's desc IS the pre-pick value (the functional form
             // would see onChange's already-updated state and lose the
-            // add-mode prefix)
-            onPick={(o) =>
-              setDesc(desc.trim().startsWith("|") ? `|${o.value}` : o.value)
-            }
+            // typed prefix); descApplyPick swaps only the current token
+            onPick={(o) => setDesc(descApplyPick(desc, o.value))}
             onSubmit={() => done("accept")}
             onEscape={onCancel}
           />
