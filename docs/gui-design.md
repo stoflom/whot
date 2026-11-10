@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 11.4** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 12.0** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2290,6 +2290,61 @@ Keyboard: `←` / `→` step the open image in Rolls mode **only while a
 full image is open**; while browsing they stay inert and keep their
 native scroll behaviour (#163), and outside Rolls they keep the
 person-stepping binding (§4.22).
+
+**47. (v12.0, #277) Roll re-import — reworking already-imported images.**
+
+`scripts/import_roll.py` gains `--reimport`: on scan, an image whose
+`content_hash` is already in the database is **reworked** instead of
+skipped. The hash stays the definitive image identity — new paths link
+to the existing image as before, and `last_import_id` updates as before.
+Motivation: an Unknown/rejected face may be recognizable now (its
+person is in the DB) — the re-scan lets the user revise prior work,
+**including his own rejections**. New images in the same roll import
+as usual; `--dry-run` is unchanged (computes everything, writes
+nothing).
+
+Per-image processing (existing images only):
+
+- **Re-detect** the faces with the current model (same decode path as a
+  fresh import).
+- **IoU-match** the new detections against the image's existing face
+  crops: IoU = |A∩B|/|A∪B| ≥ `--min-overlap` (new flag, default
+  **0.50**, the import_harvested §9.3 rule), **1:1 greedy best-IoU
+  assignment** (a new detection overlapping two old crops gives to the
+  best; the other crop stays free).
+- **Unmatched detections** take the normal new-detection pipeline
+  (embed, associate, store; `detected_in_import_id` = this run).
+- **Matched detections**: a `confirmed` face is unchanged; a
+  `state='discarded'` face is unchanged (discarded faces take part in
+  the IoU match, so a re-detection is *consumed*, never duplicated);
+  a `provisional`/`rejected` face is **re-matched** — the existing
+  association (known corpus + existing UnknownN clusters, §4.12) is run
+  on the face's **stored embedding**, and the face takes the winning
+  person at `link_status='provisional'` or joins an existing/new
+  UnknownN cluster exactly as before. A `rejected` face re-links even
+  when it re-matches the **same** person: the re-scan is the user's
+  deliberate rework of the roll. Re-linking rewrites `person_id`,
+  `link_status`, `seq` (next-in-group for the *new* person, MAX+1) and
+  `name`; the face's own `description`, box, preview and confidence are
+  **kept** — appearance inheritance is not re-applied to an existing
+  face, and the original geometry is never replaced by the new box.
+  A face re-matching the person it already has is a no-op (no seq
+  churn). A person receiving a re-linked provisional face is re-seated
+  to `New` exactly as in a fresh import (group invariant, §4.35).
+- **Orphaned faces** (existing crops with no IoU match) are
+  **unchanged and never auto-deleted**; they are counted in the report.
+
+Consequences: repeat `--reimport` runs are **idempotent**
+(deterministic detection and association, stable UnknownN numbering).
+If the insightface model itself changed between imports, crops may stop
+matching and unmatched detections create new rows beside the old ones
+on the same image — recoverable, and visible in the report, which gains
+the rework counts (images reworked, faces kept / re-linked / new /
+orphaned). A `no-face` image gains faces if the model now detects them
+(`images.state` flips to `scanned`). Each run records a new `imports`
+row (new faces reference it; re-linked faces keep their original
+detection). GUI/backend exposure of the flag is a separate change
+(#278).
 
 ## 5. Related documents
 
