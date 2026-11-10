@@ -1078,9 +1078,11 @@ def c18_rolls_path_tree(t):
     """)
     pure = center["grids"] == 0 and center["thumbs"] == 0
     # every DIRECTORY branch renders: the rel-path of each header title
-    # equals the ancestors-closure of the image directories
+    # equals the ancestors-closure of the image directories (#280: the
+    # title now carries the ABSOLUTE path + the counts rollup — the
+    # '/'-joined segment path lives in data-rel)
     def header_paths():
-        return js(t, "return [...document.querySelectorAll('.roll-path')].map(x => x.title);")
+        return js(t, "return [...document.querySelectorAll('.roll-path')].map(x => x.dataset.rel);")
 
     def expected_dirs(listed_js):
         return sorted(js(t, r"""
@@ -3014,7 +3016,9 @@ def c34_rolls_branch_thumbnails(t):
             centerGrids: document.querySelectorAll('.rolls .img-grid').length,
             centerThumbs: document.querySelectorAll('.rolls .img-thumb').length,
             selHdr: document.querySelector('.roll-header.selected .roll-path')?.textContent.trim() ?? null,
-            selCounts: document.querySelector('.roll-header.selected .roll-counts')?.textContent.trim() ?? null,
+            // #280: the counts rollup lives in the path tooltip now
+            // ("path — N img · N new · N ✓ · N ✗") — keep the counts part
+            selCounts: (document.querySelector('.roll-header.selected .roll-path')?.title ?? '').split(' — ')[1] ?? null,
             detail: !!document.querySelector('.image-detail'),
             dp: !!document.querySelector('.dp-person') || !!document.querySelector('.dp-summary'),
           };
@@ -6504,6 +6508,180 @@ def c63_rolls_image_stepping(t):
            f"paths={pick['paths'][:3]}…")
 
 
+def c64_roll_branch_reimport_recursive(t):
+    """#280 (v12.4, §4.36+§4.39): the branch header icon row — the
+    counts rollup moved into the roll-path tooltip ('<abs> — N img ·
+    N new · N ✓ · N ✗', the recursive raw totals) and the space
+    carries ⇩ (opens the import pane on the branch with Re-import
+    PRE-CHECKED — the pane is not a toggle) and the per-branch
+    recursive grid toggle (☐/☑, aria-pressed); ticked, the branch's
+    grid lists every descendant image and the grid head notes it; the
+    header context menu carries both (Re-import… + ☐/☑ Include
+    sub-branch images); neither icon triggers the header's own
+    toggle+select click."""
+    fresh(t)
+    set_show_filter(t, "all")
+    js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
+    time.sleep(1.2)
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const dirOf = p => { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); };
+      const dirs = new Map();
+      for (const im of snap.images)
+        dirs.set(dirOf(im.primary_path), (dirs.get(dirOf(im.primary_path)) || 0) + 1);
+      // a branch with ≥1 direct AND ≥1 deeper image (most direct)
+      let best = null, nbest = 0;
+      for (const [d, n] of dirs) {
+        let deeper = 0;
+        for (const [d2, n2] of dirs)
+          if (d2 !== d && d2.startsWith(d + '/')) deeper += n2;
+        if (n >= 1 && deeper >= 1 && n > nbest) { nbest = n; best = {dir: d, direct: n, deeper}; }
+      }
+      return best;
+    """)
+    if pick is None:
+        record("C64 roll-branch header icon row: re-import route + recursive grid (#280)", True,
+               "need a branch with direct + deeper images — vacuous")
+        return
+
+    def drill(path):
+        segs = [s for s in path.strip('/').split('/') if s]
+        for i, seg in enumerate(segs):
+            last = i == len(segs) - 1
+            state = js(t, r"""
+              const prefix = arguments[0], seg = arguments[1], last = arguments[2];
+              let container = document.querySelector('.rolls');
+              for (const p of prefix) {
+                const s = [...container.children].find(x => x.classList.contains('roll') &&
+                  x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === p);
+                if (!s) return 'no-parent';
+                container = s.querySelector(':scope > .roll-children');
+                if (!container) return 'closed-parent';
+              }
+              const target = [...container.children].find(x => x.classList.contains('roll') &&
+                x.querySelector(':scope > .roll-header .roll-path')?.textContent.trim() === seg);
+              if (!target) return 'not-found';
+              const isOpen = !!target.querySelector(':scope > .roll-children');
+              if (last || !isOpen) target.querySelector(':scope > .roll-header').click();
+              return 'ok';
+            """, segs[:i], seg, last)
+            time.sleep(0.6)
+            if state != "ok":
+                return False
+        return True
+
+    drilled = drill(pick["dir"])
+    if not drilled:
+        record("C64 roll-branch header icon row: re-import route + recursive grid (#280)", False,
+               f"drill to {pick['dir']!r} failed")
+        return
+    time.sleep(0.6)
+
+    def hdr_state():
+        return js(t, r"""
+          const hdr = [...document.querySelectorAll('.roll-header')]
+            .find(h => h.dataset.path === arguments[0]);
+          if (!hdr) return null;
+          const path = hdr.querySelector('.roll-path');
+          const btns = [...hdr.querySelectorAll('.roll-actions button')];
+          const re = btns.find(b => (b.title ?? '').startsWith('Re-import'));
+          const rec = btns.find(b => b.getAttribute('aria-pressed') != null);
+          return {
+            title: path?.title ?? null,
+            countsGone: !document.querySelector('.roll-counts'),
+            reBtn: !!re, recBtn: !!rec,
+            recPressed: rec?.getAttribute('aria-pressed') ?? null,
+            recGlyph: rec?.textContent ?? null,
+            thumbs: document.querySelectorAll('.rolls-thumbs .img-thumb').length,
+            head: document.querySelector('.rolls-thumbs-head')?.textContent ?? null,
+            pane: !!document.querySelector('.import-pane'),
+          };
+        """, pick["dir"])
+
+    # the expected rollup: raw, filter-independent, over EVERY descendant
+    expect = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const abs = arguments[0];
+      const under = snap.images.filter(im =>
+        im.primary_path === abs || im.primary_path.startsWith(abs + '/'));
+      const ids = new Set(under.map(i => i.id));
+      const fs = snap.faces.filter(f => ids.has(f.image_id));
+      return {img: under.length,
+              pending: fs.filter(f => f.link_status === 'provisional').length,
+              done: fs.filter(f => f.link_status === 'confirmed').length,
+              rejected: fs.filter(f => f.link_status === 'rejected').length};
+    """, pick["dir"])
+
+    s0 = hdr_state()
+    # ── phase A: the icon row replaces the counts text ───────────────
+    a_ok = (s0["countsGone"] and s0["reBtn"] and s0["recBtn"]
+            and s0["recPressed"] == "false" and s0["recGlyph"] == "☐"
+            and s0["title"] == (f"{pick['dir']} — {expect['img']} img · "
+                                f"{expect['pending']} new · {expect['done']} ✓ · "
+                                f"{expect['rejected']} ✗")
+            and s0["thumbs"] == pick["direct"]
+            and "incl. sub-branches" not in (s0["head"] or ""))
+
+    # ── phase B: the recursive toggle widens the grid ────────────────
+    js(t, r"""
+      const hdr = [...document.querySelectorAll('.roll-header')]
+        .find(h => h.dataset.path === arguments[0]);
+      const rec = [...hdr.querySelectorAll('.roll-actions button')]
+        .find(b => b.getAttribute('aria-pressed') != null);
+      rec.click();
+    """, pick["dir"])
+    time.sleep(0.8)
+    s1 = hdr_state()
+    b_ok = (s1["recPressed"] == "true" and s1["recGlyph"] == "☑"
+            and s1["thumbs"] == pick["direct"] + pick["deeper"]
+            and "incl. sub-branches" in (s1["head"] or ""))
+
+    # ── phase C: the context menu carries both; Re-import… opens the
+    #    pane with Re-import PRE-CHECKED on the branch ────────────────
+    ctxclick(t, t.find_element(By.CSS_SELECTOR, ".roll-header.selected"))
+    time.sleep(0.6)
+    menu = js(t, r"""
+      return [...document.querySelectorAll('.ctx-item')].map(i => i.textContent.trim());
+    """)
+    c_menu_ok = ("Re-import…" in menu
+                 and any("☑ Include sub-branch images" in x for x in menu))
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+     if b.text.strip() == "Re-import…"][0].click()
+    time.sleep(1.2)
+    pane = js(t, r"""
+      const p = document.querySelector('.import-pane');
+      if (!p) return {open: false};
+      const l = [...p.querySelectorAll('.import-opts label')]
+        .find(x => x.textContent.includes('--reimport'));
+      return {open: true,
+              dir: p.querySelector('.import-path')?.textContent ?? null,
+              reChecked: l ? l.querySelector('input[type=checkbox]').checked : null,
+              reVisible: !!l};
+    """)
+    c_ok = (c_menu_ok and pane["open"] and pane["dir"] == pick["dir"]
+            and pane["reVisible"] and pane["reChecked"] is True)
+    # close the pane (§4.36: only ✕ closes it) and toggle recursive off
+    js(t, "[...document.querySelectorAll('.import-head button')].find(b => b.textContent.includes('✕'))?.click();")
+    time.sleep(0.6)
+    ctxclick(t, t.find_element(By.CSS_SELECTOR, ".roll-header.selected"))
+    time.sleep(0.6)
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+     if "Include sub-branch images" in b.text][0].click()
+    time.sleep(0.8)
+    s2 = hdr_state()
+    d_ok = (s2["recPressed"] == "false" and s2["recGlyph"] == "☐"
+            and s2["thumbs"] == pick["direct"] and s2["pane"] is False
+            and "incl. sub-branches" not in (s2["head"] or ""))
+
+    ok = a_ok and b_ok and c_ok and d_ok
+    record("C64 roll-branch header icon row: re-import route + recursive grid (#280)", ok,
+           f"branch={pick['dir']} direct={pick['direct']} deeper={pick['deeper']}; "
+           f"A: title={s0['title']!r} (want …{expect['img']} img…) countsGone={s0['countsGone']}; "
+           f"B: {s0['thumbs']}→{s1['thumbs']} (want {pick['direct']}+{pick['deeper']}) "
+           f"{s1['recGlyph']} head={s1['head']!r}; "
+           f"C: menu={menu} pane={pane}; D: back-to-off={d_ok}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -6512,7 +6690,7 @@ def main():
     holder["t"].start()
     holder["t"].set_window_size(1600, 1000)
     for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review, c62_one_ipc_transfer_per_action,
-      c63_rolls_image_stepping):
+      c63_rolls_image_stepping, c64_roll_branch_reimport_recursive):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)
