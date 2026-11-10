@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.17** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.18** (#278) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -212,11 +212,19 @@ Behaviour rules: gui-design §4.36. Structure:
 
 - **`importer.rs`** owns everything process-related; no SQL, no Tauri
   types beyond what the commands need.
-- **`ImportOptions { roll_dir, dry_run, all, gpu, threshold, recursive,
-  create_db }`** (serde, camelCase over IPC) maps 1:1 onto the
+- **`ImportOptions { roll_dir, dry_run, all, reimport, gpu, threshold, recursive, create_db }`**
+  (serde, camelCase over IPC) maps 1:1 onto the
   `import_roll.py` CLI; `build_args()` renders the flag vector
   (deterministic order: mode flags, `--threshold`, the directory) and
   refuses `create_db && dry_run` before anything spawns.
+  `reimport` (#278, exposing the script's script-design §8.4 re-import
+  pass) renders between `--all` and `--gpu` and is validated like the
+  other combos: `reimport && create_db` is refused — the rework pass
+  re-detects and re-links images whose `content_hash` is already in the
+  database, so re-importing against a freshly created database would
+  rework nothing by definition; the configuration is refused before any
+  process spawns. A re-import with `--dry-run` stays legal (compute
+  everything, write nothing).
 - **`ImportState`** — the single `Mutex`-guarded slot in `AppState`:
   `idle`, or the child `pid`, start `Instant`, append-only line buffer
   (combined stdout+stderr, capped at `MAX_LINES = 5000`, oldest dropped)

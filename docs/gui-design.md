@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 12.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 12.1** (#278) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1800,7 +1800,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      browser and the rule bar stay interactive; only one import pane can
      be open at a time.
    - **Options**: toggles for the `import_roll.py` CLI flags that make
-     sense per roll — `--dry-run`, `--all`, `--gpu` (CPU is the default,
+     sense per roll — `--dry-run`, `--all`,
+     `--reimport` (#278, below), `--gpu` (CPU is the default,
      §4.29), `--recursive` (**on by default** — the probe that
      opened the pane already found images below the top level, so a
      default-off import would silently skip the very sub-folders that
@@ -1811,6 +1812,25 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      through the path filter again). `--create-db` + `--dry-run` is
      refused up front (the script's `validate_args` — creation is a
      write).
+   - **Re-import toggle (--reimport, v12.1, #278)**: the Options
+     block gains a **Re-import** toggle (`--reimport`), **default
+     off** — a committed-path trigger means "fresh roll", so the
+     ordinary path must stay the ordinary path. The toggle is **always
+     available** (the pane already shows which images are new via the
+     snapshot match) and carries a hint that it re-detects and
+     re-links the roll's already-imported images per §4.47 (accepted
+     faces stay as-is; provisional/rejected faces are re-matched; each
+     run records a new import). It is **hidden while no usable
+     database exists** — the same probe answer the `--create-db`
+     visibility uses (`get_import_info`'s
+     `{ dbPath, dbExists }`), because a re-import against a
+     freshly-created database has nothing to rework by definition; the
+     backend refuses the combination up front as well
+     (backend-design §7). The script-side IoU rework parameters stay
+     script-side: `--min-overlap` is **not** a GUI control in this
+     pass (the script's default 0.50 applies). `--reimport` +
+     `--dry-run` is legal and stays (compute everything, write
+     nothing).
    - **Option gating**: the pane offers only options that can
      apply — `--create-db` is **hidden while a usable database exists**
      (the script refuses an existing non-empty DB, so the checkbox
