@@ -2,10 +2,12 @@
 """import_roll.py — import a film-roll directory into data/faces.db.
 
 Pipeline (see docs/gui-design.md §4 and README.md):
-  scan -> BLAKE3 hash -> skip existing / detect+embed -> associate -> store
+  scan -> BLAKE3 hash -> skip existing (or rework it with --reimport,
+  gui-design §4.47 / #277) -> detect+embed -> associate -> store
 
 Usage: import_roll.py [--dry-run] [--all] [--recursive] [--gpu]
-                      [--threshold F] [-q] [--create-db] [ROLL_DIR]
+                      [--threshold F] [--reimport] [--min-overlap F]
+                      [-q] [--create-db] [ROLL_DIR]
 Console (scripts-design §10): startup header, status updates (full paths),
 final summary; -q/--quiet prints only the header and the final summary.
 --create-db builds the database from database/schema.sql (§4.29, #90).
@@ -593,6 +595,14 @@ def store_image(con: sqlite3.Connection, plan: ImportPlan, pairs, unknowns, impo
           plan.icon_jpeg, plan.preview_jpeg, import_id, import_id, now))
     image_id = cur.lastrowid
     con.execute("INSERT OR IGNORE INTO image_paths(image_id, path) VALUES (?, ?)", (image_id, plan.path))
+    store_faces(con, image_id, pairs, unknowns, import_id, now)
+
+
+def store_faces(con: sqlite3.Connection, image_id: int, pairs, unknowns, import_id: int,
+                now: str) -> None:
+    """Insert the face rows + embeddings for one image, then re-seat the
+    touched persons (the provisional face half of the group invariant,
+    §4.35). Shared by the fresh-import path and the #277 re-import path."""
     for det, stub in pairs:
         person_id = ensure_person(con, stub, unknowns)
         # §4.12: inherit the winning appearance group; seq & label follow it
@@ -614,13 +624,195 @@ def store_image(con: sqlite3.Connection, plan: ImportPlan, pairs, unknowns, impo
     # a seated person (no user-given group) re-seats to `New`; a filed
     # person's rows are never touched (a reject-bin seat can't be
     # in play: the `RejectedN` family is never an import target, #266).
-    for pid in {ensure_person(con, stub, unknowns) for _, stub in pairs}:
+    reseat_persons(con, {ensure_person(con, stub, unknowns) for _, stub in pairs})
+
+
+# ---------------------------------------------------------------- re-import (#277, gui-design §4.47)
+
+@dataclass
+class ExistingFace:
+    """One face crop already in the database (stable ORDER BY id)."""
+    id: int
+    box: tuple[int, int, int, int]
+    person_id: int | None
+    link_status: str
+    state: str
+    description_key: str
+
+
+def load_existing_faces(con: sqlite3.Connection, image_id: int) -> list[ExistingFace]:
+    """The image's existing face crops, in stable order (#277)."""
+    rows = con.execute(
+        "SELECT id, x, y, w, h, person_id, link_status, state, description_key"
+        "  FROM faces WHERE image_id = ? ORDER BY id", (image_id,)).fetchall()
+    return [ExistingFace(id=r[0], box=(r[1], r[2], r[3], r[4]), person_id=r[5],
+                         link_status=r[6], state=r[7], description_key=r[8]) for r in rows]
+
+
+def iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    """IoU = |A∩B|/|A∪B| of two (x, y, w, h) boxes — the §9.3 matching
+    rule, re-used for the #277 crop match."""
+    ax1, ay1, ax2, ay2 = a[0], a[1], a[0] + a[2], a[1] + a[3]
+    bx1, by1, bx2, by2 = b[0], b[1], b[0] + b[2], b[1] + b[3]
+    inter = (max(0, min(ax2, bx2) - max(ax1, bx1))
+             * max(0, min(ay2, by2) - max(ay1, by1)))
+    if inter == 0:
+        return 0.0
+    return inter / (a[2] * a[3] + b[2] * b[3] - inter)
+
+
+def match_detections(detections: list[Detection],
+                     existing: list[tuple[int, int, int, int]],
+                     min_overlap: float) -> list[int | None]:
+    """1:1 greedy best-IoU assignment of new detections to the image's
+    existing face crops (#277): every (detection, crop) pair with
+    IoU ≥ min_overlap is considered best-first (ties: lower detection,
+    then lower crop) and each side is used once. Returns, per detection,
+    the index into *existing* or None."""
+    scored: list[tuple[float, int, int]] = []
+    for di, det in enumerate(detections):
+        for ei, box in enumerate(existing):
+            v = iou(det.box, box)
+            if v >= min_overlap:
+                scored.append((v, di, ei))
+    scored.sort(key=lambda t: (-t[0], t[1], t[2]))
+    used_det: set[int] = set()
+    used_box: set[int] = set()
+    out: list[int | None] = [None] * len(detections)
+    for v, di, ei in scored:
+        if di in used_det or ei in used_box:
+            continue
+        out[di] = ei
+        used_det.add(di)
+        used_box.add(ei)
+    return out
+
+
+def repair_stale_primaries(con: sqlite3.Connection, person_ids: set[int]) -> None:
+    """After faces moved between persons, a source person's primary may
+    point at a face that no longer belongs to it. Recompute such a
+    primary with the machine rule (the same statement
+    assign_missing_primaries uses; no eligible face → NULL) and clear
+    the pinned flag — the user's pick moved with the face (§4.47)."""
+    for pid in person_ids:
+        if pid is None:
+            continue
+        con.execute("""
+            UPDATE persons SET primary_face_id = (
+                SELECT f.id FROM faces f
+                 WHERE f.person_id = persons.id AND f.state != 'discarded'
+                   AND f.link_status != 'rejected'
+                 ORDER BY f.confidence DESC, f.id LIMIT 1),
+                 primary_pinned = 0
+             WHERE id = ?
+               AND primary_face_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM faces f
+                                WHERE f.id = persons.primary_face_id
+                                  AND f.person_id = persons.id)
+        """, (pid,))
+
+
+def reseat_persons(con: sqlite3.Connection, person_ids: set[int]) -> None:
+    """Re-seat persons receiving a provisional face to `New` (group
+    invariant, §4.35) — the same statement the fresh-import path runs."""
+    for pid in person_ids:
         con.execute(
             "UPDATE person_groups SET path = 'New'"
             "  WHERE person_id = ? AND path IN ('New', 'Accepted')"
             "    AND EXISTS (SELECT 1 FROM faces WHERE person_id = ?"
             "                AND link_status = 'provisional')",
             (pid, pid))
+
+
+def reimport_image(con: sqlite3.Connection, image_id: int, detections: list[Detection],
+                   corpus: list[PersonStub], unknowns: list[PersonStub], threshold: float,
+                   numbering_names: list[str], min_overlap: float,
+                   import_id: int, now: str, dry_run: bool) -> dict[str, int]:
+    """#277 / gui-design §4.47: rework ONE existing image.
+
+    The detections are IoU-matched 1:1 against the image's existing face
+    crops. Unmatched detections take the fresh-detection path (new face
+    rows, `detected_in_import_id` = this run). A matched
+    provisional/rejected face is re-matched through the same association
+    on its STORED embedding — it takes the winning person at
+    `link_status='provisional'` (a rejected face re-links even to the
+    person it already carries: the re-scan is the user's deliberate
+    rework), or joins an existing/new UnknownN cluster exactly as before;
+    re-linking rewrites person_id/seq/name and keeps the face's own
+    description, box, preview and confidence. A face re-matching the
+    person it already has is a no-op (no seq churn). confirmed and
+    discarded faces are untouched — discarded ones still consume their
+    re-detection, so they are never duplicated. Orphaned crops stay as
+    they are (never auto-deleted). Writes are skipped when *dry_run* (a
+    fresh UnknownN, still person_id 0, counts as a change). Returns the
+    per-image counts {kept, relinked, new, orphaned}.
+    """
+    faces = load_existing_faces(con, image_id)
+    matches = match_detections(detections, [f.box for f in faces], min_overlap)
+    counts = {"kept": 0, "relinked": 0, "new": 0, "orphaned": 0}
+
+    # 1. matched provisional/rejected faces → re-match on the stored embedding
+    det_to_face = {di: ei for di, ei in enumerate(matches) if ei is not None}
+    matched_faces: set[int] = set(det_to_face.values())
+    pending: list[tuple[ExistingFace, np.ndarray]] = []
+    for ei in sorted(det_to_face.values()):
+        f = faces[ei]
+        if f.link_status == "confirmed" or f.state == "discarded":
+            counts["kept"] += 1
+            continue
+        row = con.execute(
+            "SELECT vector FROM face_embeddings WHERE face_id = ? AND model = ?",
+            (f.id, MODEL_TAG)).fetchone()
+        if row is None:      # e.g. a face without a vector — left as-is
+            counts["kept"] += 1
+            continue
+        pending.append((f, _vec(row[0])))
+    for ei, f in enumerate(faces):
+        if ei not in matched_faces:
+            counts["orphaned"] += 1
+
+    relinked_pids: set[int] = set()
+    source_pids: set[int | None] = set()
+    if pending:
+        stubs = [Detection(box=f.box, det_score=0.0, embedding=emb) for f, emb in pending]
+        pairs = associate(stubs, corpus, unknowns, threshold, numbering_names)
+        for (f, _), (_, stub) in zip(pending, pairs):
+            if dry_run:
+                new_pid = stub.person_id or -1   # a fresh UnknownN would be minted
+                if new_pid == f.person_id:
+                    counts["kept"] += 1
+                    continue
+                counts["relinked"] += 1
+                continue
+            new_pid = ensure_person(con, stub, unknowns)
+            if new_pid == f.person_id:
+                counts["kept"] += 1      # re-matched to the same person: no seq churn
+                continue
+            counts["relinked"] += 1
+            desc = f.description_key
+            seq = assign_seq(con, new_pid, desc)
+            name = f"{stub.name}-{desc}-{seq}" if desc else f"{stub.name}-{seq}"
+            con.execute(
+                "UPDATE faces SET person_id = ?, link_status = 'provisional', "
+                "seq = ?, name = ? WHERE id = ?",
+                (new_pid, seq, name, f.id))
+            relinked_pids.add(new_pid)
+            source_pids.add(f.person_id)
+        if relinked_pids:
+            reseat_persons(con, relinked_pids)
+            repair_stale_primaries(con, source_pids)
+
+    # 2. unmatched detections → fresh-detection path (new face rows)
+    new_dets = [detections[di] for di in range(len(detections)) if matches[di] is None]
+    if new_dets:
+        pairs = associate(new_dets, corpus, unknowns, threshold, numbering_names)
+        if not dry_run:
+            store_faces(con, image_id, pairs, unknowns, import_id, now)
+            # a no-face image that now has faces flips state (§4.47)
+            con.execute("UPDATE images SET state = 'scanned' WHERE id = ? AND state = 'no-face'",
+                        (image_id,))
+        counts["new"] += len(new_dets)
+    return counts
 
 
 # ---------------------------------------------------------------- main
@@ -678,6 +870,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="deprecated no-op: CPU is the default now (#91)")
     ap.add_argument("--threshold", type=float, default=THRESHOLD_DEFAULT)
     ap.add_argument("--recursive", action="store_true")
+    ap.add_argument("--reimport", action="store_true",
+                    help="rework images already in the database: re-detect, IoU-match "
+                         "against existing crops, re-link provisional/rejected faces "
+                         "(gui-design §4.47, #277)")
+    ap.add_argument("--min-overlap", type=float, default=0.50,
+                    help="minimum IoU for matching new detections to existing crops "
+                         "(--reimport; default 0.50, the §9.3 rule)")
     ap.add_argument("--create-db", action="store_true",
                     help="create the database named in .env from database/schema.sql; "
                          "refuses an existing non-empty database (#90)")
@@ -691,6 +890,8 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
         ap.error("--create-db cannot be combined with --dry-run (creation is a write)")
     if args.roll_dir is None and not args.create_db:
         ap.error("roll_dir is required unless --create-db is given")
+    if not 0 < args.min_overlap <= 1:
+        ap.error("--min-overlap must be in (0, 1]")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -714,6 +915,7 @@ def main(argv: list[str] | None = None) -> int:
                f"recursive : {'yes' if args.recursive else 'no'}",
                f"threshold : {args.threshold}  (model {MODEL_TAG})",
                f"provider  : {'gpu (MIGraphX, --gpu)' if args.gpu else 'cpu (default, --gpu to opt in)'}",
+               f"reimport  : {'yes (min-overlap ' + str(args.min_overlap) + ')' if args.reimport else 'no'}",
                f"database  : {db_path}")
 
     # --- database first: never create one implicitly, never misreport a
@@ -769,6 +971,8 @@ def main(argv: list[str] | None = None) -> int:
 
     failures: list[tuple[Path, str]] = []
     n_new = n_existing = n_noface = n_faces = 0
+    n_reworked = 0
+    re_counts = {"kept": 0, "relinked": 0, "new": 0, "orphaned": 0}
     ui.start_beat("importing")          # a single slow image must not go silent
     for i, path in enumerate(files, 1):
         n_stub = len(unknowns)     # run-created stubs before this file (dropped on failure)
@@ -779,7 +983,22 @@ def main(argv: list[str] | None = None) -> int:
             existing = con.execute("SELECT id FROM images WHERE content_hash = ?", (hash_,)).fetchone()
             if existing:
                 n_existing += 1
-                ui.status("  already in database — skipping")
+                if not args.reimport:
+                    ui.status("  already in database — skipping")
+                    if not args.dry_run:      # dry-run must not write
+                        con.execute("INSERT OR IGNORE INTO image_paths(image_id, path) VALUES (?, ?)",
+                                    (existing[0], str(path)))
+                        # rescan touches the image: keep last_import_id truthful (#18)
+                        con.execute("UPDATE images SET last_import_id = ? WHERE id = ?",
+                                    (import_id, existing[0]))
+                        con.commit()
+                    continue
+                # #277 / gui-design §4.47: rework this existing image
+                ui.status("  in database — reworking (--reimport)")
+                plan = plan_image(path, detector)
+                c = reimport_image(con, existing[0], plan.detections, corpus, unknowns,
+                                   args.threshold, numbering_names, args.min_overlap,
+                                   import_id, now, args.dry_run)
                 if not args.dry_run:      # dry-run must not write
                     con.execute("INSERT OR IGNORE INTO image_paths(image_id, path) VALUES (?, ?)",
                                 (existing[0], str(path)))
@@ -787,6 +1006,11 @@ def main(argv: list[str] | None = None) -> int:
                     con.execute("UPDATE images SET last_import_id = ? WHERE id = ?",
                                 (import_id, existing[0]))
                     con.commit()
+                n_reworked += 1
+                for k, v in c.items():
+                    re_counts[k] += v
+                ui.status(f"  reworked: {c['kept']} kept, {c['relinked']} re-linked, "
+                          f"{c['new']} new face(s), {c['orphaned']} orphaned")
                 continue
             plan = plan_image(path, detector)
             if not plan.detections and not args.all:
@@ -823,7 +1047,13 @@ def main(argv: list[str] | None = None) -> int:
     con.close()
     ui.summary("-" * 64,
                f"{'would import' if args.dry_run else 'imported'} {n_new} image(s) "
-               f"({n_faces} faces), skipped {n_existing} existing, {n_noface} without faces")
+               f"({n_faces} faces), "
+               f"{'reworked' if args.reimport else 'skipped'} {n_existing} existing, "
+               f"{n_noface} without faces")
+    if args.reimport:
+        ui.summary(f"{'would rework' if args.dry_run else 'reworked'} {n_reworked} existing image(s): "
+                   f"{re_counts['kept']} face(s) kept, {re_counts['relinked']} re-linked, "
+                   f"{re_counts['new']} new, {re_counts['orphaned']} orphaned")
     if failures:
         ui.error(f"failed {len(failures)} file(s) (the rest of the batch was imported):")
         for p, err in failures:

@@ -2330,7 +2330,11 @@ Per-image processing (existing images only):
   face, and the original geometry is never replaced by the new box.
   A face re-matching the person it already has is a no-op (no seq
   churn). A person receiving a re-linked provisional face is re-seated
-  to `New` exactly as in a fresh import (group invariant, §4.35).
+  to `New` exactly as in a fresh import (group invariant, §4.35). If a
+  re-linked face was the source person's primary face, the source's
+  primary is recomputed with the machine rule (best eligible remaining
+  face, else none) and its pinned flag is cleared — the pick moved with
+  the face.
 - **Orphaned faces** (existing crops with no IoU match) are
   **unchanged and never auto-deleted**; they are counted in the report.
 
