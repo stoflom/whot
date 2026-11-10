@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 11.3** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 11.4** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -267,11 +267,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   image's **full `primary_path`** (truncated to fit, full text in the
   hover tooltip alongside the W×H · state · rotated dim facts) with a
   **Copy** button (the §4.26 clipboard rule); the **mode-scoped ‹ n/m ›
-  nav cluster** — Rolls steps the film roll's images (rule 46), Person
-  steps persons, Review steps persons holding new faces under the
-  pinned Show filter; the **⟳/⟲ stored-rotation buttons** (§4.32 — both
+  nav cluster** with a **labelled counter** — Rolls steps the film
+  roll's images (`345/560 images`, rule 46), Person/Review step the
+  **faces of the right-pane person available for editing**
+  (`1/4 faces` — the person's visible faces in the person grid's
+  display order; in Review, the new faces under the pinned Show
+  filter): a step **opens the full image containing that face** and
+  the view stays in full-image mode, the arrows are inactive at the
+  first/last face, and the **← → arrow keys mirror the active arrows**;
+  the **⟳/⟲ stored-rotation buttons** (§4.32 — both
   surfaces now; previously only the split had them); and **close/back**
-  (×/Esc on the split, *← rolls* on the detail). The path is the
+  (×/Esc on the split, *← rolls* on the detail) — the only way back to
+  the grid, which returns at its saved scroll place. The path is the
   original file's location — never the `/tmp` viewer-fallback copy
   (above). The Description/Accuracy seg stays with the **Person grid**
   toolbar only — it does not move into the full-image bar.
@@ -290,9 +297,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   double-click, and the container's scroll while the image is open
   belongs to the focus view, never to the grid's saved place.
   **Lifecycle** (§4.15): the mode ends when a person is
-  selected — tree row or stepping (always — the attention has shifted,
-  §4.15) — when a card/rectangle selection moves to a different image,
-  or the user navigates explicitly (top-bar tabs, *Review*); the
+  selected by a **tree row**, when a card/rectangle selection moves to
+  a different image, when the user navigates explicitly (top-bar tabs,
+  *Review*), or on close/back — the bar's ‹ › **face stepping does not
+  end the mode** (it stays in the full image, moving between that
+  person's face images); the
   face-rectangle menu hides *Open full image* while its image is the one
   already open.
 - **Face vs person tiles**: face crops render as **rounded squares
