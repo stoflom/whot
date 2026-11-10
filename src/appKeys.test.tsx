@@ -31,6 +31,7 @@ const makeInput = (over: Partial<AppKeysInput> = {}): AppKeysInput => ({
   doReject: vi.fn(),
   stepPerson: vi.fn(),
   stepImage: vi.fn(),
+  stepSplitFace: vi.fn(),
   ...over,
 });
 
@@ -205,6 +206,16 @@ describe("useAppKeys (#258) — the shortcuts (#68/#53/#96/#95/#235)", () => {
     expect(input.stepPerson).toHaveBeenCalledWith(1);
     key(document.body, "ArrowLeft");
     expect(input.stepPerson).toHaveBeenCalledWith(-1);
+    expect(input.stepImage).not.toHaveBeenCalled();
+  });
+
+  it("arrows mirror the full-image FACE step while a split is open in Person/Review (#275 v11.4)", () => {
+    const { input } = mount({ input: { splitImageId: 42, mode: "person" } });
+    key(document.body, "ArrowLeft");
+    key(document.body, "ArrowRight");
+    expect(input.stepSplitFace).toHaveBeenNthCalledWith(1, -1);
+    expect(input.stepSplitFace).toHaveBeenNthCalledWith(2, 1);
+    expect(input.stepPerson).not.toHaveBeenCalled(); // the grid step no longer fires
     expect(input.stepImage).not.toHaveBeenCalled();
   });
 

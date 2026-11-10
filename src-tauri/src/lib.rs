@@ -116,24 +116,26 @@ fn open_with(viewer: &str, path: &str) -> Result<(), String> {
     })
 }
 
-/// #272 — 'Open roll path' (gui-design §3 context menus): the roll's
-/// directory (`imports.path`) opens in the system file manager through
-/// the same opener plugin as `open_image`. A stale (moved/deleted) roll
-/// directory is a rejection like `open_image`'s (#144) — the caller's
-/// error toast names the path.
+/// #272 (gui-design v11.1) — 'Open roll path' (gui-design §3 context
+/// menus): the directory CONTAINING the image file (parent of
+/// `images.primary_path`) opens in the system file manager through the
+/// same opener plugin as `open_image` — roll imports may be recursive,
+/// so the roll root `imports.path` is not where the file lives. A stale
+/// (moved/deleted) image location is a rejection like `open_image`'s
+/// (#144) — the caller's error toast names the path.
 #[tauri::command]
-async fn open_roll(state: State<'_, AppState>, import_id: i64) -> Result<(), String> {
+async fn open_roll(state: State<'_, AppState>, image_id: i64) -> Result<(), String> {
     let paths = state.paths()?;
-    let p = db::roll_dir(paths, import_id)
+    let p = db::image_file_dir(paths, image_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("roll {import_id} is not recorded"))?;
+        .ok_or_else(|| format!("image {image_id} is not recorded"))?;
     if !std::path::Path::new(&p).exists() {
-        return Err(format!("roll directory no longer exists: {p}"));
+        return Err(format!("image directory no longer exists: {p}"));
     }
     let settings = db::get_settings(paths).map_err(|e| e.to_string())?;
     open_with(&settings.directory_viewer, &p)?;
     // diagnostic line in the spirit of #144 (which path was opened)
-    eprintln!("[open_roll] roll {import_id}: opened {p}");
+    eprintln!("[open_roll] image {image_id}: opened {p}");
     Ok(())
 }
 

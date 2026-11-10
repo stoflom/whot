@@ -256,3 +256,47 @@ export function buildSections(inp: SectionInputs): Section[] {
       ruleDefaultGroup: renameGroupFor(p),
     }));
 }
+
+// #275 (gui-design v11.4) — the full-image bar's FACE step (Person/
+// Review): the right-pane person's editable faces in the view's display
+// order, and the open image's position in that list. Pure — App owns
+// the state, this owns the list rule.
+
+/** The ordered "available for editing" face list of a person: Person
+    mode reuses the person grid's sections (Description/Accuracy, the
+    Show filter and the staged descriptions all applied upstream in
+    buildSections); Review takes the person's faces under the pinned
+    filter in snapshot order — the review branch's own within-person
+    order. A NULL person (an unassigned face opened the view) has no
+    list. */
+export function personFaceList(
+  mode: Mode,
+  personId: number | null,
+  sections: Section[],
+  faces: Face[],
+  faceFilter: FaceFilter
+): number[] {
+  if (personId == null) return [];
+  if (mode === "person") return sections.flatMap((s) => s.faceIds);
+  const status =
+    faceFilter === "confirmed" || faceFilter === "rejected"
+      ? faceFilter
+      : "provisional";
+  return faces
+    .filter((f) => f.person_id === personId && f.link_status === status)
+    .map((f) => f.id);
+}
+
+/** The bar's `n` position: the FIRST face of `imageId` in the ordered
+    list (-1 = the person holds no face on the open image — both
+    arrows inactive). */
+export function splitStepPos(
+  list: number[],
+  facesById: Map<number, Face>,
+  imageId: number
+): number {
+  for (let i = 0; i < list.length; i++) {
+    if (facesById.get(list[i])?.image_id === imageId) return i;
+  }
+  return -1;
+}

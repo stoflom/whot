@@ -40,6 +40,9 @@ export interface AppKeysInput {
   doReject: (ids: number[]) => void;
   stepPerson: (dir: 1 | -1) => void;
   stepImage: (dir: 1 | -1) => void;
+  /** #275 (v11.4): the full-image focus bar's face step — the arrows
+      mirror its ‹ › while the split is open (Person/Review) */
+  stepSplitFace: (dir: 1 | -1) => void;
 }
 
 export interface AppKeysInternals {
@@ -72,7 +75,7 @@ export function useAppKeys(input: AppKeysInput, x: AppKeysInternals): void {
         sel, splitImageId, imageId,
         mode,
         toggle, toggleMany, changeSel, commitPending, acceptAndNext, doReject,
-        stepPerson, stepImage,
+        stepPerson, stepImage, stepSplitFace,
       } = inputRef.current;
       const { contextConfirmRef, pendingRef, hoverRef, lastSelRef } = xRef.current;
       const tgt = e.target as HTMLElement | null;
@@ -187,6 +190,12 @@ export function useAppKeys(input: AppKeysInput, x: AppKeysInternals): void {
             if (imageId == null) return;
             e.preventDefault();
             stepImage(dir);
+          } else if (splitImageId != null) {
+            // #275 (v11.4): a full image is open in Person/Review — the
+            // arrows mirror the bar's ‹ › FACE step (stays in full view;
+            // a no-op at the first/last face, like the disabled arrows)
+            e.preventDefault();
+            stepSplitFace(dir);
           } else {
             // #95: plain arrows step persons (§4.22/#31) — they were
             // dead because this block returned before the arrow checks

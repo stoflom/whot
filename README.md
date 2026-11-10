@@ -350,10 +350,11 @@ rules are `docs/gui-design.md` §4, architecture is
   unique temp copy of `images.preview` is the fallback when none exists
   (opener plugin; gui-design §3; `image_viewer` in whotrc.json overrides
   the system viewer, #273)
-- `open_roll(import_id) → ()` — open the roll's directory
-  (`imports.path`) in the system file manager (opener plugin;
-  gui-design §3 context menus; `directory_viewer` in whotrc.json
-  overrides the default manager, #273)
+- `open_roll(image_id) → ()` — open the directory containing the image
+  file (parent of `images.primary_path`; the recursive roll import may
+  place it in a subdirectory below the roll root `imports.path`) in the
+  system file manager (opener plugin; gui-design §3 context menus;
+  `directory_viewer` in whotrc.json overrides the default manager, #273)
 - `person_face_clusters(person_id, threshold) →
   [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
   similarity clusters inside each (§4.9)

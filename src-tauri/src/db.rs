@@ -976,17 +976,25 @@ pub fn resolve_image_open_path(paths: &Paths, image_id: i64) -> Result<Option<St
         .find(|p| std::path::Path::new(p).exists()))
 }
 
-/// #272 — the roll directory recorded for an import (`imports.path`);
-/// `None` for an unknown id.
-pub fn roll_dir(paths: &Paths, import_id: i64) -> Result<Option<String>> {
+/// #272 (gui-design v11.1) — the directory containing the image file:
+/// the parent of `images.primary_path`. Roll imports may be recursive,
+/// so `imports.path` records only the roll root while the image can sit
+/// in a subdirectory — the file manager opens where the file actually
+/// lives. `None` for an unknown image id.
+pub fn image_file_dir(paths: &Paths, image_id: i64) -> Result<Option<String>> {
     let con = connect(paths)?;
-    Ok(con
+    let p: Option<String> = con
         .query_row(
-            "SELECT path FROM imports WHERE id = ?",
-            params![import_id],
+            "SELECT primary_path FROM images WHERE id = ?",
+            params![image_id],
             |r| r.get(0),
         )
-        .optional()?)
+        .optional()?;
+    Ok(p.and_then(|s| {
+        std::path::Path::new(&s)
+            .parent()
+            .map(|d| d.to_string_lossy().into_owned())
+    }))
 }
 
 // ---------------------------------------------------------------- derived state

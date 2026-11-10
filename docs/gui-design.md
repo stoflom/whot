@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 11.0** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 11.4** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -241,8 +241,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the Review and Rolls views, where it would change nothing. **Rolls
   while browsing renders no centre toolbar at all** (§4.38) — the grid
   gets the pane's full height; the one exception is rule 46: a full
-  image open in Rolls returns the toolbar carrying the film-roll nav
-  cluster. Review and Person keep the navigation cluster. The
+  image open carries **no separate centre toolbar at all** — its own
+  single header bar above the image carries the mode's nav cluster
+  (#275: Rolls steps the film roll's images, Person/Review step as the
+  mode steps — see *Full-image views* below). Review and Person grids
+  keep the centre navigation cluster. The
   toolbar is the center pane's **fixed header** (in the views that have
   one): the sections scroll
   beneath it in their own, shorter scroll area — nothing can scroll past
@@ -257,12 +260,28 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   face's person (§4.37)** — and on opening a full image the right
   pane follows the opening face's person (a faceless Rolls open: the
   image's first face crop, §4.37).
-  **The header shows where the original lives (#268)**: both full-image
-  headers — the focus mode's pinned header row (§4.19) and the Rolls
-  image-detail header — display the image's **full `primary_path`**
-  (truncated to fit, full text in the hover tooltip) with a **Copy**
-  button (the §4.26 clipboard rule). The path is the original file's
-  location — never the `/tmp` viewer-fallback copy (above).
+  **The header shows where the original lives (#268), in ONE bar
+  (#275)**: both full-image surfaces — the focus mode's pinned header
+  row (§4.19) and the Rolls image-detail header — are the **same single
+  bar** directly above the image (no stacked second toolbar): the
+  image's **full `primary_path`** (truncated to fit, full text in the
+  hover tooltip alongside the W×H · state · rotated dim facts) with a
+  **Copy** button (the §4.26 clipboard rule); the **mode-scoped ‹ n/m ›
+  nav cluster** with a **labelled counter** — Rolls steps the film
+  roll's images (`345/560 images`, rule 46), Person/Review step the
+  **faces of the right-pane person available for editing**
+  (`1/4 faces` — the person's visible faces in the person grid's
+  display order; in Review, the new faces under the pinned Show
+  filter): a step **opens the full image containing that face** and
+  the view stays in full-image mode, the arrows are inactive at the
+  first/last face, and the **← → arrow keys mirror the active arrows**;
+  the **⟳/⟲ stored-rotation buttons** (§4.32 — both
+  surfaces now; previously only the split had them); and **close/back**
+  (×/Esc on the split, *← rolls* on the detail) — the only way back to
+  the grid, which returns at its saved scroll place. The path is the
+  original file's location — never the `/tmp` viewer-fallback copy
+  (above). The Description/Accuracy seg stays with the **Person grid**
+  toolbar only — it does not move into the full-image bar.
 - **Card double-click — full-image focus** (§4.19): double-clicking a
   face card opens the center pane's **focus mode**: the annotated full
   image spans the pane's full width (height-fitted, §4.11 overlay)
@@ -278,9 +297,11 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   double-click, and the container's scroll while the image is open
   belongs to the focus view, never to the grid's saved place.
   **Lifecycle** (§4.15): the mode ends when a person is
-  selected — tree row or stepping (always — the attention has shifted,
-  §4.15) — when a card/rectangle selection moves to a different image,
-  or the user navigates explicitly (top-bar tabs, *Review*); the
+  selected by a **tree row**, when a card/rectangle selection moves to
+  a different image, when the user navigates explicitly (top-bar tabs,
+  *Review*), or on close/back — the bar's ‹ › **face stepping does not
+  end the mode** (it stays in the full image, moving between that
+  person's face images); the
   face-rectangle menu hides *Open full image* while its image is the one
   already open.
 - **Face vs person tiles**: face crops render as **rounded squares
@@ -372,10 +393,21 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the **open in system viewer** entry (the Rust `open_image` command
   opens the **first actual location** of the original image — never a
   temp copy while one is reachable — and hands that path to the opener
-  plugin), the **open roll path** entry (the Rust `open_roll` command
-  hands the importing roll's directory — `imports.path` — to the opener
-  plugin, i.e. the system file manager; greyed out while the image was
-  never imported) and the rotate entries (§4.32).
+  plugin), the **open roll** entry (#274, above *Open roll path*): a
+  full view-context change (#123) that switches to **Rolls mode** with
+  the path tree **opened and selected at the invoked image's own
+  branch** (the directory of its `primary_path`) — the same end state
+  as clicking *Rolls* and expanding the tree down to that branch, with
+  the grid listing the image among its siblings; greyed out while the
+  image was never imported, the same gating as *Open roll path*), the
+  **open roll path** entry (the Rust `open_roll` command
+  hands the **directory containing the image file** — the parent of
+  `images.primary_path` — to the opener plugin, i.e. the system file
+  manager; greyed out while the image was never imported). Roll imports
+  may be **recursive** (#169), so `imports.path` records only the roll
+  *root* while the image can sit in a subdirectory — the entry opens the
+  image's own directory, the full path to where the file can be found),
+  and the rotate entries (§4.32).
   **`open_image` opens the original, not a copy (#268)**: the command
   resolves the image's recorded locations — `images.primary_path` first,
   then the `image_paths` alias set (schema-design §3) — and opens the
@@ -1974,8 +2006,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
        `Open roll path` (all:
        applied to **each image of the scope**, one command per image in
        order — rotations batch into one refresh; roll path skips the
-       never-imported images and counts the opened ones in its `(N)`
-       suffix, greyed out when none have a roll), plus the existing
+       never-imported images, opens each image's own directory (the
+       recursive-import subdirectory when the roll walked into it) and
+       counts the opened ones in its `(N)` suffix, greyed out when none
+       have a roll), plus the existing
        faces-of-this-image entries (invoked thumb).
    - **Selection lifecycle**: the image selection clears when the
      branch selection changes (a different thumb set); it survives

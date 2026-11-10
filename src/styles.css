@@ -519,17 +519,21 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 /* ---------------------------------------------------------------- image detail */
 
 .image-detail { display: flex; flex-direction: column; gap: 0.8rem; }
-.image-detail-top { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-.image-meta { font-size: 0.9rem; }
-/* #268: the original's full path, truncated to fit (full text on
-   hover), with the shared Copy affordance beside it */
-.image-meta-path {
+/* #275: the ONE full-image header bar — both full-image surfaces
+   (the focus split and the Rolls image detail) share it: the original's
+   full path + Copy, the mode-scoped ‹ n/m › cluster, the ⟳/⟲ stored
+   rotation, and close/back. No stacked second toolbar; the dim facts
+   (W×H · state · rotated · type) ride in the path's hover tooltip */
+.full-image-bar {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
+  gap: 0.5rem;
+  font-size: 0.8rem;
 }
-.image-meta-path span {
+/* #268: the original's full path, truncated to fit (full text on
+   hover) — the flex item must be allowed to shrink below its content */
+.full-image-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -760,22 +764,6 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   min-height: 0;
   min-width: 0;
 }
-.focus-top {
-  flex: none;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8rem;
-}
-.focus-top span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* #268: the full-path span must be able to shrink in the flex row
-   (flex items refuse to shrink below their content by default) */
-.focus-path { min-width: 0; }
 .focus-image {
   flex: none;
   display: flex;

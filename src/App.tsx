@@ -13,7 +13,8 @@ import type { AppearanceGroup, Delta, Face, ImageRow, Person, Refcrop, Settings,
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import AddGroupDialog from "./components/AddGroupDialog";
-import { CopyButton, ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
+import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
+import { FullImageBar } from "./components/FullImageBar";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
 import { faceIdsOf } from "./nameCluster";
@@ -104,8 +105,10 @@ import { faceMenuGroups, imageAreaMenuGroups, thumbMenuGroups } from "./menus";
 import {
   buildSections,
   firstCropPerson,
+  personFaceList,
   sectionsForImage as sectionsForImageOf,
   sectionsPersonKey,
+  splitStepPos,
 } from "./sections";
 // §4.44 stage 2 (#206): the pane layout rules + the #191 click-pair
 // guard — pure/co-tested, App owns only the wiring
@@ -155,6 +158,10 @@ export default function App() {
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
   const [rollRoot, setRollRoot] = useState("/");
+  // #274: latest-value ref — the menu callback reads it without churning
+  // its identity (the #228 rule)
+  const rollRootRef = useRef(rollRoot);
+  rollRootRef.current = rollRoot;
   // #174 (§4.39): the selected branch of the Rolls path hierarchy —
   // session state like the root (survives mode switches): absolute
   // path, defaults to the root itself, re-validated when the root
@@ -202,6 +209,10 @@ export default function App() {
   // selection change via callback identity churn
   const imgSelRef = useRef<ImageSel>(emptyImageSel());
   imgSelRef.current = imgSel;
+  // #275 (v11.4): the full-image face step, defined below (it needs
+  // splitRow) but read by useAppKeys above — the house latest-value
+  // ref pattern (the key listener reads it at event time)
+  const stepSplitFaceRef = useRef<(dir: 1 | -1) => void>(() => {});
   // #98: sections handed to callbacks defined *before* them (the memoised
   // grid handlers) — same latest-value pattern as selRef/hoverRef
   const sectionsRef = useRef<Section[]>([]);
@@ -1392,6 +1403,45 @@ export default function App() {
     [branchThumbs, imageId, splitImageId, confirmContext, centerScroll.ref],
   );
 
+  // #274 — full image → Rolls mode with the path tree opened and
+  // selected at the image's own branch (the dir-of-primary_path rule,
+  // §4.22): the end state of clicking *Rolls* and expanding the tree
+  // down to that branch. A root that would exclude the branch falls
+  // back to the whole tree; every ancestor of the branch (relative
+  // segment paths — the openSet keys) joins the open set, so the tree
+  // is fully expanded at the target. Explicit navigation ends focus
+  // (§4.15): the #123 dialog guards the context change.
+  const openRollBranch = useCallback(
+    (id: number) =>
+      confirmContext(() => {
+        const img = snapRef.current?.images.find((i) => i.id === id);
+        if (!img) return;
+        const k = img.primary_path.lastIndexOf("/");
+        const branch = k <= 0 ? "/" : img.primary_path.slice(0, k);
+        const root = rollRootRef.current;
+        const effRoot =
+          root === "/" || branch.startsWith(`${root}/`) ? root : "/";
+        if (effRoot !== root) changeRollRoot(effRoot);
+        if (branch !== "/") {
+          const rel =
+            effRoot === "/" ? branch : branch.slice(effRoot.length + 1);
+          setRollOpenSet((prev) => {
+            const next = new Set(prev);
+            for (let p = rel; p !== ""; ) {
+              next.add(p);
+              const j = p.lastIndexOf("/");
+              p = j <= 0 ? "" : p.slice(0, j);
+            }
+            return next;
+          });
+        }
+        setRollBranch(branch);
+        setMode("rolls");
+        setImageId(null);
+        if (splitImageId != null) setSplitImageId(null);
+      }),
+    [confirmContext, changeRollRoot, splitImageId]
+  );
   const imageAreaMenu = useCallback(
     (e: ReactMouseEvent, imageId: number) => {
       if (!snap) return;
@@ -1411,17 +1461,20 @@ export default function App() {
         // #272: the surface image's importing roll (null = never imported)
         rollImportId:
           snap.images.find((i) => i.id === imageId)?.last_import_id ?? null,
-        // #272: roll directory in the file manager — a stale directory
-        // reaches the error toast (#144)
-        openRollPath: (imp) =>
-          api.openRoll(imp).catch((err) => setError(String(err))),
+        // #274: Rolls mode with the tree opened at the image's branch
+        // (the #123 dialog lives in openRollBranch)
+        openRoll: openRollBranch,
+        // #272 (gui-design v11.1): the image's own directory in the file
+        // manager — a stale directory reaches the error toast (#144)
+        openRollPath: (imageId) =>
+          api.openRoll(imageId).catch((err) => setError(String(err))),
         rotateImage: rotateImg,
         changeSel,
       }));
     },
     // #228 (F-L4): sel read via selRef — the callback identity must not
     // churn per face selection (it re-renders memo(RollsThumbs))
-    [snap, faceVisible, openMenu, rotateImg, changeSel]
+    [snap, faceVisible, openMenu, rotateImg, changeSel, openRollBranch]
   );
 
   const imageMenu = useCallback(
@@ -1457,10 +1510,10 @@ export default function App() {
             .filter((i) => i.last_import_id != null)
             .map((i): [number, number] => [i.id, i.last_import_id as number])
         ),
-        // #272: roll directories in the file manager — a stale directory
-        // reaches the error toast (#144)
-        openRollPath: (imp) =>
-          api.openRoll(imp).catch((err) => setError(String(err))),
+        // #272 (gui-design v11.1): each image's own directory in the
+        // file manager — a stale directory reaches the error toast (#144)
+        openRollPath: (imageId) =>
+          api.openRoll(imageId).catch((err) => setError(String(err))),
         doAccept,
         changeSel,
       }));
@@ -2109,6 +2162,7 @@ export default function App() {
       doReject,
       stepPerson,
       stepImage,
+      stepSplitFace: (d) => stepSplitFaceRef.current(d),
     },
     {
       contextConfirmRef,
@@ -2312,6 +2366,37 @@ export default function App() {
     () => (imgRow ? snap?.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f)) ?? [] : []),
     [snap, imgRow, faceVisible]
   );
+  // #275 (gui-design v11.3) — a full image is up on either surface: the
+  // card-double-click split (focus pane) or the Rolls image detail.
+  // While it is, the centre's own toolbar does not render: the single
+  // bar above the image carries the mode's nav cluster instead
+  const fullImageOpen =
+    splitRow != null || (mode === "rolls" && imageId != null && imgRow != null);
+  // #275 (gui-design v11.4) — the focus bar's FACE step: the right-pane
+  // person's editable faces in the view's display order (person grid
+  // sections in Person, the pinned-filter faces in Review) and the open
+  // image's position in that list — the pure rule is personFaceList/
+  // splitStepPos (sections.ts, co-tested)
+  const splitStep = useMemo(() => {
+    if (splitRow == null || personId == null) return { ids: [] as number[], pos: -1 };
+    const ids = personFaceList(mode, personId, sections, snap?.faces ?? [], faceFilter);
+    return { ids, pos: splitStepPos(ids, facesById, splitRow.id) };
+  }, [splitRow, personId, mode, sections, snap, faceFilter, facesById]);
+  // one step = open the full image holding the target face; the view
+  // STAYS in full-image mode (the bar is the only grid return). At the
+  // first/last face (or an unlisted image) the step is a no-op — the
+  // arrows and the ← → keys share the rule
+  const stepSplitFace = useCallback(
+    (dir: 1 | -1) => {
+      const idx = splitStep.pos + dir;
+      if (splitStep.pos === -1 || idx < 0 || idx >= splitStep.ids.length) return;
+      const f = facesById.get(splitStep.ids[idx]);
+      if (f == null) return;
+      confirmContext(() => setSplitImageId(f.image_id));
+    },
+    [splitStep, facesById, confirmContext]
+  );
+  stepSplitFaceRef.current = stepSplitFace;
 
   if (noDb) {
     // #185 (§4.36): no usable database — the first-run screen owns the
@@ -2516,11 +2601,11 @@ export default function App() {
           {/* #163 (v3.64): browsing Rolls renders no centre toolbar at
               all — no nav cluster (person stepping always lands in
               Person — it used to yank a rolls browser away), no seg
-              (§4.9); the grid gets the pane's full height. #235 (rule
-              46): a FULL IMAGE open in Rolls is the one exception —
-              the toolbar returns carrying the film-roll ‹ n/m ›
-              cluster (stepImage over the branch's listed images) */}
-          {mode !== "rolls" || imageId != null ? (
+              (§4.9); the grid gets the pane's full height. #275 (rule
+              46 refined): a FULL IMAGE is up with its OWN single bar —
+              path, the mode's ‹ n/m › cluster, rotation, close/back —
+              so no centre toolbar renders while one is open */}
+          {!fullImageOpen && (mode !== "rolls" || imageId != null) ? (
           <div className="center-toolbar">
             <span className="toolbar-left">
               {mode === "rolls" ? (
@@ -2626,43 +2711,33 @@ export default function App() {
               // this image's faces; the regular grid returns when the mode
               // ends (×/Esc, §4.15 selection move, explicit navigation)
               <div className="focus-pane">
-                <div className="focus-top">
-                  {/* #268: the ORIGINAL file's full path (truncated to
-                      fit, full text on hover) — never the /tmp copy */}
-                  <span className="focus-path" title={splitRow.primary_path}>
-                    {splitRow.primary_path}
-                  </span>
-                  <CopyButton text={splitRow.primary_path} />
-                  <span className="dim">
-                    {splitRow.width}×{splitRow.height} · {splitRow.state}
-                    {splitRow.rotation ? ` · rotated ${splitRow.rotation}°` : ""}
-                  </span>
-                  {/* #122: the stored display rotation — button twin of the
-                      context-menu entries (rotate once, it sticks) */}
-                  <button
-                    className="ghost"
-                    onClick={() => rotateImg(splitRow.id, 90)}
-                    title="Rotate 90° clockwise (stored)"
-                  >
-                    ⟳
-                  </button>
-                  <button
-                    className="ghost"
-                    onClick={() => rotateImg(splitRow.id, -90)}
-                    title="Rotate 90° counter-clockwise (stored)"
-                  >
-                    ⟲
-                  </button>
-                  <button
-                    className="ghost"
-                    onClick={() =>
-                      confirmContext(() => setSplitImageId(null)) // #123
-                    }
-                    title="close (Esc)"
-                  >
-                    ×
-                  </button>
-                </div>
+                {/* #275: the ONE full-image bar (focus surface) — the
+                    person stepper keeps its #76/#194 fallback rules;
+                    the #123 dialog lives in stepPerson/close */}
+                <FullImageBar
+                  img={splitRow}
+                  step={stepSplitFace}
+                  canPrev={splitStep.pos !== -1 && splitStep.pos > 0}
+                  canNext={
+                    splitStep.pos !== -1 &&
+                    splitStep.pos < splitStep.ids.length - 1
+                  }
+                  total={splitStep.ids.length}
+                  pos={splitStep.pos}
+                  stepNoun="face"
+                  onRotate={(d) => rotateImg(splitRow.id, d)}
+                  close={
+                    <button
+                      className="ghost"
+                      onClick={() =>
+                        confirmContext(() => setSplitImageId(null)) // #123
+                      }
+                      title="close (Esc)"
+                    >
+                      ×
+                    </button>
+                  }
+                />
                 <div className="focus-image">
                   <FaceOverlay
                     imageId={splitRow.id}
@@ -2723,23 +2798,33 @@ export default function App() {
             />
           ) : mode === "rolls" && imageId != null && imgRow ? (
             <div className="image-detail">
-              <div className="image-detail-top">
-                <button className="secondary" onClick={() => setImageId(null)}>
-                  ← rolls
-                </button>
-                <div className="image-meta">
-                  {/* #268: the ORIGINAL file's full path (truncated to
-                      fit, full text on hover) — never the /tmp copy */}
-                  <div className="image-meta-path">
-                    <span title={imgRow.primary_path}>{imgRow.primary_path}</span>
-                    <CopyButton text={imgRow.primary_path} />
-                  </div>
-                  <div className="dim">
-                    {imgRow.width}×{imgRow.height} · {imgRow.state}
-                    {imgRow.rtype ? ` · ${imgRow.rtype}` : ""}
-                  </div>
-                </div>
-              </div>
+              {/* #275: the ONE full-image bar (Rolls detail surface) —
+                  the film-roll image stepper (rule 46); the #123
+                  dialog lives in stepImage */}
+              <FullImageBar
+                img={imgRow}
+                rtype={imgRow.rtype}
+                step={stepImage}
+                canPrev={
+                  branchThumbs.images.length > 0 &&
+                  imgStepIdx !== -1 &&
+                  imgStepIdx > 0
+                }
+                canNext={
+                  branchThumbs.images.length > 0 &&
+                  imgStepIdx !== -1 &&
+                  imgStepIdx < branchThumbs.images.length - 1
+                }
+                total={branchThumbs.images.length}
+                pos={imgStepIdx}
+                stepNoun="image"
+                onRotate={(d) => rotateImg(imgRow.id, d)}
+                close={
+                  <button className="secondary" onClick={() => setImageId(null)}>
+                    ← rolls
+                  </button>
+                }
+              />
               <div className="image-preview">
                 <FaceOverlay
                   imageId={imgRow.id}
