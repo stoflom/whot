@@ -9,7 +9,17 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import * as api from "./api";
-import type { AppearanceGroup, Delta, Face, ImageRow, Person, Refcrop, Settings, Snapshot } from "./api";
+import type {
+  AppearanceGroup,
+  Delta,
+  Face,
+  ImageRow,
+  ImportOptions,
+  Person,
+  Refcrop,
+  Settings,
+  Snapshot,
+} from "./api";
 import EditDialog from "./components/EditDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
 import AddGroupDialog from "./components/AddGroupDialog";
@@ -99,7 +109,7 @@ import {
   imageStepTarget,
   type ImageSel,
 } from "./imageSelect";
-import { faceMenuGroups, imageAreaMenuGroups, thumbMenuGroups } from "./menus";
+import { faceMenuGroups, imageAreaMenuGroups, rollBranchMenuGroups, thumbMenuGroups } from "./menus";
 // §4.44 (gui-design v3.94): the centre-pane section derivations are the
 // pure, co-tested buildSections/sectionsForImageOf; App owns only the
 // identities (see the #98 rules there)
@@ -180,6 +190,18 @@ export default function App() {
       return next;
     });
   }, []);
+  // v12.4 (#280)/§4.39: the per-branch recursive-grid state — ABSOLUTE
+  // paths, session state like the open-set; the selected branch's grid
+  // lists every descendant image while ticked
+  const [rollRecursive, setRollRecursive] = useState<Set<string>>(new Set());
+  const toggleRollRecursive = useCallback((path: string) => {
+    setRollRecursive((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
   // #174 (§4.39): the right-pane thumbnail selection — the §4.23
   // anchor pattern over images; clears when the branch selection
   // changes (a different thumb set)
@@ -193,8 +215,13 @@ export default function App() {
     setImgSel(emptyImageSel());
   }, []);
   // #167 (§4.36): the import pane's directory — session state in the
-  // DetailPane's right-pane slot (survives tab switches); null = closed
+  // DetailPane's right-pane slot (survives tab switches); null = closed.
+  // v12.4 (#280): the branch re-import routes pre-check Re-import, so
+  // the pane state carries optional initial options alongside the dir
   const [importDir, setImportDir] = useState<string | null>(null);
+  const [importInitial, setImportInitial] = useState<
+    Partial<Omit<ImportOptions, "rollDir">> | null
+  >(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [selPersons, setSelPersons] = useState<Set<number>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
@@ -1344,7 +1371,12 @@ export default function App() {
     if (!snap) return { images: [] as ImageRow[], deeper: false };
     const listed = listedImages(snap.images, snap.faces, faceFilter);
     const under = rollBranch === "/" ? "/" : `${rollBranch}/`;
-    const direct = snap.images.filter((x) => dirOf(x.primary_path) === rollBranch);
+    // v12.4 (#280)/§4.39: the branch's recursive toggle — ticked lists
+    // every descendant image, not just the ones filed *at* the branch
+    const recursive = rollRecursive.has(rollBranch);
+    const inBranch = recursive
+      ? snap.images.filter((x) => x.primary_path.startsWith(under))
+      : snap.images.filter((x) => dirOf(x.primary_path) === rollBranch);
     const deeper = snap.images.some(
       (x) =>
         listed.has(x.id) &&
@@ -1352,10 +1384,10 @@ export default function App() {
         x.primary_path.startsWith(under)
     );
     return {
-      images: direct.filter((x) => listed.has(x.id)).sort((a, b) => byFilename(a, b)),
+      images: inBranch.filter((x) => listed.has(x.id)).sort((a, b) => byFilename(a, b)),
       deeper,
     };
-  }, [snap, rollBranch, faceFilter]);
+  }, [snap, rollBranch, faceFilter, rollRecursive]);
   // thumb clicks — §4.23's anchor pattern over the branch's display
   // order (face selection untouched); the pane drops stale ids itself
   const thumbClick = useCallback(
@@ -1444,6 +1476,30 @@ export default function App() {
         if (splitImageId != null) setSplitImageId(null);
       }),
     [confirmContext, changeRollRoot, splitImageId]
+  );
+  // v12.4 (#280): the latest recursive state for the event-time menu
+  // read (the #98 identity rule — branchMenu must not churn per toggle)
+  const rollRecursiveRef = useRef(rollRecursive);
+  rollRecursiveRef.current = rollRecursive;
+  // §4.36 branch route: the header ⇩ / the menu's Re-import… open the
+  // import pane on the branch with Re-import pre-checked (every tree
+  // branch holds imported images; the pane's own gating rules apply)
+  const reimportBranch = useCallback((path: string) => {
+    setImportDir(path);
+    setImportInitial({ reimport: true });
+    setImageId(null);
+    if (splitImageId != null) setSplitImageId(null);
+  }, [splitImageId]);
+  const branchMenu = useCallback(
+    (e: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void }, path: string) => {
+      openMenu(e as unknown as ReactMouseEvent, rollBranchMenuGroups({
+        path,
+        onReimport: reimportBranch,
+        recursive: rollRecursiveRef.current.has(path),
+        onToggleRecursive: toggleRollRecursive,
+      }));
+    },
+    [openMenu, reimportBranch, toggleRollRecursive]
   );
   const imageAreaMenu = useCallback(
     (e: ReactMouseEvent, imageId: number) => {
@@ -2806,8 +2862,18 @@ export default function App() {
               // accept dialog when a staged set is live
               onOpenImage={openThumb}
               // #167 (§4.36): a not-yet-imported directory opens the
-              // import pane in the right pane
-              onImportDir={setImportDir}
+              // import pane in the right pane — the path-filter route is
+              // always a FRESH import (clear any branch-route initial)
+              onImportDir={(path) => {
+                setImportDir(path);
+                setImportInitial(null);
+              }}
+              // v12.4 (#280)/§4.36: header ⇩ / menu Re-import… route
+              onReimport={reimportBranch}
+              // v12.4 (#280)/§4.39: the per-branch recursive-grid state
+              recursiveSet={rollRecursive}
+              onToggleRecursive={toggleRollRecursive}
+              onBranchMenu={branchMenu}
             />
           ) : mode === "rolls" && imageId != null && imgRow ? (
             <div className="image-detail">
@@ -2911,7 +2977,13 @@ export default function App() {
             // faces show up in the rolls tree)
             <ImportPane
               dir={importDir}
-              onClose={() => setImportDir(null)}
+              // v12.4 (#280): the branch routes pre-check Re-import
+              // (initial resets with the pane — see onClose)
+              initial={importInitial ?? undefined}
+              onClose={() => {
+                setImportDir(null);
+                setImportInitial(null);
+              }}
               onImported={onImported}
             />
           ) : mode === "rolls" && imageId == null ? (
@@ -2923,6 +2995,8 @@ export default function App() {
               branch={rollBranch}
               images={branchThumbs.images}
               hasSubBranches={branchThumbs.deeper}
+              // v12.4 (#280)/§4.39: the branch's recursive-grid state
+              recursive={rollRecursive.has(rollBranch)}
               sel={imgSel.sel}
               onClickImage={thumbClick}
               onOpenImage={openThumb}

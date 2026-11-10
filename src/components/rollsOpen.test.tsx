@@ -64,6 +64,10 @@ const renderRolls = (openSet: Set<string>, onToggle: (p: string) => void) =>
       openSet={openSet}
       onToggle={onToggle}
       onImportDir={() => {}}
+      onReimport={() => {}}
+      recursiveSet={new Set()}
+      onToggleRecursive={() => {}}
+      onBranchMenu={() => {}}
     />
   );
 
@@ -82,5 +86,78 @@ describe("Rolls tree open state (#265)", () => {
     const { container } = renderRolls(new Set(), onToggle);
     fireEvent.click(container.querySelector<HTMLElement>('[data-path="/b"]')!);
     expect(onToggle).toHaveBeenCalledWith("b");
+  });
+});
+
+// v12.4 (#280)/§4.36+§4.39 — the branch header icon row: the counts text
+// became the roll-path tooltip and the space carries the ⇩ re-import
+// button + the per-branch recursive toggle (neither triggers the
+// header's own toggle+select click)
+describe("Rolls branch header icon row (#280)", () => {
+  const renderHeader = (recursiveSet: Set<string>) => {
+    const onReimport = vi.fn();
+    const onToggleRecursive = vi.fn();
+    const onToggle = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = render(
+      <RollsPane
+        images={images}
+        faces={faces}
+        faceFilter="all"
+        root="/"
+        onRootChange={() => {}}
+        onOpenImage={() => {}}
+        selected=""
+        onSelect={onSelect}
+        openSet={new Set()}
+        onToggle={onToggle}
+        onImportDir={() => {}}
+        onReimport={onReimport}
+        recursiveSet={recursiveSet}
+        onToggleRecursive={onToggleRecursive}
+        onBranchMenu={() => {}}
+      />
+    );
+    return { container, onReimport, onToggleRecursive, onToggle, onSelect };
+  };
+
+  it("the counts live in the roll-path tooltip, not the header body", () => {
+    const { container } = renderHeader(new Set());
+    const path = container.querySelector<HTMLElement>('[data-path="/a"] .roll-path')!;
+    // 1 image at /a + its sub-branch's image = 2 img, both provisional
+    expect(path.title).toBe("/a — 2 img · 2 new · 0 ✓ · 0 ✗");
+    // the old counts span is gone from the DOM
+    expect(container.querySelector(".roll-counts")).toBeNull();
+  });
+
+  it("⇩ opens the import pane route with the ABSOLUTE path, without selecting", () => {
+    const { container, onReimport, onToggle, onSelect } = renderHeader(new Set());
+    const btn = [
+      ...container.querySelectorAll<HTMLElement>('[data-path="/b"] .roll-actions button'),
+    ].find((b) => b.title.startsWith("Re-import"))!;
+    fireEvent.click(btn);
+    expect(onReimport).toHaveBeenCalledWith("/b");
+    // stopPropagation keeps the header's toggle+select click out
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("the recursive toggle reports the ABSOLUTE path and shows its state", () => {
+    const { container, onToggleRecursive } = renderHeader(new Set(["/a"]));
+    const hdr = container.querySelector<HTMLElement>('[data-path="/a"]')!;
+    const btn = [
+      ...hdr.querySelectorAll<HTMLElement>(".roll-actions button"),
+    ].find((b) => b.getAttribute("aria-pressed") != null)!;
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(btn.textContent).toBe("☑");
+    fireEvent.click(btn);
+    expect(onToggleRecursive).toHaveBeenCalledWith("/a");
+    const off = renderHeader(new Set());
+    const hdrB = off.container.querySelector<HTMLElement>('[data-path="/b"]')!;
+    const btnB = [
+      ...hdrB.querySelectorAll<HTMLElement>(".roll-actions button"),
+    ].find((b) => b.getAttribute("aria-pressed") != null)!;
+    expect(btnB.getAttribute("aria-pressed")).toBe("false");
+    expect(btnB.textContent).toBe("☐");
   });
 });

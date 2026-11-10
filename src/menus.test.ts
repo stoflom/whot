@@ -12,6 +12,7 @@ import {
   faceMenuGroups,
   thumbMenuGroups,
   imageAreaMenuGroups,
+  rollBranchMenuGroups,
   type FaceMenuInput,
   type ThumbMenuInput,
   type ImageAreaMenuInput,
@@ -408,5 +409,48 @@ describe("imageAreaMenuGroups", () => {
     expect(entry.disabled).toBe(false);
     entry.onClick();
     expect(roll).toBe(42); // the image's own id (gui-design v11.1)
+  });
+});
+
+// v12.4 (#280): the roll-branch header context menu — the §4.36
+// re-import route + the §4.39 recursive-grid mirror
+describe("rollBranchMenuGroups (#280)", () => {
+  it("'Re-import…' opens the pane route on the invoked branch", () => {
+    const calls: string[] = [];
+    const groups = rollBranchMenuGroups({
+      path: "/mnt/rolls/2024",
+      onReimport: (p) => calls.push(`re:${p}`),
+      recursive: false,
+      onToggleRecursive: (p) => calls.push(`rec:${p}`),
+    });
+    const entry = item(groups, "Re-import…")!;
+    expect(entry.disabled).not.toBe(true);
+    entry.onClick();
+    expect(calls).toEqual(["re:/mnt/rolls/2024"]);
+  });
+
+  it("the recursive entry labels ☐/☑ and toggles the same branch", () => {
+    const calls: string[] = [];
+    const findRecursive = (groups: ReturnType<typeof rollBranchMenuGroups>) =>
+      groups.flatMap((g) => g.items).find((i) => i.label.includes("Include sub-branch images"))!;
+    const off = rollBranchMenuGroups({
+      path: "/a",
+      onReimport: noOp,
+      recursive: false,
+      onToggleRecursive: (p) => calls.push(p),
+    });
+    const offEntry = findRecursive(off);
+    expect(offEntry.label.startsWith("☐")).toBe(true);
+    offEntry.onClick();
+    const on = rollBranchMenuGroups({
+      path: "/a",
+      onReimport: noOp,
+      recursive: true,
+      onToggleRecursive: (p) => calls.push(p),
+    });
+    const onEntry = findRecursive(on);
+    expect(onEntry.label.startsWith("☑")).toBe(true);
+    onEntry.onClick();
+    expect(calls).toEqual(["/a", "/a"]);
   });
 });

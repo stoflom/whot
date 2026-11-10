@@ -458,7 +458,19 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .roll-header.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .roll-path { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roll-date { color: var(--dim); font-size: 0.85rem; flex: none; }
-.roll-counts { margin-left: auto; color: var(--dim); font-size: 0.85rem; flex: none; }
+/* v12.4 (#280)/§4.39: the header icon row — the counts text became the
+   roll-path tooltip; the space carries ⇩ (re-import) + the recursive
+   grid toggle. Compact ghost buttons that never trigger the header's
+   toggle+select click (stopPropagation in RollsPane) */
+.roll-actions { margin-left: auto; display: flex; gap: 0.15rem; flex: none; }
+.roll-actions button.ghost {
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+}
+.roll-actions button.ghost:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.roll-actions button.ghost[aria-pressed="true"] { color: var(--accent); }
 /* #161: nested path branches — sub-directories render indented below their parent */
 .roll-children { display: flex; flex-direction: column; gap: 0.5rem; padding: 0 0.6rem 0.6rem; }
 /* #162: pinned path-filter row — mirrors the tree-header sticky pin */

@@ -326,3 +326,39 @@ export function imageAreaMenuGroups(inp: ImageAreaMenuInput): MenuGroup[] {
     },
   ];
 }
+
+// -------------------------------------------------------- roll branch
+
+// v12.4 (#280): the roll-branch header context menu — the pane's two
+// branch-scoped actions that are not the header's own toggle+select
+// click. Pure like every builder here: the caller resolves the live
+// per-branch recursive state at event time.
+export interface RollBranchMenuInput {
+  /** the branch's absolute path (labels only — the actions are closures) */
+  path: string;
+  /** §4.36 re-import route: open the import pane, Re-import pre-checked */
+  onReimport: (path: string) => void;
+  /** §4.39: the branch's recursive grid state (☐ unticked / ☑ ticked) */
+  recursive: boolean;
+  onToggleRecursive: (path: string) => void;
+}
+
+export function rollBranchMenuGroups(inp: RollBranchMenuInput): MenuGroup[] {
+  return [
+    {
+      title: inp.path,
+      items: [
+        {
+          // §4.36 branch route — every tree branch holds ≥ 1 imported
+          // image, so this is always a genuine RE-import
+          label: "Re-import…",
+          onClick: () => inp.onReimport(inp.path),
+        },
+        {
+          label: `${inp.recursive ? "☑" : "☐"} Include sub-branch images`,
+          onClick: () => inp.onToggleRecursive(inp.path),
+        },
+      ],
+    },
+  ];
+}

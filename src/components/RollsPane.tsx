@@ -35,10 +35,26 @@ interface Props {
   onToggle: (path: string) => void;
   /** #167 (§4.36): a not-yet-imported directory opens the import pane */
   onImportDir: (path: string) => void;
+  /** v12.4 (#280)/§4.36: header ⇩ / menu Re-import… — open the import
+      pane on an ABSOLUTE branch path with Re-import pre-checked */
+  onReimport: (path: string) => void;
+  /** v12.4 (#280)/§4.39: the per-branch recursive-grid state — ABSOLUTE
+      paths, SESSION state in App like the open-set */
+  recursiveSet: ReadonlySet<string>;
+  onToggleRecursive: (path: string) => void;
+  /** v12.4 (#280): the branch header context menu (§4.36/§4.39) */
+  onBranchMenu: BranchMenuOpener;
 }
 
 // the hierarchy maths (DirNode/buildTree/Totals/rollupIndex) live in
 // ../rollsTree (#226) — extracted pure and co-tested there.
+
+/** v12.4 (#280): the branch-header context-menu opener — the raw
+    contextmenu event (openMenu needs preventDefault/stopPropagation) */
+type BranchMenuOpener = (
+  e: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void },
+  path: string
+) => void;
 
 // #226 (F-M5): every recursive computation (roll-up totals, the
 // Show-filter pruning, the name sort) is precomputed once per
@@ -65,6 +81,11 @@ interface BranchProps {
   /** #255: the roving-tabindex focus — only this header is tabbable */
   focusedPath: string | null;
   onFocusPath: (path: string) => void;
+  /** v12.4 (#280): the header icon row + context menu (§4.36/§4.39) */
+  onReimport: (path: string) => void;
+  recursiveSet: ReadonlySet<string>;
+  onToggleRecursive: (path: string) => void;
+  onBranchMenu: BranchMenuOpener;
 }
 
 // #255: the APG tree key pattern for a branch header — Enter/Space act
@@ -122,10 +143,18 @@ function BranchView({
   onSelect,
   focusedPath,
   onFocusPath,
+  onReimport,
+  recursiveSet,
+  onToggleRecursive,
+  onBranchMenu,
 }: BranchProps) {
   const open = openSet.has(path);
   const t = totals.get(node)!;
   const branches = visible.get(node) ?? [];
+  // v12.4 (#280): the totals moved out of the header body into the
+  // path tooltip — the space carries the two branch actions
+  const counts = `${t.img} img · ${t.pending} new · ${t.done} ✓ · ${t.rejected} ✗`;
+  const recursive = recursiveSet.has(absPath);
   return (
     <section className="roll">
       <header
@@ -143,13 +172,48 @@ function BranchView({
         }}
         onFocus={() => onFocusPath(absPath)}
         onKeyDown={(e) => branchKey(e, path, absPath, open, onToggle, onSelect)}
+        onContextMenu={(e) => onBranchMenu(e, absPath)}
       >
         <span className="roll-arrow">{open ? "▾" : "▸"}</span>
-        <span className="roll-path" title={path}>
+        {/* v12.4 (#280): the totals moved into the tooltip (absolute
+            path + counts); data-rel keeps the '/'-joined segment path
+            the suite's ancestor checks read */}
+        <span className="roll-path" data-rel={path} title={`${absPath} — ${counts}`}>
           {node.name}
         </span>
-        <span className="roll-counts">
-          {t.img} img · {t.pending} new · {t.done} ✓ · {t.rejected} ✗
+        <span className="roll-actions">
+          {/* v12.4 (#280)/§4.36: ⇩ opens the import pane on this branch
+              with Re-import pre-checked — stopPropagation keeps the
+              header's toggle+select click out */}
+          <button
+            type="button"
+            className="ghost"
+            title={`Re-import ${path}… (opens the import pane, Re-import pre-checked)`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onReimport(absPath);
+            }}
+          >
+            ⇩
+          </button>
+          {/* v12.4 (#280)/§4.39: the per-branch recursive-grid toggle —
+              ticked = the branch's grid lists every descendant image */}
+          <button
+            type="button"
+            className="ghost"
+            aria-pressed={recursive}
+            title={
+              recursive
+                ? "Including sub-branch images in this branch's grid — click to show direct images only"
+                : "Show direct images only — click to include sub-branch images in this branch's grid"
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleRecursive(absPath);
+            }}
+          >
+            {recursive ? "☑" : "☐"}
+          </button>
         </span>
       </header>
       {open && (
@@ -168,6 +232,10 @@ function BranchView({
               onSelect={onSelect}
               focusedPath={focusedPath}
               onFocusPath={onFocusPath}
+              onReimport={onReimport}
+              recursiveSet={recursiveSet}
+              onToggleRecursive={onToggleRecursive}
+              onBranchMenu={onBranchMenu}
             />
           ))}
         </div>
@@ -176,7 +244,7 @@ function BranchView({
   );
 }
 
-function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, selected, onSelect, openSet, onToggle, onImportDir }: Props) {
+function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage, selected, onSelect, openSet, onToggle, onImportDir, onReimport, recursiveSet, onToggleRecursive, onBranchMenu }: Props) {
   const tree = useMemo(() => buildTree(images, root), [images, root]);
 
   // per-image raw face counters + the Show-filter presence set (§4.10,
@@ -317,6 +385,10 @@ function RollsPane({ images, faces, faceFilter, root, onRootChange, onOpenImage,
               onSelect={onSelect}
               focusedPath={focusedPath}
               onFocusPath={setFocusedPath}
+              onReimport={onReimport}
+              recursiveSet={recursiveSet}
+              onToggleRecursive={onToggleRecursive}
+              onBranchMenu={onBranchMenu}
             />
           ))}
         </div>

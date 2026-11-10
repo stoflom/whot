@@ -189,6 +189,10 @@ describe("RollsPane APG tree (#255)", () => {
         openSet={openSet}
         onToggle={() => {}}
         onImportDir={() => {}}
+        onReimport={() => {}}
+        recursiveSet={new Set()}
+        onToggleRecursive={() => {}}
+        onBranchMenu={() => {}}
       />
     );
 

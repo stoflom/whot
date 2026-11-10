@@ -22,6 +22,9 @@ interface Props {
   images: ImageRow[];
   /** does the branch hold deeper LISTED images? (hint wording, §4.39) */
   hasSubBranches: boolean;
+  /** v12.4 (#280)/§4.39: the branch's recursive toggle — the grid
+      lists every descendant image while on (head notes it) */
+  recursive?: boolean;
   sel: Set<number>;
   onClickImage: (id: number, mods: { ctrl: boolean; shift: boolean }) => void;
   onOpenImage: (id: number) => void;
@@ -51,7 +54,7 @@ function Thumb({ image, selected, onClick, onOpen, onContextMenu }: {
   );
 }
 
-function RollsThumbs({ branch, images, hasSubBranches, sel, onClickImage, onOpenImage, onContextMenuImage }: Props) {
+function RollsThumbs({ branch, images, hasSubBranches, recursive = false, sel, onClickImage, onOpenImage, onContextMenuImage }: Props) {
   // #225: the mounted prefix — App-owned depth is pointless here (the
   // pane remounts per branch), so the limit lives here and resets when
   // the branch changes (a new listing starts at its prefix)
@@ -80,6 +83,9 @@ function RollsThumbs({ branch, images, hasSubBranches, sel, onClickImage, onOpen
       <div className="rolls-thumbs">
         <div className="rolls-thumbs-head dim" title={branch}>
           {branch}
+          {/* v12.4 (#280)/§4.39: the branch's recursive toggle is on —
+              the grid lists every descendant image */}
+          {recursive ? " · incl. sub-branches" : ""}
           {sel.size > 1 ? ` · ${sel.size} selected` : ""}
         </div>
         <div className="img-grid">
