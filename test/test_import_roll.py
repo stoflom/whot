@@ -707,3 +707,292 @@ class CreateDatabaseTest(unittest.TestCase):
         self.assertIn("cannot read the existing file", err.getvalue())
         self.assertIn("refusing to overwrite it", err.getvalue())
         self.assertEqual(other.read_bytes(), junk)
+
+
+# ---------------------------------------------------------------- #276 venv discovery
+
+class VenvSitePackagesTest(unittest.TestCase):
+    """#276: a venv may split site-packages over lib/ and lib64/ (Fedora
+    Python 3.15); the injection must hand the interpreter ALL halves."""
+
+    def _root(self) -> Path:
+        d = Path(tempfile.mkdtemp())
+        (d / "insightface").mkdir()
+        return d / "insightface"
+
+    def _sp(self, root: Path, *parts: str) -> Path:
+        p = root / "insight_env" / Path(*parts)
+        p.mkdir(parents=True)
+        return p
+
+    def test_fedora_split_returns_both_halves(self):
+        root = self._root()
+        lib = self._sp(root, "lib", "python3.15", "site-packages")
+        lib64 = self._sp(root, "lib64", "python3.15", "site-packages")
+        got = ir._venv_site_packages(root)
+        self.assertEqual(got, [lib, lib64], "lib first, then lib64 (prepend order)")
+
+    def test_plain_lib_layout(self):
+        root = self._root()
+        lib = self._sp(root, "lib", "python3.12", "site-packages")
+        self.assertEqual(ir._venv_site_packages(root), [lib])
+
+    def test_bare_site_packages_fallback(self):
+        root = self._root()
+        bare = self._sp(root, "lib64", "site-packages")
+        self.assertEqual(ir._venv_site_packages(root), [bare])
+
+    def test_missing_venv(self):
+        self.assertEqual(ir._venv_site_packages(self._root()), [])
+
+    def test_inject_prepends_every_half_in_venv_order(self):
+        root = self._root()
+        lib = self._sp(root, "lib", "python3.15", "site-packages")
+        lib64 = self._sp(root, "lib64", "python3.15", "site-packages")
+        before = list(sys.path)
+        try:
+            ir.inject_insightface_venv({"INSIGHTFACE_PATH": str(root)})
+            for sp in (lib, lib64):
+                self.assertIn(str(sp), sys.path)
+            self.assertLess(sys.path.index(str(lib64)), sys.path.index(str(lib)),
+                            "lib64 (the C-extension half) must import first")
+        finally:
+            sys.path[:] = before
+
+    def test_inject_without_env_var_is_a_noop(self):
+        before = list(sys.path)
+        ir.inject_insightface_venv({})
+        self.assertEqual(sys.path, before)
+
+    def test_inject_missing_venv_exits_with_both_layouts_named(self):
+        root = self._root()   # insightface/ exists, insight_env/ does not
+        with self.assertRaises(SystemExit) as cm:
+            ir.inject_insightface_venv({"INSIGHTFACE_PATH": str(root)})
+        self.assertIn("lib64/python*/site-packages", str(cm.exception.code))
+
+
+# ---------------------------------------------------------------- #277 IoU matching
+
+class IouTest(unittest.TestCase):
+    def test_identical_boxes(self):
+        self.assertAlmostEqual(ir.iou((0, 0, 20, 20), (0, 0, 20, 20)), 1.0)
+
+    def test_disjoint_boxes(self):
+        self.assertEqual(ir.iou((0, 0, 10, 10), (100, 100, 10, 10)), 0.0)
+
+    def test_half_overlap(self):
+        self.assertAlmostEqual(ir.iou((0, 0, 10, 10), (5, 0, 10, 10)), 1.0 / 3.0)
+
+    def test_touching_edges_do_not_overlap(self):
+        self.assertEqual(ir.iou((0, 0, 10, 10), (10, 0, 10, 10)), 0.0)
+
+
+def _det(box, emb):
+    return ir.Detection(box=box, det_score=0.9, embedding=emb)
+
+
+class MatchDetectionsTest(unittest.TestCase):
+    """1:1 greedy best-IoU assignment (the §9.3 rule, #277)."""
+
+    A = (0, 0, 20, 20)
+    B = (10, 0, 20, 20)          # IoU(A, B) = 1/3 < 0.5
+
+    def test_exact_rematch(self):
+        dets = [_det(self.A, vec(1, 0, 0, 0)), _det(self.B, vec(0, 1, 0, 0))]
+        self.assertEqual(ir.match_detections(dets, [self.A, self.B], 0.5), [0, 1])
+
+    def test_each_takes_its_best(self):
+        # d2 hugs B (0.818) and is below threshold vs A (0.428)
+        d1 = _det((0, 0, 20, 20), vec(1, 0, 0, 0))
+        d2 = _det((8, 0, 20, 20), vec(0, 1, 0, 0))
+        self.assertEqual(ir.match_detections([d1, d2], [self.A, self.B], 0.5), [0, 1])
+
+    def test_collision_best_wins(self):
+        # both dets only qualify for A; d1 (IoU 1.0) wins, d2 (0.818) loses
+        d1 = _det((0, 0, 20, 20), vec(1, 0, 0, 0))
+        d2 = _det((2, 0, 20, 20), vec(0, 1, 0, 0))
+        self.assertEqual(ir.match_detections([d1, d2], [self.A, self.B], 0.5), [0, None])
+
+    def test_below_threshold_is_unmatched(self):
+        dets = [_det((100, 100, 10, 10), vec(1, 0, 0, 0))]
+        self.assertEqual(ir.match_detections(dets, [self.A, self.B], 0.5), [None])
+
+    def test_each_crop_is_used_once(self):
+        dets = [_det(self.A, vec(1, 0, 0, 0)), _det(self.A, vec(0, 1, 0, 0))]
+        self.assertEqual(ir.match_detections(dets, [self.A, self.B], 0.5), [0, None])
+
+
+# ---------------------------------------------------------------- #277 re-import
+
+def _reimport_db() -> sqlite3.Connection:
+    """Full-schema DB: image 1 with one face per scenario of §4.47.
+    Alice (known, filed), Unknown1 (provisional family), Rejected1
+    (owns the rejected face whose re-link must re-link it to Alice)."""
+    con = sqlite3.connect(":memory:")
+    con.executescript((Path(__file__).resolve().parent.parent
+                       / "database" / "schema.sql").read_text())
+    con.execute("PRAGMA foreign_keys = ON")
+    con.execute("INSERT INTO imports(id, path, started_at) VALUES (1, '/r', 't')")
+    con.execute("INSERT INTO imports(id, path, started_at) VALUES (2, '/r', 't')")
+    con.execute("INSERT INTO images(id, content_hash, width, height, primary_path, "
+                "state, created_at) VALUES (1, ?, 1000, 1000, 'r.jpg', 'scanned', 't')",
+                ("a" * 64,))
+    for pid, name, seat in ((1, "Alice", "family|a"), (2, "Unknown1", "Accepted"),
+                            (3, "Rejected1", "Rejected")):
+        con.execute("INSERT INTO persons(id, name, state, created_at) "
+                    "VALUES (?, ?, 'created', 't')", (pid, name))
+        con.execute("INSERT INTO person_groups(person_id, path) VALUES (?, ?)",
+                    (pid, seat))
+    A, U = vec(1.0, 0.0, 0.0, 0.0), vec(0.0, 1.0, 0.0, 0.0)
+    # f2/f5 were filed as Unknown1/Rejected1 but their stored embeddings are
+    # Alice-like: the re-scan must re-link them to Alice.
+    faces = [  # id, box, person, link_status, state, name, seq, emb
+        (1, (0, 0, 20, 20), 1, "confirmed", "detected", "Alice-1", 1, A),
+        (2, (100, 0, 20, 20), 2, "provisional", "detected", "Unknown1-1", 1, A),
+        (3, (200, 0, 20, 20), 2, "provisional", "detected", "Unknown1-2", 2, U),
+        (4, (300, 0, 20, 20), 2, "provisional", "discarded", "Unknown1-3", 3, U),
+        (5, (400, 0, 20, 20), 3, "rejected", "detected", "Rejected1-1", 1, A),
+        (6, (500, 0, 20, 20), 2, "provisional", "detected", "Unknown1-4", 4, U),
+    ]
+    for fid, box, pid, ls, st, name, seq, emb in faces:
+        con.execute(
+            "INSERT INTO faces(id, image_id, x, y, w, h, person_id, link_status, state,"
+            " origin, description, name, seq, confidence, detected_in_import_id, created_at,"
+            " description_key) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, 'insightface', NULL, ?,"
+            " ?, 0.9, 1, 't', '')",
+            (fid, *box, pid, ls, st, name, seq))
+        con.execute("INSERT INTO face_embeddings(face_id, model, dim, vector, created_at)"
+                    " VALUES (?, ?, 4, ?, 't')",
+                    (fid, ir.MODEL_TAG, emb.astype("<f4").tobytes()))
+    con.execute("UPDATE persons SET primary_face_id = 1 WHERE id = 1")
+    con.execute("UPDATE persons SET primary_face_id = 2 WHERE id = 2")
+    # Rejected1's primary is face 5 — it goes stale when face 5 re-links
+    con.execute("UPDATE persons SET primary_face_id = 5, primary_pinned = 1 WHERE id = 3")
+    con.commit()
+    return con
+
+
+def _reimport_dets() -> list:
+    """One re-detection per existing crop + one brand-new face at x=600."""
+    A, U = vec(1.0, 0.0, 0.0, 0.0), vec(0.0, 1.0, 0.0, 0.0)
+    return [
+        _det((0, 0, 20, 20), A),      # -> f1 (confirmed, kept)
+        _det((100, 0, 20, 20), A),    # -> f2 (re-matches Alice, re-links)
+        _det((200, 0, 20, 20), U),    # -> f3 (re-matches Unknown1, no-op)
+        _det((300, 0, 20, 20), U),    # -> f4 (discarded, consumed)
+        _det((400, 0, 20, 20), A),    # -> f5 (rejected, re-links to Alice)
+        _det((600, 0, 20, 20), U),    # no crop there -> new face (Unknown1)
+    ]
+
+
+def _run_reimport(con: sqlite3.Connection, dry_run: bool = False) -> dict:
+    corpus = ir.load_known_corpus(con)
+    unknowns = ir.load_unknown_corpus(con)
+    names = ir.load_unknown_numbering_names(con)
+    return ir.reimport_image(con, 1, _reimport_dets(), corpus, unknowns, 0.4,
+                             names, 0.5, import_id=2, now="t", dry_run=dry_run)
+
+
+class ReimportImageTest(unittest.TestCase):
+    def test_scenario_counts(self):
+        counts = _run_reimport(_reimport_db())
+        self.assertEqual(counts, {"kept": 3, "relinked": 2, "new": 1, "orphaned": 1})
+
+    def test_relink_rewrites_person_seq_and_name(self):
+        con = _reimport_db()
+        _run_reimport(con)
+        con.commit()
+        row = con.execute("SELECT person_id, link_status, seq, name FROM faces WHERE id = 2"
+                          ).fetchone()
+        self.assertEqual(row, (1, "provisional", 2, "Alice-2"),
+                         "f2 re-linked to Alice, next-in-group seq, derived label")
+        row = con.execute("SELECT person_id, link_status, seq, name FROM faces WHERE id = 5"
+                          ).fetchone()
+        self.assertEqual(row, (1, "provisional", 3, "Alice-3"),
+                         "rejected face re-links to provisional (deliberate rework)")
+
+    def test_noop_same_person_keeps_seq(self):
+        con = _reimport_db()
+        _run_reimport(con)
+        con.commit()
+        row = con.execute("SELECT person_id, seq, name FROM faces WHERE id = 3").fetchone()
+        self.assertEqual(row, (2, 2, "Unknown1-2"), "same person: no seq churn")
+
+    def test_discarded_consumed_orphaned_untouched(self):
+        con = _reimport_db()
+        _run_reimport(con)
+        con.commit()
+        discarded = con.execute("SELECT COUNT(*) FROM faces WHERE id = 4"
+                                ).fetchone()[0]
+        self.assertEqual(discarded, 1, "discarded face is not duplicated")
+        orphan = con.execute("SELECT person_id, seq FROM faces WHERE id = 6").fetchone()
+        self.assertEqual(orphan, (2, 4), "orphaned face stays as-is")
+
+    def test_new_face_takes_the_fresh_path(self):
+        con = _reimport_db()
+        _run_reimport(con)
+        con.commit()
+        row = con.execute("SELECT image_id, x, person_id, link_status, seq, name,"
+                          " detected_in_import_id FROM faces WHERE id = 7").fetchone()
+        self.assertEqual(row, (1, 600, 2, "provisional", 5, "Unknown1-5", 2),
+                         "new detection stored as a fresh face under Unknown1")
+        emb = con.execute("SELECT COUNT(*) FROM face_embeddings WHERE face_id = 7"
+                          ).fetchone()[0]
+        self.assertEqual(emb, 1)
+
+    def test_reseat_and_stale_primary(self):
+        con = _reimport_db()
+        _run_reimport(con)
+        con.commit()
+        seat = con.execute("SELECT path FROM person_groups WHERE person_id = 2"
+                           ).fetchone()[0]
+        self.assertEqual(seat, "New", "provisional face re-seats the person (4.35)")
+        filed = con.execute("SELECT path FROM person_groups WHERE person_id = 1"
+                            ).fetchone()[0]
+        self.assertEqual(filed, "family|a", "a filed person's rows are never touched")
+        row = con.execute("SELECT primary_face_id, primary_pinned FROM persons WHERE id = 3"
+                          ).fetchone()
+        self.assertEqual(row, (None, 0),
+                         "source person's stale primary recomputed, pinned cleared")
+
+    def test_dry_run_writes_nothing(self):
+        con = _reimport_db()
+        before = (con.execute("SELECT * FROM faces ORDER BY id").fetchall(),
+                  con.execute("SELECT * FROM persons ORDER BY id").fetchall(),
+                  con.execute("SELECT * FROM person_groups ORDER BY 1, 2").fetchall())
+        counts = _run_reimport(con, dry_run=True)
+        self.assertEqual(counts, {"kept": 3, "relinked": 2, "new": 1, "orphaned": 1})
+        after = (con.execute("SELECT * FROM faces ORDER BY id").fetchall(),
+                 con.execute("SELECT * FROM persons ORDER BY id").fetchall(),
+                 con.execute("SELECT * FROM person_groups ORDER BY 1, 2").fetchall())
+        self.assertEqual(after, before, "dry-run changes nothing")
+
+    def test_no_face_image_flips_to_scanned(self):
+        con = _reimport_db()
+        con.execute("DELETE FROM faces")
+        con.execute("UPDATE images SET state = 'no-face' WHERE id = 1")
+        con.commit()
+        A = vec(1.0, 0.0, 0.0, 0.0)
+        counts = ir.reimport_image(con, 1, [_det((0, 0, 20, 20), A)],
+                                   [], [], 0.4, ["Unknown1"], 0.5, import_id=2, now="t",
+                                   dry_run=False)
+        con.commit()
+        self.assertEqual(counts["new"], 1)
+        self.assertEqual(con.execute("SELECT state FROM images WHERE id = 1"
+                                     ).fetchone()[0], "scanned")
+
+
+class ReimportParserTest(unittest.TestCase):
+    def test_flags(self):
+        ap = ir.build_parser()
+        args = ap.parse_args(["/tmp/roll", "--reimport"])
+        self.assertTrue(args.reimport)
+        self.assertEqual(args.min_overlap, 0.5, "the 9.3 default")
+        args = ap.parse_args(["/tmp/roll", "--reimport", "--min-overlap", "0.8"])
+        self.assertEqual(args.min_overlap, 0.8)
+
+    def test_min_overlap_range_refused(self):
+        ap = ir.build_parser()
+        for bad in ("0", "1.5", "-0.2"):
+            with self.assertRaises(SystemExit):
+                ir.validate_args(ap, ap.parse_args(["/tmp/roll", "--min-overlap", bad]))
