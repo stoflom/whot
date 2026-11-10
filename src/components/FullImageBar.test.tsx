@@ -31,7 +31,7 @@ const mount = (over: {
   canNext?: boolean;
   total?: number;
   pos?: number;
-  stepNoun?: "person" | "image";
+  stepNoun?: "face" | "image";
   onRotate?: (d: 90 | -90) => void;
   rtype?: string | null;
   img?: ImageRow;
@@ -47,7 +47,7 @@ const mount = (over: {
       canNext={over.canNext ?? true}
       total={over.total ?? 5}
       pos={over.pos ?? 2}
-      stepNoun={over.stepNoun ?? "person"}
+      stepNoun={over.stepNoun ?? "face"}
       onRotate={onRotate}
       close={<button data-testid="close">×</button>}
     />
@@ -55,32 +55,38 @@ const mount = (over: {
   return { step, onRotate, ...utils };
 };
 
-const btn = (title: string) =>
-  document.querySelector<HTMLButtonElement>(
-    `button[title="${title}"]`
-  )!;
+// scoped to a mount's own container — sibling mounts stay in the
+// document until cleanup (multiple mounts per test)
+const btn = (c: ParentNode, title: string) =>
+  c.querySelector<HTMLButtonElement>(`button[title="${title}"]`)!;
+
 
 afterEach(cleanup);
 
 describe("FullImageBar (#275)", () => {
-  it("is ONE bar carrying path, copy, the ‹ n/m › cluster, rotation and close", () => {
-    const { container } = mount();
+  it("is ONE bar carrying path, copy, the LABELLED ‹ n/m › cluster, rotation and close", () => {
+    const { container } = mount(); // default: the face surface
     const bar = container.querySelector(".full-image-bar")!;
     expect(bar).toBeTruthy();
     expect(bar.textContent).toContain(IMG.primary_path);
     expect(bar.querySelector(".err-copy")).toBeTruthy();
-    expect(bar.querySelector(".nav-pos")!.textContent).toBe("3/5");
-    expect(btn("previous person (←)")).toBeTruthy();
-    expect(btn("next person (→)")).toBeTruthy();
-    expect(btn("Rotate 90° clockwise (stored)")).toBeTruthy();
-    expect(btn("Rotate 90° counter-clockwise (stored)")).toBeTruthy();
+    expect(bar.querySelector(".nav-pos")!.textContent).toBe("3/5 faces");
+    expect(btn(container, "previous face (←)")).toBeTruthy();
+    expect(btn(container, "next face (→)")).toBeTruthy();
+    expect(btn(container, "Rotate 90° clockwise (stored)")).toBeTruthy();
+    expect(btn(container, "Rotate 90° counter-clockwise (stored)")).toBeTruthy();
     expect(bar.querySelector('[data-testid="close"]')).toBeTruthy();
     // nothing above it — the bar is the surface's header
     expect(container.firstElementChild).toBe(bar);
+    // the Rolls surface labels its counter in images
+    const rolls = mount({ stepNoun: "image", rtype: "raw" });
+    expect(rolls.container.querySelector(".nav-pos")!.textContent).toBe(
+      "3/5 images"
+    );
   });
 
   it("folds the dim facts into the path tooltip (W×H · state · rotated, type on the detail surface)", () => {
-    const focus = mount({ stepNoun: "person" });
+    const focus = mount({ stepNoun: "face" });
     expect(
       focus.container
         .querySelector(".full-image-path")!
@@ -99,20 +105,18 @@ describe("FullImageBar (#275)", () => {
   });
 
   it("steps the mode's list and honours the surface's own arrow rules", () => {
-    const { step } = mount();
-    fireEvent.click(btn("previous person (←)"));
-    fireEvent.click(btn("next person (→)"));
-    expect(step).toHaveBeenNthCalledWith(1, -1);
-    expect(step).toHaveBeenNthCalledWith(2, 1);
+    const first = mount();
+    fireEvent.click(btn(first.container, "previous face (←)"));
+    fireEvent.click(btn(first.container, "next face (→)"));
+    expect(first.step).toHaveBeenNthCalledWith(1, -1);
+    expect(first.step).toHaveBeenNthCalledWith(2, 1);
     // person surface: an unanchored item (pos -1) still steps (the
     // #76/#194 cursor/last-position fallback) — the caller says so
     const off = mount({ pos: -1, canPrev: true, canNext: true });
-    expect(
-      off.container.querySelector<HTMLButtonElement>(
-        'button[title="previous person (←)"]'
-      )!.disabled
-    ).toBe(false);
-    expect(off.container.querySelector(".nav-pos")!.textContent).toBe("–/5");
+    expect(btn(off.container, "previous face (←)").disabled).toBe(false);
+    expect(off.container.querySelector(".nav-pos")!.textContent).toBe(
+      "–/5 faces"
+    );
     // image surface: off-list disables both arrows (rule 46)
     const img = mount({ stepNoun: "image", pos: -1, canPrev: false, canNext: false });
     expect(
@@ -128,19 +132,15 @@ describe("FullImageBar (#275)", () => {
     // empty list: `–`; the callers fold total-0 into their can flags
     const empty = mount({ total: 0, canPrev: false, canNext: false });
     expect(empty.container.querySelector(".nav-pos")!.textContent).toBe("–");
-    expect(
-      empty.container.querySelector<HTMLButtonElement>(
-        'button[title="previous person (←)"]'
-      )!.disabled
-    ).toBe(true);
+    expect(btn(empty.container, "previous face (←)").disabled).toBe(true);
   });
 
   it("rotates the stored display rotation via the caller (±90)", () => {
-    const { onRotate } = mount();
-    fireEvent.click(btn("Rotate 90° clockwise (stored)"));
-    fireEvent.click(btn("Rotate 90° counter-clockwise (stored)"));
-    expect(onRotate).toHaveBeenNthCalledWith(1, 90);
-    expect(onRotate).toHaveBeenNthCalledWith(2, -90);
+    const m = mount();
+    fireEvent.click(btn(m.container, "Rotate 90° clockwise (stored)"));
+    fireEvent.click(btn(m.container, "Rotate 90° counter-clockwise (stored)"));
+    expect(m.onRotate).toHaveBeenNthCalledWith(1, 90);
+    expect(m.onRotate).toHaveBeenNthCalledWith(2, -90);
   });
 
   it("renders the surface's close/back control as-is", () => {

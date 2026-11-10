@@ -6,8 +6,9 @@
 //   §4.35  the rejected section + the system person's empty rule default
 //   #155   the staged (§4.24) description drives the Description regroup
 import { describe, expect, it } from "vitest";
-import { buildSections, firstCropPerson, sectionsForImage, sectionsPersonKey } from "./sections";
+import { buildSections, firstCropPerson, personFaceList, sectionsForImage, sectionsPersonKey, splitStepPos } from "./sections";
 import type { SectionInputs } from "./sections";
+import type { Section } from "./components/FaceGrid";
 import type { AppearanceGroup, Face, ImageRow, Person, Snapshot } from "./api";
 import { indexStagedSet } from "./stage";
 
@@ -559,5 +560,59 @@ describe("view branch priority", () => {
   it("no snapshot → no sections (the loading guard)", () => {
     resetFixtures([], []);
     expect(build({ snap: null, mode: "review" })).toEqual([]);
+  });
+});
+
+describe("#275 (gui-design v11.4) — the full-image bar's FACE step", () => {
+  it("person mode: the person grid's sections in display order", () => {
+    const sections: Section[] = [
+      { key: "pd-7-a", title: "A", faceIds: [1, 2] },
+      { key: "pd-7-b", title: "B", faceIds: [3] },
+    ];
+    expect(personFaceList("person", 7, sections, [], "all")).toEqual([
+      1, 2, 3,
+    ]);
+  });
+
+  it("review: the person's faces under the pinned filter, snapshot order", () => {
+    const fs = [
+      face({ id: 1, person: 7, status: "provisional" }),
+      face({ id: 2, person: 7, status: "confirmed" }),
+      face({ id: 3, person: 7, status: "provisional" }),
+      face({ id: 4, person: 8, status: "provisional" }),
+    ];
+    expect(personFaceList("review", 7, [], fs, "provisional")).toEqual([
+      1, 3,
+    ]);
+    expect(personFaceList("review", 7, [], fs, "confirmed")).toEqual([2]);
+  });
+
+  it("a NULL person (unassigned face opened the view) has no list", () => {
+    expect(
+      personFaceList(
+        "person",
+        null,
+        [{ key: "k", title: "t", faceIds: [1] }],
+        [],
+        "all"
+      )
+    ).toEqual([]);
+    expect(
+      personFaceList("review", null, [], [face({ person: 7 })], "provisional")
+    ).toEqual([]);
+  });
+
+  it("splitStepPos: the first face on the open image in LIST order, -1 when none", () => {
+    const fs = [
+      face({ id: 1, image: 5 }),
+      face({ id: 2, image: 6 }),
+      face({ id: 3, image: 5 }),
+    ];
+    const byId = new Map(fs.map((f) => [f.id, f]));
+    expect(splitStepPos([1, 2, 3], byId, 6)).toBe(1);
+    // the position is the face's LIST position, not the image's
+    expect(splitStepPos([2, 1, 3], byId, 5)).toBe(1);
+    expect(splitStepPos([1, 2], byId, 99)).toBe(-1);
+    expect(splitStepPos([], byId, 5)).toBe(-1);
   });
 });
