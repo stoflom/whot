@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 12.1** (#278) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 12.2** (#279) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -82,7 +82,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ WhoT Face Manager                [Review] [Rolls]      settings ⚙       │
+│ WhoT Face Manager                [Review] [Rolls]      ? help · settings ⚙ │
 ├──────────────┬───────────────────────────────────────────┬───────────────┤
 │ filter       │ group header (select-all ▣ · N faces ·    │ person name   │
 │ ┌──────────┐ │ name · group · desc · Edit…; similarity   │ group path    │
@@ -336,8 +336,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   inert — person stepping can only land in the person view, so ‹/← have
   no target in Rolls; with a full image open in Rolls, ‹ › and ←/→
   step the film roll's images instead (rule 46). Shortcuts never fire while an
-  input or dialog has focus; the current set is listed in the settings
-  popover (`Esc` closes overlays, `Enter` commits fields).
+  input or dialog has focus; the current set is listed in the **?
+  shortcuts help screen** (§4.48 — `Esc` closes overlays, `Enter` commits fields).
 - **Context menus**: face cards, person rows and image thumbs show a
   right-click menu with grouped entries — *selection* (select/deselect/
   select-all/clear) and *actions* (accept/reject, primary, reference,
@@ -854,7 +854,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     (no-op when neither exists); all-selected ⇒ deselect, otherwise
     select all. Shortcuts obey the existing guards (never while an input
     or dialog has focus, `preventDefault` so webkit cannot steal Ctrl-G)
-    and are listed in the settings popover.
+    and are listed in the **? shortcuts help screen** (§4.48).
 18. **Add group…** ⇒ context menu of **person
     rows** (*add group…*; multi-select: *add group to N persons…*): a
     shared **`AddGroupDialog` (#256)** — one component for every host —
@@ -981,8 +981,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     Esc closes split/dialog/menu (§4.19). Shortcuts are suppressed while
     typing in any input and while a menu or dialog is open. Context-menu
     items display their shortcut as a right-aligned dim hint
-    (`MenuItem.hint`); the rule-bar tooltips and the settings popover's
-    Keyboard list document the set. No shortcuts for destructive
+    (`MenuItem.hint`); the rule-bar tooltips and the **? shortcuts
+    help screen** (§4.48) document the set. No shortcuts for destructive
     actions (remove person, delete group) — they keep confirm dialogs.
 23. **Anchor + shift-click ranges** ⇒ a plain card click selects
     just that card and drops the *range anchor*; **Shift-click** selects
@@ -2155,7 +2155,7 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      describe.
    - **Top-bar status totals**: the top bar **always** shows the
      **database's live face totals** as
-     an overview — `? N` (New), `✓ N` (Accepted), `✗ N` (Rejected) —
+     an overview — `★ N` (New), `✓ N` (Accepted), `✗ N` (Rejected) —
      **independent of mode, Show filter and selection** (shown with no
      anchor at all) and re-derived from the refreshed snapshot on every
      mutation (accept, reject, assign/merge, delete). Same chips and
@@ -2369,6 +2369,37 @@ orphaned). A `no-face` image gains faces if the model now detects them
 row (new faces reference it; re-linked faces keep their original
 detection). GUI/backend exposure of the flag is a separate change
 (#278).
+
+**48. (v12.2, #279) The ? shortcuts help screen — and the settings
+popover's value fields.**
+
+Three related changes to the top bar's right corner:
+
+- **Help screen**: a ghost **`?`** button sits in the top bar beside the
+  ⚙ settings button and opens a dedicated modal **Shortcuts** dialog —
+  the keyboard/mouse idiom list (`←`/`→`, `Ctrl-G`, `Space`, `Ctrl-A`,
+  `A`/`R`, click idioms, `Esc`, `Enter`, name-assign, double-click,
+  right-click). The list moved **out of the settings popover**, which it
+  crowded while the popover's job is value fields; the help screen owns
+  that documentation now, and every other doc pointer to the "settings
+  popover's Keyboard list" (§3 stepping bullet, §4.17, §4.22) points
+  here. The dialog registers with the overlay registry (#258) and
+  carries the window-level Escape handler (#248 — v5.5), a visible
+  **Close** button and click-away dismissal, like every dialog; no other
+  behaviour changes.
+- **Settings popover — system viewers**: the popover gains the two
+  #273 viewer settings as text inputs beside its numeric fields —
+  **Image viewer** (`image_viewer`, the *Open in system viewer* program)
+  and **Directory viewer** (`directory_viewer`, the *Open roll path*
+  program) — shown and **edited like the other entries**, saved with the
+  popover's save. **Empty (default) means the system default**: the
+  placeholder states it, so an emptied field is meaningful, never lost.
+  The values are free text (a program path/command), no validation
+  beyond the existing launch failure path (#144's error toast).
+- **The New totals chip becomes a star**: `?` now opens help, so the
+  top-bar status totals' New chip (§4.41) reads **`★ N`** — the glyphs
+  `✓ N` (Accepted) and `✗ N` (Rejected) are untouched. The chip's title
+  and colour scheme are unchanged.
 
 ## 5. Related documents
 
