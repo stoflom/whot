@@ -21,9 +21,15 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
   }, [onClose]);
   const [threshold, setThreshold] = useState(settings.cluster_threshold);
   const [refcropN, setRefcropN] = useState(settings.refcrop_n);
+  // #273 → the popover's fields: the two system viewers are free-text
+  // program paths (v12.2, #279 — show/edit them like the other entries)
+  const [imageViewer, setImageViewer] = useState(settings.image_viewer);
+  const [directoryViewer, setDirectoryViewer] = useState(settings.directory_viewer);
   useEffect(() => {
     setThreshold(settings.cluster_threshold);
     setRefcropN(settings.refcrop_n);
+    setImageViewer(settings.image_viewer);
+    setDirectoryViewer(settings.directory_viewer);
   }, [settings]);
 
   // #48 — min/max attributes only steer the spinner; typed values pass
@@ -61,27 +67,31 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
             onChange={(e) => setRefcropN(parseInt(e.target.value) || 1)}
           />
         </label>
-        <div className="shortcuts">
-          <h4>Keyboard</h4>
-          <ul>
-            <li><b>←</b> / <b>→</b> — previous / next person (tree order; from the person under the cursor if none is selected); in the Rolls view, while a full image is open, the previous / next image of the selected branch</li>
-            <li><b>Ctrl-G</b> — select/deselect the group under the cursor (else the hovered or last-selected card's section)</li>
-            <li><b>Space</b> — toggle selection of the hovered / last-selected card</li>
-            <li><b>Ctrl-A</b> — select all cards in the current view</li>
-            <li><b>A</b> / <b>R</b> — accept / reject the selection (the hovered card if nothing is selected)</li>
-            <li><b>click</b> — select a single card (drops the range anchor)</li>
-            <li><b>Shift-click</b> — select everything from the anchor to the clicked card</li>
-            <li><b>Ctrl-click</b> — toggle a face card in the selection</li>
-            <li><b>Esc</b> — close split, dialog or context menu</li>
-            <li><b>Enter</b> — commit an edited field</li>
-            <li>face-card name — assign that person (asks: this face or whole group — unless the card is selected, then the whole selection)</li>
-            <li>double-click — rename a person · open a face's full image</li>
-            <li>right-click — context menus on tiles and images</li>
-          </ul>
-        </div>
+        {/* #273/v12.2 (#279): the system viewers — free text; empty means
+            the system default opener (never a lost setting) */}
+        <label>
+          Image viewer (the Open in system viewer program)
+          <input
+            type="text"
+            title="Program for the Open in system viewer entry — empty uses the system default"
+            placeholder="empty = system default"
+            value={imageViewer}
+            onChange={(e) => setImageViewer(e.target.value)}
+          />
+        </label>
+        <label>
+          Directory viewer (the Open roll path program)
+          <input
+            type="text"
+            title="Program / file manager for the Open roll path entry — empty uses the system default"
+            placeholder="empty = system default"
+            value={directoryViewer}
+            onChange={(e) => setDirectoryViewer(e.target.value)}
+          />
+        </label>
         <div className="dialog-actions">
           <button className="secondary" onClick={onClose}>cancel</button>
-          <button onClick={() => onSave({ ...settings, ...clamped })}>save</button>
+          <button onClick={() => onSave({ ...settings, ...clamped, image_viewer: imageViewer, directory_viewer: directoryViewer })}>save</button>
         </div>
       </div>
     </div>

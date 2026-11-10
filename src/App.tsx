@@ -91,6 +91,7 @@ import ImportPane from "./components/ImportPane";
 import FirstRun from "./components/FirstRun";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
+import HelpDialog from "./components/HelpDialog";
 import {
   byFilename,
   clickImage,
@@ -351,6 +352,8 @@ export default function App() {
   // #31: the tree's text filter (declared early — stepIds needs it, #125)
   const [filter, setFilter] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // v12.2 (#279) — the ? help screen (top-bar ghost button beside ⚙)
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // #132: the info toast survives the action that raised it and clears on
   // the NEXT user action — capture phase, so it beats any child handler
@@ -2528,7 +2531,7 @@ export default function App() {
               an overview of the database; never scoped to the anchor,
               the mode or the filter */}
           <span className="status-counts" title="totals in the database">
-            <span className="c-prov" title="new faces">? {statusTotals.provisional}</span>
+            <span className="c-prov" title="new faces">★ {statusTotals.provisional}</span>
             <span className="c-conf" title="accepted faces">✓ {statusTotals.confirmed}</span>
             <span className="c-rej" title="rejected faces">✗ {statusTotals.rejected}</span>
           </span>
@@ -2538,6 +2541,16 @@ export default function App() {
             title="Refresh"
           >
             ↻
+          </button>
+          {/* v12.2 (#279): ? opens the shortcuts help screen — ? is now
+              taken in the top bar, which is why the New totals chip
+              became ★ */}
+          <button
+            className="ghost"
+            onClick={() => setHelpOpen(true)}
+            title="Keyboard shortcuts"
+          >
+            ?
           </button>
           <button className="ghost" onClick={() => setSettingsOpen(true)} title="Settings">
             ⚙
@@ -3106,6 +3119,7 @@ export default function App() {
           onCancel={() => setEdit(null)}
         />
       )}
+      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {settingsOpen && snap && (
         <SettingsPopover
           settings={snap.settings}
