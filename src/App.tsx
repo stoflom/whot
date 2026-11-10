@@ -105,8 +105,10 @@ import { faceMenuGroups, imageAreaMenuGroups, thumbMenuGroups } from "./menus";
 import {
   buildSections,
   firstCropPerson,
+  personFaceList,
   sectionsForImage as sectionsForImageOf,
   sectionsPersonKey,
+  splitStepPos,
 } from "./sections";
 // §4.44 stage 2 (#206): the pane layout rules + the #191 click-pair
 // guard — pure/co-tested, App owns only the wiring
@@ -207,6 +209,10 @@ export default function App() {
   // selection change via callback identity churn
   const imgSelRef = useRef<ImageSel>(emptyImageSel());
   imgSelRef.current = imgSel;
+  // #275 (v11.4): the full-image face step, defined below (it needs
+  // splitRow) but read by useAppKeys above — the house latest-value
+  // ref pattern (the key listener reads it at event time)
+  const stepSplitFaceRef = useRef<(dir: 1 | -1) => void>(() => {});
   // #98: sections handed to callbacks defined *before* them (the memoised
   // grid handlers) — same latest-value pattern as selRef/hoverRef
   const sectionsRef = useRef<Section[]>([]);
@@ -2156,6 +2162,7 @@ export default function App() {
       doReject,
       stepPerson,
       stepImage,
+      stepSplitFace: (d) => stepSplitFaceRef.current(d),
     },
     {
       contextConfirmRef,
@@ -2365,6 +2372,31 @@ export default function App() {
   // bar above the image carries the mode's nav cluster instead
   const fullImageOpen =
     splitRow != null || (mode === "rolls" && imageId != null && imgRow != null);
+  // #275 (gui-design v11.4) — the focus bar's FACE step: the right-pane
+  // person's editable faces in the view's display order (person grid
+  // sections in Person, the pinned-filter faces in Review) and the open
+  // image's position in that list — the pure rule is personFaceList/
+  // splitStepPos (sections.ts, co-tested)
+  const splitStep = useMemo(() => {
+    if (splitRow == null || personId == null) return { ids: [] as number[], pos: -1 };
+    const ids = personFaceList(mode, personId, sections, snap?.faces ?? [], faceFilter);
+    return { ids, pos: splitStepPos(ids, facesById, splitRow.id) };
+  }, [splitRow, personId, mode, sections, snap, faceFilter, facesById]);
+  // one step = open the full image holding the target face; the view
+  // STAYS in full-image mode (the bar is the only grid return). At the
+  // first/last face (or an unlisted image) the step is a no-op — the
+  // arrows and the ← → keys share the rule
+  const stepSplitFace = useCallback(
+    (dir: 1 | -1) => {
+      const idx = splitStep.pos + dir;
+      if (splitStep.pos === -1 || idx < 0 || idx >= splitStep.ids.length) return;
+      const f = facesById.get(splitStep.ids[idx]);
+      if (f == null) return;
+      confirmContext(() => setSplitImageId(f.image_id));
+    },
+    [splitStep, facesById, confirmContext]
+  );
+  stepSplitFaceRef.current = stepSplitFace;
 
   if (noDb) {
     // #185 (§4.36): no usable database — the first-run screen owns the
@@ -2684,18 +2716,15 @@ export default function App() {
                     the #123 dialog lives in stepPerson/close */}
                 <FullImageBar
                   img={splitRow}
-                  step={stepPerson}
-                  canPrev={
-                    stepIds.length > 0 &&
-                    (stepIdx === -1 || stepIdx > 0)
-                  }
+                  step={stepSplitFace}
+                  canPrev={splitStep.pos !== -1 && splitStep.pos > 0}
                   canNext={
-                    stepIds.length > 0 &&
-                    (stepIdx === -1 || stepIdx < stepIds.length - 1)
+                    splitStep.pos !== -1 &&
+                    splitStep.pos < splitStep.ids.length - 1
                   }
-                  total={stepIds.length}
-                  pos={stepIdx}
-                  stepNoun="person"
+                  total={splitStep.ids.length}
+                  pos={splitStep.pos}
+                  stepNoun="face"
                   onRotate={(d) => rotateImg(splitRow.id, d)}
                   close={
                     <button

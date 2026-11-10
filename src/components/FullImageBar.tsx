@@ -30,8 +30,9 @@ export interface FullImageBarProps {
   /** the stepped item's position in the mode's list (-1 = not listed
       → `–/m`) */
   pos: number;
-  /** what the arrows step — the button titles' noun */
-  stepNoun: "person" | "image";
+  /** what the arrows step — the button titles' noun and the counter's
+      label (`1/4 faces`, `345/560 images`) */
+  stepNoun: "face" | "image";
   /** the stored display rotation (#122) — the context-menu twin */
   onRotate: (delta: 90 | -90) => void;
   /** the surface's close/back control (×/Esc on the split,
@@ -62,8 +63,12 @@ export function FullImageBar(p: FullImageBarProps) {
       >
         ‹
       </button>
+      {/* #275 (v11.4): the counter is LABELLED — what it counts is part
+          of the number, not a guess from the mode */}
       <span className="nav-pos">
-        {p.total > 0 ? `${p.pos === -1 ? "–" : p.pos + 1}/${p.total}` : "–"}
+        {p.total > 0
+          ? `${p.pos === -1 ? "–" : p.pos + 1}/${p.total} ${p.stepNoun}s`
+          : "–"}
       </span>
       <button
         className="ghost"
