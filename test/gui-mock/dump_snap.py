@@ -27,7 +27,10 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 # --- sanitization (the README "Sanitization" contract) -------------------
 
 # structural names that are not personal data and never rewritten
+# (#165 legacy bin `Rejected` + the #266 writer-owned cluster family
+# `RejectedN` — both stay verbatim)
 RESERVED_PERSON_NAMES = {"Rejected"}
+RESERVED_PERSON_RE = re.compile(r"^Rejected\d+$")
 RESERVED_SEGMENTS = {"Accepted", "New", "Rejected"}
 GENERIC_HOME = "tester"
 GENERIC_KEY = "person"
@@ -67,7 +70,8 @@ def sanitize_snap(snap):
     person_tokens = set()
     for i, p in enumerate(raw_persons):
         n = p["name"]
-        if not UNKNOWN_RE.match(n) and n not in RESERVED_PERSON_NAMES:
+        if not UNKNOWN_RE.match(n) and n not in RESERVED_PERSON_NAMES \
+                and not RESERVED_PERSON_RE.match(n):
             tokens.update(_name_tokens(n))
             # the raw person-name words (still unmasked here) also drive
             # the DIRECTORY renames further below; the snapshot's person
@@ -90,7 +94,8 @@ def sanitize_snap(snap):
     for p in raw_persons:
         # stable per distinct name (persons.name is UNIQUE in the schema)
         if p["name"] not in person_name and not UNKNOWN_RE.match(p["name"]) \
-                and p["name"] not in RESERVED_PERSON_NAMES:
+                and p["name"] not in RESERVED_PERSON_NAMES \
+                and not RESERVED_PERSON_RE.match(p["name"]):
             serial += 1
             person_name[p["name"]] = f"{GENERIC_FIRST} {GENERIC_LAST}{serial}"
     for p in raw_persons:

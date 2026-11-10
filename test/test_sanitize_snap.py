@@ -18,7 +18,8 @@ from pathlib import Path
 GUI_MOCK = Path(__file__).resolve().parent / "gui-mock"
 sys.path.insert(0, str(GUI_MOCK))
 
-from dump_snap import sanitize_snap, RESERVED_PERSON_NAMES, RESERVED_SEGMENTS
+from dump_snap import (sanitize_snap, RESERVED_PERSON_NAMES,
+                       RESERVED_PERSON_RE, RESERVED_SEGMENTS)
 
 
 def person(pid, name, groups=(), note=None, state="created"):
@@ -46,11 +47,13 @@ def raw_snap():
             person(2, "Unknown12", ["New"]),
             person(3, "Baby Chandler", ["Familie|Chandler", "Friends"]),
             person(4, "Rejected", ["Rejected"], state="created"),
+            person(5, "Rejected7", ["Rejected"], state="created"),
         ],
         "faces": [
             face(10, 1, "Annette Botha (Pompie)-1", seq=1),
             face(11, 3, "Baby Chandler-sun-2", seq=2, description="baby"),
             face(12, 1, "Annette Botha (Pompie)-scar-3", seq=3, description="scar"),
+            face(13, 5, "Rejected7-1", seq=1),
         ],
         "images": [
             {"id": 20, "primary_path": "/home/stoflom/Pictures/Trees/2020/a.jpg",
@@ -76,19 +79,29 @@ class TestSanitizeSnap(unittest.TestCase):
     # persons -----------------------------------------------------------
     def test_real_names_become_john_smith_n_in_id_order(self):
         names = [p["name"] for p in self.out["persons"]]
-        self.assertEqual(names, ["John Smith1", "Unknown12", "John Smith2", "Rejected"])
+        self.assertEqual(names, ["John Smith1", "Unknown12", "John Smith2",
+                                 "Rejected", "Rejected7"])
 
     def test_identity_is_preserved_for_identical_names(self):
         snap = raw_snap()
-        snap["persons"].append(person(5, "Annette Botha (Pompie)", ["New"]))
+        snap["persons"].append(person(6, "Annette Botha (Pompie)", ["New"]))
         out = sanitize_snap(snap)
-        mapped = [p["name"] for p in out["persons"] if p["id"] in (1, 5)]
+        mapped = [p["name"] for p in out["persons"] if p["id"] in (1, 6)]
         self.assertEqual(mapped[0], mapped[1])
 
     def test_unknown_and_system_names_stay(self):
         names = {p["name"] for p in self.out["persons"]}
         self.assertIn("Unknown12", names)
         self.assertIn("Rejected", names)
+        self.assertIn("Rejected7", names)
+
+    def test_rejected_cluster_family_stays_verbatim(self):
+        # #266: every `RejectedN` cluster person is writer-owned and
+        # structural — none may be rewritten (nor feed the token corpus)
+        names = [p["name"] for p in self.out["persons"]]
+        self.assertIn("Rejected7", names)
+        labels = [f["name"] for f in self.out["faces"]]
+        self.assertIn("Rejected7-1", labels)
 
     # notes / descriptions ----------------------------------------------
     def test_note_tokens_are_masked(self):
@@ -130,14 +143,14 @@ class TestSanitizeSnap(unittest.TestCase):
         # naive `Vriende -> Friends` semantic mapping would have merged
         # two different branches.
         snap = raw_snap()
-        snap["persons"].append(person(5, "Zorro Botha", ["Friends"]))
-        snap["persons"].append(person(6, "Willem Dekker", ["Vriende"]))
+        snap["persons"].append(person(6, "Zorro Botha", ["Friends"]))
+        snap["persons"].append(person(7, "Willem Dekker", ["Vriende"]))
         out = sanitize_snap(snap)
         g3 = next(p for p in out["persons"] if p["id"] == 3)["groups"]
-        g5 = next(p for p in out["persons"] if p["id"] == 5)["groups"]
         g6 = next(p for p in out["persons"] if p["id"] == 6)["groups"]
-        self.assertEqual(g3[1], g5[0])          # Friends == Friends
-        self.assertNotEqual(g6[0], g3[1])       # Vriende != Friends
+        g7 = next(p for p in out["persons"] if p["id"] == 7)["groups"]
+        self.assertEqual(g3[1], g6[0])          # Friends == Friends
+        self.assertNotEqual(g7[0], g3[1])       # Vriende != Friends
 
     def test_segment_mapping_is_deterministic(self):
         snap = raw_snap()
@@ -215,7 +228,8 @@ class TestSanitizeSnap(unittest.TestCase):
         blob = json.dumps(out)
         for p in snap["persons"]:
             n = p["name"]
-            if n.startswith("Unknown") or n in RESERVED_PERSON_NAMES:
+            if n.startswith("Unknown") or n in RESERVED_PERSON_NAMES \
+                    or RESERVED_PERSON_RE.match(n):
                 continue
             for w in n.split():
                 if len(w) >= 3:

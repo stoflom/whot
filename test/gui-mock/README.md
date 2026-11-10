@@ -31,15 +31,14 @@ python3 test/gui-mock/gui_check.py    # WebKitGTK (default): exit 0 iff all 64 c
 WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox instead
 ```
 
-> **C32 is always to be tested stand-alone.** In the full-suite run C32
-> (`c32_full_image_follows_person`) fails deterministically under the
-> Firefox driver with `ElementClickInterceptedException` — the overlay
-> rect click lands on a `selected` sibling (timing-sensitive hit-test,
-> see the pre-click note inside the check). Stand-alone (a driver run
-> invoking just `c32_full_image_follows_person`, as in the isolation
-> runs) it passes reliably. A full-suite abort at C32 is therefore a
-> known harness flake, **not** an app regression — re-verify the check
-> stand-alone before looking for frontend causes.
+> **C32's overlay-rect clicks** go through the `click_rect` helper: the
+> mock's preview is a 13×16 placeholder JPEG (#212), so every overlay
+> rect renders ~4×4 and the rects of one image stack on the same point;
+> Marionette (Firefox) hit-tests the element centre and refuses the
+> click whenever a sibling rect paints above the target (the selected
+> rect is z-ordered on top), while the WebKit driver synthesises the
+> click without that check. The helper falls back to a DOM dispatch
+> (identical React onClick path) on `ElementClickInterceptedException`.
 
 Manual poking: open http://127.0.0.1:8123/ in any browser.
 
@@ -82,7 +81,9 @@ sanitizer is a pure function (`sanitize_snap`) with these rules and
 invariants (pinned by `test/test_sanitize_snap.py`):
 
 - `persons.name`: every real-name person → `John Smith{n}` (id order;
-  `UnknownN` and the system person `Rejected` are structural and stay).
+  `UnknownN` and the #165/#266 reject bins — the legacy `Rejected` and
+  the writer-owned `RejectedN` cluster family — are structural and
+  stay).
 - `person_groups.path`: every non-reserved segment → a generic
   `Group{n}`, one generic **per distinct segment** (first-seen order) —
   injective, so the tree's branch shape and ordering are unchanged and

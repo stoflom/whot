@@ -241,6 +241,7 @@ else:
 from selenium.webdriver.common.action_chains import ActionChains as AC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import ElementClickInterceptedException
 
 URL = "http://127.0.0.1:{port}/"
 
@@ -300,6 +301,21 @@ def ctxclick(t, el):
     t.execute_script(
         "arguments[0].dispatchEvent(new MouseEvent('contextmenu', {"
         "bubbles: true, cancelable: true, view: window, button: 2}))", el)
+
+
+def click_rect(t, el):
+    """Overlay-rect click with an intercept fallback. The mock's
+    preview is a 13×16 placeholder JPEG (#212), so every .face-rect
+    renders ~4×4 and the rects of one image stack on the same point;
+    Marionette (Firefox) hit-tests the element centre and refuses the
+    click whenever a sibling rect paints above the target (the selected
+    rect is z-ordered on top), while the WebKit driver synthesises the
+    click without that check. The DOM dispatch reaches the identical
+    React onClick path."""
+    try:
+        el.click()
+    except ElementClickInterceptedException:
+        js(t, "arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true}))", el)
 
 
 # #214 — the review grid mounts its sections incrementally (the App's
@@ -868,32 +884,56 @@ def c29_show_rejected_bin_165(t):
     """)
     tip_ok = "except rejected" in tip and "Show → Rejected" in tip
 
+    # #266: the legacy single bin `Rejected` is retired (one-shot split);
+    # the cluster family `RejectedN` is the reject bin now — the check
+    # discovers a real cluster person from the (sanitized) dump
+    cluster = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const p = snap.persons.find(p => /^Rejected\d+$/.test(p.name)
+        && snap.faces.some(f => f.person_id === p.id && f.link_status === 'rejected'));
+      return p ? p.name : null;
+    """)
+    if cluster is None:
+        record("C29 Show=All excludes the rejected bin — only Show→Rejected lists it (#165/§4.10, #266 family)",
+               False, f"no non-empty RejectedN cluster in the dump; tooltip ok={tip_ok}")
+        return
+    legacy = js(t, "return !!window.__MOCK_SNAP.persons.find(p => p.name === 'Rejected')")
+
     def tree_state():
         return js(t, """
-          const nodes = [...document.querySelectorAll('.tree-node-name')]
-            .map(x => x.textContent);
-          const rej = window.__MOCK_SNAP.persons.find(p => p.name === 'Rejected');
+          const branchNode = [...document.querySelectorAll('.tree-node-name')]
+            .some(n => n.textContent.trim() === 'Rejected');
+          const rejRows = [...document.querySelectorAll('.tree-person .tree-name')]
+            .filter(n => /^Rejected\\d*$/.test(n.textContent.trim())).length;
+          const rej = window.__MOCK_SNAP.persons.find(p => p.name === arguments[0]);
           const rows = rej
             ? document.querySelectorAll(`.tree-person[data-person-id='${rej.id}']`).length
             : 0;
-          return {branch: nodes.includes('Rejected'), rows: rows,
+          return {branch: branchNode, rows: rows, rejRows: rejRows,
                   snapRejected: window.__MOCK_SNAP.faces
                     .filter(f => f.link_status === 'rejected').length};
-        """)
+        """, cluster)
 
     set_show_filter(t, "all")
     all_state = tree_state()
-    all_ok = (not all_state["branch"]) and all_state["rows"] == 0
+    # Show=All/New: no Rejected branch, no cluster rows at all
+    all_ok = ((not all_state["branch"]) and all_state["rows"] == 0
+              and all_state["rejRows"] == 0)
     set_show_filter(t, "provisional")
     prov_state = tree_state()
-    prov_ok = (not prov_state["branch"]) and prov_state["rows"] == 0
+    prov_ok = ((not prov_state["branch"]) and prov_state["rows"] == 0
+               and prov_state["rejRows"] == 0)
     set_show_filter(t, "rejected")
     rej_state = tree_state()
+    # Show=Rejected: the Rejected status branch renders with the
+    # discovered cluster person's row under it
     rej_ok = rej_state["branch"] and rej_state["rows"] >= 1
     set_show_filter(t, "all")
-    ok = tip_ok and all_ok and prov_ok and rej_ok and all_state["snapRejected"] > 0
-    record("C29 Show=All excludes the rejected bin — only Show→Rejected lists it (#165, §4.10)",
-           ok, f"tooltip ok={tip_ok} ({tip[:60]!r}); "
+    ok = (tip_ok and all_ok and prov_ok and rej_ok
+          and all_state["snapRejected"] > 0 and legacy is False)
+    record("C29 Show=All excludes the rejected bin — only Show→Rejected lists it (#165/§4.10, #266 family)",
+           ok, f"tooltip ok={tip_ok} ({tip[:60]!r}); cluster={cluster}; "
+               f"legacy Rejected present={legacy} (want False); "
                f"all: branch={all_state['branch']} rows={all_state['rows']}; "
                f"new: branch={prov_state['branch']} rows={prov_state['rows']}; "
                f"rejected: branch={rej_state['branch']} rows={rej_state['rows']}; "
@@ -960,13 +1000,22 @@ def c30_bar_accept_selection_over_stage(t):
      if b.text.strip() == "Apply"][0].click()
     time.sleep(0.8)
     sections = js(t, "return document.querySelectorAll('.face-section').length")
+    # the mock reflects a STAGED desc only in the live DOM grouping (the
+    # snap faces keep the committed value until Accept — C19's contract,
+    # "Apply stages it, preview, nothing is written yet")
     staged_ok = js(t, r"""
-      const fs = window.__MOCK_SNAP.faces.filter(f => f.person_id === Number(arguments[0]));
-      return fs.some(f => (f.description ?? '') === 'side');
-    """, pick["pid"])
-    if sections < 2 or not staged_ok:
+      const secs = [...document.querySelectorAll('.face-section')];
+      const hit = secs.find(s =>
+        [...s.querySelectorAll('.face-card')]
+          .some(c => [String(arguments[1]), String(arguments[2])]
+            .includes(c.getAttribute('data-face-id'))));
+      return hit
+        ? (hit.querySelector('.face-section-title')?.textContent?.trim() ?? '')
+        : null;
+    """, pick["pid"], pick["a"], pick["b"])
+    if sections < 2 or not staged_ok or "side" not in staged_ok:
         record("C30 bar Accept takes the selection over the staged set (#166)", False,
-               f"stage/regroup failed: sections={sections}, staged={staged_ok}")
+               f"stage/regroup failed: sections={sections}, staged-title={staged_ok!r}")
         return
 
     # select EVERY rendered card (both resulting sections) in one gesture
@@ -1336,6 +1385,13 @@ def c11_merge_focuses_target(t):
     inp.click()
     inp.send_keys(pick["target"])
     time.sleep(0.6)
+    # the typed name prefix-matches MANY persons in a big corpus, so the
+    # suggestion list stays open — under Firefox it overlays the action
+    # row and the button's hit-test refuses the click
+    # (ElementClickIntercepted). Escape with the list open only closes
+    # the list (#92 — the dialog itself stays); then the click is clean.
+    inp.send_keys(Keys.ESCAPE)
+    time.sleep(0.4)
     merge_btn = [b for b in t.find_elements(By.CSS_SELECTOR, ".overlay .dialog button.bad")
                  if b.is_enabled()]
     if not merge_btn:
@@ -1546,13 +1602,16 @@ def c14_drag_sources(t):
       if (!row?.draggable) bad.push('tree-person not draggable');
       return bad;
     """)
-    # #165/§4.35: the system person's row (only listed under Show →
-    # Rejected) is never a drag source either
+    # #165/§4.35 + #266: the reject-bin rows (the writer-owned
+    # `RejectedN` cluster family) are listed only under Show → Rejected
+    # and are never drag sources either
     set_show_filter(t, "rejected")
     bad += js(t, r"""
-      const row = [...document.querySelectorAll('.tree-person')]
-        .find(r => (r.querySelector('.tree-name')?.textContent ?? '').trim() === 'Rejected');
-      return row && row.draggable ? ['system person row draggable'] : [];
+      return [...document.querySelectorAll('.tree-person')]
+        .filter(r => /^Rejected\d*$/.test((r.querySelector('.tree-name')
+          ?.textContent ?? '').trim()))
+        .filter(r => r.draggable)
+        .map(() => 'reject-bin row draggable');
     """)
     set_show_filter(t, "all")
     record("C14 drag sources (v3.33 WebKit fixes)", not bad,
@@ -1978,6 +2037,10 @@ def c24_dark_scheme_native_controls(t):
     light-scheme defaults washed the value text out against the dark
     panel."""
     fresh(t)
+    # a status colour class (st-provisional warns, st-confirmed greens)
+    # would colour the value text — the baseline read wants the plain
+    # theme text colour
+    set_show_filter(t, "all")
     r = js(t, """
       const scheme = getComputedStyle(document.documentElement).colorScheme;
       const sel = document.querySelector('.topbar-right select');
@@ -2428,7 +2491,10 @@ def c31_rolls_import_pane(t):
       };
     """)
 
-    exp_toggles = ["--dry-run", "--all", "--gpu", "--recursive", "--threshold"]  # #186: no --create-db
+    # #278 order: --reimport sits between --all and --gpu (hidden when no
+    # usable DB exists — that case is C47's first-run pane)
+    exp_toggles = ["--dry-run", "--all", "--reimport", "--gpu",
+                   "--recursive", "--threshold"]  # #186: no --create-db
     ok = (
         pane.get("open") and pane.get("detailGone")
         and pane.get("dir") == "/mnt/rolls/new-roll"
@@ -2477,13 +2543,20 @@ def c32_full_image_follows_person(t):
     set_show_filter(t, "all")
 
     # pick a review card whose image also holds a non-rejected face of
-    # ANOTHER person — one card drives all four phases
+    # ANOTHER person — one card drives all four phases. Prefer a pair
+    # whose overlay rects do NOT geometrically overlap: Firefox's
+    # hit-test refuses a click on a rect covered by a sibling (the
+    # selected card's rect is z-ordered on top), WebKit tolerates it.
     pick = js(t, r"""
       const snap = window.__MOCK_SNAP;
       const byId = new Map(snap.faces.map(f => [f.id, f]));
       const pname = (pid) => snap.persons.find(p => p.id === pid)?.name ?? null;
+      const overlap = (a, b) =>
+        !(a.x + a.w <= b.x || b.x + b.w <= a.x ||
+          a.y + a.h <= b.y || b.y + b.h <= a.y);
       const cards = [...document.querySelectorAll('.face-card')]
         .map(c => Number(c.dataset.faceId));
+      let fallback = null;
       for (const cid of cards) {
         const f = byId.get(cid);
         if (!f || f.person_id == null) continue;
@@ -2491,11 +2564,14 @@ def c32_full_image_follows_person(t):
           x.image_id === f.image_id && x.id !== f.id &&
           x.person_id != null && x.person_id !== f.person_id &&
           x.link_status !== 'rejected');
-        if (other) return {cardId: cid, cardPid: f.person_id, cardName: pname(f.person_id),
-                           otherFace: other.id, otherPid: other.person_id,
-                           otherName: pname(other.person_id)};
+        if (!other) continue;
+        const cand = {cardId: cid, cardPid: f.person_id, cardName: pname(f.person_id),
+                      otherFace: other.id, otherPid: other.person_id,
+                      otherName: pname(other.person_id)};
+        if (!overlap(f, other)) return cand;   // disjoint — clean click
+        fallback ??= cand;                      // overlapping — last resort
       }
-      return null;
+      return fallback;
     """)
     if pick is None:
         record("C32 right pane follows the full image (#171/§4.37)", True,
@@ -2538,7 +2614,7 @@ def c32_full_image_follows_person(t):
     entry_name = right_name()
 
     rect = t.find_element(By.CSS_SELECTOR, f"[data-overlay-face='{pick['otherFace']}']")
-    rect.click()
+    click_rect(t, rect)
     time.sleep(0.6)
     after_rect = view_state()
     rect_name = right_name()
@@ -2576,7 +2652,7 @@ def c32_full_image_follows_person(t):
     time.sleep(0.8)
     under_entry = view_state()
     rect2 = t.find_element(By.CSS_SELECTOR, f"[data-overlay-face='{pick['otherFace']}']")
-    rect2.click()  # rect anchor updates UNDER the import pane
+    click_rect(t, rect2)  # rect anchor updates UNDER the import pane
     time.sleep(0.6)
     under_rect = view_state()
     # close the import pane → the anchor revealed underneath must be the RECT's person
@@ -2638,7 +2714,7 @@ def c32_full_image_follows_person(t):
             break
     anchor_before_null = right_name()
     null_rect = t.find_element(By.CSS_SELECTOR, f"[data-overlay-face='{pick['cardId']}']")
-    null_rect.click()
+    click_rect(t, null_rect)
     time.sleep(0.6)
     after_null = view_state()
     after_null_name = right_name()
@@ -3196,6 +3272,16 @@ def c36_review_lock(t):
                     .trim().split(/\s+/)[0] ?? ''};
         """)
 
+    # the load pin can land AFTER fresh's last confirmation (the async
+    # settings/snapshot fetch resolves late) — settle it: re-force the
+    # baseline until it sticks past a pause
+    for _ in range(6):
+        if lock_state()["value"] == "all":
+            break
+        set_show_filter(t, "all")
+        time.sleep(1.0)
+    p1 = lock_state()
+
     def click_tab(name):
         [b for b in t.find_elements(By.CSS_SELECTOR, ".topbar nav button")
          if name in b.text][0].click()
@@ -3235,8 +3321,12 @@ def c36_review_lock(t):
       const done = snap.persons.find(p => p.name !== 'Rejected' &&
         !/^unknown/i.test(p.name) && p.counts.total > 0 && p.counts.provisional === 0
         && p.counts.confirmed > 0);
+      // the corpus may hold NO NAMED person with a new face (this dump
+      // keeps every provisional on UnknownN clusters) — allow Unknown
+      // persons for `two`; the phase-5/6 witness (verdict outside
+      // Review: no advance, no close) doesn't care about the name
       const two = snap.persons.find(p => p.name !== 'Rejected' &&
-        !/^unknown/i.test(p.name) && p.counts.provisional >= 2);
+        p.counts.provisional >= 1);
       const twoFid = two ? snap.faces.find(f =>
         f.person_id === two.id && f.link_status === 'provisional')?.id ?? null : null;
       return done && two && twoFid != null
@@ -3245,8 +3335,14 @@ def c36_review_lock(t):
     if pick is None:
         record("C36 the Review lock (#175/§4.40, rewritten #188): indicator span, pin+guard on entry, value kept on exit, no any-view advance",
                p1_ok and p2_ok,
-               f"need a fully-reviewed person + a person with ≥2 new faces — vacuous; p1={p1} p2={p2}")
+               f"need a fully-reviewed person + a person with ≥1 new face — vacuous; p1={p1} p2={p2}")
         return
+    # ── phase 3: enter Review — pins New + disabled + locked, and the
+    #    position guard advances off a fully-reviewed anchor ──────────
+    # (phase 2 exits on the Rolls tab — the tree renders on Person;
+    # Show is 'confirmed' there, under which the fully-reviewed anchor
+    # IS listed)
+    click_tab("Person")
     t.find_element(By.CSS_SELECTOR, f".tree-person[data-person-id='{pick['doneId']}']").click()
     time.sleep(0.8)
     click_tab("Review")
@@ -3300,20 +3396,33 @@ def c36_review_lock(t):
     if accept:
         accept[0].click()
         time.sleep(1.5)
+    # the accept may DRAIN two (every corpus person holds ≤1 new face
+    # right now) — under the kept Show→New the drained row VANISHES
+    # (§4.10) and `selected` would read null without the tree ever
+    # having moved. Flip Show → All (the select is enabled outside
+    # Review; a filter flip never moves the anchor) so the anchored
+    # row renders again
+    set_show_filter(t, "all")
+    time.sleep(0.6)
     p6 = lock_state()
-    two_prov = js(t, r"""
-      return window.__MOCK_SNAP.faces.filter(
-        f => f.person_id === Number(arguments[0]) && f.link_status === 'provisional').length;
-    """, pick["twoId"])
+    two_after = js(t, r"""
+      const fid = Number(arguments[0]);
+      const f = window.__MOCK_SNAP.faces.find(x => x.id === fid);
+      const left = window.__MOCK_SNAP.faces.filter(
+        f => f.person_id === Number(arguments[1]) && f.link_status === 'provisional').length;
+      return {status: f?.link_status ?? null, left};
+    """, pick["twoFid"], pick["twoId"])
     p56_ok = (p5["tab"].startswith("Person") and not p5["disabled"]
               and p5["value"] == "provisional"               # value kept (2nd exit)
               and not p5["latched"]
               and accepted
               and focus_before["focus"]                      # focus opened
               and p6["focus"]                                # …and STAYS open (#175 gone)
-              and p6["tab"].startswith("Person")             # no hand-over anywhere
+              and p6["tab"].startswith("Person")            # no hand-over anywhere
               and p6["selected"] == pick["twoId"]            # anchor unchanged
-              and two_prov >= 1)                             # partial: two had ≥2
+              and two_after["status"] == "confirmed")        # the verdict itself lands
+              # (the accept may DRAIN two — ≥2-new persons are not in
+              # every corpus; the no-advance contract doesn't care)
 
     ok = p1_ok and p2_ok and p3_ok and p4_ok and p56_ok
     record("C36 the Review lock (#175/§4.40, rewritten #188): indicator span, pin+guard on entry, value kept on exit, no any-view advance",
@@ -3327,7 +3436,8 @@ def c36_review_lock(t):
            f"4(locked click): {p4['tab']}/{p4['value']!r}/{p4['latched']}; "
            f"5/6(→Person, verdict outside Review): kept={p5['value']!r} "
            f"accepted={accepted} focus {focus_before['focus']}→{p6['focus']} "
-           f"tab={p6['tab']!r} sel={p6['selected']} (want {pick['twoId']}) twoProv={two_prov}")
+           f"tab={p6['tab']!r} sel={p6['selected']} (want {pick['twoId']}) "
+           f"verdict={two_after['status']!r} twoLeft={two_after['left']}")
 
 
 def status_totals(t):
@@ -4232,7 +4342,6 @@ def c43_single_only_menu_items(t):
         ctxclick(t, t2)
         time.sleep(0.6)
         b_open = item("Open image")
-        b_full = item("Open full image (focused)")
         b_rot = item("Rotate 90° CW")     # scope-wide: stays enabled
         # #191: the 2-thumb selection must survive the right-click
         # (the '· N selected' header is the visible witness)
@@ -4244,14 +4353,14 @@ def c43_single_only_menu_items(t):
         ctxclick(t, thumb(0))
         time.sleep(0.6)
         b_open_s = item("Open image")
-        b_full_s = item("Open full image (focused)")
         close_menu()
+        # #271: the thumbnail menu's 'Open full image (focused)' entry
+        # is GONE — focus open stays reachable from the card (its
+        # §4.14 one-item rule died with the entry itself)
         b_ok = (drilled
                 and b_open["found"] and b_open["disabled"]
-                and b_full["found"] and b_full["disabled"]
                 and b_rot["found"] and not b_rot["disabled"]
                 and b_open_s["found"] and not b_open_s["disabled"]
-                and b_full_s["found"] and not b_full_s["disabled"]
                 and "2 selected" in b_sel)
 
     # ── phase C: the tree person menu ─────────────────────────────────
@@ -4314,8 +4423,8 @@ def c43_single_only_menu_items(t):
     record("C43 one-item-only menu entries disable for a multi-scope (#182/§4.14): face/thumbnail/tree menus",
            ok,
            f"A: multi={a_multi} scope={a_scope} single={a_single} sel={a_sel}; "
-           f"B: pick={pick} open={b_open} full={b_full} rot={b_rot} "
-           f"single open={b_open_s} full={b_full_s} sel={b_sel!r} (ok={b_ok}); "
+           f"B: pick={pick} open={b_open} rot={b_rot} "
+           f"single open={b_open_s} sel={b_sel!r} (ok={b_ok}); "
            f"C: pids={pids} open={c_open} rename={c_ren} pend={c_pend} move={c_move} "
            f"single open={c_open_s} rename={c_ren_s} sel={c_sel} (ok={c_ok})")
 
@@ -4370,7 +4479,8 @@ def c44_rotate_image_cascades(t):
     before = rots()
 
     # ⟳ in the focus header — the image AND every crop
-    t.find_element(By.CSS_SELECTOR, ".focus-top button[title^='Rotate 90° clockwise']").click()
+    t.find_element(By.CSS_SELECTOR,
+                   ".full-image-bar button[title^='Rotate 90° clockwise']").click()
     time.sleep(1.2)
     after_img = rots()
     cascade_ok = (after_img["img"] == (before["img"] + 90) % 360
@@ -5903,7 +6013,12 @@ def c59_tree_select_reanchors_review(t):
                   and st["sectionOffset"] is not None and abs(st["sectionOffset"]) <= 6)
     # the review CONTINUES from there: stepping walks off the new anchor
     # (the step index must point at it — a stale index would not land
-    # one past the displayed one)
+    # one past the displayed one). #255: a focused tree node owns its
+    # arrow keys (expand/collapse) and the global stepper never fires
+    # behind it — Firefox focuses the clicked row, WebKit does not;
+    # blur the row first so the plain-arrow step path (§4.22) runs.
+    js(t, "document.activeElement && document.activeElement.blur()")
+    time.sleep(0.3)
     t.find_element(By.CSS_SELECTOR, "body").send_keys(Keys.ARROW_RIGHT)
     time.sleep(1.2)
     p1 = navpos()
@@ -6014,7 +6129,7 @@ def c60_split_close_restores_grid_scroll(t):
             break
         time.sleep(0.3)
     # close the split (× — the close (Esc) button in the focus header)
-    t.find_element(By.CSS_SELECTOR, '.focus-top button[title="close (Esc)"]').click()
+    t.find_element(By.CSS_SELECTOR, '.full-image-bar button[title="close (Esc)"]').click()
     time.sleep(1.2)
     st = js(t, r"""
       return {focus: !!document.querySelector('.focus-pane'),
@@ -6068,16 +6183,28 @@ def c61_full_view_verdict_advances_review(t):
         return
 
     def navpos():
+        # #275: the centre toolbar (the person stepper) unmounts while a
+        # full image is up, so the stepper text itself is unreadable in
+        # the split — compute the same 0-based stepIdx the stepper shows
+        # (stepIds.indexOf(personId)): the ordinal of the SELECTED tree
+        # row among the visible tree rows (first occurrence — a
+        # multi-branch person renders a row per branch, #156)
         return js(t, r"""
-          const m = (document.querySelector('.nav-pos')?.textContent ?? '')
-            .match(/^(\d+)\/(\d+)$/);
-          return m ? Number(m[1]) : null;
+          const rows = [...document.querySelectorAll('.tree-person')];
+          const seen = new Set(); const order = [];
+          for (const r of rows) { const id = Number(r.dataset.personId);
+            if (!seen.has(id)) { seen.add(id); order.push(id); } }
+          const sel = document.querySelector('.tree-person.selected');
+          const pid = sel ? Number(sel.dataset.personId) : null;
+          return pid != null ? order.indexOf(pid) : null;
         """)
 
     # open the full view on that exact face (the roll lists every face
     # of that image; the ✓ below clicks the card in the ROLL). The
     # anchor follows the opened face (personId ⇒ stepIdx), so the pos
     # is read AFTER the open (at load stepIdx is -1 — "–")
+    # open the full view on that exact face (the roll lists every face
+    # of that image; the ✓ below clicks the card in the ROLL)
     card = t.find_element(By.CSS_SELECTOR,
                           f".face-card[data-face-id='{pick['fid']}']")
     js(t, "arguments[0].scrollIntoView({block:'center'})", card)
@@ -6092,6 +6219,10 @@ def c61_full_view_verdict_advances_review(t):
         record("C61 full-view accept advances the review (v3.93, §4.40 reach/§4.30)",
                False, "focus split did not open")
         return
+    # the anchor follows the opened face (the split open sets personId),
+    # so the position is read AFTER the open (before it the right pane
+    # is unanchored — pos -1)
+    pos0 = navpos()
     pos0 = navpos()
     # the verdict is made IN the full view: the film-roll card's ✓
     fcard = t.find_element(By.CSS_SELECTOR,
@@ -6106,8 +6237,6 @@ def c61_full_view_verdict_advances_review(t):
       const sel = document.querySelector('.tree-person.selected');
       const snap = window.__MOCK_SNAP;
       const p = sel ? snap.persons.find(x => x.id === Number(sel.dataset.personId)) : null;
-      const m = (document.querySelector('.nav-pos')?.textContent ?? '')
-        .match(/^(\d+)\/(\d+)$/);
       return {
         tab: (active?.textContent ?? '').trim().split(/\s+/)[0] ?? '',
         showDisabled: !!s?.disabled,
@@ -6118,10 +6247,10 @@ def c61_full_view_verdict_advances_review(t):
         anchorHasNew: sel ? snap.faces.some(
           f => f.person_id === Number(sel.dataset.personId) && f.link_status === 'provisional')
           : false,
-        pos: m ? Number(m[1]) : null,
+        pos: arguments[1],
         faceStatus: snap.faces.find(f => f.id === Number(arguments[0]))?.link_status ?? null,
       };
-    """, pick["fid"])
+    """, pick["fid"], navpos())
     ok = (st["tab"] == "Review" and st["showDisabled"] is True and st["locked"] is True
           and st["focus"] is False                  # the advance closed the split
           and st["anchor"] is not None and st["anchor"] != pick["pid"]
