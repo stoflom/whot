@@ -28,6 +28,10 @@ pub struct ImportOptions {
     pub roll_dir: String,
     pub dry_run: bool,
     pub all: bool,
+    /// #278 — rework already-imported images (re-detect, IoU-match,
+    /// re-link provisional/rejected faces): the script's --reimport
+    /// (gui-design §4.36 option; the per-image rules are §4.47)
+    pub reimport: bool,
     pub gpu: bool,
     pub threshold: f64,
     pub recursive: bool,
@@ -37,10 +41,18 @@ pub struct ImportOptions {
 /// render the flag vector (deterministic order); refuses the
 /// `--create-db` + `--dry-run` combination before anything spawns —
 /// the script's `validate_args` would reject it too (creation is a
-/// write).
+/// write). #278: `--reimport` + `--create-db` is refused as well —
+/// re-importing against a freshly created database reworks nothing
+/// by definition (there is no imported content to rework yet).
 pub fn build_args(opts: &ImportOptions) -> Result<Vec<String>, String> {
     if opts.create_db && opts.dry_run {
         return Err("--create-db cannot be combined with --dry-run (creation is a write)".into());
+    }
+    if opts.reimport && opts.create_db {
+        return Err(
+            "--reimport cannot be combined with --create-db (a fresh database has nothing to rework)".
+                into(),
+        );
     }
     // #252: the threshold arrives raw from the IPC (f64) — a NaN/inf/negative
     // or >1 value would only fail deep inside the child Python process. The
@@ -54,6 +66,10 @@ pub fn build_args(opts: &ImportOptions) -> Result<Vec<String>, String> {
     }
     if opts.all {
         args.push("--all".into());
+    }
+    // #278: next to --all, per backend-design §7's deterministic order
+    if opts.reimport {
+        args.push("--reimport".into());
     }
     if opts.gpu {
         args.push("--gpu".into());

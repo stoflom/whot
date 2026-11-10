@@ -7,6 +7,7 @@ use whotapp_lib::importer::{build_args, scan_import_dir, ImportOptions, ImportRu
 fn opts(
     dry_run: bool,
     all: bool,
+    reimport: bool,
     gpu: bool,
     threshold: f64,
     recursive: bool,
@@ -16,6 +17,7 @@ fn opts(
         roll_dir: "/tmp/roll".into(),
         dry_run,
         all,
+        reimport,
         gpu,
         threshold,
         recursive,
@@ -25,18 +27,19 @@ fn opts(
 
 #[test]
 fn build_args_default_is_threshold_and_dir_only() {
-    let a = build_args(&opts(false, false, false, 0.40, false, false)).unwrap();
+    let a = build_args(&opts(false, false, false, false, 0.40, false, false)).unwrap();
     assert_eq!(a, vec!["--threshold", "0.4", "/tmp/roll"]);
 }
 
 #[test]
 fn build_args_flags_in_deterministic_order() {
-    let a = build_args(&opts(true, true, true, 0.55, true, false)).unwrap();
+    let a = build_args(&opts(true, true, true, true, 0.55, true, false)).unwrap();
     assert_eq!(
         a,
         vec![
             "--dry-run",
             "--all",
+            "--reimport",
             "--gpu",
             "--recursive",
             "--threshold",
@@ -48,11 +51,29 @@ fn build_args_flags_in_deterministic_order() {
 
 #[test]
 fn build_args_create_db_dry_run_refused() {
-    let e = build_args(&opts(true, false, false, 0.40, false, true)).unwrap_err();
+    let e = build_args(&opts(true, false, false, false, 0.40, false, true)).unwrap_err();
     assert!(e.contains("--create-db"), "{e}");
     // create-db alone is fine
-    let a = build_args(&opts(false, false, false, 0.40, false, true)).unwrap();
+    let a = build_args(&opts(false, false, false, false, 0.40, false, true)).unwrap();
     assert_eq!(a[0], "--create-db");
+}
+
+/// #278: `--reimport` + `--create-db` is refused — re-importing against
+/// a freshly created database reworks nothing by definition. A
+/// re-import with `--dry-run` stays legal (compute everything, write
+/// nothing).
+#[test]
+fn build_args_reimport_opts_278() {
+    let e = build_args(&opts(false, false, true, false, 0.40, false, true)).unwrap_err();
+    assert!(e.contains("--reimport"), "{e}");
+    assert!(e.contains("--create-db"), "{e}");
+    // reimport alone renders in the deterministic position (next to --all)
+    let a = build_args(&opts(false, true, true, false, 0.40, false, false)).unwrap();
+    assert_eq!(a, vec!["--all", "--reimport", "--threshold", "0.4", "/tmp/roll"]);
+    // reimport + dry-run is legal
+    let a = build_args(&opts(true, false, true, false, 0.40, false, false)).unwrap();
+    assert_eq!(a[0], "--dry-run");
+    assert_eq!(a[1], "--reimport");
 }
 
 /// #252: the threshold arrives raw from the IPC — NaN/inf/negative/>1 are
@@ -60,12 +81,12 @@ fn build_args_create_db_dry_run_refused() {
 #[test]
 fn build_args_threshold_out_of_range_refused() {
     for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.5] {
-        let e = build_args(&opts(false, false, false, bad, false, false)).unwrap_err();
+        let e = build_args(&opts(false, false, false, false, bad, false, false)).unwrap_err();
         assert!(e.contains("--threshold"), "expected a threshold error, got: {e}");
     }
     // the inclusive bounds are accepted
-    assert!(build_args(&opts(false, false, false, 0.0, false, false)).is_ok());
-    assert!(build_args(&opts(false, false, false, 1.0, false, false)).is_ok());
+    assert!(build_args(&opts(false, false, false, false, 0.0, false, false)).is_ok());
+    assert!(build_args(&opts(false, false, false, false, 1.0, false, false)).is_ok());
 }
 
 /// #169: the probe walks RECURSIVELY — a level-2 image opens the pane —
@@ -114,7 +135,7 @@ fn runner_lifecycle_start_status_stop() {
     unsafe { std::env::set_var("WHOT_IMPORT_PYTHON", "/bin/sh") };
 
     let runner = ImportRunner::new();
-    let o = opts(false, false, false, 0.40, false, false);
+    let o = opts(false, false, false, false, 0.40, false, false);
     let st = runner.start(&root, &o).unwrap();
     assert!(st.running);
     // second start while live is refused
@@ -163,7 +184,7 @@ fn runner_exit_code_reaped_on_poll() {
 
     let runner = ImportRunner::new();
     runner
-        .start(&root, &opts(false, false, false, 0.40, false, false))
+        .start(&root, &opts(false, false, false, false, 0.40, false, false))
         .unwrap();
     let mut since = 0;
     let mut code = None;
@@ -188,7 +209,7 @@ fn runner_refuses_missing_script() {
     std::fs::create_dir_all(&root).unwrap();
     let runner = ImportRunner::new();
     let e = runner
-        .start(&root, &opts(false, false, false, 0.40, false, false))
+        .start(&root, &opts(false, false, false, false, 0.40, false, false))
         .unwrap_err();
     assert!(e.contains("import script not found"), "{e}");
     let _ = std::fs::remove_dir_all(&root);

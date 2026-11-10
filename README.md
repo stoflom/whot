@@ -84,7 +84,12 @@ no-op), `--threshold F` (cosine similarity, default 0.40), `--create-db` (build 
 database named by `FACES_DB` in `.env` from `database/schema.sql`, creating
 missing parent directories; refuses an existing non-empty database and
 exits 1; `ROLL_DIR` is optional with it — omit it to create only, pass it to
-create and then import).
+create and then import), `--reimport` with `--min-overlap F`
+(rework already-imported images: re-detect their faces,
+IoU-match the re-detections against the existing crops (≥ 0.50,
+default) and re-link the **provisional/rejected** faces against today's
+known corpus — accepted faces stay as-is, orphans untouched; new images
+in the same roll import as usual).
 
 Progress lines print the **full path** of every file (`-q` still prints
 only the header and the final summary). A missing database is reported as
@@ -417,10 +422,10 @@ full-refreshes instead).
 
 - `start_import(options) → { running, killed, exitCode, elapsed,
   nextSince, lines }` — spawn `scripts/import_roll.py` as an independent
-  child process (`{rollDir, dryRun, all, gpu, threshold, recursive,
+  child process (`{rollDir, dryRun, all, reimport, gpu, threshold, recursive,
   createDb}` → the CLI flags; cwd = project root; `WHOT_IMPORT_PYTHON`
   overrides the interpreter; one run at a time; refused:
-  `--create-db` + `--dry-run`)
+  `--create-db` + `--dry-run` and `--reimport` + `--create-db`)
 - `stop_import() → bool` — kill the running import child (if any)
 
 Section numbers (`§4.x`) refer to `docs/gui-design.md`.

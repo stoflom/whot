@@ -206,6 +206,9 @@ export interface ImportOptions {
   rollDir: string;
   dryRun: boolean;
   all: boolean;
+  /** #278 — rework already-imported images (re-detect, IoU-match,
+      re-link provisional/rejected; §4.47) */
+  reimport: boolean;
   gpu: boolean;
   threshold: number;
   recursive: boolean;

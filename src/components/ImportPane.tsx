@@ -35,6 +35,7 @@ const DEFAULTS: Omit<ImportOptions, "rollDir"> = {
   threshold: 0.4,
   recursive: true,
   createDb: false,
+  reimport: false,
 };
 
 export default function ImportPane({ dir, onClose, onImported, initial }: Props) {
@@ -176,6 +177,18 @@ export default function ImportPane({ dir, onClose, onImported, initial }: Props)
         <label title="import every image, faceless ones with state no-face">
           <input type="checkbox" checked={opts.all} onChange={() => toggle("all")} /> --all
         </label>
+        {/* v12.1 (#278): hidden while no usable database exists — a
+            re-import against a freshly-created database has nothing to
+            rework by definition (the backend refuses the combination
+            too); default off — a committed-path trigger means a fresh
+            roll, and the toggle must be deliberate. The IoU rework
+            parameters stay script-side (--min-overlap default 0.50); no
+            pane control in this pass. */}
+        {dbExists && (
+          <label title="re-detect and re-link this roll's already-imported images: accepted faces stay as-is, rejected/unmatched faces get a second match — like reviewing them again">
+            <input type="checkbox" checked={opts.reimport} onChange={() => toggle("reimport")} /> --reimport
+          </label>
+        )}
         <label title="opt in to the MIGraphX GPU provider (CPU is the default)">
           <input type="checkbox" checked={opts.gpu} onChange={() => toggle("gpu")} /> --gpu
         </label>

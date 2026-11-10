@@ -217,8 +217,8 @@ Behaviour rules: gui-design §4.36. Structure:
   `import_roll.py` CLI; `build_args()` renders the flag vector
   (deterministic order: mode flags, `--threshold`, the directory) and
   refuses `create_db && dry_run` before anything spawns.
-  `reimport` (#278, exposing the script's script-design §8.4 re-import
-  pass) renders between `--all` and `--gpu` and is validated like the
+  `reimport` (#278, exposing the script's re-import pass — the
+  per-image rules are gui-design §4.47) renders between `--all` and `--gpu` and is validated like the
   other combos: `reimport && create_db` is refused — the rework pass
   re-detects and re-links images whose `content_hash` is already in the
   database, so re-importing against a freshly created database would
