@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 12.2** (#279) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 12.3** (#271 follow-up) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1886,9 +1886,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
    the user hunting in the tree:
    - **On entry**: opening the **focus split** (card double-click or
      *Open full image* on a face) re-anchors the right pane on **the
-     person owning that face**; the branch thumbnail's *Open full image
-     (focused)* — a focus entry without a face — **keeps the current
-     person**. Opening the **Rolls image detail**
+     person owning that face** (#271 dropped the thumbnail's redundant
+     *Open full image (focused)* entry — focus open stays reachable from
+     the card). Opening the **Rolls image detail**
      re-anchors on the opening face's person when the entry carries a
      face context; an entry without one (the thumbnail open —
      double-click, path-filter file entry, *Open image* menu) re-anchors
