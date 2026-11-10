@@ -41,7 +41,10 @@ sidecars is available today for testing — see [Legacy recovery](#legacy-recove
 ## Setup
 
 - For face detection: Python venv with `insightface` at `<INSIGHTFACE_PATH>/insight_env`,
-Refer [InsightFace](https://github.com/deepinsight/insightface/blob/master/python-package/README.md).
+  Refer [InsightFace](https://github.com/deepinsight/insightface/blob/master/python-package/README.md).
+  The import scripts locate the venv's site-packages under `lib/python*/` or
+  `lib64/python*/` (some platforms, e.g. Fedora, install packages into the
+  `lib64` half) and prefer the directory that contains `insightface` (#276).
 - Node 22+, Rust (Tauri prerequisites: webkit2gtk-4.1, gtk3).
 - Paths (data, config, insightface, input directories) live in `.env` —
   copy the committed `env.sample` template and adjust. `${VAR}` references

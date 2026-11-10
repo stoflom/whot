@@ -38,19 +38,33 @@ SCHEMA_VERSION = "1.9"
 
 # ---------------------------------------------------------------- insightface venv
 
-def _locate_venv_site_packages(insightface_path: Path) -> Path | None:
-    """Find insight_env's site-packages, trying several Python-version layouts."""
+def _venv_site_packages(insightface_path: Path) -> list[Path]:
+    """All of insight_env's site-packages directories, in prepend order.
+
+    #276: a venv may split its site-packages over `lib/python*` and
+    `lib64/python*` (Fedora Python 3.15 puts the C-extension packages —
+    insightface, cv2, onnx — in the `lib64` half, leaving only
+    pure-Python deps in `lib`). The venv's own interpreter sees BOTH
+    halves, so the injection must too — returning only the first
+    candidate made `import insightface` fail with a bare
+    ModuleNotFoundError. Directories are returned `lib` before `lib64`;
+    prepending them in this order puts `lib64` first on `sys.path`, the
+    venv's own order."""
     insight_env = insightface_path / "insight_env"
     if not insight_env.is_dir():
-        return None
-    # Try versioned site-packages first (python3.Y/, python3.Y.Z/)
-    for lib_dir in sorted(insight_env.glob("lib/python*")):
-        sp = lib_dir / "site-packages"
-        if sp.is_dir():
-            return sp
-    # Fallback: bare "lib/site-packages" (rare)
-    sp = insight_env / "lib" / "site-packages"
-    return sp if sp.is_dir() else None
+        return []
+    out: list[Path] = []
+    for lib in ("lib", "lib64"):
+        # Try versioned site-packages first (python3.Y/, python3.Y.Z/)
+        for lib_dir in sorted((insight_env / lib).glob("python*")):
+            sp = lib_dir / "site-packages"
+            if sp.is_dir() and sp not in out:
+                out.append(sp)
+        # Fallback: bare "<lib>/site-packages" (rare)
+        sp = insight_env / lib / "site-packages"
+        if sp.is_dir() and sp not in out:
+            out.append(sp)
+    return out
 
 
 def inject_insightface_venv(env: dict[str, str]) -> None:
@@ -73,16 +87,17 @@ def inject_insightface_venv(env: dict[str, str]) -> None:
     else:
         p = p.resolve()
 
-    sp = _locate_venv_site_packages(p)
-    if sp is None:
+    site_dirs = _venv_site_packages(p)
+    if not site_dirs:
         sys.exit(
             f"insightface venv not found at {p}/insight_env (INSIGHTFACE_PATH={raw})\n"
-            f"Check that the venv exists and has a lib/python*/site-packages directory."
+            f"Check that the venv exists and has a lib/python*/site-packages\n"
+            f"(or lib64/python*/site-packages) directory."
         )
 
-    site_pkgs = str(sp)
-    if site_pkgs not in sys.path:
-        sys.path.insert(0, site_pkgs)
+    for sp in site_dirs:   # #276: every half the venv sees (lib before lib64)
+        if str(sp) not in sys.path:
+            sys.path.insert(0, str(sp))
 THRESHOLD_DEFAULT = 0.40          # cosine similarity, same parameter as GUI ranking (req 4.3)
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff",
                   ".pef", ".dng", ".cr2", ".cr3", ".nef", ".arw", ".rw2", ".orf"}
