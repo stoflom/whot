@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 12.3** (#271 follow-up) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 12.4** (#280) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -171,15 +171,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
     pane simply organises the pictures according to their paths. (The
     imports
     themselves stay in the DB and snapshot; the pane just ignores them.)
-    A branch header shows the segment name and the branch totals —
+    A branch header shows the segment name, the branch's two icon
+    buttons (⇩ re-import, the recursive toggle — §4.39's icon row,
+    v12.4/#280) and its totals in the **path tooltip** —
     `{n} img · {n} new · {n} ✓ · {n} ✗` — counted over **every** image
     under the branch, filter-independent like the person tree's raw
     badges: the Show filter changes who is listed, never any
     counters. Clicking a header expands/collapses **and selects** the
-    branch (its direct images land in the right pane); branches
+    branch (its direct images land in the right pane, every descendant
+    while the header's recursive toggle is ticked); branches
     start collapsed, listed alphabetically by segment (images by
-    filename). The **open state is session state** (like the root and
-    the branch selection): opening a roll's grid unmounts the pane, and
+    filename). The **open state is session state** (like the root, the
+    branch selection and the recursive toggles): opening a roll's grid unmounts the pane, and
     returning shows the tree the way it was (#265). **The centre renders no thumbnails** (§4.39):
     clicking a branch header both toggles the branch **and selects it**,
     and the selected
@@ -1782,7 +1785,22 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
 36. **Rolls import pane** ⇒ importing a fresh roll must not
    require the terminal: the Rolls path filter (§3) doubles as the
-   import entry point.
+   import entry point, and every branch of the path tree can be
+   sent to the pane directly (#280).
+   - **Branch re-import routes (v12.4, #280)**: the pane is unreachable
+     through the trigger for a path that already matches snapshot
+     images (below) — yet the `--reimport` flow needs exactly such
+     rolls. Two routes therefore act on any **tree branch** (every
+     branch holds ≥ 1 imported image by construction — the tree is
+     built from the snapshot, so the routes always make sense):
+     the header's **⇩ icon** and the branch context menu's
+     **Re-import…** entry both open the import pane on that branch's
+     path with **Re-import pre-checked** (the toggle stays editable —
+     the §4.36 visibility/gating rules apply unchanged; an import of a
+     mixed roll can un-tick it). The menu also carries the branch's
+     **Include sub-branch images** check entry (the header recursive
+     toggle's §4.39 mirror — same state, same wording). The
+     committed-path trigger below is unchanged for fresh rolls.
    - **Trigger**: committing a path (typed + Enter, or the native folder
      picker) that matches no snapshot image **and** that
      `scan_import_dir(path)` confirms to be a real directory holding
@@ -1991,19 +2009,32 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      re-validated when the root changes (a selection outside the new
      root falls back to the root).
    - **The right pane shows the selected branch's images — direct
-     children only, never recursive**: a branch that also holds
-     sub-branches lists just the images filed *at that path* (the
-     directory of the image's `primary_path` equals the branch path),
-     ordered by filename and Show-listed by the §4.10 rule (an image
-     lists iff it holds ≥ 1 matching face; `All` lists every image —
-     branch counters stay raw, §4.16). A branch
+     children by default**, ordered by filename and Show-listed by the
+     §4.10 rule (an image lists iff it holds ≥ 1 matching face; `All`
+     lists every image — branch counters stay raw, §4.16). The branch
+     header carries a **recursive toggle** (v12.4, #280): per-branch
+     **session state** (like the branch open-set), ticked via the
+     header icon or the context menu's *Include sub-branch images*
+     entry — while ticked the branch's grid lists **every descendant
+     image** (paths under the branch, not just *at* it), and the grid
+     head notes `incl. sub-branches`. A branch
      with no direct listing image shows a dim hint: `no images directly
      at this path — open a sub-branch` when it has sub-branches, else
-     `nothing to show`.
+     `nothing to show` (with the toggle on, the grid shows the
+     descendants instead).
    - **The centre renders no thumbnails**: the hierarchy (headers with
-     rollup counters + expand arrows) is the centre's whole content; the
-     Rolls path filter, Show pruning and the import entry (§4.36) apply
+     expand arrows + the per-branch icon row, v12.4/#280) is the
+     centre's whole content; the Rolls path filter, Show pruning and
+     the import entry (§4.36) apply
      as in §3.
+   - **Branch header icon row (v12.4, #280)**: the header's counts text
+     is gone — its `{img} img · {new} new · {✓} ✓ · {✗} ✗` rollup moves
+     into the roll-path tooltip (`path — N img · N new · N ✓ · N ✗`),
+     and the space carries two icon buttons (neither triggers the
+     header's toggle+select click): **⇩** opens the import pane on the
+     branch with Re-import pre-checked (§4.36), and the **recursive
+     toggle** (☐ unticked / ☑ ticked) carries the per-branch
+     sub-branch-images state above.
    - **Thumbnail interactions** (right pane):
      - plain click **replaces** the image selection with that image;
        ctrl/⌘-click toggles; shift-click ranges over the branch's
