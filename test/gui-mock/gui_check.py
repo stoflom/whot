@@ -2145,9 +2145,10 @@ def c26_rolls_path_filter(t):
     set_path(img_path)
     detail = js(t, r"""
       const d = document.querySelector('.image-detail');
-      return d ? (d.querySelector('.image-meta div')?.textContent ?? null) : null;
+      // #275 one-bar markup: the path lives in the full-image bar
+      return d ? (d.querySelector('.full-image-bar .full-image-path')?.textContent ?? null) : null;
     """)
-    js(t, "[...document.querySelectorAll('.image-detail-top button')].find(b => b.textContent.includes('rolls'))?.click();")
+    js(t, "[...document.querySelectorAll('.image-detail .full-image-bar button.secondary')].find(b => b.textContent.includes('rolls'))?.click();")
     time.sleep(0.6)
     back_val = input_value()
 
@@ -3037,7 +3038,8 @@ def c34_rolls_branch_thumbnails(t):
     dblclick(t, tgt)
     time.sleep(1.0)
     e2 = pane_state()
-    back = t.find_element(By.CSS_SELECTOR, ".image-detail-top button")
+    # #275 one-bar markup: the detail's close/back lives in .full-image-bar
+    back = t.find_element(By.CSS_SELECTOR, ".image-detail .full-image-bar button.secondary")
     back.click()
     time.sleep(0.8)
     e3 = pane_state()
@@ -3352,8 +3354,10 @@ def topbar_totals(t):
 
 
 def chip_texts(total):
-    """the chip strings a set of status totals must render as"""
-    return (f"? {total['provisional']}",
+    """the chip strings a set of status totals must render as
+    (#179; v12.2 #279 — the New chip read '? N' until ? became the help
+    button, then moved to '★ N')"""
+    return (f"★ {total['provisional']}",
             f"✓ {total['confirmed']}",
             f"✗ {total['rejected']}")
 
@@ -6306,20 +6310,22 @@ def c63_rolls_image_stepping(t):
 
     def bar_state():
         return js(t, r"""
-          const tl = document.querySelector('.center-toolbar .toolbar-left');
+          // #275 one-bar markup: while a full image is open the centre
+          // toolbar is gone — the bar above the image carries everything
+          const tl = document.querySelector('.image-detail .full-image-bar');
           const btns = tl ? [...tl.querySelectorAll('button.ghost')] : [];
           return {
             bar: !!tl,
-            pos: document.querySelector('.center-toolbar .nav-pos')?.textContent ?? null,
+            pos: tl?.querySelector('.nav-pos')?.textContent ?? null,
             prev: btns.length ? !btns[0].disabled : null,
             next: btns.length > 1 ? !btns[1].disabled : null,
-            meta: document.querySelector('.image-detail .image-meta')?.textContent ?? null,
+            meta: tl?.querySelector('.full-image-path')?.textContent ?? null,
             tab: document.querySelector('.topbar nav .active')?.textContent.split(/\s+/)[0] ?? null,
           };
         """)
 
     def step_btn(idx):
-        js(t, "document.querySelectorAll('.center-toolbar .toolbar-left button')[arguments[0]]?.click();", idx)
+        js(t, "document.querySelectorAll('.image-detail .full-image-bar button.ghost')[arguments[0]]?.click();", idx)
         time.sleep(1.0)
 
     # open the first image of the roll (thumbnail double-click)
@@ -6340,7 +6346,7 @@ def c63_rolls_image_stepping(t):
     step_btn(0)  # ‹ → back
     s4 = bar_state()
     # walk to the end of the roll
-    while js(t, "return !document.querySelectorAll('.center-toolbar .toolbar-left button')[1]?.disabled"):
+    while js(t, "return !document.querySelectorAll('.image-detail .full-image-bar button.ghost')[1]?.disabled"):
         step_btn(1)
     sN = bar_state()
 
@@ -6349,13 +6355,14 @@ def c63_rolls_image_stepping(t):
         return s["meta"] is not None and path in s["meta"]
     ok = (
         browse_bar is False
-        and s1["bar"] is True and s1["pos"] == f"1/{m}"
+        # v11.4/#275: the counter is LABELLED — `n/m images` now
+        and s1["bar"] is True and s1["pos"] == f"1/{m} images"
         and s1["prev"] is False and s1["next"] is True and on(s1, pick["paths"][0])
         and s1["tab"] == "Rolls"
-        and s2["pos"] == f"2/{m}" and on(s2, pick["paths"][1])
-        and s3["pos"] == f"3/{m}" and on(s3, pick["paths"][2])
-        and s4["pos"] == f"2/{m}" and on(s4, pick["paths"][1])
-        and sN["pos"] == f"{m}/{m}" and sN["next"] is False and sN["prev"] is True
+        and s2["pos"] == f"2/{m} images" and on(s2, pick["paths"][1])
+        and s3["pos"] == f"3/{m} images" and on(s3, pick["paths"][2])
+        and s4["pos"] == f"2/{m} images" and on(s4, pick["paths"][1])
+        and sN["pos"] == f"{m}/{m} images" and sN["next"] is False and sN["prev"] is True
         and on(sN, pick["paths"][m - 1])
         and sN["tab"] == "Rolls"
     )
