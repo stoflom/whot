@@ -2468,29 +2468,46 @@ pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> 
             .collect::<std::result::Result<Vec<_>, _>>()?
     };
     let mut moved = 0;
-    for (pid, pname) in present {
-        if pname == "Rejected" || is_rejected_cluster_name(&pname) {
+    for (_, pname) in &present {
+        if pname == "Rejected" || is_rejected_cluster_name(pname) {
             bail!("'{pname}' is writer-owned (the RejectedN cluster family, #266) and cannot be changed");
         }
-        // insert-first: the final row (target, or the derived seat for
-        // empty input) lands before the old rows drop — §4.35
-        let final_path = if path.is_empty() {
-            derive_seat(&tx, pid)?.to_string()
-        } else {
-            path.clone()
-        };
-        tx.execute(
-            "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?1, ?2)",
-            params![pid, final_path],
-        )?;
-        tx.execute(
-            "DELETE FROM person_groups WHERE person_id = ?1 AND path != ?2",
-            params![pid, final_path],
-        )?;
         moved += 1;
     }
     if moved == 0 {
         bail!("none of the selected persons exist any more");
+    }
+    // #283 (N4): the common case (a real target path) is TWO set-based
+    // statements for the whole selection (the old per-pid loop was 2×N);
+    // insert-first: the final row lands before the old rows drop — §4.35
+    if !path.is_empty() {
+        tx.execute(
+            &format!(
+                "INSERT OR REPLACE INTO person_groups (person_id, path)
+                   SELECT id, ?1 FROM persons WHERE id IN ({list})"
+            ),
+            params![path],
+        )?;
+        tx.execute(
+            &format!(
+                "DELETE FROM person_groups WHERE person_id IN ({list}) AND path != ?1"
+            ),
+            params![path],
+        )?;
+    } else {
+        // to the status seat: derive it per person (a per-pid CASE in SQL
+        // would have to be spelled twice per person — the loop stays)
+        for (pid, _) in &present {
+            let final_path = derive_seat(&tx, *pid)?.to_string();
+            tx.execute(
+                "INSERT OR REPLACE INTO person_groups (person_id, path) VALUES (?1, ?2)",
+                params![pid, final_path],
+            )?;
+            tx.execute(
+                "DELETE FROM person_groups WHERE person_id = ?1 AND path != ?2",
+                params![pid, final_path],
+            )?;
+        }
     }
     tx.commit()?;
     // #219 — the moved persons have new group paths (person rows).
@@ -2540,35 +2557,62 @@ pub fn move_persons_between_groups(
             .collect::<std::result::Result<Vec<_>, _>>()?
     };
     let mut moved = 0;
-    for (pid, pname) in present {
-        if pname == "Rejected" || is_rejected_cluster_name(&pname) {
+    for (_, pname) in &present {
+        if pname == "Rejected" || is_rejected_cluster_name(pname) {
             bail!("'{pname}' is writer-owned (the RejectedN cluster family, #266) and cannot be changed");
-        }
-        if from != to {
-            tx.execute(
-                "DELETE FROM person_groups WHERE person_id = ? AND path = ?",
-                params![pid, from],
-            )?;
-        }
-        if !to.is_empty() {
-            tx.execute(
-                "INSERT OR IGNORE INTO person_groups (person_id, path) VALUES (?, ?)",
-                params![pid, to],
-            )?;
-            // §4.35/§4.18: filing replaces the seat — an add-group onto a
-            // seated person drops the seat (insert happened above first)
-            tx.execute(
-                "DELETE FROM person_groups
-                  WHERE person_id = ? AND path IN ('New', 'Accepted', 'Rejected')",
-                params![pid],
-            )?;
-        } else {
-            ensure_seat(&tx, pid)?; // §4.35: last membership removed ⇒ seat
         }
         moved += 1;
     }
     if moved == 0 {
         bail!("none of the selected persons exist any more");
+    }
+    // #283 (N4): set-based — one statement per shape over the whole
+    // selection (the old loop was 2–3 statements per person)
+    if from != to {
+        tx.execute(
+            &format!(
+                "DELETE FROM person_groups WHERE person_id IN ({list}) AND path = ?1"
+            ),
+            params![from],
+        )?;
+    }
+    if !to.is_empty() {
+        // insert-first: the target row lands before the seat drops
+        tx.execute(
+            &format!(
+                "INSERT OR IGNORE INTO person_groups (person_id, path)
+                   SELECT id, ?1 FROM persons WHERE id IN ({list})"
+            ),
+            params![to],
+        )?;
+        // §4.35/§4.18: filing replaces the seat — an add-group onto a
+        // seated person drops the seat (insert happened above first)
+        tx.execute(
+            &format!(
+                "DELETE FROM person_groups
+                   WHERE person_id IN ({list})
+                     AND path IN ('New', 'Accepted', 'Rejected')"
+            ),
+            [],
+        )?;
+    } else {
+        // §4.35: last membership removed ⇒ the derived seat — ensure_seat
+        // for the whole selection at once (insert only where the person
+        // has no row left; the seat is derived per person by the same CASE
+        // as derive_seat)
+        tx.execute(
+            &format!(
+                "INSERT OR IGNORE INTO person_groups (person_id, path)
+                   SELECT p.id, CASE WHEN EXISTS(SELECT 1 FROM faces f
+                                     WHERE f.person_id = p.id
+                                       AND f.link_status = 'provisional')
+                                THEN 'New' ELSE 'Accepted' END
+                     FROM persons p WHERE p.id IN ({list})
+                       AND NOT EXISTS (SELECT 1 FROM person_groups g
+                                        WHERE g.person_id = p.id)"
+            ),
+            [],
+        )?;
     }
     tx.commit()?;
     // #219 — the moved persons have new group paths (person rows).

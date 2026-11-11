@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { facePreview, imagePreview, imageThumb } from "./api";
-import { LruCache } from "./lruCache";
+import { LruCache, revokeUrlAfterGrace } from "./lruCache";
 export { imagePreview, facePreview }; // #122: useRotatedImage callers pass their loader
 
 function useCached(loader: (id: number) => Promise<string | null>, id: number | null) {
@@ -44,7 +44,8 @@ export const useImagePreviewImg = (id: number) => useCached(imagePreview, id);
 export const ROTATED_CACHE_CAP = 24;
 export const rotatedCache = new LruCache<string, string>(
   ROTATED_CACHE_CAP,
-  (_key, url) => URL.revokeObjectURL(url)
+  // #283 (N7): revoke after the grace, like the api.ts caches
+  (_key, url) => revokeUrlAfterGrace(url)
 );
 
 /** the rotated pixels as a fresh Blob URL, or null when the canvas

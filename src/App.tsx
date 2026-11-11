@@ -552,7 +552,13 @@ export default function App() {
     () => orderedVisiblePersonIdsFromTree(tree, treePersons, deferredStepFilter),
     [tree, treePersons, deferredStepFilter]
   );
-  const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
+  // #283 (N6): the step index of the anchor — one O(n) scan per
+  // [stepIds, personId] change, not per render (the old inline indexOf
+  // ran on every App render)
+  const stepIdx = useMemo(
+    () => (personId != null ? stepIds.indexOf(personId) : -1),
+    [stepIds, personId]
+  );
 
   // #213: one person-data signature per snapshot — the cluster and
   // refcrop effects below key on IT instead of the snapshot identity, so

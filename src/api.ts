@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { decodeImageBatch } from "./imageBatch";
-import { LruCache } from "./lruCache";
+import { LruCache, revokeUrlAfterGrace } from "./lruCache";
 
 export interface PersonCounts {
   total: number;
@@ -262,9 +262,12 @@ export const getImportInfo = () =>
 
 type ImageKind = "face" | "thumb" | "preview";
 
+// #283 (N7): revoke after the grace — an `<img>` mounted with the URL
+// right before the eviction has begun loading by then (the #212
+// contract: a begun load survives the revoke)
 const revokeUrl = (_id: number, p: Promise<string | null>) =>
   void p.then((url) => {
-    if (url) URL.revokeObjectURL(url);
+    if (url) revokeUrlAfterGrace(url);
   });
 
 const imageCaches: Record<ImageKind, LruCache<number, Promise<string | null>>> = {
