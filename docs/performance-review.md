@@ -455,7 +455,8 @@ minor bumps or subminor fixes depending on whether they alter documented
 behaviour.
 
 *(All items were implemented as issues #218–#228 and re-verified on
-2026-11-11 — see §6.)*
+2026-11-11 — see §6. The §6.3 findings N1–N8 were then implemented as
+issues #281/#282/#283, same day — see §6.5.)*
 
 ---
 
@@ -588,3 +589,53 @@ Nothing in §6.3 changes the design documents' structure; all fixes fit
 the existing module layout. App/design versions already reflect the
 feature work through #280 (app 12.4.0, gui-design v12.4, backend-design
 1.18, schema v1.9).
+
+### 6.5 Update — §6.3 findings implemented (2026-11-11, same day)
+
+All §6.3 findings are implemented as issues #281/#282/#283 (app 12.4.1,
+backend-design 1.19; no gui-design/schema change), each with its own
+regression tests, both gui-mock drivers 65/65:
+
+- **N1/N2 (#282)** — `facesById`/`personsById` key on `snap.faces`/
+  `snap.persons` (a person-only delta rebuilds neither), and every
+  handler that only reads a map goes through `facesByIdRef`: the whole
+  `markExhaust → doAccept/doReject → faceMenu → gridHandlers` chain keeps
+  identity across a verdict delta, so `memo(FaceCard)` skips every
+  untouched card. The `RollsPane` props are stable (`reimportBranch`
+  functional update, `onImportDir` hoisted) — the #215 memo now holds.
+- **N3 (#281)** — `Delta` carries `base` (the pre-write stamp) next to
+  `version`; the GUI compares `base` against its applied stamp
+  (`deltaStale`: `drifted || base !== since`), which closes the
+  before-pre-read window the count-only check could not see (and a
+  zero-row write keeps `base === version`, so `base` is the sound
+  comparison). The §4.27 sweep and the #266 legacy split report their
+  deletions through `removed`; `rotate_image(s)` read the delta face ids
+  inside the tx. Plans apply in order against the live stamp
+  (`applyDeltas`), one full refresh on the first stale delta.
+- **N4 (#283 / #281)** — `rotate_images` is one set-based statement pair
+  for the batch (write phase constant in the image count, trace-tested);
+  `move_persons_to_group`/`move_persons_between_groups` are set-based
+  (one statement per shape; the empty-path seat derivation keeps its
+  loop).
+- **N5 (#283)** — `--reimport` preloads the re-link embeddings in one
+  batched query and the reseat/repair passes are one statement over the
+  person set. `associate()` stays scalar deliberately: BLAS accumulation
+  order could flip borderline threshold matches (the §9.3 rules are
+  behaviour-pinned), and the per-image bound is acceptable — recorded in
+  #283.
+- **N6–N8 (#283)** — `stepIdx` is a `useMemo`; evicted Blob URLs revoke
+  after a 5s grace (`revokeUrlAfterGrace`); the `paneState` rAF throttle,
+  `applyDeltaToSnapshot`/`deltaStale` and the `SectionView` comparator
+  (`sectionPropsEqual`, exported) all have unit tests now.
+- **Also (#281 verification)** — C61 in the gui-mock suite carried a
+  pre-existing order-race (reproduced on the pre-change build): the §4.40
+  Review-entry pin (Show → New) races `fresh()`'s Show → All, and under
+  New the drained person drops from the tree, shifting every successor
+  one left — `pos > pos0` compared across two tree shapes. The check now
+  pins the real contract (the anchor equals the first reviewable
+  successor read from the same step order).
+- **Explicitly left as-is** — B-L3 (`sweep_stale_shells` GLOB: negligible
+  per the review, and the NOT EXISTS probe is index-served), B-L4 (the
+  two single-statement writes), and B-H3's in-call cosine memoisation
+  (#218 moved the clustering off the main thread; revisit only if a
+  profile shows it).
