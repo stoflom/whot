@@ -758,14 +758,15 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
             <button className="ghost" onClick={rollDownAll} title="Expand (roll down) all branches">
               ⌄
             </button>
-            {/* §4.28 + #88: the merge-similar dialog — the title stays
-                reference-free (§4.43) */}
+            {/* §4.28 + #88: the merge-similar dialog — icon-only like
+                the ⌃/⌄ neighbours (v12.7/#286); the wording lives in
+                the tooltip, reference-free (§4.43) */}
             <button
               className="ghost merge-open"
               onClick={onOpenMerge}
               title="Merge Similar Persons — find and combine near-identical names"
             >
-              ⧉ merge similar
+              ⧉
             </button>
           </div>
         </div>

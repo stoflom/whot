@@ -1086,7 +1086,6 @@ button.dp-group-path:hover:not(:disabled) { border-color: var(--border); }
 /* ------------------------------------------------- Merge Similar Persons (#88, §4.28) */
 
 /* header button in the tree tools row */
-button.merge-open { font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
 
 /* person-row drop target: SOLID outline — distinct from a branch's
    dashed drop highlight (§4.28: person/branch/Ungrouped must be
