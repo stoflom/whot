@@ -128,6 +128,8 @@ import { useClickPairGuard } from "./clickPair";
 // §4.44 + #222 (F-H3): the review-verdict callbacks — the #98 identity
 // rule lives in the hook (person anchor read via refs), co-tested
 import { useReviewVerdicts } from "./reviewVerdicts";
+// #281: the pure delta-protocol helpers (upsert/drop + exact staleness)
+import { applyDeltaToSnapshot, deltaStale } from "./deltas";
 
 type Mode = "review" | "rolls" | "person";
 
@@ -404,38 +406,40 @@ export default function App() {
     setSnap(s);
   }, []);
   // #219: apply a mutation's delta locally — only the touched rows move,
-  // no full snapshot re-fetch. The moved persons/faces/images upsert by
-  // id; removed persons drop out. `drifted` falls back to a full refresh.
+  // no full snapshot re-fetch. #281: the upsert/drop maths is the pure
+  // `applyDeltaToSnapshot` (co-tested in deltas.test.ts); staleness is
+  // exact via `deltaStale` — `base` (the command's pre-write stamp) must
+  // equal the stamp of the state this delta applies onto.
   const applyDelta = useCallback(
     (delta: Delta) => {
-      if (delta.drifted) {
+      if (deltaStale(delta, snapVersionRef.current)) {
         void refresh().catch(() => {});
         return;
       }
       snapVersionRef.current = delta.version;
-      setSnap((s) => {
-        if (!s) return s;
-        const next: Snapshot = { ...s };
-        if (delta.persons != null || delta.removed.length > 0) {
-          const byId = new Map(next.persons.map((p) => [p.id, p]));
-          for (const p of delta.persons ?? []) byId.set(p.id, p);
-          for (const id of delta.removed) byId.delete(id);
-          next.persons = [...byId.values()];
-        }
-        if (delta.faces != null) {
-          const byId = new Map(next.faces.map((f) => [f.id, f]));
-          for (const f of delta.faces) byId.set(f.id, f);
-          next.faces = [...byId.values()];
-        }
-        if (delta.images != null) {
-          const byId = new Map(next.images.map((im) => [im.id, im]));
-          for (const im of delta.images) byId.set(im.id, im);
-          next.images = [...byId.values()];
-        }
-        return next;
-      });
+      setSnap((s) => (s ? applyDeltaToSnapshot(s, delta) : s));
     },
     [refresh]
+  );
+  // #281: apply a PLAN's deltas in order — each delta's `base` is the
+  // stamp the previous apply left (the backend chains sequential ops
+  // exactly this way), so every delta is checked against the live stamp;
+  // the first stale/drifted one aborts the plan and falls back to ONE
+  // full refresh (applying the rest on top of a known-stale base would
+  // just cascade more refreshes).
+  const applyDeltas = useCallback(
+    async (deltas: Delta[]) => {
+      let stale = false;
+      for (const d of deltas) {
+        if (deltaStale(d, snapVersionRef.current)) {
+          stale = true;
+          break;
+        }
+        applyDelta(d);
+      }
+      if (stale) await refresh();
+    },
+    [applyDelta, refresh]
   );
   // #208: reload only when the database actually moved since the last
   // snapshot (our own mutations refresh explicitly and record the new
@@ -479,14 +483,24 @@ export default function App() {
     };
   }, [refreshIfChanged]);
 
+  // #282 (N1): the id maps key on the ARRAYS, not the whole snapshot — a
+  // person-only delta (group/note/name) rebuilds neither, so the handler
+  // chain that reads them through refs (below) keeps its identity and
+  // memo(FaceCard) skips untouched cards on those mutations too
   const facesById = useMemo(
     () => new Map((snap?.faces ?? []).map((f) => [f.id, f])),
-    [snap]
+    [snap?.faces]
   );
   const personsById = useMemo(
     () => new Map((snap?.persons ?? []).map((p) => [p.id, p])),
-    [snap]
+    [snap?.persons]
   );
+  // #282 (N1): the #98 identity rule — handlers that only READ the id
+  // maps do so through this ref (the pendingRef pattern), so their
+  // identities never churn with a delta and memo(FaceCard) skips every
+  // untouched card on a verdict.
+  const facesByIdRef = useRef(facesById);
+  facesByIdRef.current = facesById;
   const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
   // #99 (§4.10): the status filter — one value drives every view's
   // visibility, tree presence/counts (#28 generalised) and the review set
@@ -538,7 +552,13 @@ export default function App() {
     () => orderedVisiblePersonIdsFromTree(tree, treePersons, deferredStepFilter),
     [tree, treePersons, deferredStepFilter]
   );
-  const stepIdx = personId != null ? stepIds.indexOf(personId) : -1;
+  // #283 (N6): the step index of the anchor — one O(n) scan per
+  // [stepIds, personId] change, not per render (the old inline indexOf
+  // ran on every App render)
+  const stepIdx = useMemo(
+    () => (personId != null ? stepIds.indexOf(personId) : -1),
+    [stepIds, personId]
+  );
 
   // #213: one person-data signature per snapshot — the cluster and
   // refcrop effects below key on IT instead of the snapshot identity, so
@@ -644,10 +664,11 @@ export default function App() {
       try {
         const result = await fn();
         const deltas = (Array.isArray(result) ? result : [result]).filter(isDelta);
-        if (deltas.some((d) => d.drifted)) {
-          await refresh(); // an external write interleaved — full refresh
-        } else if (deltas.length > 0) {
-          for (const d of deltas) applyDelta(d);
+        if (deltas.length > 0) {
+          // #281: in plan order against the live stamp — a drifted or
+          // base-stale delta (external write before/mid-command) falls
+          // back to one full refresh, the rest of the plan with it
+          await applyDeltas(deltas);
         } else {
           await refresh(); // non-delta command (settings) / void result
         }
@@ -660,7 +681,7 @@ export default function App() {
         setBusy(false);
       }
     },
-    [refresh, applyDelta]
+    [refresh, applyDeltas]
   );
 
   // #122: rotations are server state — command, then refresh
@@ -709,10 +730,10 @@ export default function App() {
   const closeSplitForFaces = useCallback(
     (ids: number[]) => {
       if (splitImageId == null) return;
-      if (!ids.some((id) => facesById.get(id)?.image_id === splitImageId))
+      if (!ids.some((id) => facesByIdRef.current.get(id)?.image_id === splitImageId))
         setSplitImageId(null);
     },
-    [splitImageId, facesById]
+    [splitImageId]
   );
 
   // #201 (§4.37) — a crop click in the focus split follows the same
@@ -721,10 +742,10 @@ export default function App() {
   const followCrop = useCallback(
     (id: number) => {
       if (splitImageId == null) return;
-      const f = facesById.get(id);
+      const f = facesByIdRef.current.get(id);
       if (f && f.person_id != null) setPersonId(f.person_id);
     },
-    [splitImageId, facesById]
+    [splitImageId]
   );
 
   const toggle = useCallback(
@@ -761,10 +782,10 @@ export default function App() {
   const rectToggle = useCallback(
     (id: number) => {
       toggle(id);
-      const f = facesById.get(id);
+      const f = facesByIdRef.current.get(id);
       if (f && f.person_id != null) setPersonId(f.person_id);
     },
-    [toggle, facesById]
+    [toggle]
   );
 
   // #49 (§4.14) — effective action scope: the active selection when the
@@ -936,16 +957,18 @@ export default function App() {
   // selection; applied sequentially because each call re-assigns seq
   // within its new (person, description) group (§4.4) and concurrent
   // transactions could compute the same next seq
+  // #282 (N1): both read facesById through the ref — the identities
+  // never churn with a delta (they feed the gridHandlers memo)
   const doPrimary = useCallback(
     (id: number) => {
-      const f = facesById.get(id);
+      const f = facesByIdRef.current.get(id);
       if (f && f.person_id != null) mutate(() => api.setPrimaryFace(f.person_id!, id));
     },
-    [facesById, mutate]
+    [mutate]
   );
   const doRefcrop = useCallback(
     (id: number) => {
-      const f = facesById.get(id);
+      const f = facesByIdRef.current.get(id);
       if (f && f.person_id != null)
         // #213: pin changes are invisible to the snapshot signature —
         // bump the epoch so the strip refetches
@@ -953,7 +976,7 @@ export default function App() {
           if (ok) setRefcropEpoch((n) => n + 1);
         });
     },
-    [facesById, mutate]
+    [mutate]
   );
 
   // #35 — tree selection: click selects, ctrl/cmd toggles, shift extends
@@ -1253,6 +1276,8 @@ export default function App() {
   // #101 (§4.24): the dialog engine — openEdit reads the sections via
   // the latest-value ref (it only fires on events), so the memoised
   // grid handlers and faceMenu can share it without ordering traps
+  // #282 (N1): the maps are read through refs (identity-stable for the
+  // memoised grid handlers / faceMenu below — see facesByIdRef)
   const prefillFor = useCallback(
     (ids: number[]): Prefill =>
       // #199 (§4.24): the prefill is what the card SHOWS — the staged
@@ -1260,8 +1285,8 @@ export default function App() {
       prefillForFaces(
         ids,
         (id) => {
-          const f = facesById.get(id);
-          const p = f?.person_id != null ? personsById.get(f.person_id) : undefined;
+          const f = facesByIdRef.current.get(id);
+          const p = f?.person_id != null ? personsByIdRef.current.get(f.person_id) : undefined;
           // #165/§4.35/#266: the reject-bin persons' reserved name/seat
           // never prefills — a claim needs a typed name (untouched = no
           // stage). #233 (§4.35 display rule): a status seat never
@@ -1276,7 +1301,7 @@ export default function App() {
         },
         pendingRef.current,
       ),
-    [facesById, personsById]
+    []
   );
 
   /** Q1/G3 + invocation-site defaults (§4.24): Edit on a card →
@@ -1288,7 +1313,7 @@ export default function App() {
       target?: { card?: number; group?: number[] },
       selectionOverride?: number[]
     ) => {
-      if (!snap) return;
+      if (!snapRef.current) return;
       const card = target?.card != null ? [target.card] : [];
       const group =
         target?.group ??
@@ -1315,11 +1340,14 @@ export default function App() {
         },
       });
     },
-    [snap, changeSel, prefillFor]
+    [changeSel, prefillFor]
   );
 
+  // #282 (N1): the map read goes through the ref so the identity never
+  // churns with a delta (faceMenu feeds the gridHandlers memo — a churn
+  // re-renders every mounted section and its cards)
   const faceMenu = useCallback((id: number, e: ReactMouseEvent) => {
-    const f = facesById.get(id);
+    const f = facesByIdRef.current.get(id);
     if (!f) return;
     // #75 (cursor-as-target, generalises #74): with an empty selection
     // the right-clicked card selects automatically — the menu then
@@ -1337,7 +1365,7 @@ export default function App() {
       sel: selRef.current,
       actionScope,
       section: sectionsRef.current.find((s) => s.faceIds.includes(id)) ?? null,
-      facesById,
+      facesById: facesByIdRef.current,
       toggle,
       toggleMany,
       doAccept,
@@ -1355,9 +1383,9 @@ export default function App() {
       addFaceGroup: (ids) => setFaceAddGroup({ ids }),
       splitImageId,
     }));
-  }, [facesById, actionScope, toggle, toggleMany, doAccept, doReject,
-     doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel,
-     confirmContext, rotateFace]);
+  }, [actionScope, toggle, toggleMany, doAccept, doReject,
+      doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel,
+      confirmContext, rotateFace]);
 
   // #174 (§4.39): the selected branch's images for the right pane —
   // DIRECT children only (the directory of primary_path equals the
@@ -1484,12 +1512,20 @@ export default function App() {
   // §4.36 branch route: the header ⇩ / the menu's Re-import… open the
   // import pane on the branch with Re-import pre-checked (every tree
   // branch holds imported images; the pane's own gating rules apply)
+  // #282 (N2): the functional update drops `splitImageId` from the
+  // deps — the identity stays put for the memo(RollsPane) prop check
   const reimportBranch = useCallback((path: string) => {
     setImportDir(path);
     setImportInitial({ reimport: true });
     setImageId(null);
-    if (splitImageId != null) setSplitImageId(null);
-  }, [splitImageId]);
+    setSplitImageId((cur) => (cur != null ? null : cur));
+  }, []);
+  // #282 (N2): identity-stable (the setters are stable) — see the
+  // RollsPane JSX note
+  const onImportDir = useCallback((path: string) => {
+    setImportDir(path);
+    setImportInitial(null);
+  }, []);
   const branchMenu = useCallback(
     (e: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void }, path: string) => {
       openMenu(e as unknown as ReactMouseEvent, rollBranchMenuGroups({
@@ -1648,7 +1684,7 @@ export default function App() {
     onFaceDragLeave,
     onFaceDropOnCard,
     clearFaceDrag,
-  } = useFaceDrag(selRef, stagedIdxRef, facesById, mutate);
+  } = useFaceDrag(selRef, stagedIdxRef, facesByIdRef, mutate);
 
   // #177 (§4.42): the accept path behind the ✓ — bound through a ref
   // so this early memo (#98 identity rule) keeps a stable callback
@@ -1988,10 +2024,9 @@ export default function App() {
       // face→owner mapping (the claim/merge moves faces between persons),
       // so the group ops below need no full snapshot re-fetch.
       const deltas: Delta[] = [];
-      const flush = async () => {
-        if (deltas.some((d) => d.drifted)) await refresh();
-        else for (const d of deltas) applyDelta(d);
-      };
+      // #281: the plan's deltas apply in order against the live stamp
+      // (`applyDeltas` — a drifted/base-stale delta is one full refresh)
+      const flush = () => applyDeltas(deltas);
       let done = 0;
       try {
         for (; done < all.length; done++) {
@@ -2038,7 +2073,7 @@ export default function App() {
       await acceptAndNext(ids, claimed);
       setPending([]);
     },
-    [acceptAndNext, stageOps, applyDelta, facesById, refresh]
+    [acceptAndNext, stageOps, applyDeltas, facesById, refresh]
   );
 
   // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the
@@ -2863,11 +2898,11 @@ export default function App() {
               onOpenImage={openThumb}
               // #167 (§4.36): a not-yet-imported directory opens the
               // import pane in the right pane — the path-filter route is
-              // always a FRESH import (clear any branch-route initial)
-              onImportDir={(path) => {
-                setImportDir(path);
-                setImportInitial(null);
-              }}
+              // always a FRESH import (clear any branch-route initial).
+              // #282 (N2): hoisted out of the JSX — an inline arrow here
+              // re-rendered the whole visible roll tree on every App
+              // render (memo(RollsPane) never held)
+              onImportDir={onImportDir}
               // v12.4 (#280)/§4.36: header ⇩ / menu Re-import… route
               onReimport={reimportBranch}
               // v12.4 (#280)/§4.39: the per-branch recursive-grid state

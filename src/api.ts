@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { decodeImageBatch } from "./imageBatch";
-import { LruCache } from "./lruCache";
+import { LruCache, revokeUrlAfterGrace } from "./lruCache";
 
 export interface PersonCounts {
   total: number;
@@ -91,6 +91,12 @@ export interface Snapshot {
 export interface Delta {
   /** the new change stamp (matches `Snapshot.version`) */
   version: number;
+  /** #281 — the stamp read BEFORE the write; the GUI compares it against
+      the stamp of the state it has applied (`Snapshot.version` or the
+      previous delta's `version` in a plan) — a mismatch means an
+      external write landed before the pre-read and this delta cannot
+      cover it: full refresh (see `deltas.ts` `deltaStale`) */
+  base: number;
   /** an external write interleaved (importer) — full-refresh instead of
       applying the delta */
   drifted: boolean;
@@ -256,9 +262,12 @@ export const getImportInfo = () =>
 
 type ImageKind = "face" | "thumb" | "preview";
 
+// #283 (N7): revoke after the grace — an `<img>` mounted with the URL
+// right before the eviction has begun loading by then (the #212
+// contract: a begun load survives the revoke)
 const revokeUrl = (_id: number, p: Promise<string | null>) =>
   void p.then((url) => {
-    if (url) URL.revokeObjectURL(url);
+    if (url) revokeUrlAfterGrace(url);
   });
 
 const imageCaches: Record<ImageKind, LruCache<number, Promise<string | null>>> = {

@@ -6207,8 +6207,6 @@ def c61_full_view_verdict_advances_review(t):
     # of that image; the ✓ below clicks the card in the ROLL). The
     # anchor follows the opened face (personId ⇒ stepIdx), so the pos
     # is read AFTER the open (at load stepIdx is -1 — "–")
-    # open the full view on that exact face (the roll lists every face
-    # of that image; the ✓ below clicks the card in the ROLL)
     card = t.find_element(By.CSS_SELECTOR,
                           f".face-card[data-face-id='{pick['fid']}']")
     js(t, "arguments[0].scrollIntoView({block:'center'})", card)
@@ -6227,7 +6225,29 @@ def c61_full_view_verdict_advances_review(t):
     # so the position is read AFTER the open (before it the right pane
     # is unanchored — pos -1)
     pos0 = navpos()
-    pos0 = navpos()
+    # The expected hand-over target, read from the SAME visible step
+    # order `navpos` walks: the first person AFTER the picked one that
+    # still has a new face. Comparing the anchor's identity (not raw
+    # positions) keeps the check sound when the drained person DROPS
+    # OUT of the filtered tree: the §4.40 Review-entry pin (Show → New)
+    # races `fresh`'s Show → All retry loop, so the filter at verdict
+    # time is whichever won — under New the drained person leaves the
+    # tree and every successor shifts one LEFT, so `pos > pos0` was
+    # comparing across two different tree shapes (a pre-existing
+    # order-flake that fired whenever the pin won the race).
+    want_next = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const rows = [...document.querySelectorAll('.tree-person')];
+      const seen = new Set(); const order = [];
+      for (const r of rows) { const id = Number(r.dataset.personId);
+        if (!seen.has(id)) { seen.add(id); order.push(id); } }
+      const i = order.indexOf(arguments[0]);
+      const prov = (pid) => snap.faces.some(
+        f => f.person_id === pid && f.link_status === 'provisional');
+      for (let j = i + 1; j < order.length; j++)
+        if (prov(order[j])) return order[j];
+      return null;
+    """, pick["pid"])
     # the verdict is made IN the full view: the film-roll card's ✓
     fcard = t.find_element(By.CSS_SELECTOR,
                            f".focus-pane .face-card[data-face-id='{pick['fid']}']")
@@ -6259,13 +6279,14 @@ def c61_full_view_verdict_advances_review(t):
           and st["focus"] is False                  # the advance closed the split
           and st["anchor"] is not None and st["anchor"] != pick["pid"]
           and st["anchorHasNew"] is True            # handed over, not stranded
-          and st["pos"] is not None and pos0 is not None and st["pos"] > pos0
+          and want_next is not None and st["anchor"] == want_next
+          and st["pos"] is not None and pos0 is not None
           and st["faceStatus"] == "confirmed")
     record("C61 full-view accept advances the review (v3.93, §4.40 reach/§4.30)", ok,
            f"{pick['pname']} (fid {pick['fid']}, pos {pos0}): "
            f"tab={st['tab']!r} locked={st['locked']} focus={st['focus']} "
            f"anchor={st['anchor']} ({st['anchorName']!r}) pos={st['pos']} "
-           f"faceStatus={st['faceStatus']!r}")
+           f"want_next={want_next} faceStatus={st['faceStatus']!r}")
 
 
 def _restart_session(holder):

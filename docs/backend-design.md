@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.18** (#278) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 1.19** (#281) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -126,12 +126,24 @@ Every mutating command follows the same shape (gui-design §4.8):
    affected persons (with counts/groups), all faces of any person whose
    names were re-derived (`refresh_person_names`), the directly-touched
    face/image rows, and any removed person ids. `delta_after()` reads
-   the stamp before (`v1`) and after (`v2`) the write; `v2 > v1 + 1`
-   means an external write (importer) interleaved and the delta is
-   flagged `drifted` — the GUI then falls back to a full
-   `get_snapshot()`. A full snapshot is still used for cold load, the
-   focus/visibility reload (`get_data_version` gate), and import
-   completion.
+   the stamp before (`v1`) and after (`v2`) the write and carries both:
+   `base = v1` and `version = v2`. Staleness is exact (#281): the GUI
+   compares `base` against the stamp of the state it has applied
+   (`Snapshot.version`, or the previous delta's `version` in a
+   sequential plan) — a mismatch means an external write landed *before*
+   this command's pre-read and the delta cannot cover it, so the GUI
+   falls back to a full `get_snapshot()`; `v2 > v1 + 1` (`drifted`) means
+   the external write landed *between* the pre-read and the commit.
+   Either flag is sufficient on its own; together they close the
+   single-interleaved-write gap of the count-only check (a zero-row
+   write never moves the stamp, so `base` — not `version` — is the
+   sound comparison). The delta covers every deletion the command
+   performed: person ids removed by the §4.27 sweep and by the legacy
+   `Rejected` split ride `removed` (#281), and the rotation commands
+   read their delta face ids *inside* the transaction (an
+   image-scoped UPDATE always reaches faces a pre-tx read missed). A
+   full snapshot is still used for cold load, the focus/visibility
+   reload (`get_data_version` gate), and import completion.
 
 The stale-shell sweep (gui-design §4.27) rides the writers that can
 empty a person — `snapshot()` itself is a pure read (#208).

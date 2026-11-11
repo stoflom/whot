@@ -693,35 +693,43 @@ def repair_stale_primaries(con: sqlite3.Connection, person_ids: set[int]) -> Non
     point at a face that no longer belongs to it. Recompute such a
     primary with the machine rule (the same statement
     assign_missing_primaries uses; no eligible face → NULL) and clear
-    the pinned flag — the user's pick moved with the face (§4.47)."""
-    for pid in person_ids:
-        if pid is None:
-            continue
-        con.execute("""
-            UPDATE persons SET primary_face_id = (
-                SELECT f.id FROM faces f
-                 WHERE f.person_id = persons.id AND f.state != 'discarded'
-                   AND f.link_status != 'rejected'
-                 ORDER BY f.confidence DESC, f.id LIMIT 1),
-                 primary_pinned = 0
-             WHERE id = ?
-               AND primary_face_id IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM faces f
-                                WHERE f.id = persons.primary_face_id
-                                  AND f.person_id = persons.id)
-        """, (pid,))
+    the pinned flag — the user's pick moved with the face (§4.47).
+    #283 (N5): one statement for the whole person set (the old loop ran
+    the UPDATE per pid)."""
+    if not person_ids or None in person_ids:
+        return
+    pids = [p for p in person_ids if p is not None]
+    marks = ",".join("?" * len(pids))
+    con.execute(f"""
+        UPDATE persons SET primary_face_id = (
+            SELECT f.id FROM faces f
+             WHERE f.person_id = persons.id AND f.state != 'discarded'
+               AND f.link_status != 'rejected'
+             ORDER BY f.confidence DESC, f.id LIMIT 1),
+             primary_pinned = 0
+         WHERE id IN ({marks})
+           AND primary_face_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM faces f
+                            WHERE f.id = persons.primary_face_id
+                              AND f.person_id = persons.id)
+    """, tuple(pids))
 
 
 def reseat_persons(con: sqlite3.Connection, person_ids: set[int]) -> None:
     """Re-seat persons receiving a provisional face to `New` (group
-    invariant, §4.35) — the same statement the fresh-import path runs."""
-    for pid in person_ids:
-        con.execute(
-            "UPDATE person_groups SET path = 'New'"
-            "  WHERE person_id = ? AND path IN ('New', 'Accepted')"
-            "    AND EXISTS (SELECT 1 FROM faces WHERE person_id = ?"
-            "                AND link_status = 'provisional')",
-            (pid, pid))
+    invariant, §4.35) — the same statement the fresh-import path runs.
+    #283 (N5): one statement for the whole person set (the old loop ran
+    the UPDATE per pid)."""
+    if not person_ids:
+        return
+    pids = [p for p in person_ids if p is not None]
+    marks = ",".join("?" * len(pids))
+    con.execute(
+        f"UPDATE person_groups SET path = 'New'"
+        f"  WHERE person_id IN ({marks}) AND path IN ('New', 'Accepted')"
+        f"    AND EXISTS (SELECT 1 FROM faces WHERE person_id IN ({marks})"
+        f"                AND link_status = 'provisional')",
+        (*pids, *pids))
 
 
 def reimport_image(con: sqlite3.Connection, image_id: int, detections: list[Detection],
@@ -754,19 +762,33 @@ def reimport_image(con: sqlite3.Connection, image_id: int, detections: list[Dete
     # 1. matched provisional/rejected faces → re-match on the stored embedding
     det_to_face = {di: ei for di, ei in enumerate(matches) if ei is not None}
     matched_faces: set[int] = set(det_to_face.values())
+    # #283 (N5): the embeddings preload in ONE batched query (the old
+    # loop ran one SELECT per re-link candidate); the kept semantics
+    # stay per-face in the loop below (confirmed/discarded consume their
+    # re-detection, a missing vector leaves the face as-is)
+    preload_ids = [
+        faces[ei].id for ei in sorted(det_to_face.values())
+        if faces[ei].link_status != "confirmed" and faces[ei].state != "discarded"
+    ]
+    embeddings: dict[int, np.ndarray] = {}
+    if preload_ids:
+        marks = ",".join("?" * len(preload_ids))
+        for fid, blob in con.execute(
+                f"SELECT face_id, vector FROM face_embeddings"
+                f" WHERE model = ? AND face_id IN ({marks})",
+                (MODEL_TAG, *preload_ids)).fetchall():
+            embeddings[fid] = _vec(blob)
     pending: list[tuple[ExistingFace, np.ndarray]] = []
     for ei in sorted(det_to_face.values()):
         f = faces[ei]
         if f.link_status == "confirmed" or f.state == "discarded":
             counts["kept"] += 1
             continue
-        row = con.execute(
-            "SELECT vector FROM face_embeddings WHERE face_id = ? AND model = ?",
-            (f.id, MODEL_TAG)).fetchone()
-        if row is None:      # e.g. a face without a vector — left as-is
+        emb = embeddings.get(f.id)
+        if emb is None:           # e.g. a face without a vector — left as-is
             counts["kept"] += 1
             continue
-        pending.append((f, _vec(row[0])))
+        pending.append((f, emb))
     for ei, f in enumerate(faces):
         if ei not in matched_faces:
             counts["orphaned"] += 1

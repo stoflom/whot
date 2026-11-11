@@ -88,19 +88,34 @@ describe("useReviewVerdicts — the identity chain (#222 F-H3)", () => {
     expect(result.current.markExhaust).toBe(first.markExhaust);
   });
 
-  it("the callbacks DO move with their real inputs (the chain is not frozen)", () => {
-    const base = makeInputs(3);
+  it("the callbacks read the LIVE map but keep identity across a delta (#282 N1)", () => {
+    // setInfo must be ONE function across rerenders (App's useState
+    // setter is stable) — a fresh one here would churn doAccept on its
+    // own, which is exactly what the test must not measure
+    const info: string[] = [];
+    const setInfo = (s: string | null) => info.push(s ?? "");
+    const base = { ...makeInputs(3), setInfo };
     const { result, rerender } = renderHook(
       (p: ReviewVerdictInputs) => useReviewVerdicts(p),
       { initialProps: base }
     );
     const first = result.current;
-    // a snapshot lands (facesById identity moves) — the guard-reading
-    // callbacks must see the new data, so they re-create (App's
-    // gridHandlers recomputes once per snapshot, never per person)
-    const nextFaces = [faceOf(1, 3), faceOf(2, 3)];
-    rerender({ ...base, facesById: new Map(nextFaces.map((f) => [f.id, f])) });
-    expect(result.current.doAccept).not.toBe(first.doAccept);
+    // a verdict delta lands: a fresh facesById (map content changed)
+    // — #282: the chain stays put (the map is read through the ref, so
+    // gridHandlers keeps its identity and memo(FaceCard) skips every
+    // untouched card) while the data read stays LIVE…
+    const nextFaces = [faceOf(1, 3, "confirmed"), faceOf(2, 3, "rejected")];
+    rerender({
+      ...base,
+      facesById: new Map(nextFaces.map((f) => [f.id, f])),
+    });
+    expect(result.current.doAccept).toBe(first.doAccept);
+    expect(result.current.doReject).toBe(first.doReject);
+    expect(result.current.focusActed).toBe(first.focusActed);
+    // …so a rejected-only scope after the delta still gets the inert
+    // guidance (the fresh map, not the stale one)
+    result.current.doAccept([2]);
+    expect(info).toEqual(["assign a person to bring it back"]);
     // mode is a dep of markExhaust only (#188 — the lock IS the mode)
     rerender({ ...base, mode: "person" });
     expect(result.current.markExhaust).not.toBe(first.markExhaust);

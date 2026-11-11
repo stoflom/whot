@@ -1,7 +1,26 @@
 // #212 — a tiny LRU map for the image caches: entries evict in
 // least-recently-used order once `max` is exceeded (Map iteration order
-// IS insertion order; a `get`/`set` of a live key refreshes it). PURE —
-// the api.ts cache layer is the only consumer.
+// IS insertion order; a `get`/`set` of a live key refreshes it). The
+// class is PURE; the api.ts image caches and the hooks.ts rotated cache
+// are the consumers (both evict through `revokeUrlAfterGrace`).
+
+/** #283 (N7): how long an evicted Blob URL stays alive past its eviction
+    (ms). A revoke the instant a cache evicts can catch an `<img>` that
+    was just mounted with that URL but has not STARTED loading yet — the
+    load then fails and the app re-requests (a flicker). A grace delay
+    that dwarfs any real load-start latency closes that window: every
+    `<img>` holding the URL at eviction time has long since begun
+    loading, and a begun load survives the revoke (the #212 contract:
+    `URL.revokeObjectURL` never breaks a load in flight). Bounded cost —
+    the blob outlives its eviction by the grace, one timer per evicted
+    URL. */
+export const REVOKE_GRACE_MS = 5_000;
+
+/** #283 (N7): revoke after the grace — the eviction-hook shape both the
+    api.ts image caches and the hooks.ts rotated cache use. */
+export function revokeUrlAfterGrace(url: string): void {
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_GRACE_MS);
+}
 
 export class LruCache<K, V> {
   private map = new Map<K, V>();

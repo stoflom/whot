@@ -1626,6 +1626,180 @@ fn delta_drift_flags_stale_prewrite_219() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+// ---------------------------------------------------------------- #281
+// performance-review §6.3 N3 — the delta protocol's coverage edges. The
+// `base` stamp makes staleness exact (an external write BEFORE the
+// command's pre-read is visible to the GUI), and every deletion the
+// command performed rides `removed` (the §4.27 sweep, the #266 legacy
+// split) so swept shells leave the tree instead of lingering.
+
+/// #281 — `base` is the command's pre-write stamp: the GUI compares it
+/// against the stamp of the state it applied, so an external write that
+/// landed before the pre-read (which `v2 > v1 + 1` cannot see) is
+/// detectable. Pin that `base` is genuinely the pre-read, not a copy of
+/// the post-commit `version`.
+#[test]
+fn delta_base_is_the_prewrite_stamp_281() {
+    let p = fixture_paths("base281");
+    let v0 = db::data_version(&p).unwrap();
+    let d = db::set_link_status(&p, &[1], "confirmed").unwrap();
+    assert_eq!(d.base, v0, "base = the stamp read before the write");
+    assert_eq!(d.version, db::data_version(&p).unwrap(), "version = post-commit");
+    assert!(d.version > d.base, "the write moved the stamp");
+    // an external write lands BEFORE the next command's pre-read: `base`
+    // reflects the (already moved) pre-read stamp — the GUI's own
+    // comparison (`base` != its applied stamp) is what flags it, not
+    // `drifted` (the count never moves by > 1 in-command)
+    let ext = db::connect(&p).unwrap();
+    ext.execute("UPDATE persons SET note = 'x' WHERE id = 2", []).unwrap();
+    drop(ext);
+    let v1 = db::data_version(&p).unwrap();
+    let d2 = db::set_link_status(&p, &[1], "confirmed").unwrap();
+    assert_eq!(d2.base, v1, "base tracks the pre-read, not the old state");
+    assert!(!d2.drifted, "no in-command interleaving: drifted stays false");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #281 — the §4.27 sweep's deletions ride `removed`: a reject that
+/// empties an `UnknownN` (its faces re-homed) and a claim that empties a
+/// writer-owned `RejectedN` both leave the GUI holding stale shell rows
+/// unless the swept ids are reported.
+#[test]
+fn swept_shells_ride_removed_281() {
+    let p = fixture_paths("sweep281");
+    // reject face 3 — its owner Unknown2 is emptied by the re-home and
+    // swept by the same write: the id must be reported
+    let d = db::set_link_status(&p, &[3], "rejected").unwrap();
+    assert!(d.removed.contains(&2), "swept Unknown2 reported: {:?}", d.removed);
+    let rej1: i64 = {
+        let con = db::connect(&p).unwrap();
+        con.query_row("SELECT id FROM persons WHERE name = 'Rejected1'", [], |r| r.get(0)).unwrap()
+    };
+    // claim the rejected face for Alice — the claim un-rejects it, the
+    // emptied `Rejected1` is writer-owned (never deleted inline, only
+    // swept): the swept id must be reported
+    let d2 = db::assign_person(&p, &[3], "Alice", "").unwrap();
+    assert!(d2.removed.contains(&rej1),
+            "swept Rejected1 ({rej1}) reported: {:?}", d2.removed);
+    // and the row itself is gone from the delta's persons — the GUI
+    // drops it by id instead of upserting a shell
+    let persons = d2.persons.as_ref().unwrap();
+    assert!(!persons.iter().any(|x| x.id == rej1), "swept shell not upserted");
+    // the claimed face landed confirmed on Alice
+    let faces = d2.faces.as_ref().unwrap();
+    let f3 = faces.iter().find(|f| f.id == 3).unwrap();
+    assert_eq!(f3.link_status, "confirmed");
+    assert!(f3.name.starts_with("Alice-"), "name re-derived: {}", f3.name);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #281 — the #266 legacy split (a reject retires the old single
+/// `Rejected` bin) is part of the reject write: the deleted legacy id
+/// rides `removed`, the `RejectedN` targets that received its faces ride
+/// the delta's persons, and the moved faces ride the delta's faces.
+#[test]
+fn split_legacy_rides_delta_281() {
+    let p = fixture_paths("split281");
+    // the legacy state: a single `Rejected` person holding two faces
+    let legacy: i64 = {
+        let con = db::connect(&p).unwrap();
+        con.execute(
+            "INSERT INTO persons(name, state, created_at) VALUES ('Rejected', 'created', ?)",
+            rusqlite::params![NOW],
+        ).unwrap();
+        con.last_insert_rowid()
+    };
+    seed_faces(&p.db, legacy, 100, &["", ""]);
+    // a reject on an unrelated face retires the legacy bin first
+    let d = db::set_link_status(&p, &[1], "rejected").unwrap();
+    // the legacy person is deleted and reported
+    assert_eq!(d.removed, vec![legacy], "the retired bin rides removed");
+    let persons = d.persons.as_ref().unwrap();
+    let targets: Vec<&db::Person> = persons
+        .iter()
+        .filter(|x| x.name.starts_with("Rejected") && x.name != "Rejected")
+        .collect();
+    assert!(!targets.is_empty(), "the RejectedN targets ride persons");
+    // both legacy faces moved onto a RejectedN target and are in the delta
+    let faces = d.faces.as_ref().unwrap();
+    for fid in [100i64, 101] {
+        let f = faces.iter().find(|f| f.id == fid)
+            .unwrap_or_else(|| panic!("legacy face {fid} in the delta"));
+        assert_eq!(f.person_id, Some(targets[0].id), "re-homed onto the target");
+        assert_eq!(f.link_status, "rejected");
+    }
+    // and the row is really gone
+    let s = db::snapshot(&p).unwrap();
+    assert!(!s.persons.iter().any(|x| x.name == "Rejected"));
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #281/#283 — `rotate_images` is one set-based statement pair for the
+/// whole batch (the old per-image loop was 3 statements × N): the
+/// write-phase statement count is constant in the image count. Also
+/// pins the in-tx delta face read (#281): every face of every rotated
+/// image is in the delta.
+#[test]
+fn rotate_images_write_phase_is_constant_281() {
+    let count = |name: &str, ids: &[i64]| -> (usize, db::Delta) {
+        let p = fixture_paths(name);
+        {
+            let mut con = db::connect(&p).unwrap();
+            con.trace(Some(counting_trace));
+        }
+        let d = db::rotate_images(&p, ids, 90).unwrap();
+        let seen = STMT_SEEN.load(Ordering::SeqCst);
+        {
+            let mut con = db::connect(&p).unwrap();
+            con.trace(None);
+        }
+        std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+        (seen, d)
+    };
+    let (one, d1) = count("rot281a", &[1]);
+    let (three, d3) = count("rot281b", &[1, 2, 3]);
+    assert_eq!(one, three,
+               "write phase is constant in the image count: {one} vs {three}");
+    // #281: the delta carries every face on every rotated image (read
+    // inside the tx) plus the image rows
+    let mut ids: Vec<i64> = d3.faces.as_ref().unwrap().iter().map(|f| f.id).collect();
+    ids.sort();
+    assert_eq!(ids, vec![1, 2, 3, 4, 5, 6], "all faces of the 3 images");
+    assert_eq!(
+        d3.images.as_ref().unwrap().iter().map(|i| i.id).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert!(d3.persons.is_none(), "no person rows move on a rotation");
+    let _ = d1;
+}
+
+/// #283 (N4) — the §9 multi-row moves are set-based: the write phase is
+/// constant in the selection size (the old loop was 2–3 statements per
+/// person: DELETE from-membership + INSERT to + seat drop).
+#[test]
+fn move_persons_write_phase_is_constant_283() {
+    let count = |name: &str, ids: &[i64]| -> usize {
+        let p = fixture_paths(name);
+        {
+            let mut con = db::connect(&p).unwrap();
+            con.trace(Some(counting_trace));
+        }
+        let _ =
+            db::move_persons_between_groups(&p, ids, "New", "Group1|Group2").unwrap();
+        let seen = STMT_SEEN.load(Ordering::SeqCst);
+        {
+            let mut con = db::connect(&p).unwrap();
+            con.trace(None);
+        }
+        std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+        seen
+    };
+    let one = count("mv283a", &[1]);
+    let three = count("mv283b", &[1, 2, 3]);
+    assert_eq!(one, three,
+               "write phase constant in the selection size: {one} vs {three}");
+}
+
 // ---------------------------------------------------------------- #220
 // performance-review §3.2 B-M2/B-M3/B-M4 — write-path N+1. The
 // acceptance line: a reject batch over F faces must not run more than
