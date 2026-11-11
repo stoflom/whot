@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 12.7** (#286/#287) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 13.0** (#286/#287) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1257,6 +1257,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       facts (face counts, group paths, `state='imported'` badge,
       created_at), multi-select, `Merge into…` / bulk group / bulk
       rename;
+    - *person detail panel* (the right pane's *Merge similar* button,
+      v13.0/#287): the **same dialog scoped to the focused person** —
+      only that person's own cluster is listed (detection unchanged,
+      single-linkage — a typo chain still reaches beyond a direct
+      match), titled `Similar to "<name>"`; the focused person is among
+      the candidates and the natural merge target. The button is
+      **hidden for system persons** (`RejectedN` bins and `UnknownN`
+      clusters — refused as merge targets) and otherwise sits below
+      *Remove person*, above the Reference faces heading;
     - *person context menu*: `Merge into…` (typeahead), `Apply group to
       selection…`, `Rename selection to…` on a (multi-)selection;
     - *drag-and-drop*: dragging a selected set **onto a person row**
