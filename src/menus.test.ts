@@ -412,13 +412,16 @@ describe("imageAreaMenuGroups", () => {
   });
 });
 
-// v12.4 (#280): the roll-branch header context menu — the §4.36
-// re-import route + the §4.39 recursive-grid mirror
+// v12.4 (#280) / v12.5 (#284): the roll-branch header context menu —
+// the §4.36 re-import route + the §4.39 recursive-grid mirror + the
+// branch's open routes
 describe("rollBranchMenuGroups (#280)", () => {
   it("'Re-import…' opens the pane route on the invoked branch", () => {
     const calls: string[] = [];
     const groups = rollBranchMenuGroups({
       path: "/mnt/rolls/2024",
+      onOpenRoll: noOp,
+      onOpenRollPath: noOp,
       onReimport: (p) => calls.push(`re:${p}`),
       recursive: false,
       onToggleRecursive: (p) => calls.push(`rec:${p}`),
@@ -435,6 +438,8 @@ describe("rollBranchMenuGroups (#280)", () => {
       groups.flatMap((g) => g.items).find((i) => i.label.includes("Include sub-branch images"))!;
     const off = rollBranchMenuGroups({
       path: "/a",
+      onOpenRoll: noOp,
+      onOpenRollPath: noOp,
       onReimport: noOp,
       recursive: false,
       onToggleRecursive: (p) => calls.push(p),
@@ -444,6 +449,8 @@ describe("rollBranchMenuGroups (#280)", () => {
     offEntry.onClick();
     const on = rollBranchMenuGroups({
       path: "/a",
+      onOpenRoll: noOp,
+      onOpenRollPath: noOp,
       onReimport: noOp,
       recursive: true,
       onToggleRecursive: (p) => calls.push(p),
@@ -452,5 +459,32 @@ describe("rollBranchMenuGroups (#280)", () => {
     expect(onEntry.label.startsWith("☑")).toBe(true);
     onEntry.onClick();
     expect(calls).toEqual(["/a", "/a"]);
+  });
+
+  // v12.5 (#284): the branch's open routes — both act on the branch
+  // itself and are unconditionally enabled (a visible branch may hold
+  // no direct listing image: sub-branch-only branches, Show pruning)
+  it("'Open roll' and 'Open roll path' target the invoked branch path, never gated (#284)", () => {
+    const calls: string[] = [];
+    const groups = rollBranchMenuGroups({
+      path: "/mnt/rolls/2024",
+      onOpenRoll: (p) => calls.push(`roll:${p}`),
+      onOpenRollPath: (p) => calls.push(`path:${p}`),
+      onReimport: noOp,
+      recursive: false,
+      onToggleRecursive: noOp,
+    });
+    const entries = groups.flatMap((g) => g.items);
+    // menu order: the open routes first, then the v12.4 pair
+    expect(entries.map((i) => i.label)).toEqual([
+      "Open roll",
+      "Open roll path",
+      "Re-import…",
+      expect.stringContaining("Include sub-branch images"),
+    ]);
+    for (const e of entries) expect(e.disabled).not.toBe(true);
+    item(groups, "Open roll")!.onClick();
+    item(groups, "Open roll path")!.onClick();
+    expect(calls).toEqual(["roll:/mnt/rolls/2024", "path:/mnt/rolls/2024"]);
   });
 });

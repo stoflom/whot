@@ -388,6 +388,10 @@
     remove_refcrop: () => {},
     get_refcrops: () => [],
     open_image: () => {},
+    // #272/#284 — the system-opener commands: the mock has no desktop
+    // session; a check only counts the calls (C64's Open roll path)
+    open_roll: () => {},
+    open_dir: () => {},
     // #174/C34 — same contract as db::rotate_image: the delta
     // normalised to [0,360), added to the stored rotation mod 360;
     // #183: the delta CASCades to every crop on the image (db parity)
