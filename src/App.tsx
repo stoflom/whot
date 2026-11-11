@@ -1505,6 +1505,28 @@ export default function App() {
       }),
     [confirmContext, changeRollRoot, splitImageId]
   );
+  // v12.5 (#284): the branch menu's *Open roll* — select the branch
+  // (its grid lands in the right pane) and add it to the open-set when
+  // closed; unlike the header click's toggle this never collapses an
+  // open branch. A rendered branch's ancestors are already open (it is
+  // visible in the tree), so the branch's own rel path suffices.
+  // Identity-stable (setters stable, the root read through the ref —
+  // the #98 identity rule).
+  const openRollAt = useCallback((absPath: string) => {
+    setRollBranch(absPath);
+    const root = rollRootRef.current;
+    const rel =
+      absPath === "/"
+        ? ""
+        : root === "/"
+          ? absPath.slice(1)
+          : absPath.startsWith(`${root}/`)
+            ? absPath.slice(root.length + 1)
+            : null;
+    if (rel !== "" && rel != null) {
+      setRollOpenSet((prev) => (prev.has(rel) ? prev : new Set(prev).add(rel)));
+    }
+  }, []);
   // v12.4 (#280): the latest recursive state for the event-time menu
   // read (the #98 identity rule — branchMenu must not churn per toggle)
   const rollRecursiveRef = useRef(rollRecursive);
@@ -1530,12 +1552,15 @@ export default function App() {
     (e: { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void }, path: string) => {
       openMenu(e as unknown as ReactMouseEvent, rollBranchMenuGroups({
         path,
+        onOpenRoll: openRollAt,
+        onOpenRollPath: (p) =>
+          api.openDir(p).catch((err) => setError(String(err))),
         onReimport: reimportBranch,
         recursive: rollRecursiveRef.current.has(path),
         onToggleRecursive: toggleRollRecursive,
       }));
     },
-    [openMenu, reimportBranch, toggleRollRecursive]
+    [openMenu, openRollAt, reimportBranch, toggleRollRecursive]
   );
   const imageAreaMenu = useCallback(
     (e: ReactMouseEvent, imageId: number) => {

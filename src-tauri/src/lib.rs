@@ -104,6 +104,25 @@ async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String,
     ))
 }
 
+/// v12.5 (#284) — 'Open roll path' on a Rolls tree branch (gui-design
+/// §4.36): the BRANCH's own directory (its absolute path) opens in the
+/// system file manager through the same opener plugin as `open_roll` —
+/// unlike `open_roll` (the image's own directory, resolved from the
+/// db) the path is handed over directly. A stale (moved/deleted) branch
+/// path is a rejection like `open_roll`'s (#144) — the caller's error
+/// toast names the path.
+#[tauri::command]
+async fn open_dir(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_dir() {
+        return Err(format!("directory no longer exists: {path}"));
+    }
+    let settings = db::get_settings(state.paths()?).map_err(|e| e.to_string())?;
+    open_with(&settings.directory_viewer, &path)?;
+    // diagnostic line in the spirit of #144 (which path was opened)
+    eprintln!("[open_dir] opened {path}");
+    Ok(())
+}
+
 /// #273 — hand `path` to the opener plugin: the configured program
 /// (whotrc.json `image_viewer` / `directory_viewer`, trimmed) when set,
 /// else the system default; a launch failure names the configured
@@ -364,6 +383,7 @@ pub fn run() {
             get_refcrops,
             open_image,
             open_roll,
+            open_dir,
             person_face_clusters,
             assign_person,
             accept_faces,

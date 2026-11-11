@@ -329,13 +329,23 @@ export function imageAreaMenuGroups(inp: ImageAreaMenuInput): MenuGroup[] {
 
 // -------------------------------------------------------- roll branch
 
-// v12.4 (#280): the roll-branch header context menu — the pane's two
+// v12.4 (#280): the roll-branch header context menu — the pane's
 // branch-scoped actions that are not the header's own toggle+select
-// click. Pure like every builder here: the caller resolves the live
-// per-branch recursive state at event time.
+// click; v12.5 (#284) adds the branch's open routes (Open roll, Open
+// roll path). Pure like every builder here: the caller resolves the
+// live per-branch recursive state at event time.
 export interface RollBranchMenuInput {
   /** the branch's absolute path (labels only — the actions are closures) */
   path: string;
+  /** v12.5 (#284): select the branch (its grid lands in the right
+      pane, §4.39) and add it to the open-set when closed — a menu
+      entry named *Open* never collapses an open branch the way the
+      header's toggle can */
+  onOpenRoll: (path: string) => void;
+  /** v12.5 (#284): the branch's own directory in the file manager
+      (#144) — unconditionally enabled, the action targets the branch
+      itself (a visible branch may hold no direct listing image) */
+  onOpenRollPath: (path: string) => void;
   /** §4.36 re-import route: open the import pane, Re-import pre-checked */
   onReimport: (path: string) => void;
   /** §4.39: the branch's recursive grid state (☐ unticked / ☑ ticked) */
@@ -348,6 +358,19 @@ export function rollBranchMenuGroups(inp: RollBranchMenuInput): MenuGroup[] {
     {
       title: inp.path,
       items: [
+        {
+          // v12.5 (#284): the branch's open route — the same end state
+          // as the header click's select, plus the open-set entry when
+          // closed (never a collapse)
+          label: "Open roll",
+          onClick: () => inp.onOpenRoll(inp.path),
+        },
+        {
+          // v12.5 (#284): the branch's own directory in the file
+          // manager — always enabled (the branch is its own target)
+          label: "Open roll path",
+          onClick: () => inp.onOpenRollPath(inp.path),
+        },
         {
           // §4.36 branch route — every tree branch holds ≥ 1 imported
           // image, so this is always a genuine RE-import
