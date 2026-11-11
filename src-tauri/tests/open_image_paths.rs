@@ -1,8 +1,12 @@
-//! #268 — `open_image` opens the ORIGINAL: `db::image_open_paths` orders
-//! the recorded locations (primary first, then the `image_paths` alias
-//! set, deduplicated) and `db::resolve_image_open_path` picks the first
-//! one that exists on disk (a recorded location can be stale — the alias
-//! set is append-only).
+//! #268/#285 — `open_image` opens the ORIGINAL: `db::image_open_paths`
+//! orders the recorded locations (primary first, then the `image_paths`
+//! alias set, deduplicated) and `db::resolve_open_image_target`
+//! decides the open: the first location that exists on disk (a
+//! recorded location can be stale — the alias set is append-only), or
+//! `Preview` when no location is recorded at all (BLOB-only); #285:
+//! `Err` when ≥ 1 recorded location exists but none does (moved /
+//! unmounted volume) — a missing original never masquerades as one
+//! that opened.
 
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
@@ -75,8 +79,11 @@ fn resolve_picks_the_first_existing_location() {
     let paths = fixture("stale", stale_primary, &[live_alias]);
     // primary recorded but the file is gone; the alias file exists
     touch(live_alias);
-    let got = db::resolve_image_open_path(&paths, 1).unwrap();
-    assert_eq!(got, Some(live_alias.to_string()), "stale primary skipped, live alias opened");
+    let got = db::resolve_open_image_target(&paths, 1).unwrap();
+    assert!(
+        matches!(got, db::OpenImageTarget::Original(ref p) if p == live_alias),
+        "stale primary skipped, live alias opened: {got:?}"
+    );
 }
 
 #[test]
@@ -86,20 +93,34 @@ fn resolve_prefers_the_primary_when_it_exists() {
     let paths = fixture("primary", primary, &[alias]);
     let p = touch(primary);
     let a = touch(alias);
-    let got = db::resolve_image_open_path(&paths, 1).unwrap();
-    assert_eq!(got, Some(primary.to_string()), "primary wins when it exists");
+    let got = db::resolve_open_image_target(&paths, 1).unwrap();
+    assert!(
+        matches!(got, db::OpenImageTarget::Original(ref q) if q == primary),
+        "primary wins when it exists: {got:?}"
+    );
     std::fs::remove_file(p).unwrap();
     std::fs::remove_file(a).unwrap();
 }
 
+// #285 (gui-design v12.6): recorded but ALL missing is an ERROR — the
+// unmounted-drive case. No preview copy may open; the message names
+// every looked-at path for the error toast.
 #[test]
-fn resolve_none_when_no_recorded_location_exists() {
+fn resolve_rejects_when_no_recorded_location_exists() {
     let paths = fixture(
         "none",
         "/tmp/whot-resolve-none/a.jpg",
         &["/tmp/whot-resolve-none/b.jpg"],
     );
-    // no files created — the image is BLOB-only (or the originals moved)
-    let got = db::resolve_image_open_path(&paths, 1).unwrap();
-    assert_eq!(got, None, "no existing location — the caller falls back to the temp copy");
+    // no files created — the originals moved / the volume unmounted
+    let err = db::resolve_open_image_target(&paths, 1).unwrap_err().to_string();
+    assert!(err.contains("/tmp/whot-resolve-none/a.jpg"), "primary named: {err}");
+    assert!(err.contains("/tmp/whot-resolve-none/b.jpg"), "alias named: {err}");
+}
+
+// an unknown image id stays an error (not a silent Preview fallback)
+#[test]
+fn resolve_unknown_image_is_an_error() {
+    let paths = fixture("unknown", "/tmp/whot-resolve-unknown/a.jpg", &[]);
+    assert!(db::resolve_open_image_target(&paths, 42).is_err());
 }

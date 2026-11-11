@@ -355,9 +355,12 @@ rules are `docs/gui-design.md` §4, architecture is
   through `get_image_batch("face", …)` (#210/#212)
 - `open_image(image_id) → ()` — open the image's **first actual
   location** (primary, then alias set) with the system viewer; the
-  unique temp copy of `images.preview` is the fallback when none exists
-  (opener plugin; gui-design §3; `image_viewer` in whotrc.json overrides
-  the system viewer, #273)
+  unique temp copy of `images.preview` is the fallback **only when no
+  location is recorded at all** (BLOB-only images) — when ≥ 1 recorded
+  location exists but none exists on disk (moved / unmounted volume) the
+  command is refused and the error toast names the looked-at paths
+  (#285; opener plugin; gui-design §3; `image_viewer` in whotrc.json
+  overrides the system viewer, #273)
 - `open_roll(image_id) → ()` — open the directory containing the image
   file (parent of `images.primary_path`; the recursive roll import may
   place it in a subdirectory below the roll root `imports.path`) in the

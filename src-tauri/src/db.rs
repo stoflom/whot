@@ -980,14 +980,32 @@ pub fn image_open_paths(paths: &Paths, image_id: i64) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// #268 — the first recorded location that exists on disk (primary
-/// first, then the aliases — the alias set is append-only, so a
-/// recorded location can be stale); `None` when none exists (the
-/// image is BLOB-only or every original was moved/deleted).
-pub fn resolve_image_open_path(paths: &Paths, image_id: i64) -> Result<Option<String>> {
-    Ok(image_open_paths(paths, image_id)?
-        .into_iter()
-        .find(|p| std::path::Path::new(p).exists()))
+/// #285 (gui-design v12.6) — what `open_image` should open:
+/// [`OpenImageTarget::Original`] — the first recorded location that
+/// exists on disk (primary first, then the aliases; the alias set is
+/// append-only, so a recorded location can be stale); or
+/// [`OpenImageTarget::Preview`] — only when NO location is recorded at
+/// all (a BLOB-only image; `images.primary_path` is `NOT NULL` today,
+/// so this is the defensive reservation). `Err` when ≥ 1 location IS
+/// recorded but none exists on disk (moved/deleted, or the volume
+/// holding it is unmounted) — the message names the looked-at paths
+/// for the caller's error toast (#285): a missing original must never
+/// masquerade as one that opened.
+#[derive(Debug)]
+pub enum OpenImageTarget {
+    /// the first recorded location that exists on disk
+    Original(String),
+    /// no recorded location at all — open the preview blob instead
+    Preview,
+}
+
+pub fn resolve_open_image_target(paths: &Paths, image_id: i64) -> Result<OpenImageTarget> {
+    let recorded = image_open_paths(paths, image_id)?;
+    match recorded.iter().find(|p| std::path::Path::new(p).exists()) {
+        Some(p) => Ok(OpenImageTarget::Original(p.clone())),
+        None if recorded.is_empty() => Ok(OpenImageTarget::Preview),
+        None => bail!("original image not found at its recorded paths: {}", recorded.join(", ")),
+    }
 }
 
 /// #272 (gui-design v11.1) — the directory containing the image file:
