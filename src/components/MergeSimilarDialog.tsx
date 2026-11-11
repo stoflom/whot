@@ -17,6 +17,10 @@ import { useOwnsKeyboard } from "../overlays";
 interface Props {
   persons: Person[];
   settings: Settings;
+  /** v13.0 (#287): anchor the triage to ONE person (the detail-panel
+      route) — only that person's cluster is listed; omitted (the
+      tree-header route) lists every cluster */
+  anchorId?: number;
   /** persist a partial settings change (whotrc.json, #88) */
   onSaveSettings: (patch: Partial<Settings>) => void;
   /** open the shared merge confirmation for the selected persons */
@@ -40,6 +44,7 @@ const KIND_LABEL: Record<string, string> = {
 export default function MergeSimilarDialog({
   persons,
   settings,
+  anchorId,
   onSaveSettings,
   onMergeInto,
   onApplyGroup,
@@ -62,15 +67,19 @@ export default function MergeSimilarDialog({
   };
   const pathOptions = useGroupPathOptions(persons);   // #97
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
-  // detection is pure and cheap, but only runs while this dialog is open
-  const clusters = useMemo(
-    () =>
-      clusterPersons(persons, {
-        distance: settings.merge_name_distance,
-        suffixAliases: settings.merge_suffix_aliases,
-      }),
-    [persons, settings.merge_name_distance, settings.merge_suffix_aliases],
-  );
+  // detection is pure and cheap, but only runs while this dialog is open;
+  // v13.0 (#287): the anchored route keeps only the anchor's own cluster
+  // (clusters are disjoint — at most one matches)
+  const clusters = useMemo(() => {
+    const all = clusterPersons(persons, {
+      distance: settings.merge_name_distance,
+      suffixAliases: settings.merge_suffix_aliases,
+    });
+    return anchorId == null
+      ? all
+      : all.filter((c) => c.members.some((m) => m.id === anchorId));
+  }, [persons, settings.merge_name_distance, settings.merge_suffix_aliases, anchorId]);
+  const anchor = anchorId != null ? byId.get(anchorId) : undefined;
 
   // close on Esc while no other dialog is stacked above us — and while
   // the #126 context menu is closed (the menu owns Esc first)
@@ -138,14 +147,24 @@ export default function MergeSimilarDialog({
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="dialog merge-dialog">
-        <h3>Merge Similar Persons</h3>
-        <p className="dim">
-          Names within <b>Damerau-Levenshtein ≤ {dist}</b> (case, seq suffixes and transpositions
-          count as one edit), single-linkage. Check the evidence, then tick who to combine —
-          <b> they may come from different clusters</b>; a neighbour beyond the distance can be
-          the same person. <b>Everything ticked merges into ONE target person</b>, which you
-          pick in the next step — merging is confirmed and has no undo.
-        </p>
+        <h3>{anchor ? `Similar to “${anchor.name}”` : "Merge Similar Persons"}</h3>
+        {anchor ? (
+          <p className="dim">
+            Persons whose names sit within <b>Damerau-Levenshtein ≤ {dist}</b> of this one
+            (case, seq suffixes and transpositions count as one edit), single-linkage — a
+            chain can reach beyond a direct match. Tick who to combine — <b>everything ticked
+            merges into ONE target person</b> (this person is the natural pick), chosen in the
+            next step — merging is confirmed and has no undo.
+          </p>
+        ) : (
+          <p className="dim">
+            Names within <b>Damerau-Levenshtein ≤ {dist}</b> (case, seq suffixes and transpositions
+            count as one edit), single-linkage. Check the evidence, then tick who to combine —
+            <b> they may come from different clusters</b>; a neighbour beyond the distance can be
+            the same person. <b>Everything ticked merges into ONE target person</b>, which you
+            pick in the next step — merging is confirmed and has no undo.
+          </p>
+        )}
 
         <div className="merge-opts">
           {/* #88: the similarity knobs — distance persists in whotrc;
@@ -177,7 +196,11 @@ export default function MergeSimilarDialog({
         </div>
 
         {clusters.length === 0 ? (
-          <p className="dim">No similar names found under the current rule.</p>
+          <p className="dim">
+            {anchor
+              ? `No names similar to “${anchor.name}” under the current rule.`
+              : "No similar names found under the current rule."}
+          </p>
         ) : (
           // #126: the list scrolls; the title/intro above and the action
           // row below stay visible (viewport-capped dialog)

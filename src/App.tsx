@@ -319,8 +319,11 @@ export default function App() {
   // #53 (§4.17): most recently selected card — Ctrl-G's fallback target
   // when nothing is hovered
   const lastSelRef = useRef<number | null>(null);
-  // #88 (§4.28): Merge Similar Persons triage + shared merge confirmation
+  // #88 (§4.28): Merge Similar Persons triage + shared merge confirmation;
+  // v13.0 (#287): mergeAnchor != null = the anchored detail-panel route
+  // (the dialog lists only that person's cluster); null = the tree route
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeAnchor, setMergeAnchor] = useState<number | null>(null);
   const [mergeInto, setMergeInto] = useState<
     { sourceIds: number[]; targetId?: number } | null
   >(null);
@@ -1098,7 +1101,20 @@ export default function App() {
     },
     [mutate]
   );
-  const openMergeDialog = useCallback(() => setMergeOpen(true), []);
+  // both routes are identity-stable (setters only — the memo(DetailPane)
+  // / memo(PersonTree) prop check, #215/#98)
+  const openMergeDialog = useCallback(() => {
+    setMergeAnchor(null);
+    setMergeOpen(true);
+  }, []);
+  const openMergeSimilar = useCallback((id: number) => {
+    setMergeAnchor(id);
+    setMergeOpen(true);
+  }, []);
+  const closeMergeDialog = useCallback(() => {
+    setMergeOpen(false);
+    setMergeAnchor(null);
+  }, []);
   const selectPendingFaces = useCallback(
     (id: number) => {
       if (!snap) return;
@@ -3074,6 +3090,9 @@ export default function App() {
             // name (rename-merge + re-anchor), note, staged group ops
             onUpdate={updatePerson}
             onRemovePerson={paneRemovePerson}
+            // v13.0 (#287): the anchored Merge Similar route — the
+            // §4.28 triage scoped to the pane's person
+            onMergeSimilar={openMergeSimilar}
             // #145: the detail-pane avatar opens the primary face's full
             // image in focus mode — the same confirmContext path as the
             // card double-click / "Open full image" menu entries
@@ -3105,11 +3124,14 @@ export default function App() {
         <MergeSimilarDialog
           persons={snap.persons}
           settings={snap.settings}
+          // v13.0 (#287): the anchored route — only the pane person's
+          // cluster; null (the tree route) lists everything
+          anchorId={mergeAnchor ?? undefined}
           onSaveSettings={saveMergeSettings}
           onMergeInto={(ids) => openMergeInto(ids)}
           onApplyGroup={applyGroupToSelection}
           onRename={renamePersons}
-          onClose={() => setMergeOpen(false)}
+          onClose={closeMergeDialog}
           escActive={mergeInto == null && edit == null}
         />
       )}

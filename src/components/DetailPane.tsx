@@ -29,6 +29,9 @@ interface Props {
       in that order, against the surviving person; resolves true when
       everything committed (the pane then clears its staging) */
   onUpdate?: (id: number, name: string, note: string, ops: GroupOp[]) => Promise<boolean>;
+  /** v13.0 (#287): the anchored Merge Similar route — the §4.28 triage
+      dialog scoped to this person (hidden for system persons) */
+  onMergeSimilar?: (id: number) => void;
 }
 
 function Editable({
@@ -128,9 +131,12 @@ function RefcropThumb({ faceId, rotation }: { faceId: number; rotation: number }
   );
 }
 
-function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson, onUpdate }: PersonViewProps) {
+function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson, onUpdate, onMergeSimilar }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
   const system = isRejectedBin(person.name); // #165/§4.35, #266 family
+  // v13.0 (#287): importer UnknownN clusters are also not merge anchors
+  // (§4.28 — refused as merge targets, excluded from detection)
+  const mergeAnchorable = !system && !/^unknown/i.test(person.name);
   // #172/#173 (§4.38) — pane-local staging for the group list plus the
   // name/note drafts Update person commits; the staging resets whenever
   // the pane RE-ANCHORS (the person changes — tree select, any §4.37
@@ -285,6 +291,21 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
       >
         Remove person
       </button>
+      {/* v13.0 (#287): the anchored Merge Similar route — the same
+          §4.28 triage scoped to THIS person only (its own cluster);
+          system persons can't be merge anchors (the button is hidden,
+          like the pane's other system gating) */}
+      {mergeAnchorable && (
+        <button
+          type="button"
+          className="dp-merge-similar"
+          onMouseDown={(e) => e.preventDefault()}
+          title="Find the persons similar to THIS one (near-identical names) and merge them"
+          onClick={() => onMergeSimilar?.(person.id)}
+        >
+          Merge similar
+        </button>
+      )}
       <h3>
         Reference faces ({refcrops.length})
       </h3>

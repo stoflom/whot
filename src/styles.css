@@ -1002,6 +1002,9 @@ button.in-flight { opacity: 0.45; cursor: progress; }
 
 /* #172/#173 (§4.38) — the person pane's staged group list + Update person */
 .dp-update { margin: 0.5rem 0 0; }
+/* v13.0 (#287) — the anchored Merge Similar route: a plain (non-danger)
+   secondary action that opens the triage dialog */
+.dp-merge-similar { margin: 0.5rem 0 0; }
 .dp-groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .dp-group-row { display: flex; align-items: center; gap: 4px; }
 .dp-group-row.staged .dp-group-path { color: var(--accent); }
