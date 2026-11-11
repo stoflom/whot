@@ -67,14 +67,19 @@ async fn get_refcrops(state: State<'_, AppState>, person_id: i64) -> Result<Vec<
 ///
 /// #268: the ORIGINAL is opened, not a copy — the first recorded
 /// location that exists on disk (`primary_path`, then the
-/// `image_paths` aliases, gui-design §3). The temp copy is the fallback
-/// for BLOB-only / moved originals; the Ok message (non-empty only in
-/// that branch) becomes the frontend's quiet info toast.
+/// `image_paths` aliases, gui-design §3). #285: a recorded path that no
+/// longer exists (moved/deleted, unmounted volume) is an ERROR (the
+/// looked-at paths named, the caller's error toast) — NO preview copy
+/// opens. The temp copy is the fallback for a BLOB-only image (no
+/// recorded location at all); the Ok message (non-empty only in that
+/// branch) becomes the frontend's quiet info toast.
 #[tauri::command]
 async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String, String> {
     let paths = state.paths()?;
     let settings = db::get_settings(paths).map_err(|e| e.to_string())?;
-    if let Some(p) = db::resolve_image_open_path(paths, image_id).map_err(|e| e.to_string())? {
+    if let db::OpenImageTarget::Original(p) =
+        db::resolve_open_image_target(paths, image_id).map_err(|e| e.to_string())?
+    {
         open_with(&settings.image_viewer, &p)?;
         // diagnostic line in the spirit of #144 (which path was opened)
         eprintln!("[open_image] image {image_id}: opened original {p}");
@@ -98,10 +103,9 @@ async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String,
     let path = std::env::temp_dir().join(format!("whot-image-{image_id}-{}-{ns}.{ext}", std::process::id()));
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     open_with(&settings.image_viewer, path.to_string_lossy().as_ref())?;
-    // #268: the original is gone — tell the user (quiet info toast)
-    Ok(format!(
-        "original image not found at its recorded paths — opened a temporary copy ({image_id})"
-    ))
+    // #268/#285: no recorded location at all (BLOB-only) — quiet info
+    // toast (a recorded-but-missing path already rejected above, #285)
+    Ok(format!("image has no recorded location — opened a temporary copy ({image_id})"))
 }
 
 /// v12.5 (#284) — 'Open roll path' on a Rolls tree branch (gui-design
