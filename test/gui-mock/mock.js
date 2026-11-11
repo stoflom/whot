@@ -31,6 +31,9 @@
   if (new URLSearchParams(location.search).get("no_db") === "1")
     window.__MOCK_NO_DB__ = true;
   let SNAP = null;
+  // v14.0 (#288): manual × removals (personId:faceId) — the
+  // mock's only durable refcrop state (rows are otherwise derived)
+  const refcropRemoved = new Set();
   let nextPersonId = 1;
   // #208: the change stamp mirrors the backend probe's semantics — it
   // moves whenever the SNAP CONTENT changes, however that happens (a
@@ -384,9 +387,44 @@
       SNAP.persons = SNAP.persons.filter((p) => !personIds.includes(p.id));
       recount(); fixPrimaries(); reseatAll();
     },
-    add_refcrop: () => {},
-    remove_refcrop: () => {},
-    get_refcrops: () => [],
+    // v14.0 (#288): the pane's reference faces — the §4.6 machine rule
+    // derived live (the mock has no person_refcrops table): per
+    // description group of the person's confirmed faces, the top
+    // refcrop_n by confidence, excluding the primary, seq 1..n; the
+    // filename derives from the face as in db (`<face.name>-<seq>.jpg`).
+    // A manual × removal suppresses the derived row (the mock's only
+    // durable refcrop state).
+    get_refcrops: ({ personId }) => {
+      const p = SNAP.persons.find((x) => x.id === personId);
+      if (!p) return [];
+      const n = (SNAP.settings && SNAP.settings.refcrop_n) || 5;
+      const byDesc = new Map();
+      for (const f of SNAP.faces)
+        if (f.person_id === personId && f.link_status === "confirmed"
+            && f.id !== p.primary_face_id) {
+          const d = f.description || "";
+          if (!byDesc.has(d)) byDesc.set(d, []);
+          byDesc.get(d).push(f);
+        }
+      const rows = [];
+      for (const [desc, faces] of byDesc) {
+        faces.sort((a, b) => b.confidence - a.confidence);
+        faces.slice(0, n).forEach((f, i) =>
+          rows.push({
+            face_id: f.id,
+            seq: i + 1,
+            description: desc,
+            pinned: false,
+            filename: `${f.name}-${i + 1}.jpg`,
+          }));
+      }
+      return rows.filter(
+        (r) => !refcropRemoved.has(personId + ":" + r.face_id));
+    },
+    add_refcrop: () => {}, // the confirmed face already surfaces
+    remove_refcrop: ({ personId, faceId }) => {
+      refcropRemoved.add(personId + ":" + faceId);
+    },
     open_image: () => {},
     // #272/#284 — the system-opener commands: the mock has no desktop
     // session; a check only counts the calls (C64's Open roll path)
