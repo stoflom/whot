@@ -68,7 +68,9 @@ describe("left-pane top bar (#261, gui-design 6.0)", () => {
     expect(row1.map((k) => k.tagName)).toEqual(["INPUT", "BUTTON"]);
     expect((row1[0] as HTMLInputElement).placeholder).toBe("search persons…");
     expect(row1[1].textContent).toBe("✕");
-    expect(row2.map((k) => k.textContent)).toEqual(["⌃", "⌄", "⧉ merge similar"]);
+    // v12.7 (#286): the merge button is icon-only (⧉) — the wording
+    // lives in the tooltip
+    expect(row2.map((k) => k.textContent)).toEqual(["⌃", "⌄", "⧉"]);
   });
 
   it("no longer renders the *Review — N pending* button", () => {
