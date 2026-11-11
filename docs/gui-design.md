@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 14.0** (#288) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 14.1** (#290) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2490,6 +2490,30 @@ Three related changes to the top bar's right corner:
   top-bar status totals' New chip (§4.41) reads **`★ N`** — the glyphs
   `✓ N` (Accepted) and `✗ N` (Rejected) are untouched. The chip's title
   and colour scheme are unchanged.
+
+**49. (v14.1, #290) The glyph vocabulary — one glyph, one meaning.**
+
+The interface is text-glyph based (no icon font); this table is the
+CANONICAL vocabulary, and every rendered glyph must appear here. A
+glyph that needs a new meaning gets a row first; a meaning with two
+visual near-twins (the old `✗` reject vs `✕`/`×` close) is a defect.
+
+| Glyph | Meaning | Where |
+| --- | --- | --- |
+| `✓` | accept / commit | card & cluster verdicts, *✓ Accept*, accepted counters, *✓ Update person* |
+| `✗` | reject / failure (the bad verdict) | card & cluster verdicts, *✗ Reject*, rejected counters, *✗ Remove person*, the toast's *✗ failed* |
+| `✕` | close / clear / drop a row (dismissal) — the ONE X | dialog & pane close, search clear, the group row's drop, the refcrop row's drop, the split close. **`×` is RETIRED from the UI (v14.1)** — it read as the reject mark; every `×` is now `✕` |
+| `?` | **help only** (the §4.48 shortcuts screen) | the top-bar `?` button. The person pane's no-primary-face avatar placeholder is **`▢`** (an empty image frame) so `?` never means "missing" |
+| `★` | primary face (and the New chip, §4.48) | card badge, *★ set as primary*, `★ N` chip |
+| `◈` | reference face | card action, *◈ add as reference* |
+| `⧉` | merge similar | the tree's icon button (#286), *⧉ Merge similar* |
+| `⌃` / `⌄` | roll up / roll down | the tree's row-2 controls |
+| `📌` | pinned refcrop row | the refcrop list |
+| `☐` / `☑` | sub-branch images off/on | the branch menu & header |
+| `‹` / `›` | previous / next | the nav clusters |
+
+gui-mock patrols the vocabulary (C67): the retired `×` and a `?`
+avatar placeholder must not render anywhere.
 
 ## 5. Related documents
 
