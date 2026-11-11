@@ -49,5 +49,8 @@ recorded in the app's `package.json` (or version file if the app has none):
 ## Testing
 
 - All tests are integrated into the suite for regression testing; each app's suite is run before committing.
-- Tests reside under an appropriate `test/` subdirectory.
+- Tests are organised in three layers:
+    - **Repo-level integration/contract suite** — the top-level `test/` directory: the pytest suite (`test/*.py`), the GUI contract suite (`test/gui-mock/`) and fixtures.
+    - **Frontend unit tests** — co-located `*.test.ts(x)` files beside their source under `src/` (the standard vitest/React convention); run with `npm test` (vitest).
+    - **Rust** — `src-tauri/tests/`, run with `(cd src-tauri && cargo test)`.
 - TypeScript must pass `tsc --noEmit` (globally installed) before committing.

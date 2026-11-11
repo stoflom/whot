@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 13.0** (#286/#287) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 13.1** (#289) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -368,7 +368,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   a zero-face shell that §4.27's stale-shell sweep deletes on every
   read. The reference-set
   pane exposes **Remove person** as a button, and **Update person**
-  directly above it (§4.38).
+  directly above it (§4.38); the pane's action buttons render
+  **icon + text** (v13.1/#289: *Update person* `✓`, *Remove person* `✗`,
+  *Merge similar* `⧉` — consistent with the app's glyph vocabulary; the
+  canonical glyph table is being rationalized in #290).
 - **Group management & drag-and-drop** (§4.16): real group branches
   (not the status branches) can be **renamed/moved**
   (a path dialog, prefilled; the whole subtree follows the prefix rewrite)
@@ -1258,14 +1261,17 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
       created_at), multi-select, `Merge into…` / bulk group / bulk
       rename;
     - *person detail panel* (the right pane's *Merge similar* button,
-      v13.0/#287): the **same dialog scoped to the focused person** —
+      v13.0/#287, icon `⧉` v13.1/#289): the **same dialog scoped to the focused person** —
       only that person's own cluster is listed (detection unchanged,
       single-linkage — a typo chain still reaches beyond a direct
       match), titled `Similar to "<name>"`; the focused person is among
-      the candidates and the natural merge target. The button is
-      **hidden for system persons** (`RejectedN` bins and `UnknownN`
-      clusters — refused as merge targets) and otherwise sits below
-      *Remove person*, above the Reference faces heading;
+      the candidates and the natural merge target. The button
+      **always renders** — below *Remove person*, above the Reference
+      faces heading — and is **disabled (greyed out)** with a
+      product-language tooltip (§4.43) for **system persons**
+      (`RejectedN` bins and `UnknownN` clusters — refused as merge
+      targets): a missing button in an otherwise-identical pane reads
+      as a bug (v13.1/#289);
     - *person context menu*: `Merge into…` (typeahead), `Apply group to
       selection…`, `Rename selection to…` on a (multi-)selection;
     - *drag-and-drop*: dragging a selected set **onto a person row**
@@ -2010,7 +2016,10 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      only the group list is staged. Staging is pane-local UI state:
      re-anchoring the pane (any §4.37 path, tree select) discards it.
    - **Update person**: a button directly above *Remove person*,
-     styled like it — it performs the same action as the commit above
+     styled like it — the person pane's action buttons all render
+     **icon + text** (v13.1/#289: *Update person* `✓`, *Remove person*
+     `✗`, *Merge similar* `⧉`, matching the app's existing glyph
+     vocabulary) — it performs the same action as the commit above
      (pending name first, then the staged group ops; with nothing
      staged and no pending name it is an informed no-op, never an
      error). A `RejectedN` cluster person sees the list **read-only**
