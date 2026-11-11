@@ -30,7 +30,8 @@ interface Props {
       everything committed (the pane then clears its staging) */
   onUpdate?: (id: number, name: string, note: string, ops: GroupOp[]) => Promise<boolean>;
   /** v13.0 (#287): the anchored Merge Similar route — the §4.28 triage
-      dialog scoped to this person (hidden for system persons) */
+      dialog scoped to this person (the button is disabled, not hidden,
+      for system persons — v13.1/#289) */
   onMergeSimilar?: (id: number) => void;
 }
 
@@ -274,7 +275,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
           }
           onClick={() => commit(ops)}
         >
-          Update person
+          ✓ Update person
         </button>
       )}
       {/* #165/§4.35/#266: the reject-bin persons cannot be removed —
@@ -289,23 +290,32 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
         disabled={system}
         onClick={() => onRemovePerson?.(person.id)}
       >
-        Remove person
+        ✗ Remove person
       </button>
-      {/* v13.0 (#287): the anchored Merge Similar route — the same
-          §4.28 triage scoped to THIS person only (its own cluster);
-          system persons can't be merge anchors (the button is hidden,
-          like the pane's other system gating) */}
-      {mergeAnchorable && (
-        <button
-          type="button"
-          className="dp-merge-similar"
-          onMouseDown={(e) => e.preventDefault()}
-          title="Find the persons similar to THIS one (near-identical names) and merge them"
-          onClick={() => onMergeSimilar?.(person.id)}
-        >
-          Merge similar
-        </button>
-      )}
+      {/* v13.0 (#287) / v13.1 (#289): the anchored Merge Similar route
+          — the same §4.28 triage scoped to THIS person only (its own
+          cluster). The button ALWAYS renders; for system persons
+          (UnknownN clusters, RejectedN bins — refused as merge targets,
+          like the pane's other system gating) it is greyed out with a
+          why-tooltip: a missing button in an otherwise-identical pane
+          reads as a bug. The ⧉ glyph matches the tree's merge button
+          (#286) */}
+      <button
+        type="button"
+        className="dp-merge-similar"
+        onMouseDown={(e) => e.preventDefault()}
+        disabled={!mergeAnchorable}
+        title={
+          mergeAnchorable
+            ? "Find the persons similar to THIS one (near-identical names) and merge them"
+            : system
+              ? "A rejected cluster person can't be a merge target"
+              : "An unknown cluster person can't be a merge target"
+        }
+        onClick={() => onMergeSimilar?.(person.id)}
+      >
+        ⧉ Merge similar
+      </button>
       <h3>
         Reference faces ({refcrops.length})
       </h3>
