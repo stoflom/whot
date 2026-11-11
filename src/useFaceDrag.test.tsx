@@ -2,9 +2,8 @@
 // appKeys.ts: a mounted probe drives the five grid handlers through
 // synthetic DragEvents and pins the state/ref contract (the payload +
 // drop target live in refs so a drop never depends on a re-render having
-// landed mid-drag) and the identity rule (the ref-driven handlers stay
-// stable across renders; the snapshot-reading pair churns only when
-// facesById does).
+// landed mid-drag) and the identity rule (every handler is ref-driven —
+// #282: even a fresh facesById map churns nothing).
 // Run: npm test (vitest run; jsdom pragma — DragEvents need a DOM)
 // @vitest-environment jsdom
 import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
@@ -73,15 +72,15 @@ let live: FaceDrag | null = null;
 function Probe({
   selRef,
   stagedIdxRef,
-  facesById,
+  facesByIdRef,
   mutate,
 }: {
   selRef: { current: Set<number> };
   stagedIdxRef: { current: Map<number, StagedEntry> };
-  facesById: Map<number, Face>;
+  facesByIdRef: { current: Map<number, Face> };
   mutate: (fn: () => Promise<unknown>, clearSel?: boolean) => Promise<boolean>;
 }) {
-  live = useFaceDrag(selRef, stagedIdxRef, facesById, mutate);
+  live = useFaceDrag(selRef, stagedIdxRef, facesByIdRef, mutate);
   return (
     <div
       data-testid="probe"
@@ -98,16 +97,17 @@ const mount = (over?: {
 }) => {
   const selRef = { current: new Set(over?.sel ?? []) };
   const stagedIdxRef = { current: over?.staged ?? new Map<number, StagedEntry>() };
+  const facesByIdRef = { current: over?.facesById ?? FACES };
   const mutate = vi.fn(async (_fn: () => Promise<unknown>, _clearSel?: boolean) => true);
   const utils = render(
     <Probe
       selRef={selRef}
       stagedIdxRef={stagedIdxRef}
-      facesById={over?.facesById ?? FACES}
+      facesByIdRef={facesByIdRef}
       mutate={mutate}
     />
   );
-  return { utils, selRef, stagedIdxRef, mutate, m: () => live! };
+  return { utils, selRef, stagedIdxRef, facesByIdRef, mutate, m: () => live! };
 };
 
 describe("useFaceDrag (#260) — the payload (rule 34)", () => {
@@ -258,7 +258,7 @@ describe("useFaceDrag (#260) — the shared clear + identity (#98)", () => {
   });
 
   it("the ref-driven handlers keep their identity across a payload re-render (the grid memo never churns mid-drag)", () => {
-    const { selRef, m } = mount();
+    const { selRef, facesByIdRef, m } = mount();
     const first = {
       start: m().onFaceDragStart,
       end: m().onFaceDragEnd,
@@ -276,9 +276,16 @@ describe("useFaceDrag (#260) — the shared clear + identity (#98)", () => {
     expect(m().onFaceDragEnd).toBe(first.end);
     expect(m().onFaceDragLeave).toBe(first.leave);
     expect(m().clearFaceDrag).toBe(first.clear);
-    // …and the snapshot-reading pair stays stable while facesById does not
-    // change (it churns only with the snapshot — the old grid memo's rate)
+    // …and #282: the snapshot is read through the ref — even a fresh
+    // facesById map (a delta landing, assigned to the SAME ref object
+    // the way App's render-body assignment does) churns no handler
+    // identity, so the grid memo never re-renders untouched cards
+    facesByIdRef.current = new Map(FACES);
+    act(() => {
+      m().onFaceDragStart(2, makeDragEvent()); // re-render with the fresh map
+    });
     expect(m().onFaceDragOver).toBe(first.over);
     expect(m().onFaceDropOnCard).toBe(first.drop);
+    expect(m().onFaceDragStart).toBe(first.start);
   });
 });
