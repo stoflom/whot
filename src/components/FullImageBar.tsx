@@ -35,7 +35,7 @@ export interface FullImageBarProps {
   stepNoun: "face" | "image";
   /** the stored display rotation (#122) — the context-menu twin */
   onRotate: (delta: 90 | -90) => void;
-  /** the surface's close/back control (×/Esc on the split,
+  /** the surface's close/back control (✕/Esc on the split,
       *← rolls* on the detail) */
   close: ReactNode;
 }

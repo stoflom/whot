@@ -86,8 +86,8 @@ export function applyGroupOps(groups: string[], ops: GroupOp[]): string[] {
   return [...new Set(out)];
 }
 
-/** × — stage the removal of one membership; a status seat is refused
-    (§4.35, the row's × is disabled), and × on a not-yet-committed add
+/** ✕ — stage the removal of one membership; a status seat is refused
+    (§4.35, the row's ✕ is disabled), and ✕ on a not-yet-committed add
     just forget that add */
 export function stageRemove(
   ops: GroupOp[],

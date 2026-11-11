@@ -403,7 +403,7 @@ export interface RefcropMenuInput {
   /** dbl-click's action: the face selected in the centre grid
       (filter-switched if hidden) and scrolled into view */
   onSelect: () => void;
-  /** the row's × button action */
+  /** the row's ✕ button action (v14.1: × retired) */
   onRemove: () => void;
   /** the face's image in full-image focus mode */
   onOpenImage: () => void;
