@@ -4,11 +4,11 @@
 // highlighted drop target) and the five grid handlers that drive it.
 //
 // Identity (#98): each handler is its own stable useCallback. The two
-// that read render values (`onFaceDragOver`/`onFaceDropOnCard` read
-// `facesById`) churn only when the snapshot does — exactly as the old
-// single `gridHandlers` memo churned — so memo(FaceGrid) keeps skipping
-// untouched cards; the purely-ref-driven ones (start/end/leave) are now
-// MORE stable than before (they never churned with the grid memo).
+// that read the snapshot (`onFaceDragOver`/`onFaceDropOnCard`) take it
+// through the `facesByIdRef` ref (the #282 N1 rule — a delta churns
+// nothing here), so all five never churn with the snapshot and
+// memo(FaceGrid) keeps skipping untouched cards; the purely-ref-driven
+// ones (start/end/leave) never churned at all.
 
 import { useCallback, useRef, useState } from "react";
 import * as api from "./api";
@@ -36,7 +36,8 @@ export interface FaceDrag {
 export function useFaceDrag(
   selRef: { readonly current: Set<number> },
   stagedIdxRef: { readonly current: Map<number, StagedEntry> },
-  facesById: Map<number, Face>,
+  /** #282: the id map BY REF — read at event time, never a dependency */
+  facesByIdRef: { readonly current: Map<number, Face> },
   mutate: (fn: () => Promise<unknown>, clearSel?: boolean) => Promise<boolean>,
 ): FaceDrag {
   const [faceDrag, setFaceDrag] = useState<number[] | null>(null);
@@ -74,7 +75,7 @@ export function useFaceDrag(
       // value when one is staged on it, else the committed one (#224:
       // an O(1) index read)
       const staged = stagedIdxRef.current.get(id);
-      const desc = (staged?.desc ?? facesById.get(id)?.description ?? "").trim();
+      const desc = (staged?.desc ?? facesByIdRef.current.get(id)?.description ?? "").trim();
       if (!desc) return; // nothing to copy — not a target (Q3)
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
@@ -83,7 +84,7 @@ export function useFaceDrag(
         setFaceDropTarget(id);
       }
     },
-    [stagedIdxRef, facesById]
+    [stagedIdxRef, facesByIdRef]
   );
 
   const onFaceDragLeave = useCallback(
@@ -104,7 +105,7 @@ export function useFaceDrag(
       clearFaceDrag();
       if (!payload) return;
       const staged = stagedIdxRef.current.get(id); // #224: O(1) lookup
-      const desc = (staged?.desc ?? facesById.get(id)?.description ?? "").trim();
+      const desc = (staged?.desc ?? facesByIdRef.current.get(id)?.description ?? "").trim();
       if (!desc) return; // double guard — the browser would not have dropped
       const ids = payload.filter((x) => x !== id); // its own desc is a no-op
       if (ids.length === 0) return;
@@ -112,7 +113,7 @@ export function useFaceDrag(
       // #209: one batched command instead of one call per dragged face
       void mutate(() => api.setFaceDescriptions(ids, desc));
     },
-    [stagedIdxRef, facesById, mutate, clearFaceDrag]
+    [stagedIdxRef, facesByIdRef, mutate, clearFaceDrag]
   );
 
   return {

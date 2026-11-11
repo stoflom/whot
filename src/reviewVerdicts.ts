@@ -51,7 +51,6 @@ export interface ReviewVerdictInputs {
 export function useReviewVerdicts(inp: ReviewVerdictInputs) {
   const {
     mode,
-    facesById,
     verdictMutate,
     setInfo,
     setPending,
@@ -66,10 +65,16 @@ export function useReviewVerdicts(inp: ReviewVerdictInputs) {
   // pattern — so no callback in this hook keys on the person: a verdict
   // advance / tree select churns no identities and the App sections
   // memo (keyed on sectionsPersonKey) rebuilds nothing in Review.
+  // #282 (N1): the same rule for the snapshot — `facesById` is read
+  // through its own ref, so a verdict delta (a fresh map) churns no
+  // identity either: focusTarget → focusActed → doAccept/doReject stay
+  // put and memo(FaceCard) skips every untouched card on every verdict.
   const personIdRef = useRef<number | null>(inp.personId);
   personIdRef.current = inp.personId;
   const stepIdxRef = useRef<number>(inp.stepIdx);
   stepIdxRef.current = inp.stepIdx;
+  const facesByIdRef = useRef(inp.facesById);
+  facesByIdRef.current = inp.facesById;
 
   // #125: a verdict that might empty the current person in Review marks
   // the step index pre-mutation; App's refreshed-snapshot effect
@@ -104,12 +109,12 @@ export function useReviewVerdicts(inp: ReviewVerdictInputs) {
       );
       const cands = first != null ? [first, ...ids] : ids;
       for (const id of cands) {
-        const pid = facesById.get(id)?.person_id;
+        const pid = facesByIdRef.current.get(id)?.person_id;
         if (pid != null) return pid;
       }
       return null;
     },
-    [facesById, lastSelRef, hoverRef]
+    [lastSelRef, hoverRef, facesByIdRef]
   );
   const focusActed = useCallback(
     (ids: number[]) => {
@@ -145,7 +150,7 @@ export function useReviewVerdicts(inp: ReviewVerdictInputs) {
       // Edit dialog claims by staging a NAME, see commitPending)
       if (
         ids.length > 0 &&
-        ids.every((id) => facesById.get(id)?.link_status === "rejected")
+        ids.every((id) => facesByIdRef.current.get(id)?.link_status === "rejected")
       ) {
         setInfo("assign a person to bring it back");
         return;
@@ -162,7 +167,7 @@ export function useReviewVerdicts(inp: ReviewVerdictInputs) {
         }
       );
     },
-    [verdictMutate, markExhaust, facesById, focusActedUnlessNoop, setInfo]
+    [verdictMutate, markExhaust, focusActedUnlessNoop, setInfo]
   );
   const doReject = useCallback(
     (ids: number[]) => {
