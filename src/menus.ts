@@ -385,3 +385,74 @@ export function rollBranchMenuGroups(inp: RollBranchMenuInput): MenuGroup[] {
     },
   ];
 }
+
+// -------------------------------------------------------- refcrop image
+
+// v14.0 (#288): the person detail pane's reference-image (refcrop)
+// context menu — the row's own actions plus the face's image routes.
+// Pure like every builder here: the caller resolves the live per-face
+// state (image existence, roll import) at event time.
+export interface RefcropMenuInput {
+  /** the face is still in the snapshot (defensive — a stale row has
+      no image routes) */
+  faceKnown: boolean;
+  /** the face's image has a roll (last_import_id != null) — the open
+      routes stay greyed out while it doesn't (the image menu's gating,
+      #272/#274) */
+  imported: boolean;
+  /** dbl-click's action: the face selected in the centre grid
+      (filter-switched if hidden) and scrolled into view */
+  onSelect: () => void;
+  /** the row's × button action */
+  onRemove: () => void;
+  /** the face's image in full-image focus mode */
+  onOpenImage: () => void;
+  /** Rolls mode with the tree opened at the image's branch */
+  onOpenRoll: () => void;
+  /** the image's own directory in the file manager */
+  onOpenRollPath: () => void;
+}
+
+export function refcropMenuGroups(inp: RefcropMenuInput): MenuGroup[] {
+  return [
+    {
+      items: [
+        {
+          // v14.0 (#288): single-select semantics (a card click) + the
+          // grow-then-scroll; the double-click runs the same action
+          label: "Select in grid",
+          onClick: inp.onSelect,
+          disabled: !inp.faceKnown,
+        },
+        {
+          label: "Open full image",
+          onClick: inp.onOpenImage,
+          disabled: !inp.faceKnown,
+        },
+        {
+          label: "Open roll",
+          disabled: !inp.faceKnown || !inp.imported,
+          onClick: () => {
+            if (inp.faceKnown && inp.imported) inp.onOpenRoll();
+          },
+        },
+        {
+          label: "Open roll path",
+          disabled: !inp.faceKnown || !inp.imported,
+          onClick: () => {
+            if (inp.faceKnown && inp.imported) inp.onOpenRollPath();
+          },
+        },
+      ],
+    },
+    {
+      items: [
+        {
+          label: "Remove reference face",
+          danger: true,
+          onClick: inp.onRemove,
+        },
+      ],
+    },
+  ];
+}

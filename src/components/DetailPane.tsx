@@ -10,6 +10,8 @@ import type { SuggestOption } from "./SuggestInput";
 import { matchesStatusFilter, type FaceFilter } from "../viewFilters";
 import { selectAll } from "../autoText";
 import { isRejectedBin } from "../personNames";
+import ContextMenu, { type MenuState } from "./ContextMenu";
+import { refcropMenuGroups } from "../menus";
 
 interface Props {
   person: Person | null;
@@ -33,6 +35,17 @@ interface Props {
       dialog scoped to this person (the button is disabled, not hidden,
       for system persons — v13.1/#289) */
   onMergeSimilar?: (id: number) => void;
+  // v14.0 (#288): the reference images (refcrops) are interactive —
+  // the row's context menu / double-click routes
+  /** the face selected in the centre grid (filter-switched if hidden)
+      and scrolled into view — the double-click runs the same action */
+  onSelectRefcrop?: (faceId: number) => void;
+  /** the face's image in full-image focus mode */
+  onOpenRefcropImage?: (faceId: number) => void;
+  /** Rolls mode with the tree opened at the image's branch */
+  onOpenRefcropRoll?: (faceId: number) => void;
+  /** the image's own directory in the file manager */
+  onOpenRefcropRollPath?: (faceId: number) => void;
 }
 
 function Editable({
@@ -132,12 +145,47 @@ function RefcropThumb({ faceId, rotation }: { faceId: number; rotation: number }
   );
 }
 
-function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson, onUpdate, onMergeSimilar }: PersonViewProps) {
+function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary, onRemoveRefcrop, onRemovePerson, onUpdate, onMergeSimilar, onSelectRefcrop, onOpenRefcropImage, onOpenRefcropRoll, onOpenRefcropRollPath }: PersonViewProps) {
   const primaryImg = useFaceImage(person.primary_face_id);
   const system = isRejectedBin(person.name); // #165/§4.35, #266 family
   // v13.0 (#287): importer UnknownN clusters are also not merge anchors
   // (§4.28 — refused as merge targets, excluded from detection)
   const mergeAnchorable = !system && !/^unknown/i.test(person.name);
+  // v14.0 (#288): the refcrop image context menu (row-local state — the
+  // menu's own outside-click/Esc handling lives in ContextMenu)
+  const [rcMenu, setRcMenu] = useState<{ faceId: number } & Pick<MenuState, "x" | "y"> | null>(null);
+  // v14.0 (#288): per-face lookups for the menu's gating — a stale row
+  // (face gone from the snapshot) loses its image routes; an image with
+  // no roll (last_import_id null) greys out the open routes (the image
+  // menu's gating, #272/#274)
+  const faceById = useMemo(
+    () => new Map((snapshot?.faces ?? []).map((f) => [f.id, f])),
+    [snapshot]
+  );
+  const rollImportByImage = useMemo(
+    () => new Map((snapshot?.images ?? []).map((i) => [i.id, i.last_import_id])),
+    [snapshot]
+  );
+  const rcMenuState = (faceId: number): MenuState => {
+    const face = faceById.get(faceId);
+    const imported =
+      face != null && rollImportByImage.get(face.image_id) != null;
+    const close = () => setRcMenu(null);
+    const state: MenuState = {
+      x: rcMenu?.x ?? 0,
+      y: rcMenu?.y ?? 0,
+      groups: refcropMenuGroups({
+        faceKnown: face != null,
+        imported,
+        onSelect: () => { close(); onSelectRefcrop?.(faceId); },
+        onRemove: () => { close(); onRemoveRefcrop(faceId); },
+        onOpenImage: () => { close(); onOpenRefcropImage?.(faceId); },
+        onOpenRoll: () => { close(); onOpenRefcropRoll?.(faceId); },
+        onOpenRollPath: () => { close(); onOpenRefcropRollPath?.(faceId); },
+      }),
+    };
+    return state;
+  };
   // #172/#173 (§4.38) — pane-local staging for the group list plus the
   // name/note drafts Update person commits; the staging resets whenever
   // the pane RE-ANCHORS (the person changes — tree select, any §4.37
@@ -326,7 +374,19 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
               {group !== "" ? group : "no description"} ({rows.length})
             </div>
             {rows.map((rc) => (
-              <div className="refcrop" key={rc.face_id} title={rc.filename}>
+              <div
+                className="refcrop"
+                key={rc.face_id}
+                title={rc.filename}
+                // v14.0 (#288): the reference image is interactive — the
+                // context menu carries Select/Remove/open routes, and the
+                // double-click runs Select (the grid-focus action)
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setRcMenu({ x: e.clientX, y: e.clientY, faceId: rc.face_id });
+                }}
+                onDoubleClick={() => onSelectRefcrop?.(rc.face_id)}
+              >
                 <RefcropThumb faceId={rc.face_id} rotation={rotOf(rc.face_id)} />
                 <span className="refcrop-desc">
                   {rc.pinned ? "📌 " : ""}#{rc.seq}
@@ -340,6 +400,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
         ))}
         {refcrops.length === 0 && <span className="dim">no reference faces yet (confirm faces first)</span>}
       </div>
+      {rcMenu && <ContextMenu menu={rcMenuState(rcMenu.faceId)} onClose={() => setRcMenu(null)} />}
     </div>
   );
 }

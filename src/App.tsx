@@ -279,6 +279,10 @@ export default function App() {
   // below (post-commit; replaces the frame-dependent double-rAF, which
   // could never reach an unmounted card)
   const [revealFace, setRevealFace] = useState<number | null>(null);
+  // v14.0 (#288): the pane's refcrop *Select in grid* — the same
+  // grow-then-scroll reveal, but it WAITS while the face is absent (the
+  // Show-filter switch refetches the grid a beat later)
+  const [focusFace, setFocusFace] = useState<number | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // the centre shows the HIERARCHY (no image open, no focus split) —
   // the detail views need the full width again (§4.39)
@@ -1140,6 +1144,16 @@ export default function App() {
     },
     [facesById, confirmContext]
   );
+  // v14.0 (#288): the pane's reference-image (refcrop) routes — the
+  // centre grid's own handlers, addressed by face (the refcrop row
+  // carries only the face_id; the image derives from it)
+  const paneOpenRefcropImage = useCallback(
+    (faceId: number) => {
+      const f = facesById.get(faceId);
+      if (f) confirmContext(() => setSplitImageId(f.image_id));
+    },
+    [facesById, confirmContext]
+  );
   const paneRemoveRefcrop = useCallback(
     (fid: number) => {
       if (personId == null) return;
@@ -1185,7 +1199,9 @@ export default function App() {
 
   // #23/#99 — change the status filter; faces the new filter hides leave
   // the selection so they can never be bulk-acted on invisibly (§4.10)
-  const changeFaceFilter = (next: FaceFilter) => {
+  // v14.0 (#288): identity-stable (the #98 rule) — the pane's refcrop
+  // *Select in grid* calls it to surface a face the Show filter hides
+  const changeFaceFilter = useCallback((next: FaceFilter) => {
     if (!snap || next === snap.settings.face_filter) return;
     const visible = new Set(
       snap.faces
@@ -1199,7 +1215,28 @@ export default function App() {
     // counting faces that no longer display anywhere — drop them
     setPending((p) => dropStagesForFaces(p, [...selRef.current].filter((id) => !visible.has(id))));
     mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
-  };
+  }, [snap, mutate]);
+  // v14.0 (#288) — *Select in grid* (also the refcrop row's
+  // double-click): single-select (a card click), the Show filter first
+  // switches to one that shows the face (a refcrop is a confirmed face
+  // — "confirmed" is the narrowest such filter), then the lazy grid
+  // grows-then-scrolls it into view (the focusFace reveal below);
+  // defined after changeFaceFilter (its dep array reads it eagerly —
+  // a TDZ hazard if hoisted above)
+  const paneSelectRefcrop = useCallback(
+    (faceId: number) => {
+      const snap = snapRef.current;
+      const f = snap?.faces.find((x) => x.id === faceId);
+      if (!snap || !f) return; // stale row — no grid target
+      const filter = (snap.settings.face_filter ?? "all") as FaceFilter;
+      if (!matchesStatusFilter(f.link_status, filter)) {
+        changeFaceFilter(f.link_status === "confirmed" ? "confirmed" : "all");
+      }
+      changeSel(new Set([faceId]));
+      setFocusFace(faceId);
+    },
+    [changeFaceFilter, changeSel]
+  );
   // #188 (§4.40) — the lock IS the mode: entering Review (any route,
   // incl. the initial load) pins Show → New through the ordinary filter
   // path; once per entry (pinnedRef) so later changes stick — the user
@@ -1260,6 +1297,33 @@ export default function App() {
       ?.scrollIntoView({ block: "nearest" });
     setRevealFace(null);
   }, [revealFace, mountLimit]);
+  // v14.0 (#288): the refcrop *Select in grid* scroll — the same
+  // grow-then-scroll as above, but it WAITS while the face is absent
+  // (the Show-filter switch refetches the grid a beat later) and drops
+  // itself once the focused person no longer holds the face
+  useLayoutEffect(() => {
+    if (focusFace == null) return;
+    const idx = sectionsRef.current.findIndex((s) => s.faceIds.includes(focusFace));
+    if (idx < 0) {
+      if (
+        personId != null &&
+        !snapRef.current?.faces.some(
+          (f) => f.id === focusFace && f.person_id === personId
+        )
+      ) {
+        setFocusFace(null);
+      }
+      return;
+    }
+    if (idx >= mountLimit) {
+      setMountLimit(mountLimitFor(sectionsRef.current.length, idx, mountLimit));
+      return;
+    }
+    document
+      .querySelector(`[data-face-id="${focusFace}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+    setFocusFace(null);
+  }, [focusFace, mountLimit, personId, snap]);
   // #188/§4.40 — the position guard, on ENTRY only (a mode transition;
   // the mount has no anchor): an anchored person without a new face
   // advances to the next person in the step list that has one (forward,
@@ -1520,6 +1584,23 @@ export default function App() {
         if (splitImageId != null) setSplitImageId(null);
       }),
     [confirmContext, changeRollRoot, splitImageId]
+  );
+  // v14.0 (#288) — the pane's refcrop *Open roll* / *Open roll path*
+  // (the image's own routes, addressed by face); defined right below
+  // openRollBranch (dep arrays read it eagerly — TDZ above)
+  const paneOpenRefcropRoll = useCallback(
+    (faceId: number) => {
+      const img = facesById.get(faceId)?.image_id;
+      if (img != null) openRollBranch(img);
+    },
+    [facesById, openRollBranch]
+  );
+  const paneOpenRefcropRollPath = useCallback(
+    (faceId: number) => {
+      const img = facesById.get(faceId)?.image_id;
+      if (img != null) api.openRoll(img).catch((err) => setError(String(err)));
+    },
+    [facesById]
   );
   // v12.5 (#284): the branch menu's *Open roll* — select the branch
   // (its grid lands in the right pane) and add it to the open-set when
@@ -3097,6 +3178,12 @@ export default function App() {
             // image in focus mode — the same confirmContext path as the
             // card double-click / "Open full image" menu entries
             onOpenPrimary={paneOpenPrimary}
+            // v14.0 (#288): the reference images are interactive — the
+            // context menu routes plus the double-click's Select
+            onSelectRefcrop={paneSelectRefcrop}
+            onOpenRefcropImage={paneOpenRefcropImage}
+            onOpenRefcropRoll={paneOpenRefcropRoll}
+            onOpenRefcropRollPath={paneOpenRefcropRollPath}
             onRemoveRefcrop={paneRemoveRefcrop}
           />
           )}
