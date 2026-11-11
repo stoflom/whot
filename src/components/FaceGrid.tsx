@@ -93,6 +93,32 @@ function stagedKeyFor(idx: Map<number, StagedEntry>, ids: number[]): string {
   return Object.keys(f).length ? JSON.stringify(f) : "";
 }
 
+/** #283 (N8): the comparator's own props type — exported so the
+    `sectionPropsEqual` contract is unit-testable at the component level
+    (the #98/#222/#282 rules it encodes: a verdict delta that keeps every
+    handler identity and this section's data must not re-render it). */
+export interface SectionViewProps {
+  section: Section;
+  /** #109: this section's selected face ids as "a,b,c" — identical
+      while its own selection is unchanged, so memo() skips the whole
+      section on an O(1) compare */
+  selSig: string;
+  /** #109: the selection size — passed only to sections holding a
+      selection (their selected cards' count labels need it); a
+      section without one gets a stable `undefined` */
+  selSize?: number;
+  /** #234 (rule 45): this section's in-flight face ids as "a,b,c" —
+      identical while its own in-flight set is unchanged, so memo()
+      skips the whole section on an O(1) compare ("" = none) */
+  inFlightSig: string;
+  /** #109: the staged fields previewing here ("" when none) */
+  stagedKey: string;
+  /** #136 (rule 34): this section's hovered description-drop target —
+      set only on the one section a drag hovers, stable `undefined`
+      elsewhere, so a hover move re-renders one or two sections */
+  descTargetId?: number;
+}
+
 const SectionView = memo(
   function SectionView({
     section,
@@ -124,27 +150,7 @@ const SectionView = memo(
     onFaceDragLeave,
     onFaceDropOnCard,
     descTargetId,
-  }: {
-    section: Section;
-    /** #109: this section's selected face ids as "a,b,c" — identical
-        while its own selection is unchanged, so memo() skips the whole
-        section on an O(1) compare */
-    selSig: string;
-    /** #109: the selection size — passed only to sections holding a
-        selection (their selected cards' count labels need it); a
-        section without one gets a stable `undefined` */
-    selSize?: number;
-    /** #234 (rule 45): this section's in-flight face ids as "a,b,c" —
-        identical while its own in-flight set is unchanged, so memo()
-        skips the whole section on an O(1) compare ("" = none) */
-    inFlightSig: string;
-    /** #109: the staged fields previewing here ("" when none) */
-    stagedKey: string;
-    /** #136 (rule 34): this section's hovered description-drop target —
-        set only on the one section a drag hovers, stable `undefined`
-        elsewhere, so a hover move re-renders one or two sections */
-    descTargetId?: number;
-  } & GridShared) {
+  }: SectionViewProps & GridShared) {
     // #109: rebuild this section's selection from its signature — the
     // body runs only when the memo lets the section through
     const sel = useMemo(() => {
@@ -309,7 +315,19 @@ const SectionView = memo(
   // the per-card primitives flow through the sections that re-render),
   // so sections a stage does not cover keep their (equivalent) previous
   // index prop
-  (a, b) =>
+  // #283 (N8): exported for the component-level unit test (the verdict
+  // delta rule — #222/#282 keep every handler identity stable, so an
+  // untouched section's compare must hold across a delta)
+  sectionPropsEqual,
+);
+
+/** #109/#283: the memo(SectionView) comparator — identical props ⇒ skip
+    the section entirely (one O(1) compare per section per render). */
+export function sectionPropsEqual(
+  a: SectionViewProps & GridShared,
+  b: SectionViewProps & GridShared,
+): boolean {
+  return (
     a.section === b.section &&
     a.selSig === b.selSig &&
     a.inFlightSig === b.inFlightSig &&
@@ -337,8 +355,9 @@ const SectionView = memo(
     a.onFaceDragOver === b.onFaceDragOver &&
     a.onFaceDragLeave === b.onFaceDragLeave &&
     a.onFaceDropOnCard === b.onFaceDropOnCard &&
-    a.descTargetId === b.descTargetId,
-);
+    a.descTargetId === b.descTargetId
+  );
+}
 
 function FaceGrid({
   sections,

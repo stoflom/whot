@@ -1773,6 +1773,33 @@ fn rotate_images_write_phase_is_constant_281() {
     let _ = d1;
 }
 
+/// #283 (N4) — the §9 multi-row moves are set-based: the write phase is
+/// constant in the selection size (the old loop was 2–3 statements per
+/// person: DELETE from-membership + INSERT to + seat drop).
+#[test]
+fn move_persons_write_phase_is_constant_283() {
+    let count = |name: &str, ids: &[i64]| -> usize {
+        let p = fixture_paths(name);
+        {
+            let mut con = db::connect(&p).unwrap();
+            con.trace(Some(counting_trace));
+        }
+        let _ =
+            db::move_persons_between_groups(&p, ids, "New", "Group1|Group2").unwrap();
+        let seen = STMT_SEEN.load(Ordering::SeqCst);
+        {
+            let mut con = db::connect(&p).unwrap();
+            con.trace(None);
+        }
+        std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+        seen
+    };
+    let one = count("mv283a", &[1]);
+    let three = count("mv283b", &[1, 2, 3]);
+    assert_eq!(one, three,
+               "write phase constant in the selection size: {one} vs {three}");
+}
+
 // ---------------------------------------------------------------- #220
 // performance-review §3.2 B-M2/B-M3/B-M4 — write-path N+1. The
 // acceptance line: a reject batch over F faces must not run more than
