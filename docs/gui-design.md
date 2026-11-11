@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 13.1** (#289) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 14.0** (#288) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -471,6 +471,23 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   image" menu entries), with the tooltip/title saying so; when the person
   has no primary face there is nothing to open and the click stays inert.
   (Primary-face *setting* is the refcrop list above, not the avatar.)
+  **The reference images are interactive** (v14.0/#288): each refcrop's
+  image carries a **context menu** (right-click) and a **double-click** —
+  - *Select in grid* (the **double-click runs the same action**): if the
+    current Show filter hides the face, Show first switches to a filter
+    that shows it (the narrowest — *Accepted* for a confirmed refcrop);
+    the face is then **selected** (single-select semantics, a card click)
+    and **scrolled into view** in the centre grid (the lazy-mount grid
+    grows first, as with the re-anchor/reveal scrolls);
+  - *Remove reference face*: the row's × button action;
+  - *Open full image*: the face's image in focus mode (the same
+    `confirmContext` → `setSplitImageId` path as the avatar click);
+  - *Open roll* / *Open roll path*: the image's own routes (Rolls mode
+    with the tree opened at the image's branch; the image's directory in
+    the file manager) with the **same gating as the centre image's menu
+    entries** (#272/#274): disabled while the image has no roll
+    (`last_import_id` null), a stale directory reaches the error toast
+    (#144).
 - **Right pane — branch thumbnails** (Rolls mode, §4.39): while
   the user browses the path hierarchy, the right pane holds the
   **selected branch's images** — the direct children of that path only

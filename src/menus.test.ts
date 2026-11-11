@@ -13,6 +13,7 @@ import {
   thumbMenuGroups,
   imageAreaMenuGroups,
   rollBranchMenuGroups,
+  refcropMenuGroups,
   type FaceMenuInput,
   type ThumbMenuInput,
   type ImageAreaMenuInput,
@@ -486,5 +487,61 @@ describe("rollBranchMenuGroups (#280)", () => {
     item(groups, "Open roll")!.onClick();
     item(groups, "Open roll path")!.onClick();
     expect(calls).toEqual(["roll:/mnt/rolls/2024", "path:/mnt/rolls/2024"]);
+  });
+});
+
+describe("refcropMenuGroups (v14.0, #288)", () => {
+  const base = (calls: string[]) => ({
+    faceKnown: true,
+    imported: true,
+    onSelect: () => calls.push("select"),
+    onRemove: () => calls.push("remove"),
+    onOpenImage: () => calls.push("image"),
+    onOpenRoll: () => calls.push("roll"),
+    onOpenRollPath: () => calls.push("path"),
+  });
+
+  it("carries the five routes in order: Select in grid first, Remove last (danger)", () => {
+    const calls: string[] = [];
+    const groups = refcropMenuGroups(base(calls));
+    expect(groups.flatMap((g) => g.items).map((i) => i.label)).toEqual([
+      "Select in grid",
+      "Open full image",
+      "Open roll",
+      "Open roll path",
+      "Remove reference face",
+    ]);
+    expect((item(groups, "Remove reference face") as { danger?: boolean })!.danger).toBe(true);
+    for (const e of groups.flatMap((g) => g.items)) expect(e.disabled).not.toBe(true);
+    const byCall: Record<string, string> = {
+      select: "Select in grid",
+      image: "Open full image",
+      roll: "Open roll",
+      path: "Open roll path",
+      remove: "Remove reference face",
+    };
+    for (const [call, label] of Object.entries(byCall)) {
+      item(groups, label)!.onClick();
+      expect(calls).toContain(call);
+    }
+  });
+
+  it("greys the open routes while the image has no roll (#272/#274 gating)", () => {
+    const calls: string[] = [];
+    const groups = refcropMenuGroups({ ...base(calls), imported: false });
+    expect(item(groups, "Open roll")!.disabled).toBe(true);
+    expect(item(groups, "Open roll path")!.disabled).toBe(true);
+    expect(item(groups, "Select in grid")!.disabled).not.toBe(true);
+    item(groups, "Open roll")!.onClick(); // a greyed entry must not fire
+    expect(calls.filter((c) => c === "roll" || c === "path")).toEqual([]);
+  });
+
+  it("greys the image routes for a stale row (face gone from the snapshot)", () => {
+    const groups = refcropMenuGroups({ ...base([]), faceKnown: false });
+    expect(item(groups, "Select in grid")!.disabled).toBe(true);
+    expect(item(groups, "Open full image")!.disabled).toBe(true);
+    expect(item(groups, "Open roll")!.disabled).toBe(true);
+    expect(item(groups, "Open roll path")!.disabled).toBe(true);
+    expect(item(groups, "Remove reference face")!.disabled).not.toBe(true);
   });
 });
