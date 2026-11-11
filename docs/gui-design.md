@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 12.5** (#284) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 12.6** (#285) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -415,11 +415,15 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   resolves the image's recorded locations — `images.primary_path` first,
   then the `image_paths` alias set (schema-design §3) — and opens the
   **first path that exists on disk** (a location can be stale: the alias
-  set is append-only, §7.1). Only when **no** recorded location exists
-  (the original was moved/deleted, or the image is BLOB-only) does it
-  fall back to writing the preview BLOB to a temp file and handing it to
-  the opener plugin, and it then raises a quiet **info** toast (#132)
-  naming the original paths it looked at. The `/tmp` temp path is never
+  set is append-only, §7.1). When **≥ 1 location is recorded but none
+  exists on disk** (the original was moved/deleted, or the volume holding
+  it is unmounted), the command **fails with an error** — the §4.26 error
+  toast names the looked-at paths — and **no preview copy is opened**
+  (a missing original must never masquerade as one that opened, #285).
+  The preview fallback applies **only to images with no recorded location
+  at all** (BLOB-only import): it writes the preview BLOB to a temp file
+  and hands it to the opener plugin, raising a quiet **info** toast
+  (#132). The `/tmp` temp path is never
   shown in the right pane — it is a viewer fallback, not a location of the
   original.
   **The `open_image` temp file (fallback only) is unique and magic-sniffed**:
