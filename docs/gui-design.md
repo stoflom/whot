@@ -2502,7 +2502,7 @@ visual near-twins (the old `✗` reject vs `✕`/`×` close) is a defect.
 | --- | --- | --- |
 | `✓` | accept / commit | card & cluster verdicts, *✓ Accept*, accepted counters, *✓ Update person* |
 | `✗` | reject / failure (the bad verdict) | card & cluster verdicts, *✗ Reject*, rejected counters, *✗ Remove person*, the toast's *✗ failed* |
-| `✕` | close / clear / drop a row (dismissal) — the ONE X | dialog & pane close, search clear, the group row's drop, the refcrop row's drop, the split close. **`×` is RETIRED from the UI (v14.1)** — it read as the reject mark; every `×` is now `✕` |
+| `✕` | close / clear / drop a row (dismissal) — the ONE X | dialog & pane close, search clear, the group row's drop, the refcrop row's drop, the split close. **`×` is RETIRED as an icon (v14.1)** — it read as the reject mark; every close/clear/drop `×` is now `✕` (the `W×H` dimension separator in image facts stays — math, not an icon) |
 | `?` | **help only** (the §4.48 shortcuts screen) | the top-bar `?` button. The person pane's no-primary-face avatar placeholder is **`▢`** (an empty image frame) so `?` never means "missing" |
 | `★` | primary face (and the New chip, §4.48) | card badge, *★ set as primary*, `★ N` chip |
 | `◈` | reference face | card action, *◈ add as reference* |
