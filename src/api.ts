@@ -91,6 +91,12 @@ export interface Snapshot {
 export interface Delta {
   /** the new change stamp (matches `Snapshot.version`) */
   version: number;
+  /** #281 — the stamp read BEFORE the write; the GUI compares it against
+      the stamp of the state it has applied (`Snapshot.version` or the
+      previous delta's `version` in a plan) — a mismatch means an
+      external write landed before the pre-read and this delta cannot
+      cover it: full refresh (see `deltas.ts` `deltaStale`) */
+  base: number;
   /** an external write interleaved (importer) — full-refresh instead of
       applying the delta */
   drifted: boolean;

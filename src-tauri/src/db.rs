@@ -634,6 +634,16 @@ pub fn snapshot(paths: &Paths) -> Result<Snapshot> {
 #[derive(Serialize, Clone, Debug)]
 pub struct Delta {
     pub version: i64,
+    /// #281 — the stamp read BEFORE the write (the `v1` of the drift
+    /// check). The GUI compares it against the stamp of the state it
+    /// has applied (`Snapshot.version`, or the previous delta's
+    /// `version` inside a sequential plan): a mismatch means an
+    /// external write landed before this command's pre-read and this
+    /// delta cannot cover it — full refresh. `drifted` alone only sees
+    /// writes landing between the pre-read and the commit, and a
+    /// zero-row write never moves the stamp at all, so `base` (not
+    /// `version`) is the sound comparison.
+    pub base: i64,
     /// an external write moved the stamp by more than 1 between our
     /// pre-read and our commit — the delta may be incomplete and the
     /// frontend must full-refresh instead of applying it.
@@ -751,7 +761,11 @@ fn image_rows(con: &Connection, ids: &[i64]) -> Result<Vec<ImageRow>> {
 /// stamp before (`v1`, taken by the caller before the write) and after
 /// (`v2`). Drift (`v2 > v1 + 1`) means an external write (importer)
 /// interleaved — the delta may be incomplete, so `drifted` is true and
-/// the frontend must full-refresh instead of applying it.
+/// the frontend must full-refresh instead of applying it. #281: `v1`
+/// also travels as `base` — the frontend compares it against the stamp
+/// of the state it has applied, which closes the other window (an
+/// external write landing BEFORE the pre-read moves the stamp without
+/// tripping the count check; see `Delta::base`).
 ///
 /// `con` is the caller's open connection (the POOL lock is already held
 /// by the caller's `DbConn` guard — calling `connect` here would
@@ -796,7 +810,7 @@ pub fn delta_after(
     } else {
         Some(image_rows(con, image_ids)?)
     };
-    Ok(Delta { version: v2, drifted, persons, faces, images, removed })
+    Ok(Delta { version: v2, base: v1, drifted, persons, faces, images, removed })
 }
 
 // ---------------------------------------------------------------- images
@@ -1034,14 +1048,26 @@ fn refresh_person_names(con: &Connection, person_id: i64) -> Result<()> {
 /// sweep rides the writers that can empty a person, so leftovers from
 /// external writers are swept at the next write instead of the next
 /// snapshot.
-fn sweep_stale_shells(con: &Connection) -> Result<()> {
-    con.execute(
-        "DELETE FROM persons
-           WHERE (name GLOB 'Unknown*' OR name GLOB 'Rejected[0-9]*')
-           AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
-        [],
-    )?;
-    Ok(())
+/// #281: returns the ids it deleted — the caller's delta must report
+/// them in `removed` (the GUI drops rows by id; a swept shell would
+/// otherwise linger until the next full refresh).
+fn sweep_stale_shells(con: &Connection) -> Result<Vec<i64>> {
+    let ids: Vec<i64> = {
+        let mut st = con.prepare(
+            "SELECT id FROM persons
+              WHERE (name GLOB 'Unknown*' OR name GLOB 'Rejected[0-9]*')
+                AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
+        )?;
+        st.query_map([], |r| r.get::<_, i64>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    if !ids.is_empty() {
+        // dependent rows (groups/refcrops) cascade with the FK — the
+        // schema declares ON DELETE CASCADE and connections set it ON
+        let list = ids_list(&ids);
+        con.execute(&format!("DELETE FROM persons WHERE id IN ({list})"), [])?;
+    }
+    Ok(ids)
 }
 
 /// §4.5 — machine primary: highest-confidence non-discarded, non-rejected face;
@@ -1520,26 +1546,47 @@ fn apply_reject_moves(tx: &Connection, assignments: &[(i64, i64)]) -> Result<()>
 /// person row is deleted, and the caller's reseat pass rewrites the
 /// seats. Databases without the person (fresh builds, dev drop-and-
 /// recreate) skip it.
-fn split_legacy_rejected_person(tx: &Connection, threshold: f64) -> Result<()> {
+/// #281: returns what it changed so the caller's delta covers it — the
+/// deleted legacy id rides `removed`, the `RejectedN` targets that
+/// received its faces join the affected persons, and the moved faces
+/// join the delta's face rows.
+struct SplitLegacy {
+    /// the deleted `Rejected` id (empty when the person is absent)
+    removed: Vec<i64>,
+    /// `RejectedN` targets that received the legacy faces
+    targets: Vec<i64>,
+    /// the legacy faces that were re-homed
+    faces: Vec<i64>,
+}
+
+fn split_legacy_rejected_person(tx: &Connection, threshold: f64) -> Result<SplitLegacy> {
     let legacy: Option<i64> = tx
         .query_row("SELECT id FROM persons WHERE name = 'Rejected'", [], |r| r.get(0))
         .optional()?;
     let Some(legacy) = legacy else {
-        return Ok(());
+        return Ok(SplitLegacy { removed: Vec::new(), targets: Vec::new(), faces: Vec::new() });
     };
     let mut st = tx.prepare("SELECT id FROM faces WHERE person_id = ?1")?;
     let mut fids: Vec<i64> = st
         .query_map(params![legacy], |r| r.get::<_, i64>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     fids.sort_unstable();
+    let mut targets: Vec<i64> = Vec::new();
     if !fids.is_empty() {
         let assignments = resolve_rejected_clusters(tx, &fids, threshold)?;
         apply_reject_moves(tx, &assignments)?;
+        let mut seen = std::collections::HashSet::new();
+        for (_, t) in &assignments {
+            if seen.insert(*t) {
+                targets.push(*t);
+            }
+        }
+        targets.sort_unstable();
     }
     tx.execute("DELETE FROM person_groups WHERE person_id = ?1", params![legacy])?;
     tx.execute("DELETE FROM person_refcrops WHERE person_id = ?1", params![legacy])?;
     tx.execute("DELETE FROM persons WHERE id = ?1", params![legacy])?;
-    Ok(())
+    Ok(SplitLegacy { removed: vec![legacy], targets, faces: fids })
 }
 
 /// #165/#266 — writer-owned persons: the legacy system person
@@ -1571,23 +1618,28 @@ fn guard_system_person(con: &Connection, person_id: i64) -> Result<()> {
 /// resolution per the face's embedding, §4.35; seq/name re-derived per
 /// §4.7), dropping stale pins at those faces (rejected faces are
 /// refcrop-ineligible, §4.6). Faces already home are skipped —
-/// re-rejecting is a no-op. Returns every person touched — the pre-move
-/// origins AND the `RejectedN` targets — sorted, so callers only
-/// recompute/reseat over that list.
+/// re-rejecting is a no-op. Returns (affected, removed, faces): every
+/// person touched — the pre-move origins AND the `RejectedN` targets,
+/// sorted, so callers only recompute/reseat over that list — plus
+/// (#281) the ids the #266 legacy split deleted (→ the delta's
+/// `removed`) and the faces it moved (→ the delta's face rows).
 fn reject_and_rehome(
     tx: &Connection,
     face_ids: &[i64],
     threshold: f64,
-) -> Result<Vec<i64>> {
+) -> Result<(Vec<i64>, Vec<i64>, Vec<i64>)> {
     // #266: retire the legacy single bin first (idempotent no-op when
     // absent)
-    split_legacy_rejected_person(tx, threshold)?;
+    let split = split_legacy_rejected_person(tx, threshold)?;
     let mut affected = affected_persons(tx, face_ids, None)?;
+    affected.extend(split.targets.iter().copied());
     let mut ids: Vec<i64> = face_ids.to_vec();
     ids.sort_unstable();
     ids.dedup();
     if ids.is_empty() {
-        return Ok(affected);
+        affected.sort_unstable();
+        affected.dedup();
+        return Ok((affected, split.removed, split.faces));
     }
     let list = ids_list(&ids);
     // faces already home (rejected on a RejectedN) are skipped
@@ -1609,7 +1661,7 @@ fn reject_and_rehome(
     }
     affected.sort();
     affected.dedup();
-    Ok(affected)
+    Ok((affected, split.removed, split.faces))
 }
 
 /// §4.35 — insert the derived seat of every person whose group rows lie
@@ -1851,7 +1903,14 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
         recompute_person(&tx, *pid, &settings)?;
         reseat(&tx, *pid)?; // §4.35: seat-holders re-derive; filed/system no-op
     }
-    sweep_stale_shells(&tx)?; // §4.27: sweep rides the writers (#208)
+    // #281: the sweep's deletions ride `removed` too — a `RejectedN`
+    // emptied by this move (un-rejecting its faces via the claim rule)
+    // is deleted by the sweep, not the inline path, and the GUI must
+    // drop the row instead of keeping a stale shell
+    let swept = sweep_stale_shells(&tx)?; // §4.27: sweep rides the writers (#208)
+    removed.extend(swept);
+    removed.sort_unstable();
+    removed.dedup();
     tx.commit()?;
     // #219 — affected = old owners + target; the target's faces are
     // re-named by refresh_person_names (person_face_ids), the moved faces
@@ -1886,7 +1945,10 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
     let mut con = connect(paths)?;
     let settings = get_settings(paths)?;
     let tx = con.transaction()?;
-    let affected: Vec<i64> = if status == "rejected" {
+    // #281: (affected, removed, faces) — a reject re-homes faces and may
+    // retire the legacy `Rejected` bin: its targets join the affected
+    // persons, its deleted id and moved faces ride the delta.
+    let (affected, mut removed, extra_faces) = if status == "rejected" {
         reject_and_rehome(&tx, face_ids, settings.cluster_threshold)?
     } else {
         // §4.3/§4.35: accept skips rejected faces — never un-rejects
@@ -1898,55 +1960,78 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
             ),
             [],
         )?;
-        affected_persons(&tx, face_ids, None)?
+        (affected_persons(&tx, face_ids, None)?, Vec::new(), Vec::new())
     };
     for pid in &affected {
         recompute_person(&tx, *pid, &settings)?;
         reseat(&tx, *pid)?; // §4.35: e.g. `UnknownN` New → Accepted
     }
-    sweep_stale_shells(&tx)?; // §4.27: sweep rides the writers (#208)
+    // #281: the sweep's deletions ride `removed` — the GUI drops the
+    // rows instead of keeping stale shells until the next full refresh
+    removed.extend(sweep_stale_shells(&tx)?); // §4.27: sweep rides the writers (#208)
+    removed.sort_unstable();
+    removed.dedup();
     tx.commit()?;
     // #219 — affected = face owners (+ `Rejected` on a reject); the faces
-    // whose status/person changed are `face_ids`; names are untouched by
-    // accept/reject so no person's full face set needs re-fetching.
-    delta_after(paths, &*con, v1, &affected, &[], face_ids, &[], Vec::new())
+    // whose status/person changed are `face_ids` (plus the legacy
+    // split's moved faces); names are untouched by accept/reject so no
+    // person's full face set needs re-fetching.
+    let mut all_faces: Vec<i64> = face_ids.to_vec();
+    all_faces.extend(extra_faces);
+    delta_after(paths, &*con, v1, &affected, &[], &all_faces, &[], removed)
 }
 
-/// #122 — full-image display rotation (server state): `delta` is the
-/// signed quarter-turn (the GUI sends +90/−90); the stored value is
-/// normalised to 0/90/180/270 CW. The same column is the geometric key
-/// #118 lands harvested EXIF angles in at import time.
-/// #122/#183 — image display rotation: the delta cascades to every
-/// crop on the image (one transaction), so each crop's orientation
-/// RELATIVE to the image is preserved — the crop pixels are fixed at
-/// creation, so the display angles move together. The converse is not
-/// true: `rotate_face` is the per-crop correction and never touches
-/// `images.rotation` (§4.32).
-fn rotate_image_tx(tx: &Connection, image_id: i64, delta: i64) -> Result<i64> {
+/// #122/#183 — image display rotation, set-based (#283 N4): the images
+/// UPDATE and the faces cascade are ONE statement each for the whole id
+/// set (the old per-image loop was 3 statements × N), and a missing
+/// image rolls the whole batch back (matched rows < ids ⇒ bail before
+/// the commit — same contract as the old loop). `d` is normalised to
+/// 0..359 in Rust; both columns are non-negative, so `(x + d) % 360`
+/// in SQL keeps the 0..359 range exactly like the old Rust-side
+/// `(cur + d) % 360`. Returns the delta's face ids read INSIDE the
+/// transaction (#281): the faces UPDATE is image-scoped, so a face
+/// added between a pre-tx read and the commit would be rotated but
+/// missing from the delta — the in-tx read cannot drift from what the
+/// UPDATE touched.
+fn rotate_images_tx(
+    tx: &Connection,
+    image_ids: &[i64],
+    delta: i64,
+) -> Result<Vec<i64>> {
     let d = ((delta % 360) + 360) % 360;
-    let cur: i64 = tx
-        .query_row("SELECT rotation FROM images WHERE id = ?", params![image_id], |r| r.get(0))
-        .context("image not found")?;
-    let next = (cur + d) % 360;
-    tx.execute("UPDATE images SET rotation = ? WHERE id = ?", params![next, image_id])?;
-    tx.execute(
-        "UPDATE faces SET rotation = ((rotation + ?1) % 360 + 360) % 360 WHERE image_id = ?2",
-        params![d, image_id],
+    let list = ids_list(image_ids);
+    let n = tx.execute(
+        &format!("UPDATE images SET rotation = (rotation + {d}) % 360 WHERE id IN ({list})"),
+        [],
     )?;
-    Ok(next)
+    if n != image_ids.len() {
+        bail!("image not found");
+    }
+    tx.execute(
+        &format!(
+            "UPDATE faces SET rotation = ((rotation + {d}) % 360 + 360) % 360
+               WHERE image_id IN ({list})"
+        ),
+        [],
+    )?;
+    let face_ids: Vec<i64> = {
+        let mut st =
+            tx.prepare(&format!("SELECT id FROM faces WHERE image_id IN ({list}) ORDER BY id"))?;
+        st.query_map([], |r| r.get::<_, i64>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    Ok(face_ids)
 }
 
 pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<Delta> {
     // #219 — the stamp before the write, for drift detection.
     let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
-    // #219 — every face on this image changes crop rotation.
-    let face_ids: Vec<i64> = con
-        .prepare("SELECT id FROM faces WHERE image_id = ?")?
-        .query_map(params![image_id], |r| r.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
     let tx = con.transaction()?;
-    rotate_image_tx(&tx, image_id, delta)?;
+    // #283 N4: the single-image rotation is the batch with one id —
+    // same set-based shape (one statement per table), same
+    // not-found refusal
+    let face_ids = rotate_images_tx(&tx, &[image_id], delta)?;
     tx.commit()?;
     // #219 — the image row and every face on it change rotation; no
     // person rows are affected.
@@ -1968,17 +2053,8 @@ pub fn rotate_images(paths: &Paths, image_ids: &[i64], delta: i64) -> Result<Del
     // #219 — the stamp before the write, for drift detection.
     let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
-    // #219 — every face on every rotated image changes crop rotation.
-    let face_ids: Vec<i64> = {
-        let list = ids_list(&ids);
-        let mut st = con.prepare(&format!("SELECT id FROM faces WHERE image_id IN ({list}) ORDER BY id"))?;
-        st.query_map([], |r| r.get::<_, i64>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?
-    };
     let tx = con.transaction()?;
-    for id in &ids {
-        rotate_image_tx(&tx, *id, delta)?;
-    }
+    let face_ids = rotate_images_tx(&tx, &ids, delta)?;
     tx.commit()?;
     // #219 — the image rows and every face on them change rotation; no
     // person rows are affected.
@@ -2560,8 +2636,17 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
         rows.collect::<std::result::Result<Vec<_>, _>>()?
     };
     let mut touched: HashSet<i64> = HashSet::new();
+    // #281: a removed person's faces re-home onto `RejectedN` clusters
+    // (the targets join the touched persons); retiring the legacy
+    // `Rejected` bin mid-batch reports its deleted id and moved faces
+    // the same way
+    let mut removed_extra: Vec<i64> = Vec::new();
+    let mut extra_faces: Vec<i64> = Vec::new();
     if !rehomed_faces.is_empty() {
-        touched.extend(reject_and_rehome(&tx, &rehomed_faces, settings.cluster_threshold)?);
+        let (aff, rem, faces) = reject_and_rehome(&tx, &rehomed_faces, settings.cluster_threshold)?;
+        touched.extend(aff);
+        removed_extra.extend(rem);
+        extra_faces.extend(faces);
     }
     // #46: delete dependents explicitly instead of trusting the FK
     // cascade — a connection opened without foreign_keys=ON would
@@ -2580,11 +2665,16 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
         reseat(&tx, *pid)?;
     }
     tx.commit()?;
-    // #219 — removed = deleted person ids; rehomed_faces = their faces
-    // (re-homed onto `Rejected`); touched = recomputed persons (e.g.
-    // `Rejected`'s primary). Names are set per-face by reject_and_rehome,
-    // so no person's full face set is re-fetched.
-    delta_after(paths, &*con, v1, &touched, &[], &rehomed_faces, &[], removed)
+    // #219 — removed = deleted person ids (plus the legacy bin the
+    // #266/#281 split retired); rehomed_faces = their faces (plus the
+    // faces the split moved); touched = recomputed persons (e.g. a
+    // `RejectedN` target's primary). Names are set per-face by
+    // reject_and_rehome, so no person's full face set is re-fetched.
+    let mut all_removed: Vec<i64> = removed;
+    all_removed.extend(removed_extra);
+    let mut all_faces: Vec<i64> = rehomed_faces.clone();
+    all_faces.extend(extra_faces);
+    delta_after(paths, &*con, v1, &touched, &[], &all_faces, &[], all_removed)
 }
 
 /// §4.6 — manually promote a confirmed face into refcrops (survives rebuilds).

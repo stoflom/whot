@@ -508,9 +508,19 @@
   // mock simplification — touched-only optimisation is tested in Rust;
   // applyDelta's upsert/removed handling is what the mock exercises).
   // `remove_persons` carries `removed` so dropped persons leave the tree.
-  const delta = (removed = []) => {
+  // #281: `base` is the stamp BEFORE the mutation (backend parity: the
+  // command's pre-write read) — the GUI's staleness check compares it
+  // against its applied stamp, so the mock must chain it exactly like
+  // the backend or every delta would look stale and force a refresh.
+  const delta = (removed = [], base) => {
     const text = JSON.stringify(SNAP);
-    return { ...JSON.parse(text), version: stampOf(text), drifted: false, removed };
+    return {
+      ...JSON.parse(text),
+      version: stampOf(text),
+      base: base ?? stampOf(text),
+      drifted: false,
+      removed,
+    };
   };
   for (const name of [
     "assign_person", "accept_faces", "reject_faces", "set_face_description",
@@ -523,8 +533,9 @@
     const orig = cmd[name];
     cmd[name] = (args) => {
       const removed = name === "remove_persons" ? (args?.personIds ?? []) : [];
+      const base = stampOf(JSON.stringify(SNAP)); // #281: pre-write stamp
       orig(args);
-      return delta(removed);
+      return delta(removed, base);
     };
   }
 

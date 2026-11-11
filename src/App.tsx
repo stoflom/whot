@@ -128,6 +128,8 @@ import { useClickPairGuard } from "./clickPair";
 // §4.44 + #222 (F-H3): the review-verdict callbacks — the #98 identity
 // rule lives in the hook (person anchor read via refs), co-tested
 import { useReviewVerdicts } from "./reviewVerdicts";
+// #281: the pure delta-protocol helpers (upsert/drop + exact staleness)
+import { applyDeltaToSnapshot, deltaStale } from "./deltas";
 
 type Mode = "review" | "rolls" | "person";
 
@@ -404,38 +406,40 @@ export default function App() {
     setSnap(s);
   }, []);
   // #219: apply a mutation's delta locally — only the touched rows move,
-  // no full snapshot re-fetch. The moved persons/faces/images upsert by
-  // id; removed persons drop out. `drifted` falls back to a full refresh.
+  // no full snapshot re-fetch. #281: the upsert/drop maths is the pure
+  // `applyDeltaToSnapshot` (co-tested in deltas.test.ts); staleness is
+  // exact via `deltaStale` — `base` (the command's pre-write stamp) must
+  // equal the stamp of the state this delta applies onto.
   const applyDelta = useCallback(
     (delta: Delta) => {
-      if (delta.drifted) {
+      if (deltaStale(delta, snapVersionRef.current)) {
         void refresh().catch(() => {});
         return;
       }
       snapVersionRef.current = delta.version;
-      setSnap((s) => {
-        if (!s) return s;
-        const next: Snapshot = { ...s };
-        if (delta.persons != null || delta.removed.length > 0) {
-          const byId = new Map(next.persons.map((p) => [p.id, p]));
-          for (const p of delta.persons ?? []) byId.set(p.id, p);
-          for (const id of delta.removed) byId.delete(id);
-          next.persons = [...byId.values()];
-        }
-        if (delta.faces != null) {
-          const byId = new Map(next.faces.map((f) => [f.id, f]));
-          for (const f of delta.faces) byId.set(f.id, f);
-          next.faces = [...byId.values()];
-        }
-        if (delta.images != null) {
-          const byId = new Map(next.images.map((im) => [im.id, im]));
-          for (const im of delta.images) byId.set(im.id, im);
-          next.images = [...byId.values()];
-        }
-        return next;
-      });
+      setSnap((s) => (s ? applyDeltaToSnapshot(s, delta) : s));
     },
     [refresh]
+  );
+  // #281: apply a PLAN's deltas in order — each delta's `base` is the
+  // stamp the previous apply left (the backend chains sequential ops
+  // exactly this way), so every delta is checked against the live stamp;
+  // the first stale/drifted one aborts the plan and falls back to ONE
+  // full refresh (applying the rest on top of a known-stale base would
+  // just cascade more refreshes).
+  const applyDeltas = useCallback(
+    async (deltas: Delta[]) => {
+      let stale = false;
+      for (const d of deltas) {
+        if (deltaStale(d, snapVersionRef.current)) {
+          stale = true;
+          break;
+        }
+        applyDelta(d);
+      }
+      if (stale) await refresh();
+    },
+    [applyDelta, refresh]
   );
   // #208: reload only when the database actually moved since the last
   // snapshot (our own mutations refresh explicitly and record the new
@@ -644,10 +648,11 @@ export default function App() {
       try {
         const result = await fn();
         const deltas = (Array.isArray(result) ? result : [result]).filter(isDelta);
-        if (deltas.some((d) => d.drifted)) {
-          await refresh(); // an external write interleaved — full refresh
-        } else if (deltas.length > 0) {
-          for (const d of deltas) applyDelta(d);
+        if (deltas.length > 0) {
+          // #281: in plan order against the live stamp — a drifted or
+          // base-stale delta (external write before/mid-command) falls
+          // back to one full refresh, the rest of the plan with it
+          await applyDeltas(deltas);
         } else {
           await refresh(); // non-delta command (settings) / void result
         }
@@ -660,7 +665,7 @@ export default function App() {
         setBusy(false);
       }
     },
-    [refresh, applyDelta]
+    [refresh, applyDeltas]
   );
 
   // #122: rotations are server state — command, then refresh
@@ -1988,10 +1993,9 @@ export default function App() {
       // face→owner mapping (the claim/merge moves faces between persons),
       // so the group ops below need no full snapshot re-fetch.
       const deltas: Delta[] = [];
-      const flush = async () => {
-        if (deltas.some((d) => d.drifted)) await refresh();
-        else for (const d of deltas) applyDelta(d);
-      };
+      // #281: the plan's deltas apply in order against the live stamp
+      // (`applyDeltas` — a drifted/base-stale delta is one full refresh)
+      const flush = () => applyDeltas(deltas);
       let done = 0;
       try {
         for (; done < all.length; done++) {
@@ -2038,7 +2042,7 @@ export default function App() {
       await acceptAndNext(ids, claimed);
       setPending([]);
     },
-    [acceptAndNext, stageOps, applyDelta, facesById, refresh]
+    [acceptAndNext, stageOps, applyDeltas, facesById, refresh]
   );
 
   // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the
