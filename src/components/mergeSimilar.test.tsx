@@ -1,8 +1,10 @@
 // v13.0 (#287) — the anchored Merge Similar route (the person detail
 // panel): the same §4.28 triage dialog scoped to ONE person (only its
 // cluster is listed, titled `Similar to "name"`, the empty state names
-// the person) and the pane's trigger button (visible for anchorable
-// persons, hidden for RejectedN/UnknownN system persons).
+// the person) and the pane's trigger button (always rendered; disabled
+// — not hidden — for RejectedN/UnknownN system persons, v13.1/#289,
+// with a why-tooltip; v13.1/#289 also pins the pane's action buttons
+// to icon + text: ✓ Update person, ✗ Remove person, ⧉ Merge similar).
 // Run: npm test (vitest run; jsdom pragma).
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -110,7 +112,7 @@ describe("MergeSimilarDialog anchored route (#287)", () => {
   });
 });
 
-describe("DetailPane trigger (#287)", () => {
+describe("DetailPane trigger (#287 / v13.1 #289)", () => {
   const mount = (person: Person, onMergeSimilar: (id: number) => void) =>
     render(
       <DetailPane
@@ -129,16 +131,29 @@ describe("DetailPane trigger (#287)", () => {
   it("a named person gets the button; it fires with the person's id", () => {
     const onMergeSimilar = vi.fn();
     mount(P(1, "jane doe"), onMergeSimilar);
-    const btn = screen.getByText("Merge similar");
+    const btn = screen.getByRole("button", { name: /merge similar/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
     expect(onMergeSimilar).toHaveBeenCalledWith(1);
   });
 
-  it("system persons (UnknownN / RejectedN) get no button — they can't be merge anchors", () => {
-    for (const name of ["Unknown7", "Rejected2"]) {
+  it("system persons (UnknownN / RejectedN) get the button DISABLED, with a why-tooltip (v13.1/#289)", () => {
+    for (const [name, tooltip] of [
+      ["Unknown7", "An unknown cluster person can't be a merge target"],
+      ["Rejected2", "A rejected cluster person can't be a merge target"],
+    ]) {
       const { unmount } = mount(P(9, name), vi.fn());
-      expect(screen.queryByText("Merge similar")).toBeNull();
+      const btn = screen.getByRole("button", { name: /merge similar/i }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+      expect(btn.getAttribute("title")).toBe(tooltip);
       unmount();
     }
+  });
+
+  it("the action buttons render icon + text: ✓ Update person, ✗ Remove person, ⧉ Merge similar (v13.1/#289)", () => {
+    mount(P(1, "jane doe"), vi.fn());
+    expect(screen.getByRole("button", { name: /update person/i }).textContent).toBe("✓ Update person");
+    expect(screen.getByRole("button", { name: /remove person/i }).textContent).toBe("✗ Remove person");
+    expect(screen.getByRole("button", { name: /merge similar/i }).textContent).toBe("⧉ Merge similar");
   });
 });

@@ -6756,8 +6756,9 @@ def c65_person_pane_merge_similar(t):
     the §4.28 triage anchored to the focused person: the dialog is
     titled `Similar to “<name>”` and lists only that person's cluster
     (the anchor itself among the members) or the named empty state;
-    the button sits below Remove person and is hidden for system
-    persons (UnknownN/RejectedN — refused merge targets)."""
+    the button sits below Remove person and is DISABLED (greyed out,
+    v13.1/#289 — not hidden) for system persons (UnknownN/RejectedN —
+    refused merge targets)."""
     fresh(t)
     set_show_filter(t, "all")
     js(t, "document.querySelectorAll('.topbar nav button')[2]?.click();")  # Person
@@ -6821,7 +6822,8 @@ def c65_person_pane_merge_similar(t):
     time.sleep(0.6)
     c_ok = js(t, "return document.querySelector('.merge-dialog') == null")
 
-    # ── phase D: a system person (UnknownN) gets NO button ────────────
+    # ── phase D: a system person (UnknownN) gets the button DISABLED
+    #    (v13.1/#289 — always rendered, greyed out, why-tooltip) ─────
     sys_pick = js(t, r"""
       const snap = window.__MOCK_SNAP;
       const m = snap.persons.find(p => /^unknown/i.test(p.name));
@@ -6829,14 +6831,17 @@ def c65_person_pane_merge_similar(t):
     """)
     if sys_pick:
         select_person(sys_pick["id"])
-        d_ok = js(t, "return document.querySelector('.dp-merge-similar') == null")
+        d_ok = js(t, r"""
+          const b = document.querySelector('.dp-merge-similar');
+          return b !== null && b.disabled === true;
+        """)
     else:
         d_ok = True
 
     ok = a_ok and b_ok and c_ok and d_ok
     record("C65 person-pane Merge similar anchor (#287)", ok,
            f"person={pick['name']!r}; A: pos={pos}; B: dlg={dlg} (want {want_title!r}); "
-           f"C: closed={c_ok}; D: system={sys_pick and sys_pick['name']} none={d_ok}")
+           f"C: closed={c_ok}; D: system={sys_pick and sys_pick['name']} disabled={d_ok}")
 
 
 def main():
