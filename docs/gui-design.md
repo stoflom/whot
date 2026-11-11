@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 12.6** (#285) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 13.0** (#286/#287) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -121,7 +121,9 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   **two rows**: the **first row is the person filter (search) input
   filling the row's width, with a Clear (✕) button at its right end**;
   the **second row is the ⌃/⌄ roll up/down buttons and the *Merge
-  Similar* button** (§4.28) — **pinned flush to the top of the pane**
+  Similar* button** (§4.28) — **icon-only** (the `⧉` glyph, like its
+  ⌃/⌄ neighbours; the wording lives in the button's tooltip, v12.7/
+  #286) — **pinned flush to the top of the pane**
   while the list scrolls (one sticky block whose panel background
   covers the full pane width and the pane's top padding, so no text
   can show through above or beside it). The left pane carries **no *Review* button**: the top bar's
@@ -1250,11 +1252,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
 
     **Three equivalent entry points**, all feeding one confirmation
     dialog:
-    - *review dialog* (the left-pane top bar's *Merge Similar*
-      button): cluster list with member
+    - *review dialog* (the left-pane top bar's *Merge Similar* icon
+      button, §3's tree action row): cluster list with member
       facts (face counts, group paths, `state='imported'` badge,
       created_at), multi-select, `Merge into…` / bulk group / bulk
       rename;
+    - *person detail panel* (the right pane's *Merge similar* button,
+      v13.0/#287): the **same dialog scoped to the focused person** —
+      only that person's own cluster is listed (detection unchanged,
+      single-linkage — a typo chain still reaches beyond a direct
+      match), titled `Similar to "<name>"`; the focused person is among
+      the candidates and the natural merge target. The button is
+      **hidden for system persons** (`RejectedN` bins and `UnknownN`
+      clusters — refused as merge targets) and otherwise sits below
+      *Remove person*, above the Reference faces heading;
     - *person context menu*: `Merge into…` (typeahead), `Apply group to
       selection…`, `Rename selection to…` on a (multi-)selection;
     - *drag-and-drop*: dragging a selected set **onto a person row**
