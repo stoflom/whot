@@ -6530,16 +6530,18 @@ def c63_rolls_image_stepping(t):
 
 
 def c64_roll_branch_reimport_recursive(t):
-    """#280 (v12.4, §4.36+§4.39): the branch header icon row — the
-    counts rollup moved into the roll-path tooltip ('<abs> — N img ·
-    N new · N ✓ · N ✗', the recursive raw totals) and the space
-    carries ⇩ (opens the import pane on the branch with Re-import
-    PRE-CHECKED — the pane is not a toggle) and the per-branch
-    recursive grid toggle (☐/☑, aria-pressed); ticked, the branch's
-    grid lists every descendant image and the grid head notes it; the
-    header context menu carries both (Re-import… + ☐/☑ Include
-    sub-branch images); neither icon triggers the header's own
-    toggle+select click."""
+    """#280 (v12.4, §4.36+§4.39) + #284 (v12.5, §4.36): the branch
+    header icon row — the counts rollup moved into the roll-path
+    tooltip ('<abs> — N img · N new · N ✓ · N ✗', the recursive raw
+    totals) and the space carries ⇩ (opens the import pane on the
+    branch with Re-import PRE-CHECKED — the pane is not a toggle) and
+    the per-branch recursive grid toggle (☐/☑, aria-pressed); ticked,
+    the branch's grid lists every descendant image and the grid head
+    notes it; the header context menu carries the v12.5 open routes
+    first (Open roll keeps the branch selected AND open; Open roll
+    path invokes open_dir on the branch path) then the v12.4 pair
+    (Re-import… + ☐/☑ Include sub-branch images); neither icon
+    triggers the header's own toggle+select click."""
     fresh(t)
     set_show_filter(t, "all")
     js(t, "document.querySelectorAll('.topbar nav button')[1]?.click();")  # Rolls
@@ -6657,15 +6659,44 @@ def c64_roll_branch_reimport_recursive(t):
             and s1["thumbs"] == pick["direct"] + pick["deeper"]
             and "incl. sub-branches" in (s1["head"] or ""))
 
-    # ── phase C: the context menu carries both; Re-import… opens the
-    #    pane with Re-import PRE-CHECKED on the branch ────────────────
-    ctxclick(t, t.find_element(By.CSS_SELECTOR, ".roll-header.selected"))
+    # ── phase C: the context menu carries the v12.5 open routes first
+    #    (Open roll, Open roll path, #284) then the v12.4 pair;
+    #    Re-import… opens the pane with Re-import PRE-CHECKED on the
+    #    branch ──────────────────────────────────────────────────────────
+    # Open roll: the branch stays selected AND the menu's open route
+    # RE-OPENS it — collapse the branch first (the header toggle does
+    # not deselect), so 'false → true' pins the ensure-open behaviour
+    # (a menu entry named Open never collapses the way the toggle can)
+    sel = ".roll-header.selected"
+    js(t, f"document.querySelector('{sel}').click();")  # collapse
+    time.sleep(0.6)
+    pre_open = js(t, f"return document.querySelector('{sel}')?.getAttribute('aria-expanded');")
+    ctxclick(t, t.find_element(By.CSS_SELECTOR, sel))
     time.sleep(0.6)
     menu = js(t, r"""
       return [...document.querySelectorAll('.ctx-item')].map(i => i.textContent.trim());
     """)
-    c_menu_ok = ("Re-import…" in menu
+    c_menu_ok = (menu[:2] == ["Open roll", "Open roll path"]
+                 and "Re-import…" in menu
                  and any("☑ Include sub-branch images" in x for x in menu))
+    # Open roll: the collapsed branch is re-opened by the menu's open
+    # route (pre_open read 'false' before the menu) — never a collapse
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+     if b.text.strip() == "Open roll"][0].click()
+    time.sleep(0.6)
+    roll_ok = (t.find_elements(By.CSS_SELECTOR, sel)
+               and js(t, f"return document.querySelector('{sel}')?.dataset.path;") == pick["dir"]
+               and js(t, f"return document.querySelector('{sel}')?.getAttribute('aria-expanded');") == "true")
+    # Open roll path: the branch's own directory reaches open_dir
+    ctxclick(t, t.find_element(By.CSS_SELECTOR, sel))
+    time.sleep(0.6)
+    dir_calls = js(t, "return (window.__MOCK_CALLS__.open_dir ?? 0);")
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+     if b.text.strip() == "Open roll path"][0].click()
+    time.sleep(0.6)
+    path_ok = js(t, "return (window.__MOCK_CALLS__.open_dir ?? 0);") == dir_calls + 1
+    ctxclick(t, t.find_element(By.CSS_SELECTOR, sel))
+    time.sleep(0.6)
     [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
      if b.text.strip() == "Re-import…"][0].click()
     time.sleep(1.2)
@@ -6679,7 +6710,7 @@ def c64_roll_branch_reimport_recursive(t):
               reChecked: l ? l.querySelector('input[type=checkbox]').checked : null,
               reVisible: !!l};
     """)
-    c_ok = (c_menu_ok and pane["open"] and pane["dir"] == pick["dir"]
+    c_ok = (c_menu_ok and roll_ok and path_ok and pane["open"] and pane["dir"] == pick["dir"]
             and pane["reVisible"] and pane["reChecked"] is True)
     # close the pane (§4.36: only ✕ closes it) and toggle recursive off
     js(t, "[...document.querySelectorAll('.import-head button')].find(b => b.textContent.includes('✕'))?.click();")
@@ -6695,12 +6726,13 @@ def c64_roll_branch_reimport_recursive(t):
             and "incl. sub-branches" not in (s2["head"] or ""))
 
     ok = a_ok and b_ok and c_ok and d_ok
-    record("C64 roll-branch header icon row: re-import route + recursive grid (#280)", ok,
+    record("C64 roll-branch header icon row: re-import route + recursive grid + branch open routes (#280/#284)", ok,
            f"branch={pick['dir']} direct={pick['direct']} deeper={pick['deeper']}; "
            f"A: title={s0['title']!r} (want …{expect['img']} img…) countsGone={s0['countsGone']}; "
            f"B: {s0['thumbs']}→{s1['thumbs']} (want {pick['direct']}+{pick['deeper']}) "
            f"{s1['recGlyph']} head={s1['head']!r}; "
-           f"C: menu={menu} pane={pane}; D: back-to-off={d_ok}")
+           f"C: menu={menu} openKept={roll_ok} (pre {pre_open}) openDir={path_ok} pane={pane}; "
+           f"D: back-to-off={d_ok}")
 
 
 def main():

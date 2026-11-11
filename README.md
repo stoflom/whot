@@ -363,6 +363,11 @@ rules are `docs/gui-design.md` §4, architecture is
   place it in a subdirectory below the roll root `imports.path`) in the
   system file manager (opener plugin; gui-design §3 context menus;
   `directory_viewer` in whotrc.json overrides the default manager, #273)
+- `open_dir(path) → ()` — open an **arbitrary directory** in the system
+  file manager (opener plugin; the Rolls tree branch menu's *Open roll
+  path*, gui-design §4.36; `directory_viewer` in whotrc.json overrides
+  the default manager, #273). A stale (moved/deleted) path is a
+  rejection — the caller's error toast names the path (#144)
 - `person_face_clusters(person_id, threshold) →
   [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
   similarity clusters inside each (§4.9)

@@ -199,6 +199,11 @@ export const openImage = (imageId: number) => invoke<string>("open_image", { ima
     the image file (parent of primary_path — a recursive roll import may
     place it below the roll root) in the system file manager (a stale
     directory is a rejection for the error toast, #144) */
+/** v12.5 (#284): an arbitrary directory (the Rolls branch menu's *Open
+    roll path* target — the branch's own absolute path) in the system
+    file manager; a stale path is a rejection (the error toast) */
+export const openDir = (path: string) => invoke<void>("open_dir", { path });
+
 export const openRoll = (imageId: number) => invoke<void>("open_roll", { imageId });
 export const personFaceClusters = (personId: number, threshold: number) =>
   invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
