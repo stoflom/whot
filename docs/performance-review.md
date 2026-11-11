@@ -1,8 +1,11 @@
 # WhoT Performance Review — Frontend & Backend
 
-**Date:** 2026-11-03
+**Date:** 2026-11-03 (§1–§5), re-reviewed 2026-11-11 (§6)
 **Scope:** `src/` (React 19 / TypeScript), `src-tauri/` (Rust / Tauri 2 / SQLite),
 at app version 3.96.0, commit `a14c1dc` (branch `dev`).
+**Update (2026-11-11):** re-review at app version 12.4.0, commit `1b65427`
+(159 commits later) — finding statuses, fix-quality assessment and new
+findings in §6.
 
 This is a review report, not a design document. It records the current
 performance state with concrete evidence (file + line references), the
@@ -450,3 +453,138 @@ they should bump the design documents (major/minor) and be tracked as
 GitHub issues; items 3, 4, 7–11 are corrections/speed-ups and can ride as
 minor bumps or subminor fixes depending on whether they alter documented
 behaviour.
+
+*(All items were implemented as issues #218–#228 and re-verified on
+2026-11-11 — see §6.)*
+
+---
+
+## 6. Update — 2026-11-11 re-review
+
+**Scope:** re-review at app version 12.4.0, commit `1b65427` (branch
+`dev`), 159 commits after the original review (3.96.0 / `a14c1dc`).
+Every §2–§3 finding was re-checked against the current code; the fixes
+landed as GitHub issues #218–#228, following the §5 fix order. Suite
+state at this commit (all re-run green): `tsc --noEmit` clean,
+vitest 442/442, cargo 51/51, python 255 passed/2 skipped, gui-mock 65/65
+on WebKitGTK (C62 pins the one-IPC-transfer-per-verdict contract, C64
+the #280 branch header row).
+
+### 6.1 Finding status
+
+| Finding | Status | Evidence |
+|---|---|---|
+| F-H1 rotated-cache unbounded data URLs | **RESOLVED (#221)** | `src/hooks.ts:44–48` — `rotatedCache = new LruCache(24, revoke)`; `hooks.ts:71` uses `canvas.toBlob` → `URL.createObjectURL`; failed encodes not cached (`:106–109`); consumer `FaceOverlay` is `memo`'d. Tests `src/hooks.test.ts:28–50`. |
+| F-H2 full snapshot per mutation | **RESOLVED (#219)** | Delta protocol both sides: `Delta { version, drifted, persons?, faces?, images?, removed }` (`db.rs:634–649`), `delta_after()` post-commit (`db.rs:760–799`); every mutating command captures `v1 = data_version()` pre-write and returns a delta. Frontend `applyDelta` upserts touched rows (`App.tsx:409–439`); `mutate` applies locally, full `refresh()` only on drift (`App.tsx:640–664`); `commitPending` collects op deltas, no double fetch (`App.tsx:1982–2042`). C62 asserts `get_snapshot` count does not move per verdict. |
+| F-H3 personId identity chain | **RESOLVED (#222)** | Verdict callbacks moved to `src/reviewVerdicts.ts` — `personId`/`stepIdx` read via render-assigned refs (`:69–72`), never deps; `markExhaust`/`doAccept`/`doReject` dep lists exclude personId (`:91, 165, 188`). `sections` keyed on `sectionsPersonKey`, which is `null` in review (`sections.ts:87–92`) — the O(faces) regroup no longer runs on a review person change. Tests `src/reviewVerdicts.test.tsx:60–108`. Residual churn (snapshot-keyed, not person-keyed) → §6.3 N1. |
+| F-M1/F-M2 tree traversal + rebuild | **RESOLVED (#223)** | Shared tree build: App builds once (`App.tsx:535`), `PersonTree` receives it (`PersonTree.tsx:76–78`). `src/treeIndex.ts` one post-order pass replaces the O(n·depth) walks; `MemoPersonRow = memo(PersonRow)` (`PersonTree.tsx:282`) with ref-only `rowHandlers`; `stepIds` fed by `deferredStepFilter` (`App.tsx:536–540`). Equivalence tests `src/treeIndex.test.ts:110–198`. |
+| F-M3 staged-set quadratic scan | **RESOLVED (#224)** | `indexStagedSet` one pass → `Map<faceId, StagedEntry>` (`stage.ts:144–228`), built once in App (`App.tsx:355`), consumed per card (`FaceGrid.tsx:257`). Equivalence tests `src/stage.test.ts:165–220`. |
+| F-M4 no windowing outside Review | **RESOLVED (#223/#225)** | App-owned `mountLimit`/`growMount` applied to all three centre surfaces — review, person/fallback (`App.tsx:2936–2937`), image-detail grid (`:2923`), focus film roll (`:2832–2833`); `RollsThumbs` has its own in-pane prefix + IO sentinel (`RollsThumbs.tsx:61–80`). |
+| F-M5 RollsPane recursion in render | **RESOLVED (#226)** | `buildTree`/`faceTotalsOf`/`rollupIndex` memoised once per tree/faces/filter (`RollsPane.tsx:248–264`); pure maths extracted to `src/rollsTree.ts`; expand/collapse is no longer a rollup input. Equivalence tests `src/rollsTree.test.ts:104–182`. |
+| F-M6 mousemove drag storm | **RESOLVED (#226)** | `paneState.ts:70–108` — mousemove coalesces into a single `requestAnimationFrame` per frame; mouseup flushes the final position. |
+| F-M7 300 ms poll forever | **RESOLVED (#226)** | Single chained `setTimeout` (`ImportPane.tsx:76–110`); `src/importPoll.ts` — 300 ms while running, 2.5 s idle heartbeat. |
+| F-L1..F-L8 | **RESOLVED (#228)** | L1: overlay rows/lookups memoised (`App.tsx:2399–2427`) + `memo(FaceOverlay)`. L2: `rotByFace` map (`DetailPane.tsx:155–163`). L3: bind-once keydown effect reading refs (`src/appKeys.ts:59–211`). L4: menu handlers read `selRef` (`App.tsx:1327, 1548–1551`). L5: dialog name maps (`EditDialog.tsx:106–113`, `MergeIntoDialog.tsx:55–66`). L6: LRU caps + revoke contract kept; batch chunking replaced by **byte-cap deferral** (`splitImageBatch`, `api.ts:315–341`). L8: context value memoised (`overlays.tsx:39–42`). |
+| B-H1 sync commands on main thread | **RESOLVED (#218)** | Heavy commands are `async fn` (tokio worker pool): `get_snapshot`, `get_image_batch`, `open_image`, `scan_import_dir`, `person_face_clusters`, all mutations (`lib.rs`). Sync allowlist is light work only (`get_data_version`, settings, import-runner mutex). Shape guard test `workflow.rs:1478`. |
+| B-H2 whole-DB snapshot per fetch | **RESOLVED (#219)** | Backend side of F-H2 above; `snapshot()` is only reachable from `get_snapshot`. Drift/dirty detection with `v2 > v1 + 1 ⇒ drifted` (`db.rs:771`). Correctness edges → §6.3 N6. |
+| B-H3 O(n²) cosine clustering | **PARTIAL** | The async part (dominant) is done via B-H1 — the O(k²·512) pass now runs off the main thread. Cosine memoisation within a call / approximate pre-filter not implemented; the #211 fingerprint cache avoids recompute on repeat calls only. Acceptable; keep as a follow-up issue. |
+| B-M2 write-path N+1 | **RESOLVED (#220)** | Set-based `base = MAX(seq)` + `ROW_NUMBER() OVER (ORDER BY id)` per `(person_id, description_key)` group: `apply_reject_moves` (`db.rs:1492–1511`, used by reject/remove), `assign_person` (`db.rs:1779–1796`). Instrumented no-scaling test `reject_batch_no_per_face_scaling_220` (`workflow.rs:1730–1745`). Relabel stays per-face **deliberately** (#209 numbers faces sequentially in call order in the shared group — not set-expressible), now index-served. |
+| B-M3 missing composite index | **RESOLVED (#220)** | Schema v1.9: `faces.description_key` (writer-maintained `COALESCE(description,'')`) + `idx_faces_person_desc_seq` (`schema.sql:123, 130`). |
+| B-M4 per-person COUNT loop | **RESOLVED (#220)** | One `WHERE id IN (…) GROUP BY` fetch (`db.rs:1802–1841`), same shape in `move_persons_*` (`:2388, 2461, 2536`). |
+| B-M5 unbounded/double-copied batches | **RESOLVED (#227)** | 32 MiB cap enforced via a lengths-only first pass (`length(col)` reads headers, no blob materialisation; `db.rs:826–922`); pass 2 streams blobs into the framed buffer, one temp copy. Test `workflow.rs:1398`. |
+| B-M6 sync `open_image` | **RESOLVED (#218)** | `async fn open_image` (`lib.rs:74–105`). |
+| B-L1 | PARTIAL (deliberate) | `idx_person_groups_path` added (`schema.sql:177`); the `substr` prefix half stays unsargable (documented — a range rewrite breaks on path bytes). Finding stays LOW. |
+| B-L2 | RESOLVED | `recompute_refcrops` INSERT prepared once (`db.rs:1165–1171`). |
+| B-L3/B-L4 | OPEN | Unchanged; the review rated both negligible and the NOT EXISTS probe is now index-served. Fine to leave. |
+
+### 6.2 Quality of the fix implementations
+
+The quality bar is consistent and good: each fix landed with its own
+equivalence or contract test (tree-index vs reference walk, staged-index
+vs verbatim scan, rollup-index vs recursive walks, set-based seq
+monotonicity incl. the multigroup case, instrumented statement-count
+growth, batch-cap truncation/deferral, command-shape guard), and the
+GUI-mock suite gained C62 to pin the delta protocol end-to-end. The
+schema change followed the documented in-place upgrade recipe (schema
+v1.8→v1.9, no data moves).
+
+Two notes on commit-message accuracy vs code:
+
+- `8adbc33` claims "set-based seq … in reject/assign/relabel"; relabel
+  (`set_face_description_tx`, `db.rs:2045–2054`) is still per-face —
+  intentionally, per the #209 call-order contract. No bug, but the
+  message overstates.
+- F-L6 resolved via LRU caps + byte-cap deferral rather than the
+  suggested refcounting/chunking: a documented contract replaces the
+  mechanism (a revoked URL never breaks an already-loaded `<img>`,
+  `api.ts:253–255`). Residual evict-while-*loading* risk remains
+  (§6.3 N7) — acceptable.
+
+### 6.3 New findings in post-review code
+
+- **N1 — MEDIUM: verdict deltas still re-render every mounted card.**
+  `facesById` memo keys on the whole `snap` (`App.tsx:482–485`), so even
+  a person-only delta rebuilds it and cascades fresh identities through
+  `doPrimary/doRefcrop/doAccept/doReject → faceMenu → gridHandlers`
+  (`App.tsx:939–957, 1321–1360, 1660–1709`), defeating the
+  `FaceGrid.tsx:312–341` comparator for one verdict. Keying `facesById`
+  on `snap.faces` (or a stamped face version) narrows this; the
+  person-keyed half of the original F-H3 is genuinely fixed.
+- **N2 — MEDIUM: `memo(RollsPane)` is defeated by inline props.**
+  `onImportDir={(path) => …}` inline arrow (`App.tsx:2867–2870`) and
+  `reimportBranch` (dep `splitImageId`, `App.tsx:1487–1492`) re-render
+  the whole visible roll tree on every App render. Rollup maths stays
+  memoised, so cost is moderate; stabilise the props via refs (the
+  `selRef` pattern).
+- **N3 — LOW/MED: delta coverage edges (correctness, not perf).**
+  (a) Writer-owned shells deleted by `sweep_stale_shells` after
+  `assign_person` are in neither `removed` nor `delta.persons` — the
+  frontend keeps a stale row until the next drift/full refresh
+  (`db.rs:1809–1854`). (b) Drift is count-based: a single interleaved
+  importer commit inside the pre-write window bumps the stamp by exactly
+  1 and is not flagged (`db.rs:771`). (c) `rotate_image(s)` reads
+  `face_ids` pre-transaction (`db.rs:1944–1947, 1972–1977`) — a face
+  added in between is rotated but absent from the delta. Each needs one
+  test of the interleaving kind (the suite covers only the
+  stale-pre-read case).
+- **N4 — LOW: remaining N+1 shapes.** `rotate_images` per image
+  (SELECT + UPDATE + face-UPDATE, `db.rs:1979–1981` — a thumbnail-scope
+  rotate of hundreds of images could be one set-based pair);
+  `move_persons_to_group`/`…_between_groups` 2N statements for a large
+  §9 selection (`db.rs:2406–2413, 2472–2491`). Same class as B-M2; low
+  frequency today.
+- **N5 — LOW (script-side):** `scripts/import_roll.py --reimport` is
+  per-row (embedding SELECT + `assign_seq` MAX + UPDATE per re-linked
+  face, `:577–584, 772`; one statement per pid in
+  `repair_stale_primaries`/`reseat_persons`), and `associate()` remains
+  O(detections × corpus vectors × 512) per image with no
+  vectorisation — now paid twice per re-import run. Bounded per image;
+  a whole-roll re-import re-pays it.
+- **N6 — LOW: `stepIdx = stepIds.indexOf(personId)` runs O(n) per
+  render** (`App.tsx:541`); a memo/Map is trivial.
+- **N7 — LOW: residual evict-while-loading risk** — the rotated cache
+  and api caches revoke on eviction with no refcounting; an `<img>`
+  still *loading* the blob at evict time falls back to a re-request
+  (correct, but a flicker after mount waves).
+- **N8 — LOW: test gaps for the fixes themselves.** No coverage for the
+  `paneState` rAF throttle, no unit test of `applyDelta`/delta routing
+  (only end-to-end C62), and the `FaceGrid` comparator is untested at
+  component level. One small test each would pin the contracts.
+
+### 6.4 Verdict and next steps
+
+All eleven §5 fix-order items are implemented and verified; the two
+architectural loops the original review called dominant (per-mutation
+full-DB snapshots, main-thread-bound commands) are closed, and each fix
+carries its own regression test. The remaining work is the §6.3 list:
+
+1. **#219 delta edges (N3)** — small correctness issue worth a dedicated
+   GitHub issue with interleaving tests (swept shells, single-commit
+   drift, pre-tx face read).
+2. **N1/N2 render-scope polish** — one more round of the same
+   ref/memo discipline the fixes already use.
+3. **N4–N8** — fold into the hygiene tail as subminor fixes.
+
+Nothing in §6.3 changes the design documents' structure; all fixes fit
+the existing module layout. App/design versions already reflect the
+feature work through #280 (app 12.4.0, gui-design v12.4, backend-design
+1.18, schema v1.9).
