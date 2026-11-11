@@ -243,7 +243,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
         {primaryImg ? (
           <img src={primaryImg} alt="" style={rotStyle(rotOf(person.primary_face_id ?? -1))} />
         ) : (
-          <span>?</span>
+          <span>▢</span>
         )}
       </div>
       {/* #165/§4.35/#266 — the reject-bin persons (RejectedN): not
@@ -271,7 +271,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
         </div>
       ) : (
         // #172 (§4.38) — the group LIST replaces the single field: every
-        // REAL membership with an × that stages its removal — the status
+        // REAL membership with an ✕ that stages its removal — the status
         // seat is never a row (a seated person's list is empty, §4.35/
         // #233 display rule); rows are editable inline (re-home that one
         // membership); Add group stages a new membership; the staged set
@@ -392,7 +392,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
                   {rc.pinned ? "📌 " : ""}#{rc.seq}
                 </span>
                 <button className="refcrop-x" title="Remove reference face" onClick={() => onRemoveRefcrop(rc.face_id)}>
-                  ×
+                  ✕
                 </button>
               </div>
             ))}

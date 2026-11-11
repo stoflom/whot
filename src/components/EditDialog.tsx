@@ -208,7 +208,7 @@ export default function EditDialog({
         </label>
         {known ? (
           // #181 (§4.38): a KNOWN name fronts that person's group LIST —
-          // the shared rows (× removal, inline re-home, add), staged
+          // the shared rows (✕ removal, inline re-home, add), staged
           // locally here; Accept commits them after the name lands
           <div className="ed-groups-field">
             <span>Groups ({applyGroupOps(known.groups, groupOps).length})</span>

@@ -2935,7 +2935,7 @@ export default function App() {
               // #55 (§4.19) — full-image focus mode: the annotated image
               // takes the pane's full width, a film roll below shows only
               // this image's faces; the regular grid returns when the mode
-              // ends (×/Esc, §4.15 selection move, explicit navigation)
+              // ends (✕/Esc, §4.15 selection move, explicit navigation)
               <div className="focus-pane">
                 {/* #275: the ONE full-image bar (focus surface) — the
                     person stepper keeps its #76/#194 fallback rules;
@@ -2960,7 +2960,7 @@ export default function App() {
                       }
                       title="close (Esc)"
                     >
-                      ×
+                      ✕
                     </button>
                   }
                 />

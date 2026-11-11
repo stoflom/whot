@@ -13,7 +13,7 @@ import {
 // details pane (#172) and the Edit dialog (#181): every REAL
 // membership is a row — the status seat is never rendered (§4.35/#233
 // display rule: a seated person's list is empty, and the staged
-// preview drops the seat when a real group is added), × stages a
+// preview drops the seat when a real group is added), ✕ stages a
 // removal, an inline row edit re-homes that one membership (§4.16) and
 // the add row stages a new one. Purely CONTROLLED — the parent owns the
 // staged ops and the commit (Update person in the pane, Accept in the
@@ -112,7 +112,7 @@ export default function GroupListEditor({
                     if (next) onOps(next);
                   }}
                 >
-                  ×
+                  ✕
                 </button>
               </li>
             );
