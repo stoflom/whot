@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 12.4** (#280) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 12.5** (#284) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1799,8 +1799,26 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
      the §4.36 visibility/gating rules apply unchanged; an import of a
      mixed roll can un-tick it). The menu also carries the branch's
      **Include sub-branch images** check entry (the header recursive
-     toggle's §4.39 mirror — same state, same wording). The
-     committed-path trigger below is unchanged for fresh rolls.
+     toggle's §4.39 mirror — same state, same wording).
+   - **Branch open routes (v12.5, #284)**: the same context menu
+     carries two more entries, both acting on the branch itself and
+     **unconditionally enabled** — a visible branch may hold no direct
+     listing image (a sub-branch-only branch, or one whose direct
+     images the Show filter pruned while a descendant keeps it alive,
+     §4.10), but the actions target the branch, not its images:
+     *Open roll* **selects the branch** (its grid lands in the right
+     pane, §4.39 — the same end state as the header click) and adds it
+     to the **open-set when closed** (an ancestors-visible branch has
+     open ancestors by construction; a menu entry named *Open* never
+     collapses an open branch the way the header's toggle can), and
+     *Open roll path* opens the **branch's own directory** (its
+     absolute path) in the system file manager — the new `open_dir`
+     Rust command hands the path to the opener plugin through the
+     `directory_viewer` setting (#273), the same rejection behaviour
+     as `open_roll` (#144): a stale (moved/deleted) branch path reaches
+     the error toast naming the path. Menu order: *Open roll*, *Open
+     roll path*, *Re-import…*, *Include sub-branch images*.
+     The committed-path trigger below is unchanged for fresh rolls.
    - **Trigger**: committing a path (typed + Enter, or the native folder
      picker) that matches no snapshot image **and** that
      `scan_import_dir(path)` confirms to be a real directory holding
