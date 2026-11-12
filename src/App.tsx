@@ -20,7 +20,11 @@ import type {
   Settings,
 } from "./api";
 import EditDialog from "./components/EditDialog";
-import ConfirmDialog from "./components/ConfirmDialog";
+// §4.44 round 2 stage 4 (#295): the guard/confirm dialog surfaces —
+// the copy + button contracts as components, actions stay App-side
+import ContextConfirmDialog from "./components/ContextConfirmDialog";
+import { PickPersonDialog, NoFacesDialog } from "./components/guards";
+import ConfirmRemoveDialog from "./components/ConfirmRemoveDialog";
 import AddGroupDialog from "./components/AddGroupDialog";
 import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import { FullImageBar } from "./components/FullImageBar";
@@ -3256,23 +3260,17 @@ export default function App() {
         />
       )}
       {contextConfirm && pending.length > 0 && (
-        <ConfirmDialog
-          title="Unapplied changes"
-          body={
-            // #123: the context switch drops staged edits either way —
-            // the body stays reference-free (§4.43)
-            `Staged: ${stageSummarySet(pending)} — accept writes it to the ` +
-            "database, discard drops it; the context switches either way"
-          }
-          confirmLabel="accept"
-          cancelLabel="discard"
-          onCancel={() => {
+        // §4.44 round 2 stage 4 (#295): the guard surface is the
+        // component; the accept/discard actions stay App-side
+        <ContextConfirmDialog
+          pending={pending}
+          onDiscard={() => {
             const act = contextConfirm.fn;
             setContextConfirm(null);
             setPending([]);
             act();
           }}
-          onConfirm={() => {
+          onAccept={() => {
             const all = pending;
             const act = contextConfirm.fn;
             setContextConfirm(null);
@@ -3281,64 +3279,25 @@ export default function App() {
         />
       )}
       {/* #176 (§4.41): the Person-mode guard dialogs — the no-anchor
-          pointer (single Close) and the sticky-person guard */}
+          pointer (single Close) and the sticky-person guard
+          (components/guards.tsx, §4.44 stage 4) */}
       {pickPersonDialog && (
-        <ConfirmDialog
-          title="Please select a person in the tree on the left"
-          body={
-            "Person mode works on the person anchored in the tree — under Show → All " +
-            "the status branches New and Accepted are listed (Rejected under Show → Rejected)."
-          }
-          confirmLabel="Close"
-          onlyConfirm
-          modeless
-          onConfirm={() => setPickPersonDialog(false)}
-          onCancel={() => setPickPersonDialog(false)}
-        />
+        <PickPersonDialog onClose={() => setPickPersonDialog(false)} />
       )}
       {noFacesDialog && (
-        <ConfirmDialog
-          title={
-            faceFilter === "all"
-              ? "No faces to show"
-              : `No ${faceFilter === "provisional" ? "new" : faceFilter === "confirmed" ? "accepted" : "rejected"} faces`
-          }
-          body={
-            `This person holds no face under Show → ${faceFilter === "all" ? "All" : faceFilter === "provisional" ? "New" : faceFilter === "confirmed" ? "Accepted" : "Rejected"}. ` +
-            "Show All brings every non-rejected face back."
-          }
-          cancelLabel="Close"
-          confirmLabel="Show All"
-          modeless
-          onConfirm={() => {
+        <NoFacesDialog
+          faceFilter={faceFilter}
+          onShowAll={() => {
             setNoFacesDialog(false);
             changeFaceFilter("all");
           }}
-          onCancel={() => setNoFacesDialog(false)}
+          onClose={() => setNoFacesDialog(false)}
         />
       )}
       {confirmRemove && (
-        <ConfirmDialog
-          title={
-            confirmRemove.length > 1
-              ? `Remove ${confirmRemove.length} persons`
-              : "Remove person"
-          }
-          body={
-            // #165/§4.13 informational copy, #266 wording: removal
-            // rejects the faces and files them onto their rejected
-            // cluster person; they can be claimed again — the body
-            // stays reference-free (§4.43)
-            `All faces of ${confirmRemove.length > 1 ? "these persons" : "this person"} ` +
-            `become rejected and join a rejected cluster; ` +
-            `${confirmRemove.length > 1 ? "the persons are" : "the person is"} deleted — ` +
-            "the faces stay in the database and can be claimed again by " +
-            "assigning them a person. This cannot be undone."
-          }
-          confirmLabel="remove"
-          danger
-          onConfirm={() => {
-            const ids = confirmRemove;
+        <ConfirmRemoveDialog
+          ids={confirmRemove}
+          onConfirm={(ids) => {
             markExhaust(); // #125: removing may empty the current person
             setConfirmRemove(null);
             setSelPersons((prev) => {
