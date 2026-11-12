@@ -116,11 +116,18 @@ import { faceMenuGroups, imageAreaMenuGroups, rollBranchMenuGroups, thumbMenuGro
 import {
   buildSections,
   firstCropPerson,
-  personFaceList,
   sectionsForImage as sectionsForImageOf,
   sectionsPersonKey,
-  splitStepPos,
 } from "./sections";
+// §4.44 round 2 (#291/#292): the detail derivations — pure/co-tested,
+// App keeps only the useMemo bindings
+import {
+  facesOfImage,
+  fullImageOpenFor,
+  imageRowFor,
+  splitStepFor,
+  stepIndexIn,
+} from "./detailView";
 // §4.44 stage 2 (#206): the pane layout rules + the #191 click-pair
 // guard — pure/co-tested, App owns only the wiring
 import { usePaneSizes, clampRollCenterFor } from "./paneState";
@@ -2558,8 +2565,13 @@ export default function App() {
   // FaceOverlay a fresh array every time (and the two image lookups were
   // linear scans per render); with stable identities memo(FaceOverlay)
   // can skip when only unrelated state moved
+  // #291/#292 (§4.44 round 2): the detail derivations are the pure
+  // src/detailView.ts — the open image's row, the branch step index
+  // (rule 46), the Show-filtered face lists (§4.10), the full-image-open
+  // rule and the focus-bar face step composition. App keeps only these
+  // useMemo bindings — same deps, same churn rates (#98 untouched).
   const imgRow: ImageRow | undefined = useMemo(
-    () => (imageId != null ? snap?.images.find((i) => i.id === imageId) : undefined),
+    () => imageRowFor(snap, imageId),
     [snap, imageId]
   );
   // #235 (rule 46) — the open image's position in the branch's listed
@@ -2567,37 +2579,44 @@ export default function App() {
   // from the path filter in another branch, or the Show filter no
   // longer lists it) → `–/m`, both buttons disabled
   const imgStepIdx = useMemo(
-    () => (imageId != null ? branchThumbs.images.findIndex((x) => x.id === imageId) : -1),
+    () => stepIndexIn(branchThumbs.images, imageId),
     [branchThumbs, imageId],
   );
   const splitRow: ImageRow | undefined = useMemo(
-    () => (splitImageId != null ? snap?.images.find((i) => i.id === splitImageId) : undefined),
+    () => imageRowFor(snap, splitImageId),
     [snap, splitImageId]
   );
   const focusFaces = useMemo(
-    () => (splitRow ? snap?.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f)) ?? [] : []),
-    [snap, splitRow, faceVisible]
+    () => (splitRow ? facesOfImage(snap, splitRow.id, faceFilter) : []),
+    [snap, splitRow, faceFilter]
   );
   const detailFaces = useMemo(
-    () => (imgRow ? snap?.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f)) ?? [] : []),
-    [snap, imgRow, faceVisible]
+    () => (imgRow ? facesOfImage(snap, imgRow.id, faceFilter) : []),
+    [snap, imgRow, faceFilter]
   );
   // #275 (gui-design v11.3) — a full image is up on either surface: the
   // card-double-click split (focus pane) or the Rolls image detail.
   // While it is, the centre's own toolbar does not render: the single
   // bar above the image carries the mode's nav cluster instead
-  const fullImageOpen =
-    splitRow != null || (mode === "rolls" && imageId != null && imgRow != null);
+  const fullImageOpen = fullImageOpenFor(splitRow, mode, imageId, imgRow);
   // #275 (gui-design v11.4) — the focus bar's FACE step: the right-pane
   // person's editable faces in the view's display order (person grid
   // sections in Person, the pinned-filter faces in Review) and the open
-  // image's position in that list — the pure rule is personFaceList/
-  // splitStepPos (sections.ts, co-tested)
-  const splitStep = useMemo(() => {
-    if (splitRow == null || personId == null) return { ids: [] as number[], pos: -1 };
-    const ids = personFaceList(mode, personId, sections, snap?.faces ?? [], faceFilter);
-    return { ids, pos: splitStepPos(ids, facesById, splitRow.id) };
-  }, [splitRow, personId, mode, sections, snap, faceFilter, facesById]);
+  // image's position in that list — the pure rule is splitStepFor
+  // (detailView.ts, co-tested over personFaceList/splitStepPos)
+  const splitStep = useMemo(
+    () =>
+      splitStepFor(
+        mode,
+        personId,
+        sections,
+        snap?.faces ?? [],
+        faceFilter,
+        facesById,
+        splitRow
+      ),
+    [mode, personId, sections, snap, faceFilter, facesById, splitRow]
+  );
   // one step = open the full image holding the target face; the view
   // STAYS in full-image mode (the bar is the only grid return). At the
   // first/last face (or an unlisted image) the step is a no-op — the
