@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 14.7** (#291 closure) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 15.0** (#297) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2550,6 +2550,49 @@ visual near-twins (the old `✗` reject vs `✕`/`×` close) is a defect.
 
 gui-mock patrols the vocabulary (C67): the retired `×` and a `?`
 avatar placeholder must not render anywhere.
+
+**50. (v15.0, #297) Session persistence — the place you left is the
+place you find.** The session-state set (§3/§4.39: state that already
+survives mode switches) additionally survives an **app restart**, via
+`localStorage`. The implementation stays out of App (§4.44): the
+pure (de)serialiser + validator live in a dedicated co-tested module
+(`sessionState.ts`), the one restore effect + throttled saves in a
+thin hook (`useSessionState.ts`); App keeps only setter bindings.
+
+- **The persisted set** (restored once, after the first snapshot
+  lands — never on the §4.36 first-run/no-DB path, ids validated
+  against that snapshot before any setter runs): the `mode`; the
+  person anchor; the Rolls detail's open image (cleared when its path
+  does not sit under the restored branch — the rule 46 `–/m` miss is
+  a live state, not a boot state); the focus split (restoring it
+  reopens the view; at boot the staged set is empty, so the §4.24
+  confirm cannot fire); the Rolls root, branch selection, open-set
+  and recursive toggles (the §4.39 re-validation rules apply
+  unchanged); the import pane's directory; the tree's text filter;
+  the person tree's collapsed set (lifted to App — the component
+  keeps its transient keyboard focus local); the centre grid's
+  scroll place **per mode** together with the mount limit (a
+  restored `scrollTop` beyond the mounted prefix clamps — the limit
+  restores so the place is reachable); the pane widths and the Rolls
+  browse centre.
+- **Not persisted**: the selections (`sel`, `imgSel`, `selPersons`),
+  the staged set (unapplied edits are the §4.24 dialog's subject,
+  not scenery — they never outlive a crash), dialogs/menus/hover,
+  the reveal/one-shot states, the cluster/refcrop caches
+  (re-derived per person signature).
+- **The contract**: ONE versioned blob under one key
+  (`whot.session.v1`); corrupt/absent/mismatched schema is silently
+  ignored (session state is an affordance, never an error screen).
+  The #176 Person-mode guard dialogs do not fire on the boot
+  restore (they guard user-driven navigation); the §4.40 Review
+  position guard still runs if the restored anchor holds no
+  provisional face — the review continues from where it was.
+  Identity per #98: restore is setters only; saves read through
+  refs in throttled listeners — no callback churn.
+- **gui-mock determinism**: the harness clears the session key on
+  every `fresh()` and reloads once, so every check boots from the
+  same state; a dedicated check pins the contract itself (set a
+  place → reload → it comes back).
 
 ## 5. Related documents
 
