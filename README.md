@@ -446,20 +446,24 @@ whot/
   src/                              # React app (TypeScript)
     main.tsx  App.tsx  api.ts      # api.ts = typed tauri invoke wrapper
     components/                    # PersonTree, FaceCard, FaceGrid, RuleBar,
-      DetailPane.tsx  RollsPane.tsx # DetailPane, RollsPane, FaceOverlay
-      EditDialog.tsx  GroupDialog.tsx          # (active rectangles on
-      ConfirmDialog.tsx  ContextMenu.tsx       # full-size images) and the
-      MergeIntoDialog.tsx                      # dialogs (Edit, Group,
-      MergeSimilarDialog.tsx                   # Confirm, MergeInto,
-      FaceMergeDialog.tsx                      # MergeSimilar, FaceMerge);
-      FirstRun.tsx                             # the #185/§4.36 first-run screen
-      NameTypeahead.tsx  PathTypeahead.tsx     # typeaheads + suggestions
-      SuggestInput.tsx  SettingsPopover.tsx    # (Name/Path/Suggest); settings
+      DetailPane.tsx  RollsPane.tsx  RollsThumbs.tsx  # DetailPane, RollsPane,
+      EditDialog.tsx  GroupDialog.tsx                 # FaceOverlay (active
+      ConfirmDialog.tsx  ContextMenu.tsx              # rectangles on full-size
+      MergeIntoDialog.tsx  MergeSimilarDialog.tsx     # images) and the dialogs
+      FaceMergeDialog.tsx  AddGroupDialog.tsx         # (Edit, Group, Confirm,
+      ContextConfirmDialog.tsx  guards.tsx            # MergeInto, MergeSimilar,
+      ConfirmRemoveDialog.tsx  HelpDialog.tsx         # FaceMerge, AddGroup, the
+      ImportPane.tsx  FirstRun.tsx  GroupListEditor.tsx  # §4.36 first-run,
+      NameTypeahead.tsx  PathTypeahead.tsx            # the §4.41 guards); the
+      SuggestInput.tsx  SettingsPopover.tsx           # toasts + full-image bar
+      ErrorNotice.tsx  FullImageBar.tsx               # close the set
     viewFilters.ts  reviewFlow.ts  stage.ts  faceDrop.ts  stepFlow.ts   # pure logic
-    sections.ts  paneState.ts  clickPair.ts  menus.ts          # §4.44 pure App extractions (v3.94)
-    gridMount.ts  personSig.ts  treeIndex.ts  rollsTree.ts     # view/grid pure logic (#213/#223)
-    groupList.ts  imageSelect.ts  nameCluster.ts  autoText.ts          # helpers
-    imageBatch.ts  lruCache.ts  importPoll.ts  rotation.ts  hooks.ts   # helpers (#212/#207)
+    sections.ts  detailView.ts  commit.ts  deltas.ts  menus.ts          # §4.44 pure extractions
+    paneState.ts  clickPair.ts  appKeys.ts  descTags.ts  verdictFlip.ts # §4.44 pure + verdict rules
+    useFaceDrag.ts  useSelectionState.ts  useSnapshotSync.ts  useMergeFlow.ts  reviewVerdicts.ts  # §4.44 hooks
+    gridMount.ts  personSig.ts  treeIndex.ts  rollsTree.ts  scrollPlace.ts  # view/grid logic
+    groupList.ts  imageSelect.ts  nameCluster.ts  personNames.ts  autoText.ts  # helpers
+    imageBatch.ts  lruCache.ts  importPoll.ts  prefetch.ts  rotation.ts  hooks.ts  # helpers
     overlays.tsx                   # one overlay registry (Esc/keys)
     styles.css
     *.test.ts                      # vitest unit tests (`npm test`)
