@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 14.1** (#290) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 14.2** (#291/#292) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2327,6 +2327,20 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   `faceDrop.ts` (the two inline dups are gone). Identity per #98: the
   ref-driven handlers never churn; the snapshot-reading pair churns
   only with `facesById` — the old `gridHandlers` memo's rate.
+  Round 2 of the sweep (master #291) continues in v14.2 (#292): the
+  detail derivations leave App as the pure, co-tested
+  `src/detailView.ts` — the open image's row (`imageRowFor`, both the
+  §4.24 detail and the #275 focus split read it), the branch-thumb
+  step index (`stepIndexIn`, rule 46's `n` of `n/m` and its `–/m`
+  miss), the Show-filtered face list of an image (`facesOfImage`,
+  §4.10/#99 — the focus pane's and the detail pane's face lists), the
+  full-image-open rule (`fullImageOpenFor`, rule 46/#275 — one bar
+  above the image, no separate centre toolbar) and the focus-bar face
+  step composition (`splitStepFor`, #275 — `personFaceList` +
+  `splitStepPos` from `sections.ts`, so the `‹ 1/4 faces ›` step and
+  the ← → keys share the one rule). App keeps only the `useMemo`
+  bindings, churning at exactly the old rates; `stepSplitFace` (the
+  state transition behind a step) stays App-owned.
 
 **45. (v4.2, #234) Optimistic verdict acknowledgement.**
 
