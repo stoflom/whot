@@ -11,6 +11,7 @@
 // handlers needs a DOM).
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { fireEvent, render } from "@testing-library/react";
 import PersonTree from "./PersonTree";
 import RollsPane from "./RollsPane";
@@ -90,14 +91,19 @@ describe("PersonTree APG tree (#255)", () => {
   };
   const persons = [person(1, "Alice", ["Family"]), person(2, "Bob", ["Family|Kids"])];
 
-  const renderTree = () =>
-    render(
+  // #297 (rule 50): the collapsed set is owned by the PARENT now (it
+  // persists across restarts in App) — the harness plays that parent
+  function TreeHarness() {
+    const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+    return (
       <PersonTree
         tree={tree}
         persons={persons}
         selectedId={1}
         filter=""
         onFilter={() => {}}
+        collapsed={collapsed}
+        onSetCollapsed={setCollapsed}
         onSelect={() => {}}
         selectedIds={new Set()}
         onRename={() => {}}
@@ -111,6 +117,8 @@ describe("PersonTree APG tree (#255)", () => {
         primaryRot={new Map()}
       />
     );
+  }
+  const renderTree = () => render(<TreeHarness />);
 
   it("declares the tree, treeitems and exactly one tabbable item", () => {
     const { container } = renderTree();

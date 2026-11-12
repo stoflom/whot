@@ -4,15 +4,32 @@
 // whenever the grid returns (active flips on, or the mode key changes).
 // Run: npm test (vitest run; jsdom pragma — a mounted hook)
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { useScrollPlace } from "./scrollPlace";
+import {
+  parseSession,
+  serializeSession,
+  SESSION_STORAGE_KEY,
+} from "./sessionState";
+import type { Mode } from "./sections";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 // the mode is prop `k` — `key` is reserved by React
-function Harness({ active, k }: { active: boolean; k: number }) {
-  const sp = useScrollPlace(k, active);
+function Harness({
+  active,
+  k,
+  persist,
+}: {
+  active: boolean;
+  k: number;
+  persist?: Mode;
+}) {
+  const sp = useScrollPlace(k, active, persist);
   return (
     <div
       className="scroller"
@@ -65,5 +82,42 @@ describe("useScrollPlace (#203/#264, §4.40)", () => {
     // …and the restore effect puts the saved place back
     rerender(<Harness active k={2} />);
     expect(scroller().scrollTop).toBe(300);
+  });
+});
+
+// #297 (rule 50) — the optional persistence: the place also survives an
+// app restart, under the ONE session blob (per-mode field)
+describe("useScrollPlace persistence (#297, rule 50)", () => {
+  it("writes the active place into the session blob (throttled)", () => {
+    vi.useFakeTimers();
+    localStorage.clear();
+    render(<Harness active k={1} persist="review" />);
+    act(() => {
+      scroller().scrollTop = 120;
+      fireEvent.scroll(scroller());
+    });
+    expect(parseSession(localStorage.getItem(SESSION_STORAGE_KEY))?.scroll)
+      .toBeUndefined(); // not yet — the debounce has not fired
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    const b = parseSession(localStorage.getItem(SESSION_STORAGE_KEY));
+    expect(b?.scroll).toEqual({ review: 120 });
+  });
+
+  it("restores the persisted place on the first activation", () => {
+    localStorage.clear();
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      serializeSession({ v: 1, scroll: { person: 250 } }),
+    );
+    render(<Harness active k={1} persist="person" />);
+    expect(scroller().scrollTop).toBe(250);
+  });
+
+  it("no persisted place → the top (0), as before", () => {
+    localStorage.clear();
+    render(<Harness active k={1} persist="rolls" />);
+    expect(scroller().scrollTop).toBe(0);
   });
 });

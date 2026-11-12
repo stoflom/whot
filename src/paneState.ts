@@ -41,8 +41,13 @@ export function clampRollCenterFor(
     window goes to the right pane's thumbnails, which flex to fill);
     an explicit px persists for the session. While it applies, the
     centre|right divider drags the CENTRE instead of the right pane. */
-export function usePaneSizes(rollsBrowse: boolean): PaneSizesApi {
-  const [paneSizes, setPaneSizes] = useState<PaneSizes>({ left: 250, right: 290 });
+export function usePaneSizes(
+  rollsBrowse: boolean,
+  initial?: PaneSizes
+): PaneSizesApi {
+  const [paneSizes, setPaneSizes] = useState<PaneSizes>(
+    () => initial ?? { left: 250, right: 290 }
+  );
   const [rollCenter, setRollCenter] = useState<number | null>(null);
   const rollCenterPx = clampRollCenterFor(
     rollCenter ?? paneSizes.left,

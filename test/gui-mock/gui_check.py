@@ -385,7 +385,16 @@ def _thumbs_grow(t, cycles=16):
 
 def fresh(t):
     """fresh page = fresh in-memory mock state; wait for the grid to render"""
+    # #297 (rule 50): localStorage SURVIVES a Selenium page reload, so a
+    # "fresh" boot must explicitly clear the session blob and reload once
+    # — otherwise a persisted place/mode from an earlier check would
+    # leak into the next one and the baseline (Review, Show → All) drifts.
+    # The second clear guards a late 300 ms save from the FIRST boot
+    # landing between the clear and the second boot's synchronous read.
     t.navigate(URL)
+    js(t, "localStorage.removeItem('whot.session.v1')")
+    t.navigate(URL)
+    js(t, "localStorage.removeItem('whot.session.v1')")
     deadline = time.time() + 30
     ready = False
     while time.time() < deadline:
@@ -7000,6 +7009,48 @@ def c67_glyph_vocabulary(t):
            f"(want False); avatars={audit and audit['avatars']} (no '?')")
 
 
+def c68_session_persistence(t):
+    """#297 (rule 50, v15.0): the session state survives an app restart —
+    the Review grid's scroll place is written to the ONE session blob
+    (throttled 300 ms), and a REAL page reload (localStorage survives —
+    that is the contract) lands the grid back on that place."""
+    fresh(t)
+    set_show_filter(t, "all")
+    # set a known place on the centre grid's scroller
+    pos = js(t, """
+      const el = document.querySelector('.center-scroll');
+      el.scrollTop = 400;
+      el.dispatchEvent(new Event('scroll'));
+      return el.scrollTop;
+    """)
+    # the debounce is 300 ms — give it margin
+    time.sleep(0.8)
+    stored = js(t, """
+      try {
+        const b = JSON.parse(localStorage.getItem('whot.session.v1') || 'null');
+        return b ? (b.scroll || null) : null;
+      } catch { return null; }
+    """)
+    # the reload — NO key clear: localStorage survives (fresh() would
+    # clear it; here the blob must carry the place across)
+    t.navigate(URL)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if (js(t, "return !!window.__MOCK_READY__")
+                and js(t, "return document.querySelectorAll('.face-card').length")):
+            break
+        time.sleep(0.3)
+    set_show_filter(t, "all")
+    time.sleep(0.5)
+    back = js(t, "return document.querySelector('.center-scroll').scrollTop")
+    ok = (pos == 400
+          and isinstance(stored, dict) and stored.get("review") == 400
+          and back == 400)
+    record("C68 session persistence: scroll place survives reload (#297)",
+           ok, f"set={pos}; stored={stored} (want review=400); "
+               f"after reload={back} (want 400)")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -7009,7 +7060,7 @@ def main():
     holder["t"].set_window_size(1600, 1000)
     for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review, c62_one_ipc_transfer_per_action,
       c63_rolls_image_stepping, c64_roll_branch_reimport_recursive, c65_person_pane_merge_similar,
-      c66_refcrop_image_menu, c67_glyph_vocabulary):
+      c66_refcrop_image_menu, c67_glyph_vocabulary, c68_session_persistence):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)
