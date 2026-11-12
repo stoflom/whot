@@ -17,17 +17,18 @@ import type {
   ImportOptions,
   Person,
   Refcrop,
-  Settings,
-  Snapshot,
 } from "./api";
 import EditDialog from "./components/EditDialog";
-import ConfirmDialog from "./components/ConfirmDialog";
+// §4.44 round 2 stage 4 (#295): the guard/confirm dialog surfaces —
+// the copy + button contracts as components, actions stay App-side
+import ContextConfirmDialog from "./components/ContextConfirmDialog";
+import { PickPersonDialog, NoFacesDialog } from "./components/guards";
+import ConfirmRemoveDialog from "./components/ConfirmRemoveDialog";
 import AddGroupDialog from "./components/AddGroupDialog";
 import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import { FullImageBar } from "./components/FullImageBar";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
 import MergeIntoDialog from "./components/MergeIntoDialog";
-import { faceIdsOf } from "./nameCluster";
 import { isRejectedBin } from "./personNames";
 import { personDataSig } from "./personSig";
 import { PrefetchCache } from "./prefetch";
@@ -116,11 +117,18 @@ import { faceMenuGroups, imageAreaMenuGroups, rollBranchMenuGroups, thumbMenuGro
 import {
   buildSections,
   firstCropPerson,
-  personFaceList,
   sectionsForImage as sectionsForImageOf,
   sectionsPersonKey,
-  splitStepPos,
 } from "./sections";
+// §4.44 round 2 (#291/#292): the detail derivations — pure/co-tested,
+// App keeps only the useMemo bindings
+import {
+  facesOfImage,
+  fullImageOpenFor,
+  imageRowFor,
+  splitStepFor,
+  stepIndexIn,
+} from "./detailView";
 // §4.44 stage 2 (#206): the pane layout rules + the #191 click-pair
 // guard — pure/co-tested, App owns only the wiring
 import { usePaneSizes, clampRollCenterFor } from "./paneState";
@@ -128,8 +136,15 @@ import { useClickPairGuard } from "./clickPair";
 // §4.44 + #222 (F-H3): the review-verdict callbacks — the #98 identity
 // rule lives in the hook (person anchor read via refs), co-tested
 import { useReviewVerdicts } from "./reviewVerdicts";
-// #281: the pure delta-protocol helpers (upsert/drop + exact staleness)
-import { applyDeltaToSnapshot, deltaStale } from "./deltas";
+// §4.44 round 2 stage 2 (#293): the face-selection layer — the sel
+// state + mirroring refs + the whole ref-driven handler family
+import { useSelectionState } from "./useSelectionState";
+// §4.44 round 2 stage 3 (#294): the backend sync layer — snapshot
+// state + the #219 delta transport + the #208 focus probe
+import { useSnapshotSync } from "./useSnapshotSync";
+// §4.44 round 2 stage 5 (#296): the merge engine — triage + §4.28
+// confirmation + the #135 face-level path, co-tested
+import { useMergeFlow } from "./useMergeFlow";
 
 type Mode = "review" | "rolls" | "person";
 
@@ -144,12 +159,23 @@ function isDelta(x: unknown): x is Delta {
 const INFLIGHT_EMPTY: Set<number> = new Set();
 
 export default function App() {
-  const [snap, setSnap] = useState<Snapshot | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  // #185 (§4.36): no USABLE database ⇒ the first-run screen (the dialog
-  // offers the import pane with --create-db) instead of the raw error
-  // (the screen + its local dir state live in components/FirstRun.tsx)
-  const [noDb, setNoDb] = useState(false);
+  // §4.44 round 2 stage 3 (#294): the backend sync layer — the snapshot
+  // state, the #219 delta transport, the #208 version probe + focus
+  // reload and the #185 first-run routing (useSnapshotSync.ts,
+  // co-tested). `mutate` below binds applyDeltas/refresh as the one IPC
+  // seam the other modules bind to.
+  const {
+    snap,
+    setSnap,
+    snapRef,
+    loadError,
+    setLoadError,
+    noDb,
+    setNoDb,
+    refresh,
+    applyDeltas,
+    onImported,
+  } = useSnapshotSync();
   const [mode, setMode] = useState<Mode>("review");
   // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
   // pointer (modeless — the tree under it stays clickable) and the
@@ -224,16 +250,12 @@ export default function App() {
   const [importInitial, setImportInitial] = useState<
     Partial<Omit<ImportOptions, "rollDir">> | null
   >(null);
-  const [sel, setSel] = useState<Set<number>>(new Set());
-  const [selPersons, setSelPersons] = useState<Set<number>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
-  // #98 (§4.31) — hover and "latest selection" are refs: the pointer
-  // crossing cards must never re-render the app. The highlight is synced
-  // imperatively (data-sync-hover on card + overlay rect) by the
-  // mousemove/scroll listener below.
+  // #98 (§4.31) — hover is a ref: the pointer crossing cards must never
+  // re-render the app. The highlight is synced imperatively
+  // (data-sync-hover on card + overlay rect) by the mousemove/scroll
+  // listener below. (The selection refs live in useSelectionState, #293.)
   const hoverRef = useRef<number | null>(null);
-  const selRef = useRef<Set<number>>(new Set());
-  selRef.current = sel;
   // #228 (F-L4): the menu callbacks read the selections through these
   // refs so memo(RollsThumbs) is not re-rendered by a face/image
   // selection change via callback identity churn
@@ -321,16 +343,8 @@ export default function App() {
   const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   // #53 (§4.17): most recently selected card — Ctrl-G's fallback target
-  // when nothing is hovered
-  const lastSelRef = useRef<number | null>(null);
-  // #88 (§4.28): Merge Similar Persons triage + shared merge confirmation;
-  // v13.0 (#287): mergeAnchor != null = the anchored detail-panel route
-  // (the dialog lists only that person's cluster); null = the tree route
-  const [mergeOpen, setMergeOpen] = useState(false);
-  const [mergeAnchor, setMergeAnchor] = useState<number | null>(null);
-  const [mergeInto, setMergeInto] = useState<
-    { sourceIds: number[]; targetId?: number } | null
-  >(null);
+  // when nothing is hovered — lives in useSelectionState now (lastSelRef)
+  // (the merge engine state lives in useMergeFlow, §4.44 round 2 #296)
   // #135/#136 (rule 34) + #260: face drag & drop — the machine is the
   // co-tested `useFaceDrag` hook (below): the payload + drop-target
   // state, the refs that mirror them, and the five grid handlers. A
@@ -338,9 +352,6 @@ export default function App() {
   // handlers read the live values through refs (the #98 identity rule).
   // #135: a face drag dropped on a person row — face-level merge
   // confirmation (the §4.28 person-level dialog moves whole persons)
-  const [faceMerge, setFaceMerge] = useState<
-    { faceIds: number[]; targetId: number } | null
-  >(null);
   // #184 (§4.18): the face menu's 'Add group…' — the dialog over every
   // DISTINCT person of the scope (the tree owns its own instance for
   // person rows)
@@ -404,92 +415,6 @@ export default function App() {
     };
   }, [info]);
 
-  // #208: the snapshot carries the change stamp (read before its data),
-  // stored here so the focus reload can skip a no-op fetch
-  const snapVersionRef = useRef(0);
-  const refresh = useCallback(async () => {
-    const s = await api.getSnapshot();
-    snapVersionRef.current = s.version;
-    setSnap(s);
-  }, []);
-  // #219: apply a mutation's delta locally — only the touched rows move,
-  // no full snapshot re-fetch. #281: the upsert/drop maths is the pure
-  // `applyDeltaToSnapshot` (co-tested in deltas.test.ts); staleness is
-  // exact via `deltaStale` — `base` (the command's pre-write stamp) must
-  // equal the stamp of the state this delta applies onto.
-  const applyDelta = useCallback(
-    (delta: Delta) => {
-      if (deltaStale(delta, snapVersionRef.current)) {
-        void refresh().catch(() => {});
-        return;
-      }
-      snapVersionRef.current = delta.version;
-      setSnap((s) => (s ? applyDeltaToSnapshot(s, delta) : s));
-    },
-    [refresh]
-  );
-  // #281: apply a PLAN's deltas in order — each delta's `base` is the
-  // stamp the previous apply left (the backend chains sequential ops
-  // exactly this way), so every delta is checked against the live stamp;
-  // the first stale/drifted one aborts the plan and falls back to ONE
-  // full refresh (applying the rest on top of a known-stale base would
-  // just cascade more refreshes).
-  const applyDeltas = useCallback(
-    async (deltas: Delta[]) => {
-      let stale = false;
-      for (const d of deltas) {
-        if (deltaStale(d, snapVersionRef.current)) {
-          stale = true;
-          break;
-        }
-        applyDelta(d);
-      }
-      if (stale) await refresh();
-    },
-    [applyDelta, refresh]
-  );
-  // #208: reload only when the database actually moved since the last
-  // snapshot (our own mutations refresh explicitly and record the new
-  // stamp) — one tiny probe call instead of a whole-snapshot fetch
-  const refreshIfChanged = useCallback(async () => {
-    const v = await api.getDataVersion();
-    if (v !== snapVersionRef.current) await refresh();
-  }, [refresh]);
-  // #247: the import pane restarts its poll chain whenever `onImported`'s
-  // identity changes — an inline arrow re-created every render would drop
-  // the poll's `prevRunning` memory mid-run and miss the clean-exit
-  // snapshot refresh, so the callback is stable
-  const onImported = useCallback(
-    () => void refresh().catch(() => {}),
-    [refresh]
-  );
-
-  useEffect(() => {
-    refresh().catch(async (e) => {
-      // #185 (§4.36): a failed load with NO usable database is the
-      // first-run case — offer the create+import flow, not the raw error
-      const usable = await api
-        .getImportInfo()
-        .then((i) => i.dbExists)
-        .catch(() => true); // probe failed — keep the error screen
-      if (usable) setLoadError(String(e));
-      else setNoDb(true);
-    });
-  }, [refresh]);
-
-  // F12: pick up imports/mutations done while the window is in the background
-  useEffect(() => {
-    const reload = () => {
-      if (document.visibilityState !== "hidden") refreshIfChanged().catch(() => {});
-    };
-    window.addEventListener("focus", reload);
-    document.addEventListener("visibilitychange", reload);
-    return () => {
-      window.removeEventListener("focus", reload);
-      document.removeEventListener("visibilitychange", reload);
-    };
-  }, [refreshIfChanged]);
-
   // #282 (N1): the id maps key on the ARRAYS, not the whole snapshot — a
   // person-only delta (group/note/name) rebuilds neither, so the handler
   // chain that reads them through refs (below) keeps its identity and
@@ -508,6 +433,64 @@ export default function App() {
   // untouched card on a verdict.
   const facesByIdRef = useRef(facesById);
   facesByIdRef.current = facesById;
+
+  // ------------------------------------------------------------ selection
+
+  // #52 (§4.15): the split follows the selection — it closes itself when
+  // the selection moves to a different image and stays open while the new
+  // selection is on the image it already shows; manual opens always win
+  const closeSplitForFaces = useCallback(
+    (ids: number[]) => {
+      if (splitImageId == null) return;
+      if (!ids.some((id) => facesByIdRef.current.get(id)?.image_id === splitImageId))
+        setSplitImageId(null);
+    },
+    [splitImageId]
+  );
+
+  // #201 (§4.37) — a crop click in the focus split follows the same
+  // plain-anchor rule as the overlay rects (#171): the right pane moves
+  // to the clicked face's person; a NULL person_id leaves it as it was
+  const followCrop = useCallback(
+    (id: number) => {
+      if (splitImageId == null) return;
+      const f = facesByIdRef.current.get(id);
+      if (f && f.person_id != null) setPersonId(f.person_id);
+    },
+    [splitImageId]
+  );
+
+  // §4.44 round 2 stage 2 (#293): the face-selection layer — the sel
+  // state + its mirroring refs and the whole ref-driven handler family
+  // (useSelectionState.ts, co-tested). Identity per #98: a selection
+  // change churns no callback identity; the injected view-context
+  // reactions keep the churn they always had. `imgSel` (the §4.23
+  // right-pane thumb selection) stays App-owned above — its branch
+  // reset lives in the root/branch state block.
+  const {
+    sel,
+    setSel,
+    selRef,
+    lastSelRef,
+    anchorRef,
+    changeSel,
+    toggle,
+    toggleMany,
+    rectToggle,
+    actionScope,
+    selectOnly,
+    rangeSelect,
+    selPersons,
+    setSelPersons,
+  } = useSelectionState({
+    closeSplitForFaces,
+    followCrop,
+    setPersonId,
+    facesByIdRef,
+    sectionsRef,
+    sectionsForImageRef,
+    splitImageId,
+  });
   const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
   // #99 (§4.10): the status filter — one value drives every view's
   // visibility, tree presence/counts (#28 generalised) and the review set
@@ -708,10 +691,8 @@ export default function App() {
   );
 
   // #123: a selection change INSIDE the context never asks — the
-  // Apply → change → Apply loop is dialog-free by design
-  const changeSel = useCallback((next: Set<number>) => {
-    setSel(next);
-  }, []);
+  // Apply → change → Apply loop is dialog-free by design. (`changeSel`
+  // itself is useSelectionState's, #293.)
 
   // #123: only a complete context change (another person, a view switch,
   // focus open/close) asks drop-or-accept while the set is live — the
@@ -728,80 +709,6 @@ export default function App() {
   useEffect(() => {
     if (contextConfirm != null && pending.length === 0) setContextConfirm(null);
   }, [contextConfirm, pending]);
-
-  // ------------------------------------------------------------ selection
-
-  // #52 (§4.15): the split follows the selection — it closes itself when
-  // the selection moves to a different image and stays open while the new
-  // selection is on the image it already shows; manual opens always win
-  const closeSplitForFaces = useCallback(
-    (ids: number[]) => {
-      if (splitImageId == null) return;
-      if (!ids.some((id) => facesByIdRef.current.get(id)?.image_id === splitImageId))
-        setSplitImageId(null);
-    },
-    [splitImageId]
-  );
-
-  // #201 (§4.37) — a crop click in the focus split follows the same
-  // plain-anchor rule as the overlay rects (#171): the right pane moves
-  // to the clicked face's person; a NULL person_id leaves it as it was
-  const followCrop = useCallback(
-    (id: number) => {
-      if (splitImageId == null) return;
-      const f = facesByIdRef.current.get(id);
-      if (f && f.person_id != null) setPersonId(f.person_id);
-    },
-    [splitImageId]
-  );
-
-  const toggle = useCallback(
-    (id: number) => {
-      anchorRef.current = id; // #69: the toggled card becomes the range anchor
-      closeSplitForFaces([id]);
-      followCrop(id); // #201 (§4.37): the right pane follows the crop
-      const n = new Set(selRef.current);
-      if (n.has(id)) n.delete(id);
-      else {
-        n.add(id);
-        lastSelRef.current = id;
-      }
-      changeSel(n);
-    },
-    [closeSplitForFaces, followCrop, changeSel]
-  );
-  const toggleMany = useCallback(
-    (ids: number[], on: boolean) => {
-      if (on && ids.length > 0) lastSelRef.current = ids[ids.length - 1];
-      const n = new Set(selRef.current);
-      ids.forEach((i) => (on ? n.add(i) : n.delete(i)));
-      changeSel(n);
-    },
-    [changeSel]
-  );
-  // #171 (§4.37) — a rect click in a full-image view toggles the
-  // selection as before AND moves the right pane to that face's person:
-  // a plain anchor (no context change, no view switch — deliberately
-  // not handleTreeSelect's §4.15 yank); a NULL person_id (legacy rows)
-  // leaves the anchor untouched. FaceOverlay renders only in the focus
-  // split and the rolls detail, so this is scoped to the full-image
-  // surfaces by construction.
-  const rectToggle = useCallback(
-    (id: number) => {
-      toggle(id);
-      const f = facesByIdRef.current.get(id);
-      if (f && f.person_id != null) setPersonId(f.person_id);
-    },
-    [toggle]
-  );
-
-  // #49 (§4.14) — effective action scope: the active selection when the
-  // invoked card is part of it, otherwise just that card. Reads selRef so
-  // the callback identity never changes with the selection (#98).
-  const actionScope = useCallback((id: number): number[] => {
-    const s = selRef.current;
-    return s.has(id) && s.size > 1 ? [...s] : [id];
-  }, []);
 
   // ------------------------------------------------------------ mutations
 
@@ -836,8 +743,7 @@ export default function App() {
   const [inFlight, setInFlight] = useState<Set<number>>(INFLIGHT_EMPTY);
   const inFlightRef = useRef(inFlight);
   inFlightRef.current = inFlight;
-  const snapRef = useRef<Snapshot | null>(null);
-  snapRef.current = snap;
+  // (snapRef is useSnapshotSync's mirror — #294)
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const personIdRef = useRef(personId);
@@ -1105,20 +1011,8 @@ export default function App() {
     },
     [mutate]
   );
-  // both routes are identity-stable (setters only — the memo(DetailPane)
-  // / memo(PersonTree) prop check, #215/#98)
-  const openMergeDialog = useCallback(() => {
-    setMergeAnchor(null);
-    setMergeOpen(true);
-  }, []);
-  const openMergeSimilar = useCallback((id: number) => {
-    setMergeAnchor(id);
-    setMergeOpen(true);
-  }, []);
-  const closeMergeDialog = useCallback(() => {
-    setMergeOpen(false);
-    setMergeAnchor(null);
-  }, []);
+  // (openMergeDialog/openMergeSimilar/closeMergeDialog are useMergeFlow's
+  // — §4.44 round 2 #296; the setters keep the #215/#98 identity rule)
   const selectPendingFaces = useCallback(
     (id: number) => {
       if (!snap) return;
@@ -1741,48 +1635,6 @@ export default function App() {
   );
 
   // ------------------------------------------------------------ sections
-
-  // #69 — anchor + shift-click range selection over the rendered card
-  // order (sections render back-to-back, so ranges may span sections)
-  const anchorRef = useRef<number | null>(null);
-  const renderedIds = useCallback(
-    () =>
-      (splitImageId != null
-        ? sectionsForImageRef.current(splitImageId)
-        : sectionsRef.current
-      ).flatMap((s) => s.faceIds),
-    [splitImageId]
-  );
-  // plain click: select just this card, drop the anchor
-  const selectOnly = useCallback(
-    (id: number) => {
-      anchorRef.current = id;
-      closeSplitForFaces([id]);
-      followCrop(id); // #201 (§4.37): the right pane follows the crop
-      lastSelRef.current = id;
-      changeSel(new Set([id]));
-    },
-    [closeSplitForFaces, followCrop, changeSel]
-  );
-  // shift-click: the contiguous range anchor…clicked card; the anchor
-  // stays put so repeated shift-clicks re-anchor the same start, the
-  // clicked card becomes the new last-selected
-  const rangeSelect = useCallback(
-    (id: number) => {
-      const ids = renderedIds();
-      const ai = anchorRef.current == null ? -1 : ids.indexOf(anchorRef.current);
-      const ci = ids.indexOf(id);
-      if (ai === -1 || ci === -1) {
-        // anchor gone (filtered/removed) or card not in this view
-        selectOnly(id);
-        return;
-      }
-      const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
-      lastSelRef.current = id;
-      changeSel(new Set(ids.slice(lo, hi + 1)));
-    },
-    [renderedIds, selectOnly, changeSel]
-  );
 
   // #97/#98: one suggestion source per snapshot — stable identity
   const personOptions = useMemo(() => snap?.persons ?? [], [snap]);
@@ -2410,156 +2262,54 @@ export default function App() {
 
   // ------------------------------------------------- #88 Merge Similar Persons
 
-  const saveMergeSettings = useCallback(
-    async (patch: Partial<Settings>) => {
-      if (!snap) return;
-      try {
-        await api.setSettings({ ...snap.settings, ...patch });
-        await refresh().catch((e) => setError(String(e)));
-      } catch (e) {
-        setError(String(e));
-      }
-    },
-    [snap, refresh],
-  );
-
-  /** menu / DnD path: open the shared confirmation (§4.28). Refuses an
-      UnknownN *target* up-front (also refused server-side) and treats a
-      drop onto the only selection as the designed no-op. */
-  const openMergeInto = useCallback(
-    (sourceIds: number[], targetId?: number) => {
-      if (!snap) return;
-      if (targetId != null) {
-        const target = snap.persons.find((p) => p.id === targetId);
-        if (target && /^unknown/i.test(target.name)) {
-          setError(
-            "cannot merge into an UnknownN cluster — it is an importer placeholder, not a person",
-          );
-          return;
-        }
-        if (sourceIds.every((id) => id === targetId)) {
-          setInfo("already merged — the drop target is the only selection");
-          return;
-        }
-      }
-      setMergeInto({ sourceIds, targetId });
-    },
-    [snap],
-  );
-
-  const confirmMerge = useCallback(
-    async (target: Person) => {
-      if (!snap || !mergeInto) return;
-      const sourceIds = mergeInto.sourceIds.filter((id) => id !== target.id);
-      // target's own faces stay put: only the sources' faces move (§4.28)
-      const faceIds = snap.faces
-        .filter((f) => f.person_id != null && sourceIds.includes(f.person_id))
-        .map((f) => f.id);
-      setMergeInto(null);
-      if (faceIds.length === 0) {
-        setInfo("nothing to merge — the selected persons have no faces");
-        return;
-      }
-      // one assign_person call = one transaction, §4.1 merge semantics
-      // (claim on rejected, emptied shells deleted, derived state recomputed).
-      // #178/§4.1: the group is never applied to an existing target (F2)
-      // — pass "" so a STATUS SEAT can never reach assign_person's
-      // up-front path validation (#165: an unfiled target's groups[0]
-      // IS their seat)
-      const ok = await mutate(() => api.assignPerson(faceIds, target.name, ""));
-      if (ok) {
-        // #133 (§4.28): the centre pane opens the merged target — all the
-        // combined faces (a failed merge leaves the selection unchanged)
-        setPersonId(target.id);
-        setImageId(null);
-        setMode("person");
-      }
-    },
-    [snap, mergeInto, mutate],
-  );
-
-  // #135 (rule 34): a face drag dropped on a person row — the same
-  // shared merge validation as every path; the confirmation is the
-  // face-level dialog (whole-person merges use the §4.28 one)
-  const onFacesDropped = useCallback(
-    (faceIds: number[], targetId: number) => {
-      // the drag is over — clear the payload and highlights (App side,
-      // the shared clear from useFaceDrag, #260)
-      clearFaceDrag();
-      if (!snap) return;
-      const target = personsById.get(targetId);
-      if (!target) return;
-      // §4.28: an UnknownN cluster is an importer placeholder, not a
-      // person — refused here and server-side; the message stays
-      // reference-free (§4.43)
-      if (/^unknown/i.test(target.name)) {
-        setError(
-          "cannot merge into an UnknownN cluster — it is an importer placeholder, not a person",
-        );
-        return;
-      }
-      const plan = faceMergePlan(faceIds, target.id, snap.faces, snap.persons);
-      if (plan.movers.length === 0) {
-        setInfo(
-          `all ${faceIds.length} face(s) are already on ${target.name} — nothing to move`,
-        );
-        return;
-      }
-      setFaceMerge({ faceIds: plan.movers, targetId });
-    },
-    [snap, personsById, clearFaceDrag],
-  );
-
-  const confirmFaceMerge = useCallback(async () => {
-    if (!snap || !faceMerge) return;
-    const target = personsById.get(faceMerge.targetId);
-    const faceIds = faceMerge.faceIds;
-    setFaceMerge(null);
-    if (!target) return;
-    // one assign_person call = one transaction, §4.1 merge semantics
-    // (claim on rejected, emptied shells deleted, derived state recomputed)
-    // #178/§4.1: "" — never the target's group (F2 ignores it anyway,
-    // and for an unfiled target groups[0] IS their status seat, which
-    // #165's up-front validation refuses)
-    const ok = await mutate(() => api.assignPerson(faceIds, target.name, ""));
-    if (ok) {
-      // #133 (rule 34): the centre pane opens the merged target
-      setPersonId(target.id);
-      setImageId(null);
-      setMode("person");
-    }
-  }, [snap, faceMerge, personsById, mutate]);
-
-  /** bulk rename/merge over a person selection: open the Edit dialog
-      over all their faces (§4.1 rename-merge, #101) */
-  const renamePersons = useCallback(
-    (ids: number[]) => {
-      if (!snap) return;
-      const faceIds = faceIdsOf(snap.faces, new Set(ids));
-      if (faceIds.length === 0) {
-        setInfo("no faces to rename — the selection has no faces");
-        return;
-      }
-      // #101: rename-selection opens the shared dialog scoped to all
-      // faces of those persons (a synthetic Group scope)
-      openEdit("group", { group: faceIds });
-    },
-    [snap, openEdit],
-  );
-
-  /** bulk group apply from the review dialog (§4.16, reversible) */
-  const applyGroupToSelection = useCallback((ids: number[], group: string) => {
-    if (ids.length === 0) return;
-    void mutate(() => api.movePersonsToGroup(ids, group));
-  }, [mutate]);
+  // §4.44 round 2 stage 5 (#296): the merge engine — the #88/#287 triage
+  // state, the shared §4.28 confirmation, the #135 face-level path, the
+  // refusals/no-ops, the one-transaction assign_person merges and the
+  // #133 re-anchor (useMergeFlow.ts, co-tested). The view reactions are
+  // injected deps; the callbacks churn at exactly the old rates (#98).
+  const {
+    mergeOpen,
+    mergeAnchor,
+    mergeInto,
+    setMergeInto,
+    faceMerge,
+    setFaceMerge,
+    openMergeDialog,
+    openMergeSimilar,
+    closeMergeDialog,
+    saveMergeSettings,
+    openMergeInto,
+    confirmMerge,
+    onFacesDropped,
+    confirmFaceMerge,
+    renamePersons,
+    applyGroupToSelection,
+  } = useMergeFlow({
+    snap,
+    personsById,
+    mutate,
+    refresh,
+    setInfo,
+    setError,
+    setPersonId,
+    setImageId,
+    setMode,
+    clearFaceDrag,
+    openEdit,
+  });
 
   // #228 (F-L1): the focus/detail image rows and their face lists are
   // memoised — the old inline `snap.faces.filter(...)` per render handed
   // FaceOverlay a fresh array every time (and the two image lookups were
   // linear scans per render); with stable identities memo(FaceOverlay)
   // can skip when only unrelated state moved
+  // #291/#292 (§4.44 round 2): the detail derivations are the pure
+  // src/detailView.ts — the open image's row, the branch step index
+  // (rule 46), the Show-filtered face lists (§4.10), the full-image-open
+  // rule and the focus-bar face step composition. App keeps only these
+  // useMemo bindings — same deps, same churn rates (#98 untouched).
   const imgRow: ImageRow | undefined = useMemo(
-    () => (imageId != null ? snap?.images.find((i) => i.id === imageId) : undefined),
+    () => imageRowFor(snap, imageId),
     [snap, imageId]
   );
   // #235 (rule 46) — the open image's position in the branch's listed
@@ -2567,37 +2317,44 @@ export default function App() {
   // from the path filter in another branch, or the Show filter no
   // longer lists it) → `–/m`, both buttons disabled
   const imgStepIdx = useMemo(
-    () => (imageId != null ? branchThumbs.images.findIndex((x) => x.id === imageId) : -1),
+    () => stepIndexIn(branchThumbs.images, imageId),
     [branchThumbs, imageId],
   );
   const splitRow: ImageRow | undefined = useMemo(
-    () => (splitImageId != null ? snap?.images.find((i) => i.id === splitImageId) : undefined),
+    () => imageRowFor(snap, splitImageId),
     [snap, splitImageId]
   );
   const focusFaces = useMemo(
-    () => (splitRow ? snap?.faces.filter((f) => f.image_id === splitRow.id && faceVisible(f)) ?? [] : []),
-    [snap, splitRow, faceVisible]
+    () => (splitRow ? facesOfImage(snap, splitRow.id, faceFilter) : []),
+    [snap, splitRow, faceFilter]
   );
   const detailFaces = useMemo(
-    () => (imgRow ? snap?.faces.filter((f) => f.image_id === imgRow.id && faceVisible(f)) ?? [] : []),
-    [snap, imgRow, faceVisible]
+    () => (imgRow ? facesOfImage(snap, imgRow.id, faceFilter) : []),
+    [snap, imgRow, faceFilter]
   );
   // #275 (gui-design v11.3) — a full image is up on either surface: the
   // card-double-click split (focus pane) or the Rolls image detail.
   // While it is, the centre's own toolbar does not render: the single
   // bar above the image carries the mode's nav cluster instead
-  const fullImageOpen =
-    splitRow != null || (mode === "rolls" && imageId != null && imgRow != null);
+  const fullImageOpen = fullImageOpenFor(splitRow, mode, imageId, imgRow);
   // #275 (gui-design v11.4) — the focus bar's FACE step: the right-pane
   // person's editable faces in the view's display order (person grid
   // sections in Person, the pinned-filter faces in Review) and the open
-  // image's position in that list — the pure rule is personFaceList/
-  // splitStepPos (sections.ts, co-tested)
-  const splitStep = useMemo(() => {
-    if (splitRow == null || personId == null) return { ids: [] as number[], pos: -1 };
-    const ids = personFaceList(mode, personId, sections, snap?.faces ?? [], faceFilter);
-    return { ids, pos: splitStepPos(ids, facesById, splitRow.id) };
-  }, [splitRow, personId, mode, sections, snap, faceFilter, facesById]);
+  // image's position in that list — the pure rule is splitStepFor
+  // (detailView.ts, co-tested over personFaceList/splitStepPos)
+  const splitStep = useMemo(
+    () =>
+      splitStepFor(
+        mode,
+        personId,
+        sections,
+        snap?.faces ?? [],
+        faceFilter,
+        facesById,
+        splitRow
+      ),
+    [mode, personId, sections, snap, faceFilter, facesById, splitRow]
+  );
   // one step = open the full image holding the target face; the view
   // STAYS in full-image mode (the bar is the only grid return). At the
   // first/last face (or an unlisted image) the step is a no-op — the
@@ -3375,23 +3132,17 @@ export default function App() {
         />
       )}
       {contextConfirm && pending.length > 0 && (
-        <ConfirmDialog
-          title="Unapplied changes"
-          body={
-            // #123: the context switch drops staged edits either way —
-            // the body stays reference-free (§4.43)
-            `Staged: ${stageSummarySet(pending)} — accept writes it to the ` +
-            "database, discard drops it; the context switches either way"
-          }
-          confirmLabel="accept"
-          cancelLabel="discard"
-          onCancel={() => {
+        // §4.44 round 2 stage 4 (#295): the guard surface is the
+        // component; the accept/discard actions stay App-side
+        <ContextConfirmDialog
+          pending={pending}
+          onDiscard={() => {
             const act = contextConfirm.fn;
             setContextConfirm(null);
             setPending([]);
             act();
           }}
-          onConfirm={() => {
+          onAccept={() => {
             const all = pending;
             const act = contextConfirm.fn;
             setContextConfirm(null);
@@ -3400,64 +3151,25 @@ export default function App() {
         />
       )}
       {/* #176 (§4.41): the Person-mode guard dialogs — the no-anchor
-          pointer (single Close) and the sticky-person guard */}
+          pointer (single Close) and the sticky-person guard
+          (components/guards.tsx, §4.44 stage 4) */}
       {pickPersonDialog && (
-        <ConfirmDialog
-          title="Please select a person in the tree on the left"
-          body={
-            "Person mode works on the person anchored in the tree — under Show → All " +
-            "the status branches New and Accepted are listed (Rejected under Show → Rejected)."
-          }
-          confirmLabel="Close"
-          onlyConfirm
-          modeless
-          onConfirm={() => setPickPersonDialog(false)}
-          onCancel={() => setPickPersonDialog(false)}
-        />
+        <PickPersonDialog onClose={() => setPickPersonDialog(false)} />
       )}
       {noFacesDialog && (
-        <ConfirmDialog
-          title={
-            faceFilter === "all"
-              ? "No faces to show"
-              : `No ${faceFilter === "provisional" ? "new" : faceFilter === "confirmed" ? "accepted" : "rejected"} faces`
-          }
-          body={
-            `This person holds no face under Show → ${faceFilter === "all" ? "All" : faceFilter === "provisional" ? "New" : faceFilter === "confirmed" ? "Accepted" : "Rejected"}. ` +
-            "Show All brings every non-rejected face back."
-          }
-          cancelLabel="Close"
-          confirmLabel="Show All"
-          modeless
-          onConfirm={() => {
+        <NoFacesDialog
+          faceFilter={faceFilter}
+          onShowAll={() => {
             setNoFacesDialog(false);
             changeFaceFilter("all");
           }}
-          onCancel={() => setNoFacesDialog(false)}
+          onClose={() => setNoFacesDialog(false)}
         />
       )}
       {confirmRemove && (
-        <ConfirmDialog
-          title={
-            confirmRemove.length > 1
-              ? `Remove ${confirmRemove.length} persons`
-              : "Remove person"
-          }
-          body={
-            // #165/§4.13 informational copy, #266 wording: removal
-            // rejects the faces and files them onto their rejected
-            // cluster person; they can be claimed again — the body
-            // stays reference-free (§4.43)
-            `All faces of ${confirmRemove.length > 1 ? "these persons" : "this person"} ` +
-            `become rejected and join a rejected cluster; ` +
-            `${confirmRemove.length > 1 ? "the persons are" : "the person is"} deleted — ` +
-            "the faces stay in the database and can be claimed again by " +
-            "assigning them a person. This cannot be undone."
-          }
-          confirmLabel="remove"
-          danger
-          onConfirm={() => {
-            const ids = confirmRemove;
+        <ConfirmRemoveDialog
+          ids={confirmRemove}
+          onConfirm={(ids) => {
             markExhaust(); // #125: removing may empty the current person
             setConfirmRemove(null);
             setSelPersons((prev) => {

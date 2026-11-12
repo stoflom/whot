@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 14.1** (#290) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 14.6** (#296) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2327,6 +2327,82 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   `faceDrop.ts` (the two inline dups are gone). Identity per #98: the
   ref-driven handlers never churn; the snapshot-reading pair churns
   only with `facesById` — the old `gridHandlers` memo's rate.
+  Round 2 of the sweep (master #291) continues in v14.2 (#292): the
+  detail derivations leave App as the pure, co-tested
+  `src/detailView.ts` — the open image's row (`imageRowFor`, both the
+  §4.24 detail and the #275 focus split read it), the branch-thumb
+  step index (`stepIndexIn`, rule 46's `n` of `n/m` and its `–/m`
+  miss), the Show-filtered face list of an image (`facesOfImage`,
+  §4.10/#99 — the focus pane's and the detail pane's face lists), the
+  full-image-open rule (`fullImageOpenFor`, rule 46/#275 — one bar
+  above the image, no separate centre toolbar) and the focus-bar face
+  step composition (`splitStepFor`, #275 — `personFaceList` +
+  `splitStepPos` from `sections.ts`, so the `‹ 1/4 faces ›` step and
+  the ← → keys share the one rule). App keeps only the `useMemo`
+  bindings, churning at exactly the old rates; `stepSplitFace` (the
+  state transition behind a step) stays App-owned. v14.3 (#293): the
+  face-selection layer leaves App as the co-tested hook
+  `src/useSelectionState.ts` — the `sel` state + its mirroring
+  `selRef`, the #53/#88 `lastSelRef` and the #69 range `anchorRef`,
+  and the whole handler family (`changeSel`, `toggle`, `toggleMany`,
+  `rectToggle`, `actionScope`, `selectOnly`, `rangeSelect`,
+  `renderedIds`) plus the tree's `selPersons` state. The handlers are
+  ref-driven by construction (the #98 rule preserved: a selection
+  change churns no callback identity); the view-context reactions a
+  toggle triggers — `closeSplitForFaces` (#52) and `followCrop`
+  (#201/§4.37) — are injected deps, and `renderedIds` reads the
+  App-owned `sectionsRef`/`sectionsForImageRef` (§4.44 stage 1). The
+  tree-select *logic* (#35/#62/#200 — context confirm, re-anchor, mode
+  routing) stays in `handleTreeSelect`: only the `selPersons` state
+  moves. `imgSel` (the §4.23 right-pane thumb selection) stays
+  App-owned — its branch-reset is declared inside the root/branch
+  state block, above the hook's placement. v14.4 (#294): the backend
+  sync layer leaves App as the co-tested hook `src/useSnapshotSync.ts`
+  — the `snap`/`loadError`/`noDb` state (#185 routes its own cold-load
+  failure to the §4.36 first-run case), the #208 change stamp
+  (`snapVersionRef`) and the `snapRef` mirror, `refresh`, the #219
+  delta transport (`applyDelta`/`applyDeltas` — staleness exact via
+  `deltaStale`, a drifted or base-stale delta falls back to ONE full
+  refresh), `refreshIfChanged` (the #208 focus/visibility probe — one
+  tiny version probe instead of a whole-snapshot fetch) and
+  `onImported` (#247: a STABLE identity so the import pane's poll
+  chain keeps its `prevRunning` memory). Reads no view state — the
+  hook is self-contained over the `./api` seam and co-tested against a
+  mocked backend. `mutate` stays App-side (it clears the selection on
+  the clearSel path — a view concern; it binds the hook's
+  `applyDeltas`/`refresh` as the one IPC seam the other modules bind
+  to), and the #234 advance-target prefetch (`prefetchRef`/
+  `prefetchTarget`) plus the #222 verdict-flight state (`inFlight`)
+  stay App-owned — they are verdict machinery bound to the view-state
+  refs, not snapshot sync. v14.5 (#295): the remaining inline
+  dialog/overlay wiring leaves App's JSX — the #123 context-change
+  guard, the #176 Person-mode guard dialogs (the no-anchor pointer and
+  the sticky-person Show-All escape) and the #165/§4.13 person-removal
+  confirm become dedicated components (`components/ContextConfirmDialog.tsx`,
+  `components/guards.tsx`, `components/ConfirmRemoveDialog.tsx`) with
+  their copy and button contracts co-tested (rule 43: product
+  language, no design/issue references). The mount/close decisions and
+  the action handlers stay App-side; the dialogs are mount-gated, so
+  the #98 identity rule is untouched (no persistent-tree callback
+  crosses the boundary). The #275 hover highlight needs no extraction —
+  it is already imperative (`data-sync-hover` sync, no React state).
+  v14.6 (#296, the round's last stage): the merge engine leaves App as
+  the co-tested hook `src/useMergeFlow.ts` — the #88/#287 triage state
+  (`mergeOpen`/`mergeAnchor`: null = the tree route, non-null = the
+  anchored detail-panel route), the shared §4.28 confirmation state
+  (`mergeInto`), the #135 face-level confirmation (`faceMerge`), the
+  UnknownN-target refusals (§4.28: an importer placeholder is not a
+  person — refused client- and server-side; copy stays reference-free,
+  rule 43), the designed no-ops (a drop onto the only selection, a
+  merge with no faces), the one-transaction `assign_person` merges
+  (#178/§4.1: the EMPTY group part — a status seat can never reach the
+  up-front path validation) with the #133 post-merge re-anchor (the
+  centre opens the target — only on success), the merge-settings save
+  and the #101 rename-selection route into the shared Edit dialog. The
+  view reactions (the anchor/image/mode setters, the #260 drag clear,
+  the Edit-dialog open) are injected deps with the same identities the
+  inline callbacks had (#98); the dialogs read the state, the engine
+  owns the ordering.
 
 **45. (v4.2, #234) Optimistic verdict acknowledgement.**
 
