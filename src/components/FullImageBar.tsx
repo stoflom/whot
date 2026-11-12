@@ -35,6 +35,9 @@ export interface FullImageBarProps {
   stepNoun: "face" | "image";
   /** the stored display rotation (#122) — the context-menu twin */
   onRotate: (delta: 90 | -90) => void;
+  /** #298 (rule 51): the annotated-image export dialog — the
+      context-menu twin */
+  onExport: () => void;
   /** the surface's close/back control (✕/Esc on the split,
       *← rolls* on the detail) */
   close: ReactNode;
@@ -91,6 +94,13 @@ export function FullImageBar(p: FullImageBarProps) {
         title="Rotate 90° counter-clockwise (stored)"
       >
         ⟲
+      </button>
+      <button
+        className="ghost"
+        onClick={p.onExport}
+        title="Export annotated image… (rectangles + names)"
+      >
+        ⤓
       </button>
       {p.close}
     </div>

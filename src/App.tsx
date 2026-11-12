@@ -26,6 +26,7 @@ import ContextConfirmDialog from "./components/ContextConfirmDialog";
 import { PickPersonDialog, NoFacesDialog } from "./components/guards";
 import ConfirmRemoveDialog from "./components/ConfirmRemoveDialog";
 import AddGroupDialog from "./components/AddGroupDialog";
+import AnnotatedExportDialog from "./components/AnnotatedExportDialog";
 import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
 import { FullImageBar } from "./components/FullImageBar";
 import MergeSimilarDialog from "./components/MergeSimilarDialog";
@@ -376,6 +377,10 @@ export default function App() {
   // DISTINCT person of the scope (the tree owns its own instance for
   // person rows)
   const [faceAddGroup, setFaceAddGroup] = useState<{ ids: number[] } | null>(null);
+  // #298 (rule 51): the annotated-image export — the dialog targets
+  // the invoked image's row (its faces are the §4.10 visible pass,
+  // computed beside the dialog's render)
+  const [exportImage, setExportImage] = useState<ImageRow | null>(null);
   // #101 (§4.24): grid editing lives in one dialog; #123: Apply extends
   // the pending SET (screen only, nothing commits), Accept commits it all
   const [edit, setEdit] = useState<{
@@ -1619,6 +1624,16 @@ export default function App() {
     },
     [openMenu, openRollAt, reimportBranch, toggleRollRecursive]
   );
+  // #298 (rule 51): the annotated-image export — the bar's ⤓ button
+  // and the image-area menu's entry both open the ONE dialog on the
+  // invoked image's row
+  const openExport = useCallback(
+    (imageId: number) => {
+      const row = snap?.images.find((i) => i.id === imageId);
+      if (row) setExportImage(row);
+    },
+    [snap]
+  );
   const imageAreaMenu = useCallback(
     (e: ReactMouseEvent, imageId: number) => {
       if (!snap) return;
@@ -1646,12 +1661,14 @@ export default function App() {
         openRollPath: (imageId) =>
           api.openRoll(imageId).catch((err) => setError(String(err))),
         rotateImage: rotateImg,
+        // #298 (rule 51): the export dialog's entry
+        exportAnnotated: openExport,
         changeSel,
       }));
     },
     // #228 (F-L4): sel read via selRef — the callback identity must not
     // churn per face selection (it re-renders memo(RollsThumbs))
-    [snap, faceVisible, openMenu, rotateImg, changeSel, openRollBranch]
+    [snap, faceVisible, openMenu, rotateImg, changeSel, openRollBranch, openExport]
   );
 
   const imageMenu = useCallback(
@@ -2777,6 +2794,7 @@ export default function App() {
                   pos={splitStep.pos}
                   stepNoun="face"
                   onRotate={(d) => rotateImg(splitRow.id, d)}
+                  onExport={() => openExport(splitRow.id)} // #298
                   close={
                     <button
                       className="ghost"
@@ -2880,6 +2898,7 @@ export default function App() {
                 pos={imgStepIdx}
                 stepNoun="image"
                 onRotate={(d) => rotateImg(imgRow.id, d)}
+                onExport={() => openExport(imgRow.id)} // #298
                 close={
                   <button className="secondary" onClick={() => setImageId(null)}>
                     ← rolls
@@ -3089,6 +3108,24 @@ export default function App() {
             if (norm && ids.length > 0) addPersonsToGroup(ids, norm);
           }}
           onCancel={() => setFaceAddGroup(null)}
+        />
+      )}
+      {/* #298 (rule 51): the annotated-image export — the bar's ⤓ and
+          the image-area menu's entry both land here; the faces are the
+          §4.10 visible pass of the invoked image */}
+      {exportImage && (
+        <AnnotatedExportDialog
+          image={exportImage}
+          faces={
+            snap
+              ? snap.faces.filter(
+                  (f) => f.image_id === exportImage.id && faceVisible(f)
+                )
+              : []
+          }
+          onClose={() => setExportImage(null)}
+          onSaved={setInfo}
+          onError={setError}
         />
       )}
       {edit && snap && (

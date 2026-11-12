@@ -205,6 +205,14 @@ export const openImage = (imageId: number) => invoke<string>("open_image", { ima
 export const openDir = (path: string) => invoke<void>("open_dir", { path });
 
 export const openRoll = (imageId: number) => invoke<void>("open_roll", { imageId });
+
+// #298 (gui-design v16.0, rule 51) — the annotated-image export: the
+// frontend's canvas-encoded bytes (PNG/JPEG/WebP) to the path the
+// native save dialog chose. The Rust side is a dumb writer (no DB,
+// no decode) — a failure names the path (the caller's error toast,
+// #144).
+export const saveImageFile = (path: string, data: Uint8Array) =>
+  invoke<void>("save_image_file", { path, data });
 export const personFaceClusters = (personId: number, threshold: number) =>
   invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
 export const getSettings = () => invoke<Settings>("get_settings");

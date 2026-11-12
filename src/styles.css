@@ -609,6 +609,10 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .dialog p { margin: 0; font-size: 0.85rem; }
 .dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: var(--dim); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+/* #298 (rule 51): the export dialog's save-path field — the input
+   shares its row with the browse button */
+.dialog-path-row { display: flex; gap: 0.4rem; align-items: center; }
+.dialog-path-row input { flex: 1; }
 
 /* ---------------------------------------------------------------- toast */
 
