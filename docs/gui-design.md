@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 14.4** (#294) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 14.5** (#295) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2374,7 +2374,18 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   to), and the #234 advance-target prefetch (`prefetchRef`/
   `prefetchTarget`) plus the #222 verdict-flight state (`inFlight`)
   stay App-owned — they are verdict machinery bound to the view-state
-  refs, not snapshot sync.
+  refs, not snapshot sync. v14.5 (#295): the remaining inline
+  dialog/overlay wiring leaves App's JSX — the #123 context-change
+  guard, the #176 Person-mode guard dialogs (the no-anchor pointer and
+  the sticky-person Show-All escape) and the #165/§4.13 person-removal
+  confirm become dedicated components (`components/ContextConfirmDialog.tsx`,
+  `components/guards.tsx`, `components/ConfirmRemoveDialog.tsx`) with
+  their copy and button contracts co-tested (rule 43: product
+  language, no design/issue references). The mount/close decisions and
+  the action handlers stay App-side; the dialogs are mount-gated, so
+  the #98 identity rule is untouched (no persistent-tree callback
+  crosses the boundary). The #275 hover highlight needs no extraction —
+  it is already imperative (`data-sync-hover` sync, no React state).
 
 **45. (v4.2, #234) Optimistic verdict acknowledgement.**
 
