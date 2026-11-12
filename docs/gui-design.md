@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 14.2** (#291/#292) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 14.3** (#293) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2340,7 +2340,23 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   `splitStepPos` from `sections.ts`, so the `‹ 1/4 faces ›` step and
   the ← → keys share the one rule). App keeps only the `useMemo`
   bindings, churning at exactly the old rates; `stepSplitFace` (the
-  state transition behind a step) stays App-owned.
+  state transition behind a step) stays App-owned. v14.3 (#293): the
+  face-selection layer leaves App as the co-tested hook
+  `src/useSelectionState.ts` — the `sel` state + its mirroring
+  `selRef`, the #53/#88 `lastSelRef` and the #69 range `anchorRef`,
+  and the whole handler family (`changeSel`, `toggle`, `toggleMany`,
+  `rectToggle`, `actionScope`, `selectOnly`, `rangeSelect`,
+  `renderedIds`) plus the tree's `selPersons` state. The handlers are
+  ref-driven by construction (the #98 rule preserved: a selection
+  change churns no callback identity); the view-context reactions a
+  toggle triggers — `closeSplitForFaces` (#52) and `followCrop`
+  (#201/§4.37) — are injected deps, and `renderedIds` reads the
+  App-owned `sectionsRef`/`sectionsForImageRef` (§4.44 stage 1). The
+  tree-select *logic* (#35/#62/#200 — context confirm, re-anchor, mode
+  routing) stays in `handleTreeSelect`: only the `selPersons` state
+  moves. `imgSel` (the §4.23 right-pane thumb selection) stays
+  App-owned — its branch-reset is declared inside the root/branch
+  state block, above the hook's placement.
 
 **45. (v4.2, #234) Optimistic verdict acknowledgement.**
 
