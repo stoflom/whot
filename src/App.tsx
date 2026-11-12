@@ -135,6 +135,9 @@ import { useClickPairGuard } from "./clickPair";
 // §4.44 + #222 (F-H3): the review-verdict callbacks — the #98 identity
 // rule lives in the hook (person anchor read via refs), co-tested
 import { useReviewVerdicts } from "./reviewVerdicts";
+// §4.44 round 2 stage 2 (#293): the face-selection layer — the sel
+// state + mirroring refs + the whole ref-driven handler family
+import { useSelectionState } from "./useSelectionState";
 // #281: the pure delta-protocol helpers (upsert/drop + exact staleness)
 import { applyDeltaToSnapshot, deltaStale } from "./deltas";
 
@@ -231,16 +234,12 @@ export default function App() {
   const [importInitial, setImportInitial] = useState<
     Partial<Omit<ImportOptions, "rollDir">> | null
   >(null);
-  const [sel, setSel] = useState<Set<number>>(new Set());
-  const [selPersons, setSelPersons] = useState<Set<number>>(new Set());
   const [confirmRemove, setConfirmRemove] = useState<number[] | null>(null);
-  // #98 (§4.31) — hover and "latest selection" are refs: the pointer
-  // crossing cards must never re-render the app. The highlight is synced
-  // imperatively (data-sync-hover on card + overlay rect) by the
-  // mousemove/scroll listener below.
+  // #98 (§4.31) — hover is a ref: the pointer crossing cards must never
+  // re-render the app. The highlight is synced imperatively
+  // (data-sync-hover on card + overlay rect) by the mousemove/scroll
+  // listener below. (The selection refs live in useSelectionState, #293.)
   const hoverRef = useRef<number | null>(null);
-  const selRef = useRef<Set<number>>(new Set());
-  selRef.current = sel;
   // #228 (F-L4): the menu callbacks read the selections through these
   // refs so memo(RollsThumbs) is not re-rendered by a face/image
   // selection change via callback identity churn
@@ -328,8 +327,7 @@ export default function App() {
   const [clusters, setClusters] = useState<AppearanceGroup[] | null>(null);
   const [refcrops, setRefcrops] = useState<Refcrop[]>([]);
   // #53 (§4.17): most recently selected card — Ctrl-G's fallback target
-  // when nothing is hovered
-  const lastSelRef = useRef<number | null>(null);
+  // when nothing is hovered — lives in useSelectionState now (lastSelRef)
   // #88 (§4.28): Merge Similar Persons triage + shared merge confirmation;
   // v13.0 (#287): mergeAnchor != null = the anchored detail-panel route
   // (the dialog lists only that person's cluster); null = the tree route
@@ -515,6 +513,64 @@ export default function App() {
   // untouched card on a verdict.
   const facesByIdRef = useRef(facesById);
   facesByIdRef.current = facesById;
+
+  // ------------------------------------------------------------ selection
+
+  // #52 (§4.15): the split follows the selection — it closes itself when
+  // the selection moves to a different image and stays open while the new
+  // selection is on the image it already shows; manual opens always win
+  const closeSplitForFaces = useCallback(
+    (ids: number[]) => {
+      if (splitImageId == null) return;
+      if (!ids.some((id) => facesByIdRef.current.get(id)?.image_id === splitImageId))
+        setSplitImageId(null);
+    },
+    [splitImageId]
+  );
+
+  // #201 (§4.37) — a crop click in the focus split follows the same
+  // plain-anchor rule as the overlay rects (#171): the right pane moves
+  // to the clicked face's person; a NULL person_id leaves it as it was
+  const followCrop = useCallback(
+    (id: number) => {
+      if (splitImageId == null) return;
+      const f = facesByIdRef.current.get(id);
+      if (f && f.person_id != null) setPersonId(f.person_id);
+    },
+    [splitImageId]
+  );
+
+  // §4.44 round 2 stage 2 (#293): the face-selection layer — the sel
+  // state + its mirroring refs and the whole ref-driven handler family
+  // (useSelectionState.ts, co-tested). Identity per #98: a selection
+  // change churns no callback identity; the injected view-context
+  // reactions keep the churn they always had. `imgSel` (the §4.23
+  // right-pane thumb selection) stays App-owned above — its branch
+  // reset lives in the root/branch state block.
+  const {
+    sel,
+    setSel,
+    selRef,
+    lastSelRef,
+    anchorRef,
+    changeSel,
+    toggle,
+    toggleMany,
+    rectToggle,
+    actionScope,
+    selectOnly,
+    rangeSelect,
+    selPersons,
+    setSelPersons,
+  } = useSelectionState({
+    closeSplitForFaces,
+    followCrop,
+    setPersonId,
+    facesByIdRef,
+    sectionsRef,
+    sectionsForImageRef,
+    splitImageId,
+  });
   const selectedPerson = personId != null ? personsById.get(personId) ?? null : null;
   // #99 (§4.10): the status filter — one value drives every view's
   // visibility, tree presence/counts (#28 generalised) and the review set
@@ -715,10 +771,8 @@ export default function App() {
   );
 
   // #123: a selection change INSIDE the context never asks — the
-  // Apply → change → Apply loop is dialog-free by design
-  const changeSel = useCallback((next: Set<number>) => {
-    setSel(next);
-  }, []);
+  // Apply → change → Apply loop is dialog-free by design. (`changeSel`
+  // itself is useSelectionState's, #293.)
 
   // #123: only a complete context change (another person, a view switch,
   // focus open/close) asks drop-or-accept while the set is live — the
@@ -735,80 +789,6 @@ export default function App() {
   useEffect(() => {
     if (contextConfirm != null && pending.length === 0) setContextConfirm(null);
   }, [contextConfirm, pending]);
-
-  // ------------------------------------------------------------ selection
-
-  // #52 (§4.15): the split follows the selection — it closes itself when
-  // the selection moves to a different image and stays open while the new
-  // selection is on the image it already shows; manual opens always win
-  const closeSplitForFaces = useCallback(
-    (ids: number[]) => {
-      if (splitImageId == null) return;
-      if (!ids.some((id) => facesByIdRef.current.get(id)?.image_id === splitImageId))
-        setSplitImageId(null);
-    },
-    [splitImageId]
-  );
-
-  // #201 (§4.37) — a crop click in the focus split follows the same
-  // plain-anchor rule as the overlay rects (#171): the right pane moves
-  // to the clicked face's person; a NULL person_id leaves it as it was
-  const followCrop = useCallback(
-    (id: number) => {
-      if (splitImageId == null) return;
-      const f = facesByIdRef.current.get(id);
-      if (f && f.person_id != null) setPersonId(f.person_id);
-    },
-    [splitImageId]
-  );
-
-  const toggle = useCallback(
-    (id: number) => {
-      anchorRef.current = id; // #69: the toggled card becomes the range anchor
-      closeSplitForFaces([id]);
-      followCrop(id); // #201 (§4.37): the right pane follows the crop
-      const n = new Set(selRef.current);
-      if (n.has(id)) n.delete(id);
-      else {
-        n.add(id);
-        lastSelRef.current = id;
-      }
-      changeSel(n);
-    },
-    [closeSplitForFaces, followCrop, changeSel]
-  );
-  const toggleMany = useCallback(
-    (ids: number[], on: boolean) => {
-      if (on && ids.length > 0) lastSelRef.current = ids[ids.length - 1];
-      const n = new Set(selRef.current);
-      ids.forEach((i) => (on ? n.add(i) : n.delete(i)));
-      changeSel(n);
-    },
-    [changeSel]
-  );
-  // #171 (§4.37) — a rect click in a full-image view toggles the
-  // selection as before AND moves the right pane to that face's person:
-  // a plain anchor (no context change, no view switch — deliberately
-  // not handleTreeSelect's §4.15 yank); a NULL person_id (legacy rows)
-  // leaves the anchor untouched. FaceOverlay renders only in the focus
-  // split and the rolls detail, so this is scoped to the full-image
-  // surfaces by construction.
-  const rectToggle = useCallback(
-    (id: number) => {
-      toggle(id);
-      const f = facesByIdRef.current.get(id);
-      if (f && f.person_id != null) setPersonId(f.person_id);
-    },
-    [toggle]
-  );
-
-  // #49 (§4.14) — effective action scope: the active selection when the
-  // invoked card is part of it, otherwise just that card. Reads selRef so
-  // the callback identity never changes with the selection (#98).
-  const actionScope = useCallback((id: number): number[] => {
-    const s = selRef.current;
-    return s.has(id) && s.size > 1 ? [...s] : [id];
-  }, []);
 
   // ------------------------------------------------------------ mutations
 
@@ -1748,48 +1728,6 @@ export default function App() {
   );
 
   // ------------------------------------------------------------ sections
-
-  // #69 — anchor + shift-click range selection over the rendered card
-  // order (sections render back-to-back, so ranges may span sections)
-  const anchorRef = useRef<number | null>(null);
-  const renderedIds = useCallback(
-    () =>
-      (splitImageId != null
-        ? sectionsForImageRef.current(splitImageId)
-        : sectionsRef.current
-      ).flatMap((s) => s.faceIds),
-    [splitImageId]
-  );
-  // plain click: select just this card, drop the anchor
-  const selectOnly = useCallback(
-    (id: number) => {
-      anchorRef.current = id;
-      closeSplitForFaces([id]);
-      followCrop(id); // #201 (§4.37): the right pane follows the crop
-      lastSelRef.current = id;
-      changeSel(new Set([id]));
-    },
-    [closeSplitForFaces, followCrop, changeSel]
-  );
-  // shift-click: the contiguous range anchor…clicked card; the anchor
-  // stays put so repeated shift-clicks re-anchor the same start, the
-  // clicked card becomes the new last-selected
-  const rangeSelect = useCallback(
-    (id: number) => {
-      const ids = renderedIds();
-      const ai = anchorRef.current == null ? -1 : ids.indexOf(anchorRef.current);
-      const ci = ids.indexOf(id);
-      if (ai === -1 || ci === -1) {
-        // anchor gone (filtered/removed) or card not in this view
-        selectOnly(id);
-        return;
-      }
-      const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
-      lastSelRef.current = id;
-      changeSel(new Set(ids.slice(lo, hi + 1)));
-    },
-    [renderedIds, selectOnly, changeSel]
-  );
 
   // #97/#98: one suggestion source per snapshot — stable identity
   const personOptions = useMemo(() => snap?.persons ?? [], [snap]);
