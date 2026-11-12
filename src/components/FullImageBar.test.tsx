@@ -33,11 +33,13 @@ const mount = (over: {
   pos?: number;
   stepNoun?: "face" | "image";
   onRotate?: (d: 90 | -90) => void;
+  onExport?: () => void;
   rtype?: string | null;
   img?: ImageRow;
 } = {}) => {
   const step = over.step ?? vi.fn();
   const onRotate = over.onRotate ?? vi.fn();
+  const onExport = over.onExport ?? vi.fn();
   const utils = render(
     <FullImageBar
       img={over.img ?? IMG}
@@ -49,10 +51,11 @@ const mount = (over: {
       pos={over.pos ?? 2}
       stepNoun={over.stepNoun ?? "face"}
       onRotate={onRotate}
+      onExport={onExport}
       close={<button data-testid="close">×</button>}
     />
   );
-  return { step, onRotate, ...utils };
+  return { step, onRotate, onExport, ...utils };
 };
 
 // scoped to a mount's own container — sibling mounts stay in the
@@ -64,6 +67,15 @@ const btn = (c: ParentNode, title: string) =>
 afterEach(cleanup);
 
 describe("FullImageBar (#275)", () => {
+  it("#298 (rule 51): the ⤓ button fires the caller's export handler", () => {
+    const onExport = vi.fn();
+    const { container } = mount({ onExport });
+    fireEvent.click(
+      btn(container, "Export annotated image… (rectangles + names)"),
+    );
+    expect(onExport).toHaveBeenCalledTimes(1);
+  });
+
   it("is ONE bar carrying path, copy, the LABELLED ‹ n/m › cluster, rotation and close", () => {
     const { container } = mount(); // default: the face surface
     const bar = container.querySelector(".full-image-bar")!;
@@ -75,6 +87,10 @@ describe("FullImageBar (#275)", () => {
     expect(btn(container, "next face (→)")).toBeTruthy();
     expect(btn(container, "Rotate 90° clockwise (stored)")).toBeTruthy();
     expect(btn(container, "Rotate 90° counter-clockwise (stored)")).toBeTruthy();
+    // #298 (rule 51): the export button sits beside the rotations,
+    // before the close control
+    const exp = btn(container, "Export annotated image… (rectangles + names)");
+    expect(exp).toBeTruthy();
     expect(bar.querySelector('[data-testid="close"]')).toBeTruthy();
     // nothing above it — the bar is the surface's header
     expect(container.firstElementChild).toBe(bar);
