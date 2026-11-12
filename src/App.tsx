@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type SetStateAction,
 } from "react";
 import * as api from "./api";
 import type {
@@ -46,7 +47,7 @@ import {
   restoreLinkStatus,
   type Verdict,
 } from "./verdictFlip";
-import { mountLimitFor, growLimit, GRID_MOUNT_INITIAL } from "./gridMount";
+import { mountLimitFor, growLimit } from "./gridMount";
 import {
   firstRealGroup,
   renameGroupFor as renameGroup,
@@ -142,6 +143,9 @@ import { useSelectionState } from "./useSelectionState";
 // §4.44 round 2 stage 3 (#294): the backend sync layer — snapshot
 // state + the #219 delta transport + the #208 focus probe
 import { useSnapshotSync } from "./useSnapshotSync";
+// #297 (rule 50): session persistence — the synchronous seed + the
+// restore/save effects (App keeps only setter bindings)
+import { useSessionInitial, useSessionPersistence } from "./useSessionState";
 // §4.44 round 2 stage 5 (#296): the merge engine — triage + §4.28
 // confirmation + the #135 face-level path, co-tested
 import { useMergeFlow } from "./useMergeFlow";
@@ -176,14 +180,17 @@ export default function App() {
     applyDeltas,
     onImported,
   } = useSnapshotSync();
-  const [mode, setMode] = useState<Mode>("review");
+  // #297 (rule 50): the synchronous session seed (localStorage needs no
+  // snapshot — the ids are reconciled by useSessionPersistence below)
+  const sessionInitial = useSessionInitial();
+  const [mode, setMode] = useState<Mode>(() => sessionInitial.mode);
   // #176 (§4.41): the Person-mode guard dialogs — the no-anchor picker
   // pointer (modeless — the tree under it stays clickable) and the
   // sticky-person guard (once per person+filter pair)
   const [pickPersonDialog, setPickPersonDialog] = useState(false);
   const [noFacesDialog, setNoFacesDialog] = useState(false);
   const noFacesKeyRef = useRef("");
-  const [personId, setPersonId] = useState<number | null>(null);
+  const [personId, setPersonId] = useState<number | null>(() => sessionInitial.personId);
   // the pointer dialog follows its purpose: it closes as soon as a
   // person is anchored or the user leaves Person mode
   useEffect(() => {
@@ -193,10 +200,10 @@ export default function App() {
   // #191 — the WebKitGTK right-click/left-click synthetic pair guard
   // (the rule and its wiring live in clickPair.ts, §4.44 co-tested)
   useClickPairGuard();
-  const [imageId, setImageId] = useState<number | null>(null);
+  const [imageId, setImageId] = useState<number | null>(() => sessionInitial.imageId);
   // #162: the Rolls path-filter root — session state so it survives tab
   // switches (RollsPane unmounts when the view changes); '/' = whole tree
-  const [rollRoot, setRollRoot] = useState("/");
+  const [rollRoot, setRollRoot] = useState<string>(() => sessionInitial.rollRoot);
   // #274: latest-value ref — the menu callback reads it without churning
   // its identity (the #228 rule)
   const rollRootRef = useRef(rollRoot);
@@ -205,11 +212,13 @@ export default function App() {
   // session state like the root (survives mode switches): absolute
   // path, defaults to the root itself, re-validated when the root
   // changes (a selection outside the new root falls back to it)
-  const [rollBranch, setRollBranch] = useState("/");
+  const [rollBranch, setRollBranch] = useState<string>(() => sessionInitial.rollBranch);
   // #265: the open branches of the Rolls path hierarchy — session
   // state like the root (RollsPane unmounts while a roll's grid is
   // open; returning must show the tree the way it was)
-  const [rollOpenSet, setRollOpenSet] = useState<Set<string>>(new Set());
+  const [rollOpenSet, setRollOpenSet] = useState<Set<string>>(
+    () => new Set(sessionInitial.rollOpen)
+  );
   const toggleRollBranch = useCallback((path: string) => {
     setRollOpenSet((prev) => {
       const next = new Set(prev);
@@ -221,7 +230,9 @@ export default function App() {
   // v12.4 (#280)/§4.39: the per-branch recursive-grid state — ABSOLUTE
   // paths, session state like the open-set; the selected branch's grid
   // lists every descendant image while ticked
-  const [rollRecursive, setRollRecursive] = useState<Set<string>>(new Set());
+  const [rollRecursive, setRollRecursive] = useState<Set<string>>(
+    () => new Set(sessionInitial.rollRecursive)
+  );
   const toggleRollRecursive = useCallback((path: string) => {
     setRollRecursive((prev) => {
       const next = new Set(prev);
@@ -246,7 +257,9 @@ export default function App() {
   // DetailPane's right-pane slot (survives tab switches); null = closed.
   // v12.4 (#280): the branch re-import routes pre-check Re-import, so
   // the pane state carries optional initial options alongside the dir
-  const [importDir, setImportDir] = useState<string | null>(null);
+  const [importDir, setImportDir] = useState<string | null>(
+    () => sessionInitial.importDir
+  );
   const [importInitial, setImportInitial] = useState<
     Partial<Omit<ImportOptions, "rollDir">> | null
   >(null);
@@ -269,7 +282,9 @@ export default function App() {
   // grid handlers) — same latest-value pattern as selRef/hoverRef
   const sectionsRef = useRef<Section[]>([]);
   const sectionsForImageRef = useRef<(imgId: number) => Section[]>(() => []);
-  const [splitImageId, setSplitImageId] = useState<number | null>(null);
+  const [splitImageId, setSplitImageId] = useState<number | null>(
+    () => sessionInitial.splitImageId
+  );
   // #200 reopened (gui-design v3.93, §4.40): the pending review
   // re-anchor scroll — a tree select during Review re-anchors the
   // review, and the grid scrolls to that person's section through a
@@ -291,7 +306,9 @@ export default function App() {
   // survives grid unmounts, and the reveal rule (§4.40 re-anchor, §4.30
   // accept-&-next) grows into the target before the scroll runs.
   // RollsThumbs windows its branch thumbs with the same rule in-pane.
-  const [mountLimit, setMountLimit] = useState(GRID_MOUNT_INITIAL);
+  const [mountLimit, setMountLimit] = useState<number>(
+    () => sessionInitial.mountLimit
+  );
   const growMount = useCallback(
     () => setMountLimit((n) => growLimit(n)),
     []
@@ -313,7 +330,10 @@ export default function App() {
   // centre width: the state + drag logic live in paneState.ts (§4.44
   // co-tested clamp rule); App keeps the named handles it always had
   const { paneSizes, setPaneSizes, rollCenterPx, setRollCenter, startDrag } =
-    usePaneSizes(rollsBrowse);
+    usePaneSizes(rollsBrowse, {
+      left: sessionInitial.paneLeft,
+      right: sessionInitial.paneRight,
+    });
   // #255: keyboard resize for the pane dividers (the mouse drag is
   // startDrag; the arrows step the SAME size the drag clamps to). The
   // divider owns its keys (data-owns-keys) so the global arrow-step
@@ -397,7 +417,17 @@ export default function App() {
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // #31: the tree's text filter (declared early — stepIds needs it, #125)
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState<string>(() => sessionInitial.treeFilter);
+  // #297 (rule 50): the tree's collapsed set — lifted out of PersonTree so
+  // it persists across restarts. The toggle is identity-stable (a plain
+  // setter wrapper) so memo(PersonTree) is not churned by a toggle.
+  const [treeCollapsed, setTreeCollapsed] = useState<Set<string>>(
+    () => new Set(sessionInitial.treeCollapsed)
+  );
+  const toggleTreeCollapsed = useCallback(
+    (updater: SetStateAction<Set<string>>) => setTreeCollapsed(updater),
+    []
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   // v12.2 (#279) — the ? help screen (top-bar ghost button beside ⚙)
   const [helpOpen, setHelpOpen] = useState(false);
@@ -495,6 +525,32 @@ export default function App() {
   // #99 (§4.10): the status filter — one value drives every view's
   // visibility, tree presence/counts (#28 generalised) and the review set
   const faceFilter = (snap?.settings.face_filter ?? "all") as FaceFilter;
+  // #297 (rule 50): the persistence — the ONE restore effect (ids
+  // validated against the snapshot; the #176 boot-guard key pre-seeded)
+  // and the throttled save of the whole persisted set. Setters only —
+  // no callback churn (#98).
+  useSessionPersistence({
+    snapRef,
+    mode,
+    personId,
+    imageId,
+    splitImageId,
+    rollRoot,
+    rollBranch,
+    rollOpen: rollOpenSet,
+    rollRecursive,
+    importDir,
+    treeFilter: filter,
+    treeCollapsed,
+    mountLimit,
+    paneLeft: paneSizes.left,
+    paneRight: paneSizes.right,
+    setPersonId,
+    setImageId,
+    setSplitImageId,
+    noFacesKeyRef,
+    faceFilter,
+  });
   const clusterGroup = snap?.settings.cluster_group ?? "accuracy";
   const clusterThreshold = snap?.settings.cluster_threshold ?? 0.4;
   // #215: a stable identity — the memo(pane) handlers below carry it
@@ -1153,7 +1209,17 @@ export default function App() {
   // open, whose container scroll is the focus view's own) and restored
   // whenever the grid RETURNS — a mode switch or the full image closing
   // — so the toolbar index and the visible place never disagree
-  const centerScroll = useScrollPlace(mode, splitImageId == null);
+  // #297 (rule 50): the `mode` also persists the place across restarts.
+  // The key carries the loading state: on a boot restore the grid
+  // mounts EMPTY (the snapshot has not landed) and a place beyond the
+  // empty range clamps to 0 — re-keying when the content arrives
+  // re-applies the restored place (the in-session §4.40 path is
+  // unaffected: the key then changes only with the mode).
+  const centerScroll = useScrollPlace(
+    mode + (snap ? "" : "-loading"),
+    splitImageId == null,
+    mode,
+  );
   // #200 reopened (gui-design v3.93, §4.40): the tree re-anchor scroll —
   // layout effect (post-commit, pre-paint, no frame dependency); the
   // optional chain: a tree person without a review section (no face
@@ -2537,6 +2603,8 @@ export default function App() {
             selectedId={personId}
             filter={filter}
             onFilter={setFilter}
+            collapsed={treeCollapsed}
+            onSetCollapsed={toggleTreeCollapsed}
             onSelect={handleTreeSelect}
             selectedIds={selPersons}
             onRemovePersons={doRemovePersons}

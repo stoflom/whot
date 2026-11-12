@@ -5,7 +5,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type MouseEvent as ReactMouseEvent,
+  type SetStateAction,
 } from "react";
 import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
@@ -124,6 +126,10 @@ interface Props {
   /** #135: a face drag dropped on a person row — validation +
       confirmation live in App (same shared path as every merge) */
   onDropFaces?: (faceIds: number[], personId: number) => void;
+  /** #297 (rule 50): the tree's collapsed set is owned by App so it can
+      persist across restarts — the component only renders + toggles it */
+  collapsed: Set<string>;
+  onSetCollapsed: Dispatch<SetStateAction<Set<string>>>;
 }
 
 function PersonRow({
@@ -281,7 +287,7 @@ function PersonRow({
 // own values moved
 const MemoPersonRow = memo(PersonRow);
 
-function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onAddGroup, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces }: Props) {
+function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, selectedIds, onRename, onSelectPending, onRemovePersons, onRenameGroup, onDeleteGroup, onMovePersons, onAddGroup, onError, onOpenMerge, onMergeInto, onRenameSelection, primaryRot, faceDragIds, faceDragRef, onDropFaces, collapsed, onSetCollapsed }: Props) {
   // #135: a face drag ending without a drop (Esc, drop outside) must
   // clear the merge-target highlight — the drag state itself lives in
   // App, only the highlight is ours
@@ -338,7 +344,8 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
   // #260: the shared live-face-drag predicate (ONE definition, faceDrop.ts)
   const liveFaceDrag = () => faceDragLive(faceDragRef?.current);
   const byId = useMemo(() => new Map(persons.map((p) => [p.id, p])), [persons]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // #297 (rule 50): the collapsed set is owned by App (it persists across
+  // restarts) — this component only renders + toggles it
   // #255: the roving-tabindex focus — exactly one visible item (branch
   // node or person row) is tabbable; arrows move it (treeItemKey)
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
@@ -369,7 +376,7 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
     p.groups.some((g) => g.toLowerCase().includes(f));
 
   const toggle = (path: string) =>
-    setCollapsed((prev) => {
+    onSetCollapsed((prev) => {
       const n = new Set(prev);
       if (n.has(path)) n.delete(path);
       else n.add(path);
@@ -389,8 +396,8 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
     }
     return out;
   };
-  const rollUpAll = () => setCollapsed(new Set(collectBranchPaths(tree, "")));
-  const rollDownAll = () => setCollapsed(new Set());
+  const rollUpAll = () => onSetCollapsed(new Set(collectBranchPaths(tree, "")));
+  const rollDownAll = () => onSetCollapsed(new Set());
 
   // structural (unfiltered) person ids of a branch — bulk remove (#35).
   // #156: dedupe — a multi-group person sits in several sub-branches and

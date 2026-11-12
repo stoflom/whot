@@ -43,6 +43,8 @@ const renderTree = (filter = "", onFilter: (v: string) => void = vi.fn()) =>
       selectedId={1}
       filter={filter}
       onFilter={onFilter}
+      collapsed={new Set()}
+      onSetCollapsed={() => {}}
       onSelect={() => {}}
       selectedIds={new Set()}
       onRename={() => {}}
