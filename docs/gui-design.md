@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 14.3** (#293) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 14.4** (#294) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2356,7 +2356,25 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   routing) stays in `handleTreeSelect`: only the `selPersons` state
   moves. `imgSel` (the §4.23 right-pane thumb selection) stays
   App-owned — its branch-reset is declared inside the root/branch
-  state block, above the hook's placement.
+  state block, above the hook's placement. v14.4 (#294): the backend
+  sync layer leaves App as the co-tested hook `src/useSnapshotSync.ts`
+  — the `snap`/`loadError`/`noDb` state (#185 routes its own cold-load
+  failure to the §4.36 first-run case), the #208 change stamp
+  (`snapVersionRef`) and the `snapRef` mirror, `refresh`, the #219
+  delta transport (`applyDelta`/`applyDeltas` — staleness exact via
+  `deltaStale`, a drifted or base-stale delta falls back to ONE full
+  refresh), `refreshIfChanged` (the #208 focus/visibility probe — one
+  tiny version probe instead of a whole-snapshot fetch) and
+  `onImported` (#247: a STABLE identity so the import pane's poll
+  chain keeps its `prevRunning` memory). Reads no view state — the
+  hook is self-contained over the `./api` seam and co-tested against a
+  mocked backend. `mutate` stays App-side (it clears the selection on
+  the clearSel path — a view concern; it binds the hook's
+  `applyDeltas`/`refresh` as the one IPC seam the other modules bind
+  to), and the #234 advance-target prefetch (`prefetchRef`/
+  `prefetchTarget`) plus the #222 verdict-flight state (`inFlight`)
+  stay App-owned — they are verdict machinery bound to the view-state
+  refs, not snapshot sync.
 
 **45. (v4.2, #234) Optimistic verdict acknowledgement.**
 
