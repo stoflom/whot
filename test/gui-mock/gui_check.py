@@ -7051,6 +7051,85 @@ def c68_session_persistence(t):
                f"after reload={back} (want 400)")
 
 
+def c69_export_annotated_entry_points(t):
+    """#298 (rule 51, v16.0): the annotated-image export — the ONE
+    bar's ⤓ button (beside the stored rotations) AND the full-image
+    context menu's 'Export annotated image…' entry each open the ONE
+    export dialog (file type / max dimension / save path, prefilled
+    <stem>-annotated.png next to the original)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    # a face card that opens a focus split (the review sections hold
+    # the provisional faces under Show → All, §4.10)
+    pick = js(t, """
+      const snap = window.__MOCK_SNAP;
+      const f = snap.faces.find(f => f.link_status === 'provisional');
+      return f ? f.id : null;
+    """)
+    if not pick:
+        record("C69 export annotated image: both entry points open the dialog (#298)",
+               True, "no provisional face — vacuous")
+        return
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick}']")
+    dblclick(t, card)
+    time.sleep(1.0)
+
+    def bar_titles():
+        return js(t, """
+          const bar = document.querySelector('.focus-pane .full-image-bar');
+          return bar ? [...bar.querySelectorAll('button')].map(b => b.title || '') : null;
+        """)
+
+    titles = bar_titles()
+    rot_ccw = "Rotate 90° counter-clockwise (stored)"
+    export_title = "Export annotated image… (rectangles + names)"
+    bar_ok = (titles is not None
+              and export_title in titles
+              and titles.index(export_title) == titles.index(rot_ccw) + 1)
+
+    # the bar's ⤓ opens the dialog
+    btn_ok, dialog_open = False, False
+    exp_btn = t.find_element(By.CSS_SELECTOR,
+                             f".full-image-bar button[title='{export_title}']")
+    exp_btn.click()
+    time.sleep(0.8)
+    heading = js(t, "return document.querySelector('.dialog h3')?.textContent ?? null")
+    path = js(t, "return document.querySelector('.dialog .dialog-path-row input')?.value ?? null")
+    dialog_open = heading == "Export annotated image" and bool(path)
+    prefilled_ok = bool(path and path.endswith("-annotated.png"))
+    btn_ok = dialog_open
+    # close it (Esc — the dialog owns the keyboard)
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.6)
+    closed = js(t, "return !document.querySelector('.dialog h3')")
+
+    # the context menu's entry opens the SAME dialog
+    menu_ok = False
+    js(t, """
+      const area = document.querySelector('.focus-pane .annotated');
+      if (area) area.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, view: window}));
+    """)
+    time.sleep(0.6)
+    items = [b for b in t.find_elements(By.CSS_SELECTOR, ".ctx-item")
+             if b.text.strip() == "Export annotated image…"]
+    if items and items[0].is_enabled():
+        items[0].click()
+        time.sleep(0.8)
+        heading = js(t, "return document.querySelector('.dialog h3')?.textContent ?? null")
+        menu_ok = heading == "Export annotated image"
+        AC(t.driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.6)
+
+    ok = bar_ok and closed and menu_ok and prefilled_ok
+    record("C69 export annotated image: bar ⤓ + context menu each open the dialog (#298)",
+           ok,
+           f"bar titles={titles} (btn={btn_ok}, closed={closed}); "
+           f"prefilled={path!r} (ok={prefilled_ok}); menu entry={bool(items)} → {menu_ok}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -7060,7 +7139,8 @@ def main():
     holder["t"].set_window_size(1600, 1000)
     for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review, c62_one_ipc_transfer_per_action,
       c63_rolls_image_stepping, c64_roll_branch_reimport_recursive, c65_person_pane_merge_similar,
-      c66_refcrop_image_menu, c67_glyph_vocabulary, c68_session_persistence):
+      c66_refcrop_image_menu, c67_glyph_vocabulary, c68_session_persistence,
+      c69_export_annotated_entry_points):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)

@@ -273,6 +273,9 @@ export interface ImageAreaMenuInput {
   openRollPath: (imageId: number) => void;
   /** #122: the stored display rotation (EXIF key, #118) */
   rotateImage: (imageId: number, delta: number) => void;
+  /** #298 (rule 51): the annotated-image export dialog (the image's
+      row — the dialog's faces are the §4.10 visible pass) */
+  exportAnnotated: (imageId: number) => void;
   changeSel: (next: Set<number>) => void;
 }
 
@@ -316,6 +319,12 @@ export function imageAreaMenuGroups(inp: ImageAreaMenuInput): MenuGroup[] {
         {
           label: "Rotate 90° CCW",
           onClick: () => inp.rotateImage(inp.imageId, -90),
+        },
+        {
+          // #298 (rule 51): the annotated composite — the same
+          // overlay the viewer shows, saved to a chosen path
+          label: "Export annotated image…",
+          onClick: () => inp.exportAnnotated(inp.imageId),
         },
         {
           label: "Select all faces",

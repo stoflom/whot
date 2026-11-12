@@ -62,6 +62,15 @@ async fn get_refcrops(state: State<'_, AppState>, person_id: i64) -> Result<Vec<
     db::get_refcrops(state.paths()?, person_id).map_err(|e| e.to_string())
 }
 
+/// #298 (gui-design v16.0, rule 51) — the annotated-image export:
+/// write the frontend's canvas-encoded bytes (PNG/JPEG/WebP) to the
+/// path the native save dialog chose. A dumb writer — no DB, no
+/// decode; a failure names the path (the caller's error toast, #144).
+#[tauri::command]
+async fn save_image_file(path: String, data: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, &data).map_err(|e| format!("cannot write {path}: {e}"))
+}
+
 /// Full-image context menu (#33): open the image with the system
 /// viewer — the webkit default menu entries don't work.
 ///
@@ -385,6 +394,7 @@ pub fn run() {
             get_data_version,
             get_image_batch,
             get_refcrops,
+            save_image_file,
             open_image,
             open_roll,
             open_dir,

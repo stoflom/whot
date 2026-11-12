@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 15.0** (#297) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 16.0** (#298) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -281,7 +281,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the view stays in full-image mode, the arrows are inactive at the
   first/last face, and the **← → arrow keys mirror the active arrows**;
   the **⟳/⟲ stored-rotation buttons** (§4.32 — both
-  surfaces now; previously only the split had them); and **close/back**
+  surfaces now; previously only the split had them), the **⤓
+  export-annotated button** (rule 51); and **close/back**
   (×/Esc on the split, *← rolls* on the detail) — the only way back to
   the grid, which returns at its saved scroll place. The path is the
   original file's location — never the `/tmp` viewer-fallback copy
@@ -415,7 +416,8 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   may be **recursive** (#169), so `imports.path` records only the roll
   *root* while the image can sit in a subdirectory — the entry opens the
   image's own directory, the full path to where the file can be found),
-  and the rotate entries (§4.32).
+  and the rotate entries (§4.32), and the **export annotated
+  image** entry (rule 51).
   **`open_image` opens the original, not a copy (#268)**: the command
   resolves the image's recorded locations — `images.primary_path` first,
   then the `image_paths` alias set (schema-design §3) — and opens the
@@ -2547,6 +2549,7 @@ visual near-twins (the old `✗` reject vs `✕`/`×` close) is a defect.
 | `📌` | pinned refcrop row | the refcrop list |
 | `☐` / `☑` | sub-branch images off/on | the branch menu & header |
 | `‹` / `›` | previous / next | the nav clusters |
+| `⤓` | export / save | the full-image bar's *⤓* button (rule 51) |
 
 gui-mock patrols the vocabulary (C67): the retired `×` and a `?`
 avatar placeholder must not render anywhere.
@@ -2593,6 +2596,45 @@ thin hook (`useSessionState.ts`); App keeps only setter bindings.
   every `fresh()` and reloads once, so every check boots from the
   same state; a dedicated check pins the contract itself (set a
   place → reload → it comes back).
+
+**51. (v16.0, #298) Export annotated image — what you see is what
+you save.** A full image (both surfaces — the focus split and the
+Rolls image detail) can be exported as ONE annotated image: the
+full image with every visible face's rectangle and person-name
+label baked into the pixels. Entry points: the ONE bar's (rule 46
+/#275) **⤓ button** — beside the stored-rotation buttons — and the
+full-image context menu's ***Export annotated image…*** entry; both
+open the same dialog.
+
+- **The dialog** requests: **file type** (PNG / JPEG / WebP),
+  **size** (original, or a max dimension in px — blank = original)
+  and the **save path** — prefilled with the original file's
+  directory + `<stem>-annotated.<ext>`; a *browse* button opens the
+  native save dialog (filtered to the chosen type).
+- **The render** is a canvas composite of the SAME
+  `images.preview` BLOB pixels the viewer displays, the stored CW
+  rotation applied to the pixels (the #122/§4.32 math), one
+  rectangle per **visible** face (the §4.10 pass) in **display
+  space** — the shared `rotatedRect`/`displayDims` math, so export
+  and display can never diverge — status-coloured (the §4.11
+  palette, rejected at its 0.6 opacity) with the person-name label
+  beneath the rectangle (the viewer's label text). The **selection
+  state is NOT exported** — selection is UI state, not annotation.
+- **Label sizing**: the label scales with the exported width
+  (~0.7 % of it — the viewer's look at a typical pane width),
+  floored at 12 px.
+- **Saving** goes through a new Tauri command `save_image_file`
+  (path + bytes — a dumb writer, no DB, no decode): the canvas
+  encode (JPEG quality 0.92, the #122 re-encode's) is written to
+  the chosen path. A failure reaches the error toast (#144);
+  success is a quiet info toast naming the path.
+- **Implementation stays out of App (§4.44)**: the composite +
+  encode live in a dedicated pure module (`exportAnnotated.ts`),
+  the dialog in `components/AnnotatedExportDialog.tsx`, the menu
+  entry in `menus.ts`, the bar button in `FullImageBar.tsx`; App
+  keeps only the open/close binding.
+- **gui-mock**: a dedicated check pins both entry points (the bar's
+  ⤓ and the menu entry each open the dialog).
 
 ## 5. Related documents
 

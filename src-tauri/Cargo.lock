@@ -4405,7 +4405,7 @@ dependencies = [
 
 [[package]]
 name = "whotapp"
-version = "15.0.0"
+version = "16.0.0"
 dependencies = [
  "anyhow",
  "rusqlite",

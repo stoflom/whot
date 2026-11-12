@@ -346,6 +346,7 @@ describe("imageAreaMenuGroups", () => {
       openRoll: noOp,
       openRollPath: noOp,
       rotateImage: (id, delta) => { rotated = [id, delta]; },
+      exportAnnotated: noOp,
       changeSel: noOp,
     };
     const g = imageAreaMenuGroups(inp);
@@ -354,6 +355,30 @@ describe("imageAreaMenuGroups", () => {
     expect(rotated).toEqual([42, -90]);
     const withFaces = imageAreaMenuGroups({ ...inp, faces: [face()] });
     expect(item(withFaces, "Select all faces")!.disabled).toBe(false);
+  });
+
+  it("'Export annotated image…' sits after the rotations and opens the dialog on the invoked image (#298)", () => {
+    let exported: number | null = null;
+    const inp: ImageAreaMenuInput = {
+      imageId: 42,
+      faces: [],
+      openInViewer: noOp,
+      rollImportId: null,
+      openRoll: noOp,
+      openRollPath: noOp,
+      rotateImage: noOp,
+      exportAnnotated: (id) => { exported = id; },
+      changeSel: noOp,
+    };
+    const g = imageAreaMenuGroups(inp);
+    const flat = g.flatMap((grp) => grp.items);
+    const entry = item(g, "Export annotated image…")!;
+    // placement: directly below 'Rotate 90° CCW', above 'Select all faces'
+    expect(flat.indexOf(entry)).toBe(flat.indexOf(item(g, "Rotate 90° CCW")!) + 1);
+    expect(flat.indexOf(entry)).toBe(flat.indexOf(item(g, "Select all faces")!) - 1);
+    expect(entry.disabled ?? false).toBe(false); // always enabled
+    entry.onClick();
+    expect(exported).toBe(42);
   });
 
   it("'Open roll' sits above 'Open roll path', greys on never-imported, opens the image's branch (#274)", () => {
@@ -365,6 +390,7 @@ describe("imageAreaMenuGroups", () => {
       openRoll: noOp,
       openRollPath: noOp,
       rotateImage: noOp,
+      exportAnnotated: noOp,
       changeSel: noOp,
     };
     const g = imageAreaMenuGroups(inp);
@@ -397,6 +423,7 @@ describe("imageAreaMenuGroups", () => {
       openRoll: noOp,
       openRollPath: noOp,
       rotateImage: noOp,
+      exportAnnotated: noOp,
       changeSel: noOp,
     };
     expect(item(imageAreaMenuGroups(inp), "Open roll path")!.disabled).toBe(true);
