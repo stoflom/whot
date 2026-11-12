@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 14.5** (#295) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 14.6** (#296) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2386,6 +2386,23 @@ GUI settings live in `config/whotrc.json` (created on first need; path from
   the #98 identity rule is untouched (no persistent-tree callback
   crosses the boundary). The #275 hover highlight needs no extraction —
   it is already imperative (`data-sync-hover` sync, no React state).
+  v14.6 (#296, the round's last stage): the merge engine leaves App as
+  the co-tested hook `src/useMergeFlow.ts` — the #88/#287 triage state
+  (`mergeOpen`/`mergeAnchor`: null = the tree route, non-null = the
+  anchored detail-panel route), the shared §4.28 confirmation state
+  (`mergeInto`), the #135 face-level confirmation (`faceMerge`), the
+  UnknownN-target refusals (§4.28: an importer placeholder is not a
+  person — refused client- and server-side; copy stays reference-free,
+  rule 43), the designed no-ops (a drop onto the only selection, a
+  merge with no faces), the one-transaction `assign_person` merges
+  (#178/§4.1: the EMPTY group part — a status seat can never reach the
+  up-front path validation) with the #133 post-merge re-anchor (the
+  centre opens the target — only on success), the merge-settings save
+  and the #101 rename-selection route into the shared Edit dialog. The
+  view reactions (the anchor/image/mode setters, the #260 drag clear,
+  the Edit-dialog open) are injected deps with the same identities the
+  inline callbacks had (#98); the dialogs read the state, the engine
+  owns the ordering.
 
 **45. (v4.2, #234) Optimistic verdict acknowledgement.**
 
