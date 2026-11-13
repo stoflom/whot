@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 17.0** (#300) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 17.1** (#301, #302) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -71,8 +71,14 @@ preserves manual annotations across such a drop & recreate, and
 (backup first) to the status-group layout of §4.35, so the long-lived live
 DB never needs a re-import.
 
-GUI settings live in `config/whotrc.json` (created on first need; path from
-`CONFIG_FILE` in `.env`):
+GUI settings live in `config/whotrc.json` (repo mode; path from
+`CONFIG_FILE` in `.env`). In an installed setup (#301, #302) the file
+is `~/.config/whot/whotrc.json` — copied from the packaged default
+(`/usr/share/whot/whotrc.json`, else the binary-embedded default) on
+first use — and the machine's environment keys ride the same file's
+`env` object (backend-design §2). The GUI behaviour is unchanged in
+17.1 (the `Settings` IPC payload round-trips `env` untouched; the
+setup dialog that edits it is #303):
 
 ```json
 { "cluster_threshold": 0.40, "refcrop_n": 5, "face_filter": "all", "cluster_group": "accuracy", "image_viewer": "", "directory_viewer": "" }

@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 1.19** (#281) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.0** (#301, #302) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -53,10 +53,10 @@ src-tauri/tests/
 
 ## 2. Paths & configuration
 
-`Paths::resolve()` (mirrors `import_roll.py`):
+`Paths::resolve()` has two modes. **Repository mode** mirrors
+`import_roll.py` and is unchanged from 1.x:
 
-1. `WHOT_ROOT` env var, if set — absolute override (required for
-   packaged builds started outside the repo).
+1. `WHOT_ROOT` env var, if set — absolute override.
 2. Else walk up from the cwd looking for a `.env` **file** or a `data/`
    directory (`.env` alone suffices — every key has a default, and a
    fresh clone has no `data/` yet).
@@ -66,10 +66,68 @@ src-tauri/tests/
    `data/faces.db`) and `CONFIG_FILE` (default `config/whotrc.json`),
    joined onto the root. `Paths` keeps the resolved `root` itself
    (the importer locates `scripts/import_roll.py` and sets the child
-   process's cwd there).
+   process's cwd there). A `.env` present in repo mode is the
+   environment source of record — whotrc's `env` object (below) is
+   NOT read there; when `.env` exists it wins (#302's fallback rule).
+
+**Installed mode** (#301, #302) — no `WHOT_ROOT`, and the walk-up finds
+no repo (packaged builds; also a scripts checkout without `.env`):
+
+4. The user config is `~/.config/whot/whotrc.json`
+   (`$WHOT_CONFIG_DIR` overrides — the test hook; `$XDG_CONFIG_HOME/whot`
+   under XDG; the platform-equivalent user config dir elsewhere:
+   `~/Library/Application Support/whot` on macOS,
+   `%APPDATA%\whot` on Windows — Tauri's `app_config_dir()` for the
+   app identifier `whot`). On **first use** the file is created by
+   copying the packaged default: `/usr/share/whot/whotrc.json` when
+   the distro package installed it there (the FHS convention rpm,
+   deb and pacman share — the installer runs as root and never
+   touches a user home), else the default **embedded in the binary**
+   (`config/whotrc.default.json`, `include_str!`) so every bundle
+   (AppImage, macOS, Windows) carries it without resource-dir
+   plumbing. A dev build with neither source present creates no file
+   (`Settings::default()` applies — the first-run flow writes one on
+   the first settings save).
+5. The environment keys come from whotrc's `env` object (below):
+   `FACES_DB` (default `data/faces.db`) resolves a relative path
+   against the app data home `~/.local/share/whot`
+   (`$WHOT_DATA_DIR` overrides; `$XDG_DATA_HOME` honoured). `Paths.root`
+   in installed mode is that data home — the importer child spawn
+   finds no scripts there and fails with its normal not-found error
+   (packaging the scripts is a separate concern; #301 scopes the
+   config only).
+
+### The `env` object (#302)
+
+whotrc.json carries the machine's environment keys in a nested `env`
+object — the same keys `.env` held (`DATA_DIR`, `CONFIG_DIR`,
+`FACES_DB`, `HARVEST_DB`, `CONFIG_FILE`, `INSIGHTFACE_PATH`,
+`DEFAULT_IMAGES_DIR`, `ARCHIVE_DIR`, `DIGIKAM_DB`,
+`DIGIKAM_RECOGNITION_DB`, `LR_CATALOG`, `LR_SIDECARS_DIR`, `PATH_MAP`):
+
+```json
+{ "env": { "DATA_DIR": "${HOME}/.local/share/whot/data",
+           "FACES_DB": "${DATA_DIR}/faces.db" } }
+```
+
+`${VAR}` expansion is the SAME algorithm both parsers already
+implement for `.env`: references resolve against other `env` keys
+first (4 passes), then the process environment; unresolvable
+references stay literal. `Settings` round-trips the object
+(`#[serde(default)] pub env: BTreeMap<String, String>`): `set_settings`
+rewrites it verbatim, so a GUI settings save never clobbers it (the
+setup dialog that edits it is #303). The bundled
+`config/whotrc.default.json` carries ONLY an `env` object — GUI keys
+keep the absent-means-default semantics and enter the file on the
+first settings save.
+
+Precedence in one line: **CLI flags → `.env` (repo mode) → user
+whotrc `env` → built-in defaults.**
 
 GUI settings are **not** in the database: `get_settings`/`set_settings`
-read and write `config/whotrc.json`
+read and write the resolved whotrc.json (`config/whotrc.json` in repo
+mode — path from `CONFIG_FILE` in `.env`; `~/.config/whot/whotrc.json`
+in installed mode)
 (`{cluster_threshold, refcrop_n, face_filter, cluster_group,
 merge_name_distance, merge_suffix_aliases, image_viewer,
 directory_viewer}` with defaults

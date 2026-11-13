@@ -36,7 +36,7 @@ sidecars is available today for testing — see [Legacy recovery](#legacy-recove
 | Status-group fix | `scripts/fix_status_groups.py` | data fix: upgrades a v1.6 `faces.db` in place to the v1.7 status-group layout (`docs/gui-design.md` §4.35) — historical; the current schema is reached via Annotation snapshot (export → recreate → restore) |
 | Staging schema | `database/harvest_schema.sql` | harvest staging DB, created by `harvest_legacy.py` |
 | GUI | repo root (Tauri 2 + React + TS, Rust backend in `src-tauri/`) | review/naming/annotation; serves images from DB BLOBs, no Python at runtime |
-| Config | `.env` (paths), `config/whotrc.json` (GUI settings, created at runtime) | |
+| Config | `.env` (paths, repo checkout) — `config/whotrc.json` (GUI settings; created at runtime); installed: `~/.config/whot/whotrc.json` (GUI settings + the same env keys in its `env` object, copied from the packaged default on first use) | |
 
 ## Setup
 
@@ -52,7 +52,15 @@ sidecars is available today for testing — see [Legacy recovery](#legacy-recove
   (`${HOME}`, `${USER}`, …).
 - The GUI resolves the project root by looking for `.env` or `data/` in the
   current directory or its parents; set `WHOT_ROOT=/path/to/whot` to
-  override (needed for release bundles started outside the repo).
+  override. When no repo is found (installed setups), the config is
+  `~/.config/whot/whotrc.json` — created on first use from
+  `/usr/share/whot/whotrc.json` (distro packages) or the binary-embedded
+  default — and the environment keys live in that file's `env` object
+  (`docs/backend-design.md` §2). A `.env` in the repo, when present,
+  always wins.
+- The import scripts follow the same rule (`dbutil.resolve_env`): `.env`
+  in the scripts' project root if it exists, else
+  `~/.config/whot/whotrc.json`'s `env` object.
 
 ```sh
 npm install

@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 6.6** (major.minor per `AGENTS.md`; major = new feature,
+**Version: 7.0** (#302) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -591,6 +591,22 @@ in its own (drifted) copy, now ONE copy each:
 
 - `load_env(path)` — the `.env` reader (KEY=VALUE, nested `${VAR}`, then
   real-environment fallback; a missing file yields `{}`, never raises).
+- `resolve_env(project_root)` — the environment source of record
+  (#302): when `<project_root>/.env` exists it is parsed with
+  `load_env` (unchanged semantics — a local `.env` wins); otherwise
+  the user config `~/.config/whot/whotrc.json` (`$WHOT_CONFIG_DIR`
+  overrides, then `$XDG_CONFIG_HOME/whot`) is read and its nested
+  `env` object expanded with the SAME `${VAR}` algorithm (other `env`
+  keys first, 4 passes, then the real environment; backend-design §2).
+  A missing file, a missing `env` object, or a malformed JSON yields
+  `{}` — never raises, exactly like `load_env`. Every script obtains
+  its environment through `resolve_env(PROJECT_ROOT)` instead of
+  calling `load_env` directly; `load_env` remains the parser and the
+  test monkeypatch point (it stays called by `resolve_env`).
+- `user_config_path()` — the user whotrc.json path
+  (`$WHOT_CONFIG_DIR/whotrc.json` → `$XDG_CONFIG_HOME/whot/whotrc.json`
+  → `~/.config/whot/whotrc.json`); the `CONFIG_FILE` default for
+  scripts that read the GUI settings directly.
 - `open_ro(path, immutable=False)` — the read-only source connection
   (URL-quoted URI so a `#`/`?` can't truncate it; `immutable` for the
   read-only archive).
