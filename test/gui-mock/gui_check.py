@@ -7130,6 +7130,100 @@ def c69_export_annotated_entry_points(t):
            f"prefilled={path!r} (ok={prefilled_ok}); menu entry={bool(items)} → {menu_ok}")
 
 
+def c70_export_open_after_tick(t):
+    """#300 (rule 51, v17.0): the annotated export's *open after
+    export* tick box — present and OFF by default; a CHECKED export
+    invokes `open_image_file` after the successful save (the mock
+    counts the call), an UNCHECKED one does not; the dialog closes
+    either way (the export succeeded)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, """
+      const snap = window.__MOCK_SNAP;
+      const f = snap.faces.find(f => f.link_status === 'provisional');
+      return f ? f.id : null;
+    """)
+    if not pick:
+        record("C70 export open-after tick box (#300)", True,
+               "no provisional face — vacuous")
+        return
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick}']")
+    dblclick(t, card)
+    time.sleep(1.0)
+
+    export_title = "Export annotated image… (rectangles + names)"
+    t.find_element(By.CSS_SELECTOR,
+                   f".full-image-bar button[title='{export_title}']").click()
+    time.sleep(0.8)
+
+    # the tick box: present, default off
+    default_off = (
+        js(t, """
+          const b = document.querySelector('.dialog input[type=checkbox]');
+          return b ? b.checked : null;
+        """) is False)
+
+    def clicks_export():
+        js(t, """
+          const b = [...document.querySelectorAll('.dialog button')]
+            .find(x => x.textContent.trim() === 'export');
+          if (b) b.click();
+        """)
+
+    # checked → the open is invoked after the save, the dialog closes
+    js(t, """
+      const b = document.querySelector('.dialog input[type=checkbox]');
+      if (b) b.click();
+    """)
+    time.sleep(0.3)
+    checked = js(t, """
+      return document.querySelector('.dialog input[type=checkbox]')?.checked ?? null
+    """)
+    clicks_export()
+    deadline = time.time() + 10
+    opened = closed = False
+    while time.time() < deadline:
+        opened = js(t, "return window.__MOCK_CALLS__['open_image_file'] ?? 0") == 1
+        closed = js(t, "return !document.querySelector('.dialog h3')")
+        if opened and closed:
+            break
+        time.sleep(0.3)
+
+    # unchecked (re-opened dialog) → no open; the dialog still closes
+    js(t, """
+      const bar = document.querySelector('.full-image-bar');
+      const b = [...bar.querySelectorAll('button')]
+        .find(x => (x.title || '') === 'Export annotated image… (rectangles + names)');
+      if (b) b.click();
+    """)
+    time.sleep(0.8)
+    unchecked_default_off = (
+        js(t, """
+          const b = document.querySelector('.dialog input[type=checkbox]');
+          return b ? b.checked : null;
+        """) is False)
+    clicks_export()
+    deadline = time.time() + 10
+    closed2 = False
+    while time.time() < deadline:
+        closed2 = js(t, "return !document.querySelector('.dialog h3')")
+        if closed2:
+            break
+        time.sleep(0.3)
+    no_open = js(t, "return window.__MOCK_CALLS__['open_image_file'] ?? 0") == 1
+
+    ok = (default_off and checked is True and opened and closed
+          and unchecked_default_off and closed2 and no_open)
+    record("C70 export open-after tick box: default off; a checked export opens, an unchecked one does not (#300)",
+           ok,
+           f"default_off={default_off} checked={checked} opened={opened} "
+           f"closed={closed} reopened_default_off={unchecked_default_off} "
+           f"closed2={closed2} no_open={no_open}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -7140,7 +7234,7 @@ def main():
     for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review, c62_one_ipc_transfer_per_action,
       c63_rolls_image_stepping, c64_roll_branch_reimport_recursive, c65_person_pane_merge_similar,
       c66_refcrop_image_menu, c67_glyph_vocabulary, c68_session_persistence,
-      c69_export_annotated_entry_points):
+      c69_export_annotated_entry_points, c70_export_open_after_tick):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)

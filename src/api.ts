@@ -213,6 +213,13 @@ export const openRoll = (imageId: number) => invoke<void>("open_roll", { imageId
 // #144).
 export const saveImageFile = (path: string, data: Uint8Array) =>
   invoke<void>("save_image_file", { path, data });
+/** #300 (gui-design v17.0, rule 51) — the annotated export's *open
+    after export*: the WRITTEN file in the image viewer (the #273
+    `image_viewer` setting, else the system default); a stale path is
+    a rejection (the caller's error toast, #144) — the export itself
+    already succeeded */
+export const openImageFile = (path: string) =>
+  invoke<void>("open_image_file", { path });
 export const personFaceClusters = (personId: number, threshold: number) =>
   invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
 export const getSettings = () => invoke<Settings>("get_settings");

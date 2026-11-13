@@ -71,6 +71,25 @@ async fn save_image_file(path: String, data: Vec<u8>) -> Result<(), String> {
     std::fs::write(&path, &data).map_err(|e| format!("cannot write {path}: {e}"))
 }
 
+/// #300 (gui-design v17.0, rule 51) — the annotated export's *open
+/// after export*: hand the WRITTEN file to the image viewer (the #273
+/// `image_viewer` setting — the configured program, else the system
+/// default — the same `open_with` opener as `open_image`). A stale
+/// path (deleted between the write and the open) is a rejection like
+/// `open_dir`'s (#144 — the caller's error toast); it never fails the
+/// export itself, which already succeeded.
+#[tauri::command]
+async fn open_image_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("file no longer exists: {path}"));
+    }
+    let settings = db::get_settings(state.paths()?).map_err(|e| e.to_string())?;
+    open_with(&settings.image_viewer, &path)?;
+    // diagnostic line in the spirit of #144 (which path was opened)
+    eprintln!("[open_image_file] opened {path}");
+    Ok(())
+}
+
 /// Full-image context menu (#33): open the image with the system
 /// viewer — the webkit default menu entries don't work.
 ///
@@ -395,6 +414,7 @@ pub fn run() {
             get_image_batch,
             get_refcrops,
             save_image_file,
+            open_image_file,
             open_image,
             open_roll,
             open_dir,

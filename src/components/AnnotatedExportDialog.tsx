@@ -11,7 +11,7 @@
 import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useOwnsKeyboard } from "../overlays";
-import { saveImageFile, type Face, type ImageRow } from "../api";
+import { openImageFile, saveImageFile, type Face, type ImageRow } from "../api";
 import {
   defaultExportName,
   FORMAT_EXT,
@@ -65,6 +65,9 @@ export default function AnnotatedExportDialog({
       : defaultExportName(image, "png")
   );
   const [busy, setBusy] = useState(false);
+  // #300: open the exported file in the image viewer after a
+  // successful save (default off)
+  const [openAfter, setOpenAfter] = useState(false);
 
   const browse = async () => {
     try {
@@ -100,6 +103,15 @@ export default function AnnotatedExportDialog({
         new Uint8Array(await blob.arrayBuffer()),
       );
       onSaved(path.trim());
+      if (openAfter) {
+        try {
+          await openImageFile(path.trim());
+        } catch (e) {
+          // #300: the file is already written — an open failure is a
+          // toast, never an export failure
+          onError(e instanceof Error ? e.message : String(e));
+        }
+      }
       onClose();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -167,6 +179,15 @@ export default function AnnotatedExportDialog({
               browse
             </button>
           </div>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={openAfter}
+            onChange={(e) => setOpenAfter(e.target.checked)}
+            disabled={busy}
+          />
+          open in the image viewer after export
         </label>
       </div>
     </div>

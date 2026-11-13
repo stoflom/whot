@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 16.1** (#299) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 17.0** (#300) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2597,8 +2597,8 @@ thin hook (`useSessionState.ts`); App keeps only setter bindings.
   same state; a dedicated check pins the contract itself (set a
   place → reload → it comes back).
 
-**51. (v16.0, #298; v16.1, #299) Export annotated image — what you
-see is what you save.** A full image (both surfaces — the focus split and the
+**51. (v16.0, #298; v16.1, #299; v17.0, #300) Export annotated
+image — what you see is what you save.** A full image (both surfaces — the focus split and the
 Rolls image detail) can be exported as ONE annotated image: the
 full image with every visible face's rectangle and person-name
 label baked into the pixels. Entry points: the ONE bar's (rule 46
@@ -2610,7 +2610,12 @@ open the same dialog.
   **size** (original, or a max dimension in px — blank = original)
   and the **save path** — prefilled with the original file's
   directory + `<stem>-annotated.<ext>`; a *browse* button opens the
-  native save dialog (filtered to the chosen type).
+  native save dialog (filtered to the chosen type). **Open after
+  export** (#300): a tick box (default off) — after a SUCCESSFUL
+  save, the exported file opens in the image viewer (the #273
+  `image_viewer` setting — the configured program, else the system
+  default). An open failure does NOT fail the export — the file is
+  already written; the failure reaches the error toast (#144).
 - **The render** is a canvas composite of the SAME
   `images.preview` BLOB pixels the viewer displays, the stored CW
   rotation applied to the pixels (the #122/§4.32 math), one
@@ -2630,7 +2635,10 @@ open the same dialog.
 - **Saving** goes through a new Tauri command `save_image_file`
   (path + bytes — a dumb writer, no DB, no decode): the canvas
   encode (JPEG quality 0.92, the #122 re-encode's) is written to
-  the chosen path. A failure reaches the error toast (#144);
+  the chosen path. A failure reaches the error toast (#144); the
+  *open after export* (#300) goes through `open_image_file`
+  (path → the #273 image viewer / system default — the `open_with`
+  opener, like `open_image`).
   success is a quiet info toast naming the path.
 - **Implementation stays out of App (§4.44)**: the composite +
   encode live in a dedicated pure module (`exportAnnotated.ts`),
@@ -2638,7 +2646,10 @@ open the same dialog.
   entry in `menus.ts`, the bar button in `FullImageBar.tsx`; App
   keeps only the open/close binding.
 - **gui-mock**: a dedicated check pins both entry points (the bar's
-  ⤓ and the menu entry each open the dialog).
+  ⤓ and the menu entry each open the dialog); the *open after
+  export* tick box is pinned too (present, default off; a checked
+  export invokes `open_image_file` with the exported path, an
+  unchecked one does not).
 
 ## 5. Related documents
 
