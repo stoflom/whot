@@ -1,0 +1,9 @@
+{
+  "env": {
+    "DATA_DIR": "${HOME}/.local/share/whot/data",
+    "FACES_DB": "${DATA_DIR}/faces.db",
+    "HARVEST_DB": "${DATA_DIR}/harvest.db",
+    "INSIGHTFACE_PATH": "${HOME}/.local/share/whot/insightface",
+    "DEFAULT_IMAGES_DIR": "${HOME}/Pictures"
+  }
+}

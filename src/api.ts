@@ -75,6 +75,10 @@ export interface Settings {
   image_viewer: string;
   /** #273: the *Open roll path* program; "" = system default manager */
   directory_viewer: string;
+  /** #302: the machine's environment keys riding whotrc.json's `env`
+      object (repo mode with a `.env` leaves it empty; round-tripped
+      untouched — the setup dialog that edits it is #303) */
+  env?: Record<string, string>;
 }
 export interface Snapshot {
   /** #208 — change stamp, read before the rows: equal on a probe ⇒

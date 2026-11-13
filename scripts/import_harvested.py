@@ -815,7 +815,7 @@ def main(argv=None) -> int:
         ui.error("error: --min-overlap must be in (0, 1]")
         return 1
 
-    env = dbutil.load_env(PROJECT_ROOT / ".env")
+    env = dbutil.resolve_env(PROJECT_ROOT)   # #302: .env wins, else the user whotrc
 
     faces_db = Path(args.faces_db).expanduser() if args.faces_db \
         else PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
