@@ -4872,7 +4872,8 @@ def c46_edit_dialog_group_list(t):
 def c47_first_run_no_database(t):
     """#185/#186 (§4.36): with NO usable database the app shows the
     first-run dialog instead of the raw error — 'No database yet' with
-    Retry + Open import pane; the offer picks a folder natively and
+    Retry + Open import pane + environment… (#303, rule 52); the offer
+    picks a folder natively and
     shows the STANDALONE import pane with --create-db pre-checked
     (--dry-run then refused by the existing combo rule), ✕ returns to
     the dialog, and once a usable database exists Retry loads the normal
@@ -4898,7 +4899,7 @@ def c47_first_run_no_database(t):
       };
     """)
     d_ok = (d["title"] == "No database yet"
-            and d["buttons"] == ["Retry", "Open import pane"]
+            and d["buttons"] == ["Retry", "Open import pane", "environment…"]
             and d["noFatal"])
 
     # the offer — the native picker returns the seeded folder
@@ -4963,7 +4964,7 @@ def c47_first_run_no_database(t):
             break
 
     ok = d_ok and pane_ok and combo_ok and back_ok and retry_ok
-    record("C47 first-run (#185/#186): no usable DB → dialog → standalone pane (--create-db pre-checked, combo refused) → ✕ back → Retry loads the app",
+    record("C47 first-run (#185/#186): no usable DB → dialog (Retry, Open import pane, environment… #303) → standalone pane (--create-db pre-checked, combo refused) → ✕ back → Retry loads the app",
            ok,
            f"dialog={d} (ok={d_ok}); pane={p} (ok={pane_ok}); combo={combo} (ok={combo_ok}); "
            f"back={back_ok} retry={retry_ok}")
@@ -7130,6 +7131,222 @@ def c69_export_annotated_entry_points(t):
            f"prefilled={path!r} (ok={prefilled_ok}); menu entry={bool(items)} → {menu_ok}")
 
 
+def c70_export_open_after_tick(t):
+    """#300 (rule 51, v17.0): the annotated export's *open after
+    export* tick box — present and OFF by default; a CHECKED export
+    invokes `open_image_file` after the successful save (the mock
+    counts the call), an UNCHECKED one does not; the dialog closes
+    either way (the export succeeded)."""
+    fresh(t)
+    set_show_filter(t, "all")
+    pick = js(t, """
+      const snap = window.__MOCK_SNAP;
+      const f = snap.faces.find(f => f.link_status === 'provisional');
+      return f ? f.id : null;
+    """)
+    if not pick:
+        record("C70 export open-after tick box (#300)", True,
+               "no provisional face — vacuous")
+        return
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick}']")
+    js(t, "arguments[0].scrollIntoView({block:'center'})", card)
+    time.sleep(0.3)
+    card = t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{pick}']")
+    dblclick(t, card)
+    time.sleep(1.0)
+
+    export_title = "Export annotated image… (rectangles + names)"
+    t.find_element(By.CSS_SELECTOR,
+                   f".full-image-bar button[title='{export_title}']").click()
+    time.sleep(0.8)
+
+    # the tick box: present, default off
+    default_off = (
+        js(t, """
+          const b = document.querySelector('.dialog input[type=checkbox]');
+          return b ? b.checked : null;
+        """) is False)
+
+    def clicks_export():
+        js(t, """
+          const b = [...document.querySelectorAll('.dialog button')]
+            .find(x => x.textContent.trim() === 'export');
+          if (b) b.click();
+        """)
+
+    # checked → the open is invoked after the save, the dialog closes
+    js(t, """
+      const b = document.querySelector('.dialog input[type=checkbox]');
+      if (b) b.click();
+    """)
+    time.sleep(0.3)
+    checked = js(t, """
+      return document.querySelector('.dialog input[type=checkbox]')?.checked ?? null
+    """)
+    clicks_export()
+    deadline = time.time() + 10
+    opened = closed = False
+    while time.time() < deadline:
+        opened = js(t, "return window.__MOCK_CALLS__['open_image_file'] ?? 0") == 1
+        closed = js(t, "return !document.querySelector('.dialog h3')")
+        if opened and closed:
+            break
+        time.sleep(0.3)
+
+    # unchecked (re-opened dialog) → no open; the dialog still closes
+    js(t, """
+      const bar = document.querySelector('.full-image-bar');
+      const b = [...bar.querySelectorAll('button')]
+        .find(x => (x.title || '') === 'Export annotated image… (rectangles + names)');
+      if (b) b.click();
+    """)
+    time.sleep(0.8)
+    unchecked_default_off = (
+        js(t, """
+          const b = document.querySelector('.dialog input[type=checkbox]');
+          return b ? b.checked : null;
+        """) is False)
+    clicks_export()
+    deadline = time.time() + 10
+    closed2 = False
+    while time.time() < deadline:
+        closed2 = js(t, "return !document.querySelector('.dialog h3')")
+        if closed2:
+            break
+        time.sleep(0.3)
+    no_open = js(t, "return window.__MOCK_CALLS__['open_image_file'] ?? 0") == 1
+
+    ok = (default_off and checked is True and opened and closed
+          and unchecked_default_off and closed2 and no_open)
+    record("C70 export open-after tick box: default off; a checked export opens, an unchecked one does not (#300)",
+           ok,
+           f"default_off={default_off} checked={checked} opened={opened} "
+           f"closed={closed} reopened_default_off={unchecked_default_off} "
+           f"closed2={closed2} no_open={no_open}")
+
+
+def c71_env_dialog(t):
+    """#303 (rule 52, v18.2): the environment dialog — the settings
+    popover's `environment…` button opens it (the first-run entry is
+    pinned in C47); the header contract (repo mode, settings file, db
+    path, the .env override warning); the prefill from the resolved
+    env; the save round-trip through set_settings (empty known keys
+    dropped, unknown keys preserved); a reopened dialog shows the
+    saved value."""
+    fresh(t)
+    # seed the resolved env the dialog prefills from: one known key,
+    # one unknown (the round-trip must preserve it untouched)
+    js(t, """
+      window.__MOCK_SNAP.settings.env = {
+        FACES_DB: '/mock/data/faces.db',
+        UNKNOWN_KEY: '/legacy/keep-me',
+      };
+    """)
+    calls0 = js(t, "return window.__MOCK_CALLS__['set_settings'] ?? 0;")
+
+    # the settings popover's entry point
+    js(t, "[...document.querySelectorAll('header button')].find(b => b.title === 'Settings').click();")
+    time.sleep(0.8)
+    pop_up = js(t, "return !!document.querySelector('.settings-overlay .dialog.settings')")
+    pop_btns = js(t, """
+      return [...document.querySelectorAll('.settings-overlay .dialog-actions button')]
+        .map(b => b.textContent.trim());
+    """)
+    env_btn_ok = pop_up and "environment…" in (pop_btns or [])
+    js(t, """
+      [...document.querySelectorAll('.settings-overlay .dialog-actions button')]
+        .find(b => b.textContent.trim() === 'environment…').click();
+    """)
+    time.sleep(0.8)
+    dlg_up = js(t, "return !!document.querySelector('.dialog.env') && !document.querySelector('.settings-overlay')")
+
+    # the header contract (the mock mirrors repo mode with a .env)
+    header = js(t, """
+      const d = document.querySelector('.dialog.env');
+      return {
+        title: d?.querySelector('h3')?.textContent.trim() ?? null,
+        body: d?.innerText ?? '',
+        rows: [...(d?.querySelectorAll('label input') ?? [])].length,
+        warn: !!d?.querySelector('.env-note'),
+      };
+    """)
+    header_ok = (dlg_up
+                 and header["title"] == "Environment"
+                 and "repository mode" in header["body"]
+                 and "/mock/config/whotrc.json" in header["body"]
+                 and "/mock/data/faces.db" in header["body"]
+                 and header["rows"] == 13          # the known keys
+                 and header["warn"])               # the .env overrides warning
+
+    # the prefill: FACES_DB from the seeded env, PATH_MAP empty with
+    # the default placeholder, UNKNOWN_KEY not editable (still 13 rows)
+    fields = js(t, """
+      const d = document.querySelector('.dialog.env');
+      const f = (re) => {
+        const l = [...d.querySelectorAll('label')].find(l => l.title.match(re));
+        return l ? {value: l.querySelector('input').value, ph: l.querySelector('input').placeholder} : null;
+      };
+      return {
+        faces: f(/faces database/), map: f(/path map/), harvest: f(/harvest staging/),
+      };
+    """)
+    prefill_ok = (fields["faces"] and fields["faces"]["value"] == "/mock/data/faces.db"
+                  and fields["map"] and fields["map"]["value"] == "" and "no default" in fields["map"]["ph"]
+                  and fields["harvest"] and fields["harvest"]["value"] == ""
+                  and fields["harvest"]["ph"] == "data/harvest.db")
+
+    # the save round-trip: edit FACES_DB, save → set_settings invoked
+    # with the edit AND the untouched unknown key; empty keys dropped
+    js(t, r"""
+      const l = [...document.querySelectorAll('.dialog.env label')].find(l => l.title.match(/faces database/));
+      const inp = l.querySelector('input');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(inp, '/elsewhere/faces.db');
+      inp.dispatchEvent(new Event('input', {bubbles: true}));
+    """)
+    time.sleep(0.4)
+    js(t, """
+      [...document.querySelectorAll('.dialog.env .dialog-actions button')]
+        .find(b => b.textContent.trim() === 'save').click();
+    """)
+    time.sleep(1.0)
+    calls1 = js(t, "return window.__MOCK_CALLS__['set_settings'] ?? 0;")
+    saved_env = js(t, "return window.__MOCK_SNAP.settings.env ?? null;")
+    toast = js(t, "return document.body.innerText.includes('environment saved');")
+    closed = js(t, "return !document.querySelector('.dialog.env')")
+    roundtrip_ok = (calls1 == calls0 + 1
+                    and saved_env is not None
+                    and saved_env.get("FACES_DB") == "/elsewhere/faces.db"
+                    and saved_env.get("UNKNOWN_KEY") == "/legacy/keep-me"  # preserved
+                    and "HARVEST_DB" not in saved_env                      # empty key dropped
+                    and toast and closed)
+
+    # a reopened dialog shows the saved value
+    js(t, "[...document.querySelectorAll('header button')].find(b => b.title === 'Settings').click();")
+    time.sleep(0.8)
+    js(t, """
+      [...document.querySelectorAll('.settings-overlay .dialog-actions button')]
+        .find(b => b.textContent.trim() === 'environment…').click();
+    """)
+    time.sleep(0.8)
+    reopened = js(t, """
+      const l = [...document.querySelectorAll('.dialog.env label')].find(l => l.title.match(/faces database/));
+      const unknown = document.body.innerText.includes('UNKNOWN_KEY');
+      return {faces: l?.querySelector('input')?.value ?? null, unknown: unknown};
+    """)
+    AC(t.driver).send_keys(Keys.ESCAPE).perform()
+    time.sleep(0.5)
+    reopen_ok = (reopened and reopened["faces"] == "/elsewhere/faces.db"
+                 and not reopened["unknown"])   # unknown keys are not editable rows
+
+    ok = env_btn_ok and header_ok and prefill_ok and roundtrip_ok and reopen_ok
+    record("C71 environment dialog: settings-popover entry → header contract (.env warning) → prefill → save round-trip (unknown preserved) → reopened shows the saved value (#303)",
+           ok,
+           f"entry={env_btn_ok} header={header} (ok={header_ok}); prefill={fields} (ok={prefill_ok}); "
+           f"calls {calls0}->{calls1} env={saved_env} toast={toast} closed={closed} (ok={roundtrip_ok}); "
+           f"reopened={reopened} (ok={reopen_ok})")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -7140,7 +7357,8 @@ def main():
     for fn in (r1_layout, r2_toggle_perf, c1_enter_stages_then_commits, c2_a_key_stages_then_commits, c3_bar_accept_commits, c4_noop_apply_feedback, c5_q4_stage_model, c6_esc_ordering, c7_single_section_selectall, c8_tree_counts_ignore_filter, c9_actions_above_typeahead, c10_noop_apply_is_info, c11_merge_focuses_target, c12_face_drag_merges_into_person, c13_face_drag_copies_description, c14_drag_sources, c15_merge_dialog_scroll, c16_filter_prunes_tree, c18_rolls_path_tree, c19_staged_desc_regroups, c20_multi_group_renders_everywhere, c21_show_filter_in_topbar, c22_review_exhaust_skips_reviewed, c23_dnd_moves_one_membership, c24_dark_scheme_native_controls, c25_merge_dialog_cancel_button, c26_rolls_path_filter, c27_center_toolbar_view_matrix, c28_add_group_person_rows_only, c29_show_rejected_bin_165, c30_bar_accept_selection_over_stage, c31_rolls_import_pane, c32_full_image_follows_person, c33_person_group_list_update, c34_rolls_branch_thumbnails, c35_rolls_layout, c36_review_lock, c37_person_sticky_colors, c38_verdict_icons, c39_rename_seated_person, c40_db_status_totals, c41_verdict_focuses_person, c42_edit_label_everywhere, c43_single_only_menu_items, c44_rotate_image_cascades, c45_face_menu_add_group, c46_edit_dialog_group_list, c47_first_run_no_database, c48_branch_rename_clash_merges, c49_step_from_empty_state, c50_merge_chips_pick_target, c51_scope_switch_keeps_typed_fields, c52_staged_desc_prefills_reopened_dialog, c53_header_logo_and_favicon, c54_no_refs_in_ui_strings, c55_review_sticky_on_step, c56_new_is_orange, c57_split_crop_click_follows_person, c58_review_keeps_scroll, c59_tree_select_reanchors_review, c60_split_close_restores_grid_scroll, c61_full_view_verdict_advances_review, c62_one_ipc_transfer_per_action,
       c63_rolls_image_stepping, c64_roll_branch_reimport_recursive, c65_person_pane_merge_similar,
       c66_refcrop_image_menu, c67_glyph_vocabulary, c68_session_persistence,
-      c69_export_annotated_entry_points):
+      c69_export_annotated_entry_points, c70_export_open_after_tick,
+      c71_env_dialog):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)

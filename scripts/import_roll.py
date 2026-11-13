@@ -923,7 +923,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ui = cli_console.Console(quiet=args.quiet)
 
-    env = dbutil.load_env(PROJECT_ROOT / ".env")
+    env = dbutil.resolve_env(PROJECT_ROOT)   # #302: .env wins, else the user whotrc
     db_path = PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
 
     if args.dry_run:

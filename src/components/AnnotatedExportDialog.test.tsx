@@ -16,14 +16,14 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { saveImageFile, type Face, type ImageRow } from "../api";
+import { openImageFile, saveImageFile, type Face, type ImageRow } from "../api";
 import AnnotatedExportDialog from "./AnnotatedExportDialog";
 import { renderAnnotatedBlob } from "../exportAnnotated";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, saveImageFile: vi.fn() };
+  return { ...actual, saveImageFile: vi.fn(), openImageFile: vi.fn() };
 });
 vi.mock("../exportAnnotated", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../exportAnnotated")>();
@@ -87,6 +87,7 @@ afterEach(() => {
   cleanup();
   vi.mocked(save).mockReset();
   vi.mocked(saveImageFile).mockReset();
+  vi.mocked(openImageFile).mockReset();
   vi.mocked(renderAnnotatedBlob).mockReset();
 });
 
@@ -215,5 +216,67 @@ describe("AnnotatedExportDialog (#298, rule 51)", () => {
     mount({ onClose });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  describe("#300 — open after export", () => {
+    const checkOpen = (c: HTMLElement) =>
+      c.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+
+    it("the tick box is present and default off", () => {
+      const { container } = mount();
+      const box = checkOpen(container);
+      expect(box).toBeTruthy();
+      expect(box.checked).toBe(false);
+    });
+
+    it("checked: a successful save opens the exported file, then closes", async () => {
+      vi.mocked(renderAnnotatedBlob).mockResolvedValueOnce(
+        new Blob([new Uint8Array([1])], { type: "image/png" })
+      );
+      vi.mocked(openImageFile).mockResolvedValueOnce(undefined);
+      const onSaved = vi.fn();
+      const onClose = vi.fn();
+      const { container } = mount({ onSaved, onClose });
+      fireEvent.click(checkOpen(container));
+      fireEvent.click(screen.getByText("export"));
+      await waitFor(() =>
+        expect(openImageFile).toHaveBeenCalledWith(
+          "/home/u/rolls/2026-01/sub/IMG_0001-annotated.png"
+        )
+      );
+      expect(onSaved).toHaveBeenCalledOnce();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("unchecked: the export never invokes the viewer", async () => {
+      vi.mocked(renderAnnotatedBlob).mockResolvedValueOnce(
+        new Blob([new Uint8Array([1])], { type: "image/png" })
+      );
+      mount();
+      fireEvent.click(screen.getByText("export"));
+      await waitFor(() =>
+        expect(saveImageFile).toHaveBeenCalledWith(
+          "/home/u/rolls/2026-01/sub/IMG_0001-annotated.png",
+          expect.any(Uint8Array)
+        )
+      );
+      expect(openImageFile).not.toHaveBeenCalled();
+    });
+
+    it("a failed open toasts but the export stands (the dialog closes)", async () => {
+      vi.mocked(renderAnnotatedBlob).mockResolvedValueOnce(
+        new Blob([new Uint8Array([1])], { type: "image/png" })
+      );
+      vi.mocked(openImageFile).mockRejectedValueOnce("cannot open: viewer");
+      const onError = vi.fn();
+      const onClose = vi.fn();
+      const { container } = mount({ onError, onClose });
+      fireEvent.click(checkOpen(container));
+      fireEvent.click(screen.getByText("export"));
+      await waitFor(() =>
+        expect(onError).toHaveBeenCalledWith("cannot open: viewer")
+      );
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
   });
 });

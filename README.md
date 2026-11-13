@@ -36,7 +36,7 @@ sidecars is available today for testing — see [Legacy recovery](#legacy-recove
 | Status-group fix | `scripts/fix_status_groups.py` | data fix: upgrades a v1.6 `faces.db` in place to the v1.7 status-group layout (`docs/gui-design.md` §4.35) — historical; the current schema is reached via Annotation snapshot (export → recreate → restore) |
 | Staging schema | `database/harvest_schema.sql` | harvest staging DB, created by `harvest_legacy.py` |
 | GUI | repo root (Tauri 2 + React + TS, Rust backend in `src-tauri/`) | review/naming/annotation; serves images from DB BLOBs, no Python at runtime |
-| Config | `.env` (paths), `config/whotrc.json` (GUI settings, created at runtime) | |
+| Config | `.env` (paths, repo checkout) — `config/whotrc.json` (GUI settings; created at runtime); installed: `~/.config/whot/whotrc.json` (GUI settings + the same env keys in its `env` object, copied from the packaged default on first use) | |
 
 ## Setup
 
@@ -52,7 +52,15 @@ sidecars is available today for testing — see [Legacy recovery](#legacy-recove
   (`${HOME}`, `${USER}`, …).
 - The GUI resolves the project root by looking for `.env` or `data/` in the
   current directory or its parents; set `WHOT_ROOT=/path/to/whot` to
-  override (needed for release bundles started outside the repo).
+  override. When no repo is found (installed setups), the config is
+  `~/.config/whot/whotrc.json` — created on first use from
+  `/usr/share/whot/whotrc.json` (distro packages) or the binary-embedded
+  default — and the environment keys live in that file's `env` object
+  (`docs/backend-design.md` §2). A `.env` in the repo, when present,
+  always wins.
+- The import scripts follow the same rule (`dbutil.resolve_env`): `.env`
+  in the scripts' project root if it exists, else
+  `~/.config/whot/whotrc.json`'s `env` object.
 
 ```sh
 npm install
@@ -371,6 +379,12 @@ rules are `docs/gui-design.md` §4, architecture is
   path*, gui-design §4.36; `directory_viewer` in whotrc.json overrides
   the default manager, #273). A stale (moved/deleted) path is a
   rejection — the caller's error toast names the path (#144)
+- `open_image_file(path) → ()` — open a **written image file** in the
+  image viewer (the annotated export's *open after export*, gui-design
+  §4 rule 51, #300; `image_viewer` in whotrc.json overrides the system
+  viewer, #273). A stale (moved/deleted) path is a rejection — the
+  caller's error toast names the path (#144); it never fails the
+  export, which already succeeded
 - `person_face_clusters(person_id, threshold) →
   [{description, clusters: [[{face_id, sim}]]}]` — appearance partitions,
   similarity clusters inside each (§4.9)
@@ -425,6 +439,11 @@ full-refreshes instead).
   the `Ungrouped`, `New`, `Accepted`, `Rejected` and `Unknown` segments
   are reserved
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
+  (the GUI settings + the `env` object, backend-design §2)
+- `get_config_info()` — the resolved configuration: `{mode:
+  "repo"|"installed", configPath, dbPath, envSource:
+  "dotenv"|"user-config"|"none"}` (the environment dialog's header,
+  gui-design §4 rule 52)
 
 **Import runner** (§4.36 — spawns, never blocks the GUI)
 
@@ -454,6 +473,7 @@ whot/
       ContextConfirmDialog.tsx  guards.tsx            # MergeInto, MergeSimilar,
       ConfirmRemoveDialog.tsx  HelpDialog.tsx         # FaceMerge, AddGroup, the
       ImportPane.tsx  FirstRun.tsx  GroupListEditor.tsx  # §4.36 first-run,
+      EnvDialog.tsx                                   # the environment dialog
       NameTypeahead.tsx  PathTypeahead.tsx            # the §4.41 guards); the
       SuggestInput.tsx  SettingsPopover.tsx           # toasts + full-image bar
       ErrorNotice.tsx  FullImageBar.tsx               # close the set
@@ -527,4 +547,4 @@ WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox
 - `docs/scripts-design.md` — Python tooling: §8 harvest, §9 harvest import
 - `docs/schema-design.md` — `faces.db` DDL design: identities, version gate, drop & recreate
 - `docs/backend-design.md` — Rust backend architecture (`lib.rs`/`db.rs`)
-- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C63`, C17 retired, + `R1`–`R2`)
+- `test/gui-mock/README.md` — the mocked-backend GUI contract harness (`C1`–`C70`, C17 retired, + `R1`–`R2`)

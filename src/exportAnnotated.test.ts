@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { Face, ImageRow } from "./api";
 import {
   defaultExportName,
+  drawRect,
   exportDims,
   FORMAT_EXT,
   formatMime,
@@ -189,5 +190,67 @@ describe("overlaySpecs", () => {
       x.person_id != null ? personName(x.person_id) ?? x.name : x.name,
     );
     expect(specs[0].label).toBe("Charles Crosby");
+  });
+});
+
+// #304 — the label chip regression: drawRect's measurements must run
+// in the LABEL font. A stub 2D context records the call order and the
+// chip geometry (jsdom has no canvas — drawRect is pure w.r.t. ctx).
+describe("drawRect label chip (#304)", () => {
+  const FONT = '24px "Inter", "Segoe UI", system-ui, sans-serif';
+  const SPEC = { x: 10, y: 20, w: 30, h: 40, color: "#f0605a", alpha: 0.9, label: "bob" };
+
+  function fakeCtx() {
+    const calls: { op: string; args: unknown[] }[] = [];
+    let font = "";
+    const ctx: CanvasRenderingContext2D = {
+      set font(v: string) { font = v; calls.push({ op: "font", args: [v] }); },
+      get font() { return font; },
+      measureText(t: string) {
+        calls.push({ op: "measureText", args: [t] });
+        return { width: 40 } as TextMetrics;
+      },
+      save: () => calls.push({ op: "save", args: [] }),
+      restore: () => calls.push({ op: "restore", args: [] }),
+      strokeRect: (...a: unknown[]) => calls.push({ op: "strokeRect", args: a }),
+      fillText: (...a: unknown[]) => calls.push({ op: "fillText", args: a }),
+      fill: () => calls.push({ op: "fill", args: [] }),
+      beginPath: () => calls.push({ op: "beginPath", args: [] }),
+      moveTo: (a: number, b: number) => calls.push({ op: "moveTo", args: [a, b] }),
+      lineTo: (a: number, b: number) => calls.push({ op: "lineTo", args: [a, b] }),
+      arcTo: () => calls.push({ op: "arcTo", args: [] }),
+      closePath: () => calls.push({ op: "closePath", args: [] }),
+      set globalAlpha(_: number) { calls.push({ op: "globalAlpha", args: [] }); },
+      set lineWidth(_: number) { calls.push({ op: "lineWidth", args: [] }); },
+      set strokeStyle(_: string) { calls.push({ op: "strokeStyle", args: [] }); },
+      set fillStyle(_: string) { calls.push({ op: "fillStyle", args: [] }); },
+      set textBaseline(_: string) { calls.push({ op: "textBaseline", args: [] }); },
+    } as unknown as CanvasRenderingContext2D;
+    return { ctx, calls };
+  }
+
+  it("the label font is set BEFORE the first measurement", () => {
+    const { ctx, calls } = fakeCtx();
+    drawRect(ctx, SPEC, 24);
+    const fontSet = calls.findIndex((c) => c.op === "font");
+    const firstMeasure = calls.findIndex((c) => c.op === "measureText");
+    expect(fontSet).toBeGreaterThanOrEqual(0);
+    expect(fontSet).toBeLessThan(firstMeasure);
+    expect(calls[fontSet].args[0]).toBe(FONT);
+  });
+
+  it("the chip width is the measured advance + 2*padX, beneath the rectangle", () => {
+    const { ctx, calls } = fakeCtx();
+    drawRect(ctx, SPEC, 24);
+    // fitLabel measures "bob" (fits — 40 <= maxPx), then the chip measures it again
+    const measures = calls.filter((c) => c.op === "measureText");
+    expect(measures.map((c) => c.args[0])).toEqual(["bob", "bob"]);
+    // roundedPath(bottom): moveTo(x, ly) then lineTo(x + lw, ly)
+    const moveTo = calls.find((c) => c.op === "moveTo")!.args as number[];
+    const lineTo = calls.find((c) => c.op === "lineTo")!.args as number[];
+    const padX = 3 * (24 / 12);
+    expect(lineTo[0] - moveTo[0]).toBe(Math.ceil(40) + 2 * padX);
+    expect(moveTo[0]).toBe(SPEC.x);          // left-aligned to the rectangle
+    expect(moveTo[1]).toBe(SPEC.y + SPEC.h); // beneath it
   });
 });

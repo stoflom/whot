@@ -1375,7 +1375,7 @@ def main(argv=None) -> int:
                  " (nothing is written, so there is nothing to resume)")
         return 1
 
-    env = dbutil.load_env(PROJECT_ROOT / ".env")
+    env = dbutil.resolve_env(PROJECT_ROOT)   # #302: .env wins, else the user whotrc
 
     def env_path(key: str) -> Path | None:
         v = env.get(key)

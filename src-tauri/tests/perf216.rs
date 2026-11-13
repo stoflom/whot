@@ -24,6 +24,8 @@ fn paths() -> Option<Paths> {
         root: PathBuf::from(ROOT),
         db,
         config: PathBuf::from(ROOT).join("whotrc.json"),
+        mode: "repo",
+        env_source: "dotenv",
     })
 }
 

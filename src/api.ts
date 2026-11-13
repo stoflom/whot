@@ -75,6 +75,10 @@ export interface Settings {
   image_viewer: string;
   /** #273: the *Open roll path* program; "" = system default manager */
   directory_viewer: string;
+  /** #302: the machine's environment keys riding whotrc.json's `env`
+      object (repo mode with a `.env` leaves it empty; round-tripped
+      untouched — the setup dialog that edits it is #303) */
+  env?: Record<string, string>;
 }
 export interface Snapshot {
   /** #208 — change stamp, read before the rows: equal on a probe ⇒
@@ -213,10 +217,26 @@ export const openRoll = (imageId: number) => invoke<void>("open_roll", { imageId
 // #144).
 export const saveImageFile = (path: string, data: Uint8Array) =>
   invoke<void>("save_image_file", { path, data });
+/** #300 (gui-design v17.0, rule 51) — the annotated export's *open
+    after export*: the WRITTEN file in the image viewer (the #273
+    `image_viewer` setting, else the system default); a stale path is
+    a rejection (the caller's error toast, #144) — the export itself
+    already succeeded */
+export const openImageFile = (path: string) =>
+  invoke<void>("open_image_file", { path });
 export const personFaceClusters = (personId: number, threshold: number) =>
   invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
 export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) => invoke("set_settings", { settings });
+/** #303 (gui-design §4 rule 52) — the environment dialog's header: the
+    startup resolution (backend-design §2). */
+export interface ConfigInfo {
+  mode: "repo" | "installed";
+  configPath: string;
+  dbPath: string;
+  envSource: "dotenv" | "user-config" | "none";
+}
+export const getConfigInfo = () => invoke<ConfigInfo>("get_config_info");
 
 // ------------------------------------------------------- import runner (#167)
 

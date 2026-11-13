@@ -27,7 +27,7 @@ without running the Rust backend or touching the real database.
 npm run build            # dist/ must be current
 python3 test/gui-mock/dump_snap.py   # sanitized snapshot -> snap.json (see Sanitization)
 python3 test/gui-mock/server.py &     # default http://127.0.0.1:8123/
-python3 test/gui-mock/gui_check.py    # WebKitGTK (default): exit 0 iff all 68 checks pass (C1–C67, C17 retired, + R1–R2)
+python3 test/gui-mock/gui_check.py    # WebKitGTK (default): exit 0 iff all 72 checks pass (C1–C71, C17 retired, + R1–R2)
 WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox instead
 ```
 

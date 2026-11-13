@@ -12,10 +12,31 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 import urllib.parse
+import json
 from pathlib import Path
 
 # ---------------------------------------------------------------------- .env
+
+def _expand_refs(raw: dict[str, str]) -> dict[str, str]:
+    """The `${VAR}` expansion shared by `load_env` and `resolve_env`
+    (#302): references resolve against the map's OTHER keys first (4
+    passes), then against the real process environment (`${HOME}`,
+    `${USER}`, …); references still unresolvable stay literal."""
+    for _ in range(4):                      # resolve nested ${VAR}
+        for k, v in raw.items():
+            if "${" in v:
+                for ref, rv in raw.items():
+                    v = v.replace("${" + ref + "}", rv)
+                raw[k] = v
+    for k, v in raw.items():                # then references to the real
+        if "${" in v:                       # environment (${HOME}, ${USER})
+            for ref, rv in os.environ.items():
+                v = v.replace("${" + ref + "}", rv)
+            raw[k] = v
+    return raw
+
 
 def load_env(path: Path) -> dict[str, str]:
     """Parse KEY=VALUE lines with ${VAR} references; no external dependency.
@@ -35,18 +56,50 @@ def load_env(path: Path) -> dict[str, str]:
             continue
         key, _, val = line.partition("=")
         raw[key.strip()] = val.strip().strip('"').strip("'")
-    for _ in range(4):                      # resolve nested ${VAR}
-        for k, v in raw.items():
-            if "${" in v:
-                for ref, rv in raw.items():
-                    v = v.replace("${" + ref + "}", rv)
-                raw[k] = v
-    for k, v in raw.items():                # then references to the real
-        if "${" in v:                       # environment (${HOME}, ${USER})
-            for ref, rv in os.environ.items():
-                v = v.replace("${" + ref + "}", rv)
-            raw[k] = v
-    return raw
+    return _expand_refs(raw)
+
+
+def user_config_path() -> Path:
+    """The user whotrc.json (#301) — the installed app's config file and
+    `resolve_env`'s fallback source: `$WHOT_CONFIG_DIR` overrides (the
+    test hook), then `$XDG_CONFIG_HOME/whot`, then the platform
+    equivalent of `~/.config/whot/whotrc.json` (`~/Library/Application
+    Support/whot` on macOS, `%APPDATA%\\whot` on Windows) — the same
+    table as the Rust side (backend-design §2)."""
+    override = os.environ.get("WHOT_CONFIG_DIR")
+    if override:
+        return Path(override) / "whotrc.json"
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return Path(xdg) / "whot" / "whotrc.json"
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "whot" / "whotrc.json"
+    if sys.platform == "win32":
+        return home / "AppData" / "Roaming" / "whot" / "whotrc.json"
+    return home / ".config" / "whot" / "whotrc.json"
+
+
+def resolve_env(project_root: Path) -> dict[str, str]:
+    """The environment source of record (#302): a `.env` in
+    *project_root* when it exists (it wins — parsed with `load_env`,
+    unchanged semantics); otherwise the user config's `env` object
+    (`user_config_path()` — backend-design §2), expanded with the same
+    `${VAR}` algorithm. A missing file, a missing `env` object, or a
+    malformed JSON yields `{}` — never raises, exactly like `load_env`.
+    """
+    env_file = Path(project_root) / ".env"
+    if env_file.exists():
+        return load_env(env_file)
+    try:
+        data = json.loads(user_config_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    env = data.get("env")
+    if not isinstance(env, dict):
+        return {}
+    return _expand_refs(
+        {str(k): str(v) for k, v in env.items() if isinstance(v, str)})
 
 # ---------------------------------------------------------------- read-only
 

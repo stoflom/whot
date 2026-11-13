@@ -104,6 +104,7 @@ import ImportPane from "./components/ImportPane";
 import FirstRun from "./components/FirstRun";
 import RuleBar from "./components/RuleBar";
 import SettingsPopover from "./components/SettingsPopover";
+import EnvDialog from "./components/EnvDialog";
 import HelpDialog from "./components/HelpDialog";
 import {
   byFilename,
@@ -434,6 +435,9 @@ export default function App() {
     []
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // #303 (rule 52) — the environment dialog: the settings popover's
+  // entry and the first-run screen's entry both open the SAME dialog
+  const [envOpen, setEnvOpen] = useState(false);
   // v12.2 (#279) — the ? help screen (top-bar ghost button beside ⚙)
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -2460,12 +2464,28 @@ export default function App() {
     // FirstRun.tsx, §4.44 stage 3); App routes its outcomes onto the
     // loadError/noDb/error states exactly as the inline branch did
     return (
-      <FirstRun
-        refresh={refresh}
-        onUsable={() => setNoDb(false)}
-        onBroken={(m) => setLoadError(m)}
-        onError={setError}
-      />
+      <>
+        {/* #303: the first-run entry — the dialog renders as a sibling
+            overlay on top of the first-run screen */}
+        {envOpen && (
+          <EnvDialog
+            onClose={() => setEnvOpen(false)}
+            onError={setError}
+            onSave={async (s) => {
+              // first-run: no refresh — there is no database yet
+              await api.setSettings(s);
+              setInfo("environment saved — path changes take effect after a restart");
+            }}
+          />
+        )}
+        <FirstRun
+          refresh={refresh}
+          onUsable={() => setNoDb(false)}
+          onBroken={(m) => setLoadError(m)}
+          onError={setError}
+          onEnv={() => setEnvOpen(true)}
+        />
+      </>
     );
   }
   if (loadError) {
@@ -3231,10 +3251,27 @@ export default function App() {
         <SettingsPopover
           settings={snap.settings}
           onClose={() => setSettingsOpen(false)}
+          onEnv={() => {
+            setSettingsOpen(false);
+            setEnvOpen(true);
+          }}
           onSave={async (s) => {
             await api.setSettings(s).catch((e) => setError(String(e)));
             setSettingsOpen(false);
             await refresh().catch((e) => setError(String(e)));
+          }}
+        />
+      )}
+      {envOpen && !noDb && (
+        // #303 (rule 52): the main app's entry (the first-run surface
+        // renders its own above) — the save refreshes the snapshot
+        <EnvDialog
+          onClose={() => setEnvOpen(false)}
+          onError={setError}
+          onSave={async (s) => {
+            await api.setSettings(s);
+            await refresh();
+            setInfo("environment saved — path changes take effect after a restart");
           }}
         />
       )}

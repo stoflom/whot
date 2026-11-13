@@ -164,8 +164,9 @@ function roundedPath(
 }
 
 /** draw the status rectangle + the name label beneath it (the CSS
-    .face-rect / .face-rect-label shapes) */
-function drawRect(ctx: CanvasRenderingContext2D, spec: RectSpec, fontPx: number): void {
+    .face-rect / .face-rect-label shapes). Exported for the rule-51
+    label regression test (a stub 2D context). */
+export function drawRect(ctx: CanvasRenderingContext2D, spec: RectSpec, fontPx: number): void {
   const { x, y, w, h, color, alpha, label } = spec;
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -174,12 +175,17 @@ function drawRect(ctx: CanvasRenderingContext2D, spec: RectSpec, fontPx: number)
   ctx.lineWidth = Math.max(1, 2 * (fontPx / 12));
   ctx.strokeStyle = color;
   ctx.strokeRect(x, y, Math.max(1, w), Math.max(1, h));
+  // #304: the label font must be set BEFORE any measurement —
+  // measureText reads the CURRENT font, and the canvas default
+  // (10px sans-serif) is far narrower than the scaled label font,
+  // which left the background chip ~1 character short of the text
+  ctx.font = `${fontPx}px "Inter", "Segoe UI", system-ui, sans-serif`;
   // label: beneath the rectangle, left-aligned, bg 80 % theme
   const maxPx = 18 * 0.62 * fontPx;
   const text = fitLabel(ctx, label, maxPx);
   const padX = 3 * (fontPx / 12);
   const padY = 0.15 * fontPx;
-  const tw = ctx.measureText(text).width;
+  const tw = Math.ceil(ctx.measureText(text).width);
   const lw = tw + 2 * padX;
   const lh = fontPx * 1.3 + 2 * padY;
   const lx = x;
@@ -188,7 +194,6 @@ function drawRect(ctx: CanvasRenderingContext2D, spec: RectSpec, fontPx: number)
   roundedPath(ctx, lx, ly, lw, lh, 3 * (fontPx / 12), true);
   ctx.fill();
   ctx.fillStyle = LABEL_TEXT;
-  ctx.font = `${fontPx}px "Inter", "Segoe UI", system-ui, sans-serif`;
   ctx.textBaseline = "top";
   ctx.fillText(text, lx + padX, ly + padY);
   ctx.restore();

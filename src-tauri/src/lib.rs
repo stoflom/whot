@@ -71,6 +71,25 @@ async fn save_image_file(path: String, data: Vec<u8>) -> Result<(), String> {
     std::fs::write(&path, &data).map_err(|e| format!("cannot write {path}: {e}"))
 }
 
+/// #300 (gui-design v17.0, rule 51) — the annotated export's *open
+/// after export*: hand the WRITTEN file to the image viewer (the #273
+/// `image_viewer` setting — the configured program, else the system
+/// default — the same `open_with` opener as `open_image`). A stale
+/// path (deleted between the write and the open) is a rejection like
+/// `open_dir`'s (#144 — the caller's error toast); it never fails the
+/// export itself, which already succeeded.
+#[tauri::command]
+async fn open_image_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("file no longer exists: {path}"));
+    }
+    let settings = db::get_settings(state.paths()?).map_err(|e| e.to_string())?;
+    open_with(&settings.image_viewer, &path)?;
+    // diagnostic line in the spirit of #144 (which path was opened)
+    eprintln!("[open_image_file] opened {path}");
+    Ok(())
+}
+
 /// Full-image context menu (#33): open the image with the system
 /// viewer — the webkit default menu entries don't work.
 ///
@@ -326,6 +345,14 @@ fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), String
     db::set_settings(state.paths()?, settings).map_err(|e| e.to_string())
 }
 
+/// #303 (gui-design §4 rule 52) — the environment dialog's header: the
+/// resolution as it was resolved at startup (backend-design §2). The
+/// one-shot read runs off the main thread with the other commands.
+#[tauri::command]
+async fn get_config_info(state: State<'_, AppState>) -> Result<db::ConfigInfo, String> {
+    db::config_info(state.paths()?).map_err(|e| e.to_string())
+}
+
 /// #167 (§4.36) — fs probe for the Rolls path filter: does the path hold
 /// ≥ 1 image at ANY depth (#169, recursive + early-exit, exact
 /// IMAGE_SUFFIXES parity); `true` + no snapshot match = "not yet
@@ -395,6 +422,7 @@ pub fn run() {
             get_image_batch,
             get_refcrops,
             save_image_file,
+            open_image_file,
             open_image,
             open_roll,
             open_dir,
@@ -419,6 +447,7 @@ pub fn run() {
             add_refcrop,
             remove_refcrop,
             get_settings,
+            get_config_info,
             set_settings,
             scan_import_dir,
             start_import,

@@ -5,10 +5,13 @@ import { useOwnsKeyboard } from "../overlays";
 interface Props {
   settings: Settings;
   onSave: (s: Settings) => void;
+  /** #303 (rule 52): opens the environment dialog (App closes this
+      popover and swaps) */
+  onEnv?: () => void;
   onClose: () => void;
 }
 
-export default function SettingsPopover({ settings, onSave, onClose }: Props) {
+export default function SettingsPopover({ settings, onSave, onEnv, onClose }: Props) {
   useOwnsKeyboard(); // #138 (the shortcut guard never saw this popover)
   // #248: the topmost overlay owns Esc — the popover had no field-level
   // escape at all, so Esc was dead until focus left the inputs
@@ -90,6 +93,11 @@ export default function SettingsPopover({ settings, onSave, onClose }: Props) {
           />
         </label>
         <div className="dialog-actions">
+          {onEnv && (
+            <button className="secondary" title="the machine's paths in whotrc.json's env object" onClick={onEnv}>
+              environment…
+            </button>
+          )}
           <button className="secondary" onClick={onClose}>cancel</button>
           <button onClick={() => onSave({ ...settings, ...clamped, image_viewer: imageViewer, directory_viewer: directoryViewer })}>save</button>
         </div>

@@ -48,7 +48,7 @@ FORMAT = 1
 # ---------------------------------------------------------------- helpers
 
 def default_db() -> Path:
-    env = dbutil.load_env(PROJECT_ROOT / ".env")
+    env = dbutil.resolve_env(PROJECT_ROOT)   # #302: .env wins, else the user whotrc
     return PROJECT_ROOT / env.get("FACES_DB", "data/faces.db")
 
 
@@ -93,10 +93,14 @@ def normalize_group_path(path: str) -> str:
 
 
 def restore_refcrop_n() -> int:
-    """refcrop_n from whotrc.json when present (default 5, like db.rs)."""
+    """refcrop_n from whotrc.json when present (default 5, like db.rs).
+    The config file is CONFIG_FILE from the resolved env (#302), falling
+    back to the user whotrc.json when the env carries no CONFIG_FILE
+    (installed setups)."""
     try:
-        env = dbutil.load_env(PROJECT_ROOT / ".env")
-        cfg = json.loads((PROJECT_ROOT / env.get("CONFIG_FILE", "config/whotrc.json")).read_text())
+        env = dbutil.resolve_env(PROJECT_ROOT)
+        cfg_path = env.get("CONFIG_FILE") or dbutil.user_config_path()
+        cfg = json.loads(Path(cfg_path).read_text())
         return max(1, int(cfg.get("refcrop_n", 5)))
     except (OSError, ValueError, json.JSONDecodeError):
         return 5

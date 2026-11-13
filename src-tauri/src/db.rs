@@ -19,6 +19,14 @@ pub const MODEL_TAG: &str = "insightface:buffalo_l";
 pub const SCHEMA_VERSION: &str = "1.9";
 const DEFAULT_THRESHOLD: f64 = 0.40;
 const DEFAULT_REFCROP_N: i64 = 5;
+/// #301 — the packaged default config, embedded at compile time so every
+/// bundle (AppImage, macOS, Windows) carries it without resource-dir
+/// plumbing; distro packages may instead install it at
+/// /usr/share/whot/whotrc.json (checked first). See backend-design §2.
+pub const EMBEDDED_DEFAULT_CONFIG: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../config/whotrc.default.json"
+));
 
 // ---------------------------------------------------------------- paths
 
@@ -28,40 +36,213 @@ pub struct Paths {
     pub root: PathBuf,
     pub db: PathBuf,
     pub config: PathBuf,
+    /// #303 — the resolution mode (backend-design §2): `"repo"` (a
+    /// checkout: WHOT_ROOT / walk-up) or `"installed"` (the per-user
+    /// config, #301). `get_config_info` reports it.
+    pub mode: &'static str,
+    /// #303 — where the environment keys came from: `"dotenv"` (the
+    /// repo `.env`), `"user-config"` (the whotrc `env` object), or
+    /// `"none"` (everything defaults).
+    pub env_source: &'static str,
 }
 
 impl Paths {
-    /// Resolve project root (`.env` or `data/` marker), then FACES_DB /
-    /// CONFIG_FILE from .env — mirrors import_roll.py resolution.
-    /// `WHOT_ROOT` overrides (documented in README; required for packaged
-    /// builds, where the cwd will not contain the repo checkout).
+    /// Resolve in one of two modes:
+    ///
+    /// **Repository mode** (backend-design §2, unchanged from 1.x):
+    /// `WHOT_ROOT`, else a walk-up from the cwd for a `.env` file or a
+    /// `data/` directory; `FACES_DB` / `CONFIG_FILE` from the parsed
+    /// `.env`, joined onto the root. A `.env` present here is the
+    /// environment source of record — whotrc's `env` object is not read.
+    ///
+    /// **Installed mode** (#301, #302): no repo found — the user config
+    /// `~/.config/whot/whotrc.json` (`$WHOT_CONFIG_DIR` override), copied
+    /// from `/usr/share/whot/whotrc.json` or the binary-embedded default
+    /// on first use; `FACES_DB` from the file's `env` object, relative
+    /// paths resolved against the app data home (`~/.local/share/whot`).
     pub fn resolve() -> Result<Paths> {
-        let root = if let Ok(r) = std::env::var("WHOT_ROOT") {
-            PathBuf::from(r)
+        if let Some(root) = repo_root() {
+            Ok(repo_paths(root))
         } else {
-            let mut dir = std::env::current_dir()
-                .context("no current directory")?;
-            loop {
-                // `.env` alone suffices — every key has a default, and a
-                // fresh clone has no data/ directory yet (F11)
-                if dir.join(".env").is_file() || dir.join("data").is_dir() {
-                    break;
-                }
-                if !dir.pop() {
-                    bail!("could not locate project root (.env or data/) — set WHOT_ROOT");
+            Ok(installed_paths(user_config_dir(), app_data_home(), default_config_text()))
+        }
+    }
+}
+
+/// Repository mode paths for a resolved root: `FACES_DB` / `CONFIG_FILE`
+/// from the parsed `.env`, joined onto the root (backend-design §2).
+pub fn repo_paths(root: PathBuf) -> Paths {
+    let env = parse_env(&root.join(".env"));
+    let db = root.join(env.get("FACES_DB").map(|s| s.as_str()).unwrap_or("data/faces.db"));
+    let config = root.join(
+        env.get("CONFIG_FILE")
+            .map(|s| s.as_str())
+            .unwrap_or("config/whotrc.json"),
+    );
+    let env_source = if root.join(".env").is_file() { "dotenv" } else { "none" };
+    Paths { root, db, config, mode: "repo", env_source }
+}
+
+/// Installed mode paths (#301, #302): `config_dir`/`data_home` are the
+/// caller-resolved per-user dirs (`user_config_dir` / `app_data_home`).
+/// On first use the user config is created by copying `default`
+/// (the packaged default text — `default_config_text()`); `FACES_DB`
+/// comes from the file's `env` object, a relative path resolved against
+/// the data home, which is also `Paths.root` (backend-design §2).
+pub fn installed_paths(
+    config_dir: PathBuf,
+    data_home: PathBuf,
+    default: Option<String>,
+) -> Paths {
+    let config = config_dir.join("whotrc.json");
+    if !config.exists() {
+        // first use: the packaged default is copied into the user's
+        // config dir and used from there — the user copy owns all later
+        // edits and survives package upgrades.
+        if let Some(default) = default {
+            let _ = std::fs::create_dir_all(&config_dir);
+            let _ = std::fs::write(&config, default);
+        }
+    }
+    let env = expand_env(read_env_object(&config));
+    let db = match env.get("FACES_DB") {
+        Some(p) => PathBuf::from(p),
+        None => PathBuf::from("data/faces.db"),
+    };
+    let db = if db.is_absolute() { db } else { data_home.join(db) };
+    let env_source = if config.is_file() { "user-config" } else { "none" };
+    Paths { root: data_home, db, config, mode: "installed", env_source }
+}
+
+/// The repository root for repo mode: `WHOT_ROOT`, else the nearest
+/// ancestor of the cwd holding a `.env` file or a `data/` directory.
+/// `None` selects installed mode (backend-design §2).
+fn repo_root() -> Option<PathBuf> {
+    if let Ok(r) = std::env::var("WHOT_ROOT") {
+        return Some(PathBuf::from(r));
+    }
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        // `.env` alone suffices — every key has a default, and a
+        // fresh clone has no data/ directory yet (F11)
+        if dir.join(".env").is_file() || dir.join("data").is_dir() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// #301 — the per-user config dir for the app identifier `whot`
+/// (backend-design §2): `$WHOT_CONFIG_DIR` overrides (the test hook),
+/// then `$XDG_CONFIG_HOME/whot` under XDG, then the platform
+/// equivalent of `~/.config/whot` (`~/Library/Application Support/whot`
+/// on macOS, `%APPDATA%\whot` on Windows).
+pub fn user_config_dir() -> PathBuf {
+    if let Some(d) = nonempty_env("WHOT_CONFIG_DIR") {
+        return d;
+    }
+    if let Some(d) = nonempty_env("XDG_CONFIG_HOME") {
+        return d.join("whot");
+    }
+    match home_dir() {
+        Some(home) => match std::env::consts::OS {
+            "macos" => home.join("Library/Application Support/whot"),
+            "windows" => home.join("AppData/Roaming/whot"),
+            _ => home.join(".config/whot"),
+        },
+        None => PathBuf::from(".config/whot"),
+    }
+}
+
+/// #301 — the app data home for installed mode: `$WHOT_DATA_DIR`
+/// overrides (the test hook), then `$XDG_DATA_HOME/whot` under XDG,
+/// then the platform equivalent of `~/.local/share/whot`.
+pub fn app_data_home() -> PathBuf {
+    if let Some(d) = nonempty_env("WHOT_DATA_DIR") {
+        return d;
+    }
+    if let Some(d) = nonempty_env("XDG_DATA_HOME") {
+        return d.join("whot");
+    }
+    match home_dir() {
+        Some(home) => match std::env::consts::OS {
+            "macos" => home.join("Library/Application Support/whot"),
+            "windows" => home.join("AppData/Roaming/whot"),
+            _ => home.join(".local/share/whot"),
+        },
+        None => PathBuf::from(".local/share/whot"),
+    }
+}
+
+fn nonempty_env(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    nonempty_env("HOME").or_else(|| nonempty_env("USERPROFILE"))
+}
+
+/// #301 — the packaged default config text: the FHS-installed
+/// `/usr/share/whot/whotrc.json` (the rpm/deb/pacman convention; the
+/// installer runs as root and never touches a user home) when present,
+/// else the default embedded in the binary at compile time
+/// (`config/whotrc.default.json`; `$WHOT_DEFAULT_CONFIG` overrides —
+/// the test hook).
+fn default_config_text() -> Option<String> {
+    if let Some(p) = nonempty_env("WHOT_DEFAULT_CONFIG") {
+        if let Ok(text) = std::fs::read_to_string(p) {
+            return Some(text);
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string("/usr/share/whot/whotrc.json") {
+        return Some(text);
+    }
+    Some(EMBEDDED_DEFAULT_CONFIG.to_string())
+}
+
+/// #302 — the `env` object of a whotrc.json, unexpanded (empty when the
+/// file is missing or malformed — `get_settings` reports malformed
+/// configs separately, #44). Parsed from the raw JSON so the `env`
+/// extraction never depends on the Settings schema's evolution.
+fn read_env_object(path: &Path) -> BTreeMap<String, String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|v| {
+            serde_json::from_value::<BTreeMap<String, String>>(
+                v.get("env").cloned().unwrap_or_default(),
+            )
+            .ok()
+        })
+        .unwrap_or_default()
+}
+
+/// #302 — the `${VAR}` expansion for the whotrc `env` object, the SAME
+/// algorithm `parse_env` applies to `.env`: references resolve against
+/// other `env` keys first (4 passes), then the process environment;
+/// unresolvable references stay literal.
+pub fn expand_env(mut env: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    for _ in 0..4 {
+        let pairs: Vec<(String, String)> =
+            env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        for val in env.values_mut() {
+            if val.contains("${") {
+                for (k, v) in &pairs {
+                    *val = val.replace(&format!("${{{k}}}"), v);
                 }
             }
-            dir
-        };
-        let env = parse_env(&root.join(".env"));
-        let db = root.join(env.get("FACES_DB").map(|s| s.as_str()).unwrap_or("data/faces.db"));
-        let config = root.join(
-            env.get("CONFIG_FILE")
-                .map(|s| s.as_str())
-                .unwrap_or("config/whotrc.json"),
-        );
-        Ok(Paths { root, db, config })
+        }
     }
+    for val in env.values_mut() {
+        if val.contains("${") {
+            *val = expand_process_env(val);
+        }
+    }
+    env
 }
 
 /// Minimal .env parser mirroring import_roll.py (KEY=VALUE, ${VAR}, 4 passes).
@@ -259,6 +440,26 @@ fn check_schema(con: &Connection, db: &Path) -> Result<()> {
 
 // ---------------------------------------------------------------- settings
 
+/// #303 — the `get_config_info` payload (gui-design §4 rule 52):
+/// the startup resolution, reported to the environment dialog's header.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigInfo {
+    pub mode: &'static str,
+    pub config_path: String,
+    pub db_path: String,
+    pub env_source: &'static str,
+}
+
+pub fn config_info(paths: &Paths) -> Result<ConfigInfo> {
+    Ok(ConfigInfo {
+        mode: paths.mode,
+        config_path: paths.config.display().to_string(),
+        db_path: paths.db.display().to_string(),
+        env_source: paths.env_source,
+    })
+}
+
 /// #99 (gui-design §4.10) — which face statuses every view shows.
 /// Serialized lowercase: "all" | "provisional" | "confirmed" | "rejected"
 /// (the UI labels `confirmed` **Accepted**); `accepted` is accepted as an
@@ -288,7 +489,13 @@ pub enum ClusterGroup {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Settings {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// serde defaults keep env-only whotrc.json files (the #301
+    /// first-use copy) loading — a missing GUI key means the default.
+    #[serde(default = "default_threshold")]
     pub cluster_threshold: f64,
+    #[serde(default = "default_refcrop_n")]
     pub refcrop_n: i64,
     /// face-status filter for every view (#99); defaults to `all`, which
     /// is exactly the old show_rejected: true — a legacy `show_rejected`
@@ -324,9 +531,18 @@ fn default_merge_name_distance() -> u32 {
     2
 }
 
+fn default_threshold() -> f64 {
+    DEFAULT_THRESHOLD
+}
+
+fn default_refcrop_n() -> i64 {
+    DEFAULT_REFCROP_N
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            env: BTreeMap::new(),
             cluster_threshold: DEFAULT_THRESHOLD,
             refcrop_n: DEFAULT_REFCROP_N,
             face_filter: FaceFilter::All,

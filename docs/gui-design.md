@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 16.1** (#299) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 18.2** (#303; v18.1 #304) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -71,8 +71,14 @@ preserves manual annotations across such a drop & recreate, and
 (backup first) to the status-group layout of §4.35, so the long-lived live
 DB never needs a re-import.
 
-GUI settings live in `config/whotrc.json` (created on first need; path from
-`CONFIG_FILE` in `.env`):
+GUI settings live in `config/whotrc.json` (repo mode; path from
+`CONFIG_FILE` in `.env`). In an installed setup (#301, #302) the file
+is `~/.config/whot/whotrc.json` — copied from the packaged default
+(`/usr/share/whot/whotrc.json`, else the binary-embedded default) on
+first use — and the machine's environment keys ride the same file's
+`env` object (backend-design §2). The GUI behaviour is unchanged in
+17.1 (the `Settings` IPC payload round-trips `env` untouched; the
+setup dialog that edits it is #303):
 
 ```json
 { "cluster_threshold": 0.40, "refcrop_n": 5, "face_filter": "all", "cluster_group": "accuracy", "image_viewer": "", "directory_viewer": "" }
@@ -2597,8 +2603,8 @@ thin hook (`useSessionState.ts`); App keeps only setter bindings.
   same state; a dedicated check pins the contract itself (set a
   place → reload → it comes back).
 
-**51. (v16.0, #298; v16.1, #299) Export annotated image — what you
-see is what you save.** A full image (both surfaces — the focus split and the
+**51. (v16.0, #298; v16.1, #299; v17.0, #300; v18.1, #304) Export annotated
+image — what you see is what you save.** A full image (both surfaces — the focus split and the
 Rolls image detail) can be exported as ONE annotated image: the
 full image with every visible face's rectangle and person-name
 label baked into the pixels. Entry points: the ONE bar's (rule 46
@@ -2610,7 +2616,12 @@ open the same dialog.
   **size** (original, or a max dimension in px — blank = original)
   and the **save path** — prefilled with the original file's
   directory + `<stem>-annotated.<ext>`; a *browse* button opens the
-  native save dialog (filtered to the chosen type).
+  native save dialog (filtered to the chosen type). **Open after
+  export** (#300): a tick box (default off) — after a SUCCESSFUL
+  save, the exported file opens in the image viewer (the #273
+  `image_viewer` setting — the configured program, else the system
+  default). An open failure does NOT fail the export — the file is
+  already written; the failure reaches the error toast (#144).
 - **The render** is a canvas composite of the SAME
   `images.preview` BLOB pixels the viewer displays, the stored CW
   rotation applied to the pixels (the #122/§4.32 math), one
@@ -2630,15 +2641,77 @@ open the same dialog.
 - **Saving** goes through a new Tauri command `save_image_file`
   (path + bytes — a dumb writer, no DB, no decode): the canvas
   encode (JPEG quality 0.92, the #122 re-encode's) is written to
-  the chosen path. A failure reaches the error toast (#144);
+  the chosen path. A failure reaches the error toast (#144); the
+  *open after export* (#300) goes through `open_image_file`
+  (path → the #273 image viewer / system default — the `open_with`
+  opener, like `open_image`).
   success is a quiet info toast naming the path.
+- **The label chip is measured in the label font** (v18.1, #304):
+  `ctx.font` is set BEFORE `fitLabel`/`measureText` — `measureText`
+  reads the canvas's CURRENT font, and the default (10px sans-serif)
+  left the background chip ~1 character short of the rendered text;
+  the chip width is the (ceiling of the) measured advance + the
+  horizontal padding. A stub-context regression test pins the
+  font-before-measure ordering and the chip geometry.
 - **Implementation stays out of App (§4.44)**: the composite +
   encode live in a dedicated pure module (`exportAnnotated.ts`),
   the dialog in `components/AnnotatedExportDialog.tsx`, the menu
   entry in `menus.ts`, the bar button in `FullImageBar.tsx`; App
   keeps only the open/close binding.
 - **gui-mock**: a dedicated check pins both entry points (the bar's
-  ⤓ and the menu entry each open the dialog).
+  ⤓ and the menu entry each open the dialog); the *open after
+  export* tick box is pinned too (present, default off; a checked
+  export invokes `open_image_file` with the exported path, an
+  unchecked one does not).
+
+**52. (v18.2, #303) The environment dialog — the machine's
+configuration in one place.** The environment keys that #302 merged
+into whotrc.json's `env` object (backend-design §2) get a dedicated
+dialog.
+
+- **Entry points**: a **`environment…`** button in the settings
+  popover (beside its action row) and one in the first-run dialog
+  (the machine's paths are exactly what a first run may need to
+  point at real storage before the first import). Both open the
+  SAME dialog.
+- **Header**: the resolved mode and file — `repo` (a checkout: the
+  settings file is `config/whotrc.json`, path from `CONFIG_FILE` in
+  `.env`) or `installed` (`~/.config/whot/whotrc.json`) — the db
+  path, and where the environment comes from. A repo `.env` present
+  is a warning line: **the `.env` overrides these values** (edits to
+  whotrc's `env` are inert until the `.env` goes away — #302's
+  precedence rule). The header comes from the one-shot
+  `get_config_info` IPC (backend-design §2).
+- **The fields**: one row per KNOWN env key — `DATA_DIR`, `FACES_DB`,
+  `HARVEST_DB`, `CONFIG_DIR`, `CONFIG_FILE`, `INSIGHTFACE_PATH`,
+  `DEFAULT_IMAGES_DIR`, `ARCHIVE_DIR`, `DIGIKAM_DB`,
+  `DIGIKAM_RECOGNITION_DB`, `LR_CATALOG`, `LR_SIDECARS_DIR`,
+  `PATH_MAP` — free text, prefilled from the resolved env (a missing
+  key shows the default in the placeholder); `${VAR}` references are
+  shown and saved LITERALLY (expansion happens on read,
+  backend-design §2). The keys are fixed — only values are editable;
+  an empty value means the default / CLI-flag path applies. Unknown
+  env keys are preserved untouched by the round-trip but are not
+  editable rows (the vocabulary is the scripts' known keys).
+- **Saving** goes through the EXISTING `set_settings` (the `env`
+  object rides `Settings` since #302) — no new writer. The dialog
+  closes on a successful save; the caller's quiet info toast carries
+  the restart hint (paths are resolved at startup — path changes
+  take effect after a restart). A save failure reaches the error
+  toast (#144) and the dialog stays open.
+- **Implementation stays out of App (§4.44)**: a dedicated component
+  (`EnvDialog.tsx`) fetches its own `get_config_info` + settings
+  prefill — the first-run surface has no snapshot yet, so the dialog
+  must not depend on one; App keeps the open/close binding and the
+  save callback.
+- **gui-mock**: a dedicated check pins the settings-popover entry
+  point (the button opens the dialog), the header contract
+  (mode/config path/db path/env source + the `.env` override
+  warning), the prefill from the resolved env, and the save
+  round-trip (`set_settings` invoked with the edited env; a reopened
+  dialog shows the saved value). C47 gains the first-run
+  `environment…` button (present; under `?no_db=1` it opens the same
+  dialog).
 
 ## 5. Related documents
 

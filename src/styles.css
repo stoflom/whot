@@ -1107,6 +1107,9 @@ button.dp-group-path:hover:not(:disabled) { border-color: var(--border); }
 /* #126: the dialog is capped to the viewport — the cluster list scrolls,
    the title/intro above and the action row below stay visible */
 .merge-dialog { max-height: 86vh; }
+/* #303 — the environment dialog: 13 rows scroll under the C15-style cap */
+.dialog.env { max-height: 86vh; overflow-y: auto; }
+.env-note { color: var(--warn); }
 .merge-list {
   overflow-y: auto;
   min-height: 0;
