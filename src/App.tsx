@@ -567,13 +567,14 @@ export default function App() {
     (f: Face) => matchesStatusFilter(f.link_status, faceFilter),
     [faceFilter]
   );
-  // #127/#128 → #152, #165 (§4.10): the face-status filter decides the
-  // tree's person presence — All now means everything EXCEPT rejected:
-  // persons holding ≥ 1 non-rejected face stay (plus the faceless
-  // shells, #127/#128), the reject-bin persons `RejectedN` never show
-  // outside Show → Rejected (§4.35/#266); New/Accepted/Rejected list
-  // only persons holding ≥ 1 face of that status; the listed badges
-  // stay raw totals (#129's badge rule — unchanged, only presence moved)
+  // #127/#128 → #152, #165, #305 (§4.10): the face-status filter decides
+  // the tree's person presence — All means every face, including
+  // rejected: persons holding ≥ 1 face (any status) stay (plus the
+  // faceless shells, #127/#128), the reject-bin persons `RejectedN`
+  // list under All while they hold faces (§4.35/#266);
+  // New/Accepted/Rejected list only persons holding ≥ 1 face of that
+  // status; the listed badges stay raw totals (#129's badge rule —
+  // unchanged, only presence moved)
   const treePersons = useMemo(
     () => (snap ? personTreeMembers(snap.persons, snap.faces, faceFilter) : []),
     [snap, faceFilter],
@@ -2561,15 +2562,15 @@ export default function App() {
           )}
           {/* #158 (§3, v3.57): the Show filter lives in the top bar — it is
               a global control applied across all panes (#99, §4.10) and not
-              something the Person view (or any single pane) owns. #175:
-              rejected faces are reachable only via Show → Rejected
-              (#165/§4.10); #175/§4.40: locked to New while Review runs —
+              something the Person view (or any single pane) owns. #305:
+              All includes rejected faces (#165/§4.10);
+              #175/§4.40: locked to New while Review runs —
               the titles stay reference-free (§4.43) */}
           <label
             title={
               mode === "review"
                 ? "Locked to New while Review is active — leave Review via the Rolls or Person tab"
-                : "All = everything except rejected; rejected faces appear only under Show → Rejected; switching it drops hidden faces from the selection"
+                : "All = every face, including rejected; switching it drops hidden faces from the selection"
             }
           >
             show
