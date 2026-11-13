@@ -473,6 +473,7 @@ whot/
       ContextConfirmDialog.tsx  guards.tsx            # MergeInto, MergeSimilar,
       ConfirmRemoveDialog.tsx  HelpDialog.tsx         # FaceMerge, AddGroup, the
       ImportPane.tsx  FirstRun.tsx  GroupListEditor.tsx  # §4.36 first-run,
+      EnvDialog.tsx                                   # the environment dialog
       NameTypeahead.tsx  PathTypeahead.tsx            # the §4.41 guards); the
       SuggestInput.tsx  SettingsPopover.tsx           # toasts + full-image bar
       ErrorNotice.tsx  FullImageBar.tsx               # close the set

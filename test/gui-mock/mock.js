@@ -485,6 +485,15 @@
     set_settings: ({ settings }) => {
       SNAP.settings = settings;
     },
+    // #303 (rule 52): the environment dialog's header — the mock
+    // mirrors repo mode (a checkout with a .env), independent of the
+    // no-DB probe (the settings file resolves even without a database)
+    get_config_info: () => ({
+      mode: "repo",
+      configPath: "/mock/config/whotrc.json",
+      dbPath: "/mock/data/faces.db",
+      envSource: "dotenv",
+    }),
     // #212: binary image delivery — ONE framed batch per call (the
     // WHOTIMG container of db::encode_image_batch / src/imageBatch.ts);
     // a real tiny JPEG stands in for the DB blobs (never pixel-checked)

@@ -18,6 +18,7 @@ export default function FirstRun({
   onUsable,
   onBroken,
   onError,
+  onEnv,
 }: {
   /** App's snapshot refresh — the screen's decisions are its RESULTS */
   refresh: () => Promise<unknown>;
@@ -28,6 +29,8 @@ export default function FirstRun({
   onBroken: (message: string) => void;
   /** a post-import refresh failure surfaces as the toast; screen stays */
   onError: (message: string) => void;
+  /** #303 (rule 52): opens the environment dialog (App owns it) */
+  onEnv: () => void;
 }) {
   // #185: firstRunDir null = the dialog, a string = the standalone pane
   const [firstRunDir, setFirstRunDir] = useState<string | null>(null);
@@ -66,6 +69,16 @@ export default function FirstRun({
                 }
               >
                 Open import pane
+              </button>
+              {/* #303 (rule 52): the machine's paths may need fixing
+                  before the first import — the SAME dialog as the
+                  settings popover's entry */}
+              <button
+                className="secondary"
+                title="the machine's paths (whotrc.json's env object)"
+                onClick={onEnv}
+              >
+                environment…
               </button>
             </div>
           </div>

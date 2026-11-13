@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 18.1** (#303; v18.1 #304) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 18.2** (#303; v18.1 #304) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2664,7 +2664,7 @@ open the same dialog.
   export invokes `open_image_file` with the exported path, an
   unchecked one does not).
 
-**52. (v18.0, #303) The environment dialog — the machine's
+**52. (v18.2, #303) The environment dialog — the machine's
 configuration in one place.** The environment keys that #302 merged
 into whotrc.json's `env` object (backend-design §2) get a dedicated
 dialog.

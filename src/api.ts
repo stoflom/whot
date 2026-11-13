@@ -228,6 +228,15 @@ export const personFaceClusters = (personId: number, threshold: number) =>
   invoke<AppearanceGroup[]>("person_face_clusters", { personId, threshold });
 export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) => invoke("set_settings", { settings });
+/** #303 (gui-design §4 rule 52) — the environment dialog's header: the
+    startup resolution (backend-design §2). */
+export interface ConfigInfo {
+  mode: "repo" | "installed";
+  configPath: string;
+  dbPath: string;
+  envSource: "dotenv" | "user-config" | "none";
+}
+export const getConfigInfo = () => invoke<ConfigInfo>("get_config_info");
 
 // ------------------------------------------------------- import runner (#167)
 
