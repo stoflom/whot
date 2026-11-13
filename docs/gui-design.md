@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 18.0** (#303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 18.1** (#303; v18.1 #304) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2603,7 +2603,7 @@ thin hook (`useSessionState.ts`); App keeps only setter bindings.
   same state; a dedicated check pins the contract itself (set a
   place → reload → it comes back).
 
-**51. (v16.0, #298; v16.1, #299; v17.0, #300) Export annotated
+**51. (v16.0, #298; v16.1, #299; v17.0, #300; v18.1, #304) Export annotated
 image — what you see is what you save.** A full image (both surfaces — the focus split and the
 Rolls image detail) can be exported as ONE annotated image: the
 full image with every visible face's rectangle and person-name
@@ -2646,6 +2646,13 @@ open the same dialog.
   (path → the #273 image viewer / system default — the `open_with`
   opener, like `open_image`).
   success is a quiet info toast naming the path.
+- **The label chip is measured in the label font** (v18.1, #304):
+  `ctx.font` is set BEFORE `fitLabel`/`measureText` — `measureText`
+  reads the canvas's CURRENT font, and the default (10px sans-serif)
+  left the background chip ~1 character short of the rendered text;
+  the chip width is the (ceiling of the) measured advance + the
+  horizontal padding. A stub-context regression test pins the
+  font-before-measure ordering and the chip geometry.
 - **Implementation stays out of App (§4.44)**: the composite +
   encode live in a dedicated pure module (`exportAnnotated.ts`),
   the dialog in `components/AnnotatedExportDialog.tsx`, the menu
