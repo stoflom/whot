@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 18.2** (#303; v18.1 #304) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 18.3** (#305; v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -201,10 +201,8 @@ setup dialog that edits it is #303):
     with its detected face rectangles** (see below); a
     single click only selects it. **Show prunes the tree** (§4.10): an
     image is listed only if it holds at least one face passing the Show
-    filter — with `All` = everything *except* rejected, an image
-    holding only rejected faces lists solely under `Show → Rejected`
-    (a `no-face` image still lists under `All`) — and a branch holding
-    no listing image
+    filter (a `no-face` image still lists under `All`) — and a branch
+    holding no listing image
     is pruned entirely (set Show back to All to see everything again —
     the branch raw counts keep such branches discoverable). An empty DB
     shows `no images yet`.
@@ -601,14 +599,15 @@ setup dialog that edits it is #303):
    against that person (§4.7) and the origin person is recomputed
    (primary/refcrops/seat, §4.5/§4.6/§4.35).
    Rejected faces: excluded from similarity grouping, primary-face
-   eligibility, refcrops and importer corpora, and **visible only under
-   `Show → Rejected`** (§4.10). **Exit is assignment alone — the claim
-   rule:** plain Accept never
+   eligibility, refcrops and importer corpora — **visible under every
+   Show filter, including `All`** (§4.10). **Exit is assignment alone —
+   the claim rule:** plain Accept never
    un-rejects (§4.3); only an explicit assignment (assign, rename, merge,
    move, section rule, the Edit dialog committed with a name) un-rejects
-   the faces it claims *and* moves them to the target. A rejected face can
-   only enter a selection while `Show = Rejected`, so claiming is always a
-   deliberate act.
+   the faces it claims *and* moves them to the target. A rejected face is
+   visible (and selectable) under every Show filter — claiming one is
+   still a deliberate act: plain Accept skips it, only an explicit
+   assignment un-rejects it.
 3. **Accept (without rename)** ⇒ selected faces `link_status='confirmed'`
    (stay with their current person; confirm an `UnknownN` as-is).
    `rejected` faces in the scope are **skipped** — accept never un-rejects
@@ -694,30 +693,29 @@ setup dialog that edits it is #303):
     `Show [All | New | Accepted | Rejected]` in the top bar: one
     setting (whotrc `face_filter`: `all` (default) | `provisional` — UI
     label **New**, the face-card badge's word — | `confirmed` —
-    UI label **Accepted** — | `rejected`). **`All` means every face
-    *except* `rejected`**: rejected faces are visible **only**
-    under an explicit `Show → Rejected`, so the reject bin can never
-    surprise the user mid-review. A legacy `show_rejected` key in the
-    config file is ignored on read. The Show control's **tooltip spells
-    this out** (the user-facing contract): `All = everything
-    except rejected; rejected faces appear only under Show → Rejected
-    (§4.10); switching it drops hidden faces from the selection`.
+    UI label **Accepted** — | `rejected`). **`All` means every face,
+    including `rejected`** — `Show → Rejected` is the narrowed view of
+    the rejected faces (the reject bin). A legacy `show_rejected` key in
+    the config file is ignored on read. The Show control's **tooltip
+    spells this out** (the user-facing contract): `All = every face,
+    including rejected; switching it drops hidden faces from the
+    selection`.
     The chosen status decides **every view's**
     visibility: the person view's cluster sections and its Rejected
-    section, image grids and full-image rectangles, the review grid, the
+    section (rejected faces render in that section under `All` and
+    `Show → Rejected`), image grids and full-image rectangles, the
+    review grid, the
     **left-pane person presence** — a person holding no face that
     matches the filter leaves the tree (set Show back to All to list
-    everyone again, including the faceless shells; the `RejectedN`
-    cluster persons are listed **only** under `Show → Rejected`, never
-    under `All` — §4.35) — the
+    everyone again, including the faceless shells and the `RejectedN`
+    cluster persons — §4.35) — the
     **Rolls path tree** — an image holding no face that matches
     the filter is dropped from its branch and a branch left without a
     listing image is pruned entirely (raw branch counts stay, so the
-    pruned branch is discoverable; under the new `All` this prunes
-    images holding *only* rejected faces, and counts as "no face
-    matches" — a `no-face` image still lists under `All`) — and the
-    **right-pane overview totals** (under `All` they therefore exclude
-    rejected faces; the rejected total reads under `Show → Rejected`).
+    pruned branch is discoverable; a `no-face` image still lists under
+    `All`) — and the
+    **right-pane overview totals** (under `All` they include
+    rejected faces).
     The badges of the persons that stay
     listed carry their raw totals: the filter changes who is
     listed, never any counters. A selection survives its person dropping
@@ -725,9 +723,9 @@ setup dialog that edits it is #303):
     the filter. `link_status`
     never changes: the filter is pure display. Switching it **drops
     non-matching faces from the selection**: faces the filter hides can
-    never be bulk-acted on — which is what makes the claim rule (§4.2,
-    §4.35) safe: rejected faces are unreachable except while
-    `Show = Rejected`.
+    never be bulk-acted on. Rejected faces are visible (and selectable)
+    under `All` too — claiming them stays deliberate: plain Accept skips
+    them (§4.3) and only an explicit assignment un-rejects (§4.2).
     **Review special case**: `All`/`Provisional` show the pending set
     (provisional — the default review), `Accepted` shows
     confirmed faces, `Rejected` shows the reject bin — every rejected
@@ -880,9 +878,8 @@ setup dialog that edits it is #303):
     exist or their counts. A person renders under **every** listed path
     (see §3); further groups stay visible in the row tooltip.
     A branch whose listed persons are all filtered out disappears with
-    them; the `RejectedN` cluster persons are listed only under
-    `Show → Rejected` (§4.35), so their branch is invisible under every
-    other setting.
+    them; the `RejectedN` cluster persons are listed under `All` and
+    `Show → Rejected` (§4.35), and only while they hold faces.
 17. **Selection accelerators** ⇒ Ctrl/⌘-click on a face-card body
     toggles that card in the selection — the tree's idiom, mirrored
     on cards; plain click stays inert so double-click-to-open is
@@ -1791,9 +1788,8 @@ setup dialog that edits it is #303):
       rule; a face matching nothing — including one **with no
       embedding** (legacy, #41) — starts a fresh `RejectedN`. Each
       person: state `created`, seat row always `Rejected` (the one
-      derivation it never re-evaluates); listed in the tree **only
-      under `Show → Rejected`** and only while it holds faces (§4.10) —
-      invisible under every other setting. The **names are reserved**
+      derivation it never re-evaluates); listed in the tree under `All`
+      and `Show → Rejected`, and only while it holds faces (§4.10). The **names are reserved**
       in `validate_person_name` as the family `^Rejected\d+$`
       (the `Unknown*` analogue; the exact name `Rejected` stays
       reserved) and are numbered collision-free over the existing
@@ -2206,9 +2202,9 @@ setup dialog that edits it is #303):
 41. **Person mode: sticky person, guard dialogs, counts, status
    colours** ⇒ Person mode's behaviour is otherwise unchanged:
    - **The Person tab is always clickable**: without an anchored
-     person a click switches to Person mode, sets **Show → All** (the
-     status branches `New`/`Accepted` are then listed — `Rejected` only
-     under Show → Rejected, §4.35) and opens the dialog
+     person a click switches to Person mode, sets **Show → All** (every
+     status branch — `New`, `Accepted`, `Rejected` — is then listed,
+     §4.35) and opens the dialog
      *Please select a person in the tree on the left* (a single
      **Close** button). With an anchor the click is the plain mode
      switch — the anchor survives mode switches (§3), so the person
