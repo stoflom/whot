@@ -1373,7 +1373,8 @@ def c11_merge_focuses_target(t):
         const name = n.querySelector('.tree-name')?.textContent.trim() ?? '';
         const total = Number(n.querySelector('.tree-count.total')?.textContent ?? 0);
         return {name, total};
-      }).filter(r => r.name && !/^unknown/i.test(r.name) && r.total > 0);
+      }).filter(r => r.name && !/^unknown/i.test(r.name)
+                     && !/^rejected\d*$/i.test(r.name) && r.total > 0);
       if (rows.length < 2) return null;
       rows.sort((a, b) => b.total - a.total);
       return {source: rows[1].name, target: rows[0].name,
@@ -5314,7 +5315,8 @@ def c50_merge_chips_pick_target(t):
         const total = Number(n.querySelector('.tree-count.total')?.textContent ?? 0);
         return {name, total};
       }).filter(r => r.name && !/^unknown/i.test(r.name)
-                    && !/^(new|accepted|rejected)$/i.test(r.name) && r.total > 0);
+                    && !/^(new|accepted|rejected)$/i.test(r.name)
+                    && !/^rejected\d*$/i.test(r.name) && r.total > 0);
       if (rows.length < 2) return null;
       rows.sort((a, b) => b.total - a.total);
       return {a: rows[0], b: rows[1]};

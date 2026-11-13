@@ -5,7 +5,8 @@
 // digits) is the LEGACY system person, retired by the one-shot split —
 // writer-owned in the backend either way, so the GUI treats the whole
 // family identically: no rename/move/file/merge/remove/drop, no name or
-// seat prefill, and listed only under Show → Rejected (§4.10).
+// seat prefill. The family is listed under All and Show → Rejected while
+// it holds faces (§4.10, #305).
 // Pure.
 
 /** does this name belong to the writer-owned reject-bin family
