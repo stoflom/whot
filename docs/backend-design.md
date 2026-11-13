@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 2.0** (#301, #302) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.1** (#303) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -123,6 +123,14 @@ first settings save.
 
 Precedence in one line: **CLI flags → `.env` (repo mode) → user
 whotrc `env` → built-in defaults.**
+
+`get_config_info` (#303) reports the resolution as it was resolved at
+startup — `{mode: "repo"|"installed", configPath, dbPath,
+envSource: "dotenv"|"user-config"|"none"}` — carried on `Paths`
+itself (`repo_paths` reports `dotenv` when the root's `.env` exists,
+else `none`; installed mode reports `user-config` when the user
+whotrc exists after the first-use copy, else `none`); the
+environment dialog's header (gui-design §4 rule 52) renders it.
 
 GUI settings are **not** in the database: `get_settings`/`set_settings`
 read and write the resolved whotrc.json (`config/whotrc.json` in repo

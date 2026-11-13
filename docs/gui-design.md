@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 17.1** (#301, #302) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 18.0** (#303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2656,6 +2656,55 @@ open the same dialog.
   export* tick box is pinned too (present, default off; a checked
   export invokes `open_image_file` with the exported path, an
   unchecked one does not).
+
+**52. (v18.0, #303) The environment dialog — the machine's
+configuration in one place.** The environment keys that #302 merged
+into whotrc.json's `env` object (backend-design §2) get a dedicated
+dialog.
+
+- **Entry points**: a **`environment…`** button in the settings
+  popover (beside its action row) and one in the first-run dialog
+  (the machine's paths are exactly what a first run may need to
+  point at real storage before the first import). Both open the
+  SAME dialog.
+- **Header**: the resolved mode and file — `repo` (a checkout: the
+  settings file is `config/whotrc.json`, path from `CONFIG_FILE` in
+  `.env`) or `installed` (`~/.config/whot/whotrc.json`) — the db
+  path, and where the environment comes from. A repo `.env` present
+  is a warning line: **the `.env` overrides these values** (edits to
+  whotrc's `env` are inert until the `.env` goes away — #302's
+  precedence rule). The header comes from the one-shot
+  `get_config_info` IPC (backend-design §2).
+- **The fields**: one row per KNOWN env key — `DATA_DIR`, `FACES_DB`,
+  `HARVEST_DB`, `CONFIG_DIR`, `CONFIG_FILE`, `INSIGHTFACE_PATH`,
+  `DEFAULT_IMAGES_DIR`, `ARCHIVE_DIR`, `DIGIKAM_DB`,
+  `DIGIKAM_RECOGNITION_DB`, `LR_CATALOG`, `LR_SIDECARS_DIR`,
+  `PATH_MAP` — free text, prefilled from the resolved env (a missing
+  key shows the default in the placeholder); `${VAR}` references are
+  shown and saved LITERALLY (expansion happens on read,
+  backend-design §2). The keys are fixed — only values are editable;
+  an empty value means the default / CLI-flag path applies. Unknown
+  env keys are preserved untouched by the round-trip but are not
+  editable rows (the vocabulary is the scripts' known keys).
+- **Saving** goes through the EXISTING `set_settings` (the `env`
+  object rides `Settings` since #302) — no new writer. The dialog
+  closes on a successful save; the caller's quiet info toast carries
+  the restart hint (paths are resolved at startup — path changes
+  take effect after a restart). A save failure reaches the error
+  toast (#144) and the dialog stays open.
+- **Implementation stays out of App (§4.44)**: a dedicated component
+  (`EnvDialog.tsx`) fetches its own `get_config_info` + settings
+  prefill — the first-run surface has no snapshot yet, so the dialog
+  must not depend on one; App keeps the open/close binding and the
+  save callback.
+- **gui-mock**: a dedicated check pins the settings-popover entry
+  point (the button opens the dialog), the header contract
+  (mode/config path/db path/env source + the `.env` override
+  warning), the prefill from the resolved env, and the save
+  round-trip (`set_settings` invoked with the edited env; a reopened
+  dialog shows the saved value). C47 gains the first-run
+  `environment…` button (present; under `?no_db=1` it opens the same
+  dialog).
 
 ## 5. Related documents
 

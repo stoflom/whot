@@ -439,6 +439,11 @@ full-refreshes instead).
   the `Ungrouped`, `New`, `Accepted`, `Rejected` and `Unknown` segments
   are reserved
 - `get_settings()` / `set_settings(json)` — `config/whotrc.json`
+  (the GUI settings + the `env` object, backend-design §2)
+- `get_config_info()` — the resolved configuration: `{mode:
+  "repo"|"installed", configPath, dbPath, envSource:
+  "dotenv"|"user-config"|"none"}` (the environment dialog's header,
+  gui-design §4 rule 52)
 
 **Import runner** (§4.36 — spawns, never blocks the GUI)
 
