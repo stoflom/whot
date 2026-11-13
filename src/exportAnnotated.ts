@@ -98,11 +98,14 @@ interface RectSpec {
 }
 
 /** the display-space overlay specs — the shared rotatedRect math
-    (display dims from the canonical W/H), scaled to the export size */
+    (display dims from the canonical W/H), scaled to the export size.
+    #299: the label beneath each rectangle is the PERSON name — the
+    caller resolves it (persons map), never the face name */
 export function overlaySpecs(
   image: ImageRow,
   faces: Face[],
   outW: number,
+  labelFor: (face: Face) => string,
 ): RectSpec[] {
   const rotation = image.rotation;
   const { w: dw, h: dh } = displayDims(image.width, image.height, rotation);
@@ -118,7 +121,7 @@ export function overlaySpecs(
       h: r.h * s,
       color: STATUS_COLOR[f.link_status] ?? "#8593a6",
       alpha: f.link_status === "rejected" ? REJECTED_ALPHA : 1,
-      label: f.name,
+      label: labelFor(f),
     };
   });
 }
@@ -198,6 +201,7 @@ export function renderAnnotatedBlob(
   faces: Face[],
   format: ExportFormat,
   maxDim: number | null,
+  labelFor: (face: Face) => string,
 ): Promise<Blob | null> {
   return new Promise((resolve) => {
     void (async () => {
@@ -242,7 +246,7 @@ export function renderAnnotatedBlob(
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(base, 0, 0, W, H);
         const fontPx = labelFontPx(W);
-        for (const spec of overlaySpecs(image, faces, W)) {
+        for (const spec of overlaySpecs(image, faces, W, labelFor)) {
           drawRect(ctx, spec, fontPx);
         }
         c.toBlob(

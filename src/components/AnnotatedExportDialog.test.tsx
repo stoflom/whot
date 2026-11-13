@@ -73,6 +73,7 @@ const mount = (
     <AnnotatedExportDialog
       image={IMG}
       faces={[face(1)]}
+      personName={(pid) => (pid === 1 ? "Alice" : null)}
       onClose={over.onClose ?? vi.fn()}
       onSaved={over.onSaved ?? vi.fn()}
       onError={over.onError ?? vi.fn()}
@@ -110,6 +111,7 @@ describe("AnnotatedExportDialog (#298, rule 51)", () => {
       <AnnotatedExportDialog
         image={{ ...IMG, primary_path: "" }}
         faces={[]}
+        personName={(pid) => (pid === 1 ? "Alice" : null)}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onError={vi.fn()}
@@ -136,8 +138,16 @@ describe("AnnotatedExportDialog (#298, rule 51)", () => {
       IMG,
       [face(1)],
       "png",
-      null // blank max dimension = original
+      null, // blank max dimension = original
+      expect.any(Function)
     );
+    // #299: the baked-in label is the PERSON name, not the face name
+    const labelFor = vi.mocked(renderAnnotatedBlob).mock
+      .calls[0]![4] as (f: Face) => string;
+    expect(labelFor(face(1))).toBe("Alice");
+    // an unresolvable person falls back to the face name
+    expect(labelFor({ ...face(1), person_id: 99 })).toBe("alice");
+    expect(labelFor({ ...face(1), person_id: null })).toBe("alice");
     expect(onSaved).toHaveBeenCalledWith(
       "/home/u/rolls/2026-01/sub/IMG_0001-annotated.png"
     );
@@ -162,7 +172,8 @@ describe("AnnotatedExportDialog (#298, rule 51)", () => {
         IMG,
         [face(1)],
         "jpeg",
-        1500
+        1500,
+        expect.any(Function)
       )
     );
   });

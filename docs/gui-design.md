@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 16.0** (#298) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 16.1** (#299) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2597,8 +2597,8 @@ thin hook (`useSessionState.ts`); App keeps only setter bindings.
   same state; a dedicated check pins the contract itself (set a
   place → reload → it comes back).
 
-**51. (v16.0, #298) Export annotated image — what you see is what
-you save.** A full image (both surfaces — the focus split and the
+**51. (v16.0, #298; v16.1, #299) Export annotated image — what you
+see is what you save.** A full image (both surfaces — the focus split and the
 Rolls image detail) can be exported as ONE annotated image: the
 full image with every visible face's rectangle and person-name
 label baked into the pixels. Entry points: the ONE bar's (rule 46
@@ -2617,8 +2617,12 @@ open the same dialog.
   rectangle per **visible** face (the §4.10 pass) in **display
   space** — the shared `rotatedRect`/`displayDims` math, so export
   and display can never diverge — status-coloured (the §4.11
-  palette, rejected at its 0.6 opacity) with the person-name label
-  beneath the rectangle (the viewer's label text). The **selection
+  palette, rejected at its 0.6 opacity) with the **person name**
+  (`persons.name`) label beneath the rectangle — NOT the face name
+  (`faces.name` = `person.name[-description]-seq`): a face named
+  `Charles Crosby-baard|sonbril-3` is labelled `Charles Crosby` (#299).
+  The on-screen viewer overlay keeps the face name, which disambiguates
+  several appearances of one person. The **selection
   state is NOT exported** — selection is UI state, not annotation.
 - **Label sizing**: the label scales with the exported width
   (~0.7 % of it — the viewer's look at a typical pane width),
