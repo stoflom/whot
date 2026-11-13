@@ -129,6 +129,8 @@ describe("faceTotalsOf (#226, verbatim)", () => {
 
   it("the listed set follows the Show filter", () => {
     expect(faceTotalsOf(FACES, IMAGES, "all").listed.has(4)).toBe(true);
+    // #305: image 2 holds only a rejected face — it lists under All too
+    expect(faceTotalsOf(FACES, IMAGES, "all").listed.has(2)).toBe(true);
     expect(faceTotalsOf(FACES, IMAGES, "confirmed").listed.has(4)).toBe(false);
     expect(faceTotalsOf(FACES, IMAGES, "confirmed").listed.has(3)).toBe(true);
     expect(faceTotalsOf(FACES, IMAGES, "rejected").listed.has(1)).toBe(false);
