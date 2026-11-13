@@ -124,8 +124,12 @@ describe("the status palette", () => {
 });
 
 describe("overlaySpecs", () => {
+  // #299: the label comes from the caller's resolver — these tests
+  // pin the geometry, so they resolve to the face name
+  const nameOf = (f: Face) => f.name;
+
   it("maps decode-space rectangles to display space at rotation 0 (identity)", () => {
-    const specs = overlaySpecs(IMG, [face()], 4000);
+    const specs = overlaySpecs(IMG, [face()], 4000, nameOf);
     expect(specs).toEqual([
       { x: 100, y: 200, w: 300, h: 400, color: "#d9a53a", alpha: 1, label: "alice" },
     ]);
@@ -133,7 +137,7 @@ describe("overlaySpecs", () => {
 
   it("maps through the 90° CW rotation (the shared rotatedRect math)", () => {
     const rotated = { ...IMG, rotation: 90 }; // display 6000×4000
-    const specs = overlaySpecs(rotated, [face()], 6000);
+    const specs = overlaySpecs(rotated, [face()], 6000, nameOf);
     // (100, 200, 300, 400) @ 90° CW in a 4000×6000 decode space:
     // x' = H - y - h = 6000 - 200 - 400 = 5400, y' = x = 100, w' = h = 400, h' = w = 300
     expect(specs).toEqual([
@@ -143,7 +147,7 @@ describe("overlaySpecs", () => {
 
   it("scales with the export size (a capped 1500-wide export of the rotated image)", () => {
     const rotated = { ...IMG, rotation: 90 };
-    const specs = overlaySpecs(rotated, [face()], 1500); // scale 0.25
+    const specs = overlaySpecs(rotated, [face()], 1500, nameOf); // scale 0.25
     expect(specs[0]).toEqual({
       x: 1350,
       y: 25,
@@ -160,6 +164,7 @@ describe("overlaySpecs", () => {
       IMG,
       [face({ id: 1, status: "confirmed" }), face({ id: 2, status: "rejected" })],
       4000,
+      nameOf,
     );
     expect(specs[0].color).toBe("#3fb950");
     expect(specs[0].alpha).toBe(1);
@@ -168,6 +173,21 @@ describe("overlaySpecs", () => {
   });
 
   it("an image without dimensions has no specs (defensive)", () => {
-    expect(overlaySpecs({ ...IMG, width: 0, height: 0 }, [face()], 4000)).toEqual([]);
+    expect(
+      overlaySpecs({ ...IMG, width: 0, height: 0 }, [face()], 4000, nameOf),
+    ).toEqual([]);
+  });
+
+  it("#299: the label is the resolver's PERSON name, not the face name", () => {
+    const f: Face = {
+      ...face(),
+      name: "Charles Crosby-baard|sonbril-3",
+      person_id: 7,
+    };
+    const personName = (pid: number | null) => (pid === 7 ? "Charles Crosby" : null);
+    const specs = overlaySpecs(IMG, [f], 4000, (x) =>
+      x.person_id != null ? personName(x.person_id) ?? x.name : x.name,
+    );
+    expect(specs[0].label).toBe("Charles Crosby");
   });
 });

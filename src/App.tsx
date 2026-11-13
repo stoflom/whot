@@ -3123,6 +3123,8 @@ export default function App() {
                 )
               : []
           }
+          personName={(pid) =>
+            pid != null ? personsById.get(pid)?.name ?? null : null}
           onClose={() => setExportImage(null)}
           onSaved={setInfo}
           onError={setError}

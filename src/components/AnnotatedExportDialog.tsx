@@ -25,6 +25,10 @@ interface Props {
   image: ImageRow;
   /** already visibility-filtered by the caller (§4.10) */
   faces: Face[];
+  /** #299: resolves the PERSON name for a face's person — the label
+      baked beneath each exported rectangle (null = the face name)
+      */
+  personName: (personId: number | null) => string | null;
   onClose: () => void;
   /** the written path — the caller's quiet info toast */
   onSaved: (path: string) => void;
@@ -37,6 +41,7 @@ const FORMATS: ExportFormat[] = ["png", "jpeg", "webp"];
 export default function AnnotatedExportDialog({
   image,
   faces,
+  personName,
   onClose,
   onSaved,
   onError,
@@ -85,6 +90,8 @@ export default function AnnotatedExportDialog({
         faces,
         format,
         Number.isFinite(dim) && dim > 0 ? dim : null,
+        // #299: the person name — never the face name
+        (f) => (f.person_id != null ? personName(f.person_id) ?? f.name : f.name),
       );
       if (!blob) throw new Error("no preview available for this image");
       if (!path.trim()) throw new Error("no save path");
