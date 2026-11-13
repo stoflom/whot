@@ -17,7 +17,7 @@ fn fixture(name: &str, image: i64, primary: &str) -> Paths {
         std::env::temp_dir().join(format!("whot-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let paths = Paths { root: root.clone(), db: root.join("faces.db"), config: root.join("whotrc.json") };
+    let paths = Paths { root: root.clone(), db: root.join("faces.db"), config: root.join("whotrc.json"), mode: "repo", env_source: "dotenv" };
     let con = Connection::open(&paths.db).unwrap();
     con.execute_batch(&std::fs::read_to_string(SCHEMA).unwrap()).unwrap();
     con.execute(

@@ -101,6 +101,8 @@ fn repository_mode_unchanged() {
     assert_eq!(p.root, root);
     assert_eq!(p.db, root.join("custom/faces.db"));
     assert_eq!(p.config, root.join("config/whotrc.json"));
+    assert_eq!(p.mode, "repo");
+    assert_eq!(p.env_source, "dotenv", "a root .env is the env source");
 
     // the factored repo mode, no env needed
     let p = repo_paths(root.clone());
@@ -130,6 +132,8 @@ fn installed_mode_first_use_copies_the_default() {
     // config + root point at the user copies
     assert_eq!(p.config, user);
     assert_eq!(p.root, data);
+    assert_eq!(p.mode, "installed");
+    assert_eq!(p.env_source, "user-config");
 
     // settings parse: the env object rides the struct
     let s = whotapp_lib::db::get_settings(&p).unwrap();
@@ -193,6 +197,8 @@ fn settings_round_trip_preserves_env() {
         root: tmp.clone(),
         db: tmp.join("faces.db"),
         config: cfg.join("whotrc.json"),
+        mode: "repo",
+        env_source: "dotenv",
     };
     let s = whotapp_lib::db::get_settings(&paths).unwrap();
     assert_eq!(s.env["FACES_DB"], "keep.db");

@@ -36,6 +36,14 @@ pub struct Paths {
     pub root: PathBuf,
     pub db: PathBuf,
     pub config: PathBuf,
+    /// #303 — the resolution mode (backend-design §2): `"repo"` (a
+    /// checkout: WHOT_ROOT / walk-up) or `"installed"` (the per-user
+    /// config, #301). `get_config_info` reports it.
+    pub mode: &'static str,
+    /// #303 — where the environment keys came from: `"dotenv"` (the
+    /// repo `.env`), `"user-config"` (the whotrc `env` object), or
+    /// `"none"` (everything defaults).
+    pub env_source: &'static str,
 }
 
 impl Paths {
@@ -71,7 +79,8 @@ pub fn repo_paths(root: PathBuf) -> Paths {
             .map(|s| s.as_str())
             .unwrap_or("config/whotrc.json"),
     );
-    Paths { root, db, config }
+    let env_source = if root.join(".env").is_file() { "dotenv" } else { "none" };
+    Paths { root, db, config, mode: "repo", env_source }
 }
 
 /// Installed mode paths (#301, #302): `config_dir`/`data_home` are the
@@ -101,7 +110,8 @@ pub fn installed_paths(
         None => PathBuf::from("data/faces.db"),
     };
     let db = if db.is_absolute() { db } else { data_home.join(db) };
-    Paths { root: data_home, db, config }
+    let env_source = if config.is_file() { "user-config" } else { "none" };
+    Paths { root: data_home, db, config, mode: "installed", env_source }
 }
 
 /// The repository root for repo mode: `WHOT_ROOT`, else the nearest
@@ -429,6 +439,26 @@ fn check_schema(con: &Connection, db: &Path) -> Result<()> {
 }
 
 // ---------------------------------------------------------------- settings
+
+/// #303 — the `get_config_info` payload (gui-design §4 rule 52):
+/// the startup resolution, reported to the environment dialog's header.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigInfo {
+    pub mode: &'static str,
+    pub config_path: String,
+    pub db_path: String,
+    pub env_source: &'static str,
+}
+
+pub fn config_info(paths: &Paths) -> Result<ConfigInfo> {
+    Ok(ConfigInfo {
+        mode: paths.mode,
+        config_path: paths.config.display().to_string(),
+        db_path: paths.db.display().to_string(),
+        env_source: paths.env_source,
+    })
+}
 
 /// #99 (gui-design §4.10) — which face statuses every view shows.
 /// Serialized lowercase: "all" | "provisional" | "confirmed" | "rejected"

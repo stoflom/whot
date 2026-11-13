@@ -24,7 +24,7 @@ fn fixture_paths(name: &str) -> Paths {
         std::env::temp_dir().join(format!("whot-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let paths = Paths { root: root.clone(), db: root.join("faces.db"), config: root.join("whotrc.json") };
+    let paths = Paths { root: root.clone(), db: root.join("faces.db"), config: root.join("whotrc.json"), mode: "repo", env_source: "dotenv" };
     let con = Connection::open(&paths.db).unwrap();
     con.execute_batch(&std::fs::read_to_string(SCHEMA).unwrap()).unwrap();
     seed(&con);
@@ -1443,7 +1443,7 @@ fn image_batch_byte_cap_truncates_and_defers_227() {
 #[test]
 fn concurrent_readers_and_writers_serialised_218() {
     let p = fixture_paths("concur");
-    let paths_for = |p: &Paths| Paths { root: p.root.clone(), db: p.db.clone(), config: p.config.clone() };
+    let paths_for = |p: &Paths| Paths { root: p.root.clone(), db: p.db.clone(), config: p.config.clone(), mode: p.mode, env_source: p.env_source };
     let reader = std::thread::spawn({
         let paths = paths_for(&p);
         move || {

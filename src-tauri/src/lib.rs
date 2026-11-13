@@ -345,6 +345,14 @@ fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), String
     db::set_settings(state.paths()?, settings).map_err(|e| e.to_string())
 }
 
+/// #303 (gui-design §4 rule 52) — the environment dialog's header: the
+/// resolution as it was resolved at startup (backend-design §2). The
+/// one-shot read runs off the main thread with the other commands.
+#[tauri::command]
+async fn get_config_info(state: State<'_, AppState>) -> Result<db::ConfigInfo, String> {
+    db::config_info(state.paths()?).map_err(|e| e.to_string())
+}
+
 /// #167 (§4.36) — fs probe for the Rolls path filter: does the path hold
 /// ≥ 1 image at ANY depth (#169, recursive + early-exit, exact
 /// IMAGE_SUFFIXES parity); `true` + no snapshot match = "not yet
@@ -439,6 +447,7 @@ pub fn run() {
             add_refcrop,
             remove_refcrop,
             get_settings,
+            get_config_info,
             set_settings,
             scan_import_dir,
             start_import,
