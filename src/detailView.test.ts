@@ -117,8 +117,8 @@ describe("facesOfImage (§4.10/#99 — one Show filter drives every view)", () =
     ],
   );
 
-  it("all = every face of the image EXCEPT rejected, snapshot order", () => {
-    expect(facesOfImage(snap, 1, "all").map((f) => f.id)).toEqual([10, 11]);
+  it("all = every face of the image, incl. rejected (#305), snapshot order", () => {
+    expect(facesOfImage(snap, 1, "all").map((f) => f.id)).toEqual([10, 11, 12]);
   });
 
   it("provisional/confirmed/rejected list only that status", () => {

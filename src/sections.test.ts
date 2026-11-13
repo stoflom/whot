@@ -171,8 +171,8 @@ describe("firstCropPerson (faceless Rolls open, #269/§4.37 On entry)", () => {
         face({ id: 2, person: 2, status: "confirmed", x: 0, y: 90 }),
       ],
     );
-    // All hides the topmost (rejected) crop → the confirmed one anchors
-    expect(firstCropPerson(s, 9, "all")).toBe(2);
+    // All (#305) shows the topmost (rejected) crop → it anchors
+    expect(firstCropPerson(s, 9, "all")).toBe(1);
     // Rejected shows only the topmost crop
     expect(firstCropPerson(s, 9, "rejected")).toBe(1);
   });
@@ -366,7 +366,7 @@ describe("person view — accuracy mode (§4.9)", () => {
     );
     const single: AppearanceGroup[] = [
       { description: "", clusters: [
-        [{ face_id: 11, sim: 0.9 }],                       // all-rejected → drops
+        [{ face_id: 11, sim: 0.9 }],                       // rejected → drops under confirmed
         [{ face_id: 12, sim: 0.7 }, { face_id: 13, sim: 0.8 }],
       ] },
     ];
@@ -375,6 +375,7 @@ describe("person view — accuracy mode (§4.9)", () => {
       personId: 1,
       selectedPerson: personsByIdFixture.get(1)!,
       clusters: single,
+      faceFilter: "confirmed", // #305: under All the rejected face would survive
     });
     // §4.9: the emptied cluster leaves, and the survivor is renumbered "Group 1"
     expect(out).toHaveLength(1);
@@ -469,7 +470,7 @@ describe("person view — description mode (§4.9, #155)", () => {
     expect(bare.map((x) => x.title)).toEqual(["hat", "beard|glasses", "(no description)"]);
   });
 
-  it("rejected and discarded faces never reach the Description grouping", () => {
+  it("rejected and discarded faces never reach the Description grouping (the Rejected section carries them under All, #305)", () => {
     resetFixtures(
       [person(1, "Anna", { total: 3 })],
       [
@@ -485,8 +486,12 @@ describe("person view — description mode (§4.9, #155)", () => {
       clusterGroup: "description",
     });
     // both survivor faces are description-less → ONE "(no description)"
-    // section holds them (groupByDescription buckets by description)
-    expect(out.map((x) => [x.title, x.faceIds])).toEqual([["(no description)", [12, 13]]]);
+    // section holds them (groupByDescription buckets by description);
+    // the rejected face renders in the appended Rejected section
+    expect(out.map((x) => [x.title, x.faceIds])).toEqual([
+      ["(no description)", [12, 13]],
+      ["Rejected", [11]],
+    ]);
   });
 });
 

@@ -41,10 +41,9 @@ export function emptyStateHint(totalFaces: number, filter: FaceFilter): string {
 }
 
 /** #152 (§4.10, rewritten by #165, #305): the left-pane tree's person
-    presence. Under 'all' — every face, including rejected — a person is
-    listed when it holds ≥ 1 face (any status), and faceless shells stay
-    findable (#127/#128); the reject-bin persons `RejectedN` list under
-    All like any other person while they hold faces (§4.35/#266).
+    presence. Under 'all' — every face, including rejected — EVERY person
+    is listed: face holders of any status, the faceless shells (#127/#128)
+    and the reject-bin persons `RejectedN` (§4.35/#266).
     Under New/Accepted/Rejected only persons holding ≥ 1 face of that
     status survive — a person with no matching face leaves the tree while
     the badges of those that stay carry raw totals (#129). */
@@ -53,11 +52,7 @@ export function personTreeMembers<P extends { id: number; name?: string }>(
   faces: { person_id: number | null; link_status: string }[],
   filter: FaceFilter,
 ): P[] {
-  if (filter === "all") {
-    const withAny = new Set<number>();
-    for (const f of faces) if (f.person_id != null) withAny.add(f.person_id);
-    return persons.filter((p) => !withAny.has(p.id));
-  }
+  if (filter === "all") return persons;
   const visible = new Set<number>();
   for (const f of faces)
     if (f.person_id != null && matchesStatusFilter(f.link_status, filter))
