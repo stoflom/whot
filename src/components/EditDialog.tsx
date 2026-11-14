@@ -10,18 +10,23 @@ import type { SuggestOption } from "./SuggestInput";
 import { useOwnsKeyboard } from "../overlays";
 import type { Prefill, StageScope } from "../stage";
 
-// #101 (§4.24) — THE edit dialog: the three value fields (name, group,
-// description) with type-ahead, plus the Card | Group | Selection scope
-// selector. #123: Apply extends the pending set (screen only), Accept
-// commits the whole set (Enter = Accept, Esc = Cancel — discard). #124:
-// Reject decides the scope immediately (a verdict, not a field edit).
-// Cards and headers never host inputs — they show labels and this button.
+// #101 (§4.24) — THE edit dialog: the four value fields (name, group,
+// description, note #307) with type-ahead on the first three, plus the
+// Card | Group | Selection scope selector. #123: Apply extends the
+// pending set (screen only), Accept commits the whole set (Enter =
+// Accept, Esc = Cancel — discard). #124: Reject decides the scope
+// immediately (a verdict, not a field edit). #307 (v19.0): the buttons
+// are blur-proof — clicking Apply/Accept acts as if Enter had been
+// pressed in the focused field first (preventDefault keeps the focus,
+// and the commit reads each field's LIVE DOM value as the last word, so
+// an engine-lost input event can never drop typed text). Cards and
+// headers never host inputs — they show labels and this button.
 
 export interface EditResult {
   kind: "apply" | "accept";
   scope: StageScope;
-  values: { name: string; group: string; desc: string };
-  touched: { name: boolean; group: boolean; desc: boolean };
+  values: { name: string; group: string; desc: string; note: string };
+  touched: { name: boolean; group: boolean; desc: boolean; note: boolean };
   /** #181 (§4.38): the group-LIST edits — staged locally, committed by
       Accept (the name first, then the memberships on the surviving
       person); Apply leaves them local */
@@ -97,7 +102,8 @@ export default function EditDialog({
   const [name, setName] = useState(base.name ?? "");
   const [group, setGroup] = useState(base.group ?? "");
   const [desc, setDesc] = useState(base.desc ?? "");
-  const [touched, setTouched] = useState({ name: false, group: false, desc: false });
+  const [note, setNote] = useState(base.note ?? "");
+  const [touched, setTouched] = useState({ name: false, group: false, desc: false, note: false });
   // #181 (§4.38): the staged membership edits of the group LIST — shown
   // while the Name field holds a KNOWN person's name (the same list the
   // details pane shows, §4.38); a new/empty name keeps the single field
@@ -127,16 +133,49 @@ export default function EditDialog({
     if (!t.name) setName(b.name ?? "");
     if (!t.group) setGroup(b.group ?? "");
     if (!t.desc) setDesc(b.desc ?? "");
+    if (!t.note) setNote(b.note ?? "");
     // #181: the list staging is per name — it survives only while the
     // name field (its owner) survives the re-base
     if (!t.name) setGroupOps([]);
   }, [scope, prefills]);
 
-  const ph = (f: "name" | "group" | "desc") =>
+  const ph = (f: "name" | "group" | "desc" | "note") =>
     (base.mixed ?? []).includes(f) ? MIXED_HINT : undefined;
 
-  const done = (kind: EditResult["kind"]) =>
-    onDone({ kind, scope, values: { name, group, desc }, touched, groupOps });
+  // #307 (v19.0): the LIVE DOM elements behind the fields — the commit
+  // reads them as the last word. A DOM value diverging from the dialog
+  // state means an input event was lost at the engine level: the DOM
+  // value wins and the field counts as touched.
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  const groupRef = useRef<HTMLInputElement | null>(null);
+  const descRef = useRef<HTMLInputElement | null>(null);
+  const noteRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const done = (kind: EditResult["kind"]) => {
+    const live = (
+      el: HTMLInputElement | HTMLTextAreaElement | null,
+      v: string,
+    ): { value: string; touched: boolean } => {
+      if (el == null || el.value === v) return { value: v, touched: false };
+      return { value: el.value, touched: true };
+    };
+    const n = live(nameRef.current, name);
+    const g = live(groupRef.current, group);
+    const d = live(descRef.current, desc);
+    const nt = live(noteRef.current, note);
+    onDone({
+      kind,
+      scope,
+      values: { name: n.value, group: g.value, desc: d.value, note: nt.value },
+      touched: {
+        name: touched.name || n.touched,
+        group: touched.group || g.touched,
+        desc: touched.desc || d.touched,
+        note: touched.note || nt.touched,
+      },
+      groupOps,
+    });
+  };
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
@@ -157,9 +196,13 @@ export default function EditDialog({
           {/* #165/§4.35 + §4.2, #266 wording: rejected faces come back
               only via an assignment; Reject moves the scope onto a
               rejected cluster person — the titles stay reference-free
-              (§4.43) */}
+              (§4.43). #307: the action buttons are blur-proof — mousedown
+              never takes the focus from a field (the DetailPane "Update
+              person" idiom), so a click acts as if Enter was pressed
+              first and typed text can never be lost to the click */}
           <button
             className="warn"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onReject(scope)}
             disabled={rejected[scope]}
             title={
@@ -170,8 +213,17 @@ export default function EditDialog({
           >
             Reject
           </button>
-          <button onClick={() => done("apply")}>Apply</button>
-          <button className="ok" onClick={() => done("accept")}>
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => done("apply")}
+          >
+            Apply
+          </button>
+          <button
+            className="ok"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => done("accept")}
+          >
             Accept
           </button>
         </div>
@@ -194,6 +246,7 @@ export default function EditDialog({
           <NameTypeahead
             autoFocus
             value={name}
+            inputRef={(el) => (nameRef.current = el)}
             onChange={(v) => {
               setName(v);
               setTouched((t) => ({ ...t, name: true }));
@@ -225,6 +278,7 @@ export default function EditDialog({
             Group
             <PathTypeahead
               value={group}
+              inputRef={(el) => (groupRef.current = el)}
               onChange={(v) => {
                 setGroup(v);
                 setTouched((t) => ({ ...t, group: true }));
@@ -248,6 +302,7 @@ export default function EditDialog({
           <SuggestInput
             className="input-desc"
             value={desc}
+            inputRef={(el) => (descRef.current = el)}
             placeholder={ph("desc") ?? "e.g. beard|glasses"}
             title="Face description — free text; empty clears it. Start with | to ADD tags to the current ones (e.g. |beard → beard|glasses), no duplicates"
             options={descOptions}
@@ -264,6 +319,35 @@ export default function EditDialog({
             onPick={(o) => setDesc(descApplyPick(desc, o.value))}
             onSubmit={() => done("accept")}
             onEscape={onCancel}
+          />
+        </label>
+        <label>
+          Note
+          {/* #307 (v19.0): the person note — the pane's free text (§4.37),
+              plain multiline input (Enter inserts a newline there; Esc
+              still cancels via the dialog-level listener; the buttons
+              commit). A leading `|` is the concat-add (the remainder is
+              appended to EACH person's existing note — with several
+              persons in scope each keeps its own note); plain text
+              replaces; touched + empty clears. */}
+          <textarea
+            className="input-note"
+            rows={2}
+            value={note}
+            placeholder={ph("note") ?? "person note — free text (start with | to append)"}
+            title="Person note — free text, stored on the person (the details pane shows it). Start with | to APPEND to the current notes — with several persons in scope each keeps its own note; empty clears"
+            ref={noteRef}
+            onChange={(e) => {
+              setNote(e.target.value);
+              setTouched((t) => ({ ...t, note: true }));
+            }}
+            onKeyDown={(e) => {
+              // #68: typing must not fire the app's global shortcuts;
+              // Esc keeps its dialog meaning (cancel), Enter stays a
+              // newline (multiline — the buttons commit)
+              e.stopPropagation();
+              if (e.key === "Escape") onCancel();
+            }}
           />
         </label>
       </div>

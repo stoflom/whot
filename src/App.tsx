@@ -38,6 +38,7 @@ import { useFaceDrag } from "./useFaceDrag";
 import {
   ownersForGroupOps,
   planCommit,
+  planNoteOps,
   planStageOps,
   remainingAfterFailure,
   reviewScope,
@@ -1347,6 +1348,9 @@ export default function App() {
             name: system ? "" : p?.name ?? "",
             group: system ? "" : firstRealGroup(p?.groups ?? []),
             desc: f?.description ?? "",
+            // #307 (v19.0): the owner's note prefills (uniform across the
+            // scope, else the field opens mixed/empty)
+            note: p?.note ?? "",
           };
         },
         pendingRef.current,
@@ -2103,6 +2107,18 @@ export default function App() {
         await flush(); // #219: land the deltas that did apply
         return;
       }
+      // #307 (v19.0): the person-note ops — per DISTINCT owner, resolved
+      // AFTER the field writes (the deltas above carry the fresh
+      // face→owner mapping, so a same-Accept assignment lands the note
+      // on the surviving/created person). A failed write surfaces but
+      // does not abort the rest (the groupOps pattern, #209).
+      for (const op of planNoteOps(all, deltas, facesById, personsById)) {
+        try {
+          deltas.push(await api.setPersonNote(op.personId, op.note));
+        } catch (e) {
+          setError(String(e));
+        }
+      }
       // #166: acceptance runs over the caller's displayed scope — the
       // staged set only staged the edits (empty scope ⇒ the staged ids)
       const ids = acceptScope;
@@ -2135,7 +2151,7 @@ export default function App() {
       await acceptAndNext(ids, claimed);
       setPending([]);
     },
-    [acceptAndNext, stageOps, applyDeltas, facesById, refresh]
+    [acceptAndNext, stageOps, applyDeltas, facesById, personsById, refresh]
   );
 
   // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the

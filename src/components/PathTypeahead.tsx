@@ -38,6 +38,8 @@ interface Props {
   onEscape?: () => void;
   /** focus left the widget — the parent's blur-commit (#97) */
   onLeave?: () => void;
+  /** #307: the inner <input> element (the dialog's live-DOM commit) */
+  inputRef?: (el: HTMLInputElement | null) => void;
   className?: string;
   placeholder?: string;
   title?: string;
@@ -56,6 +58,7 @@ export default function PathTypeahead({
   onSubmit,
   onEscape,
   onLeave,
+  inputRef,
   className,
   placeholder,
   title,
@@ -72,6 +75,7 @@ export default function PathTypeahead({
       onSubmit={onSubmit}
       onEscape={onEscape}
       onLeave={onLeave}
+      inputRef={inputRef}
       className={className}
       placeholder={placeholder}
       title={title}

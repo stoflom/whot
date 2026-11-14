@@ -11,6 +11,9 @@ export interface Stage {
   name?: string;
   group?: string;
   desc?: string;
+  /** #307 (v19.0): the person-note value (raw dialog value — a leading
+      `|` marks the concat-add; the expansion happens at commit) */
+  note?: string;
 }
 
 /** dialog prefill for one scope: uniform values, or '' plus a mixed flag
@@ -19,7 +22,9 @@ export interface Prefill {
   name?: string;
   group?: string;
   desc?: string;
-  mixed?: ("name" | "group" | "desc")[];
+  /** #307: the scope's distinct owners' note — uniform, or mixed */
+  note?: string;
+  mixed?: ("name" | "group" | "desc" | "note")[];
 }
 
 export function scopeFaceIds(
@@ -34,8 +39,8 @@ export function scopeFaceIds(
     touched ⇒ nothing to stage (null). */
 export function buildStage(
   faceIds: number[],
-  values: { name: string; group: string; desc: string },
-  touched: { name: boolean; group: boolean; desc: boolean },
+  values: { name: string; group: string; desc: string; note: string },
+  touched: { name: boolean; group: boolean; desc: boolean; note: boolean },
 ): Stage | null {
   const stage: Stage = { faceIds };
   const name = values.name.trim();
@@ -48,7 +53,14 @@ export function buildStage(
     if (!(d.startsWith("|") && addTokens(values.desc).length === 0))
       stage.desc = values.desc;
   }
-  if (stage.name == null && stage.group == null && stage.desc == null) return null;
+  if (touched.note) {
+    // #307 (v19.0): the note mirrors the deliberate-clear semantics — an
+    // empty touched value clears; a lone `|` (nothing to add) is a no-op
+    const n = values.note.trim();
+    if (!(n.startsWith("|") && n.slice(1).trim() === "")) stage.note = values.note;
+  }
+  if (stage.name == null && stage.group == null && stage.desc == null && stage.note == null)
+    return null;
   return stage;
 }
 
@@ -252,28 +264,34 @@ export function stagedFieldsForCard(
     typing then sets them all) */
 export function prefillForFaces(
   ids: number[],
-  committed: (id: number) => { name: string; group: string; desc: string },
+  committed: (id: number) => { name: string; group: string; desc: string; note: string },
   set: Stage[],
 ): Prefill {
   if (ids.length === 0) return {};
   const names = new Set<string>();
   const groups = new Set<string>();
   const descs = new Set<string>();
+  const notes = new Set<string>();
   for (const id of ids) {
     const c = committed(id);
     const staged = stagedFieldsForCard(set, id);
     names.add(staged.name ?? c.name);
     groups.add(staged.group ?? c.group);
     descs.add(staged.desc ?? c.desc);
+    // #307: the note is person-level — the caller maps each face to its
+    // owner's note (a scope spanning several persons mixes unless uniform)
+    notes.add(c.note);
   }
   const mixed: Prefill["mixed"] = [];
   if (names.size > 1) mixed.push("name");
   if (groups.size > 1) mixed.push("group");
   if (descs.size > 1) mixed.push("desc");
+  if (notes.size > 1) mixed.push("note");
   return {
     ...(names.size === 1 ? { name: [...names][0] } : {}),
     ...(groups.size === 1 ? { group: [...groups][0] } : {}),
     ...(descs.size === 1 ? { desc: [...descs][0] } : {}),
+    ...(notes.size === 1 ? { note: [...notes][0] } : {}),
     ...(mixed.length ? { mixed } : {}),
   };
 }
@@ -314,6 +332,17 @@ export function stageSummary(stage: Stage): string {
   if (stage.name != null) parts.push(`name “${stage.name}”`);
   if (stage.group != null) parts.push(stage.group ? `group “${stage.group}”` : "group → ungrouped");
   if (stage.desc != null) parts.push(stage.desc ? `description “${stage.desc}”` : "description → cleared");
+  if (stage.note != null) {
+    // #307 (v19.0): the raw staged value — the `|` add marker shows as +
+    const n = stage.note;
+    parts.push(
+      n.startsWith("|") && n.trim() !== "|"
+        ? `note +“${n.slice(1).trim()}”`
+        : n
+          ? `note “${n}”`
+          : "note → cleared",
+    );
+  }
   return parts.join(", ") || "no changes";
 }
 

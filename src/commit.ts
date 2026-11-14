@@ -22,6 +22,14 @@ export type OpAction =
   | { kind: "setPersonGroup"; personId: number; group: string }
   | { kind: "setDescription"; ids: number[]; desc: string };
 
+/** #307 (v19.0) — one resolved person-note write. The raw staged
+    `|` add-mode value is EXPANDED here: the final note is what the
+    executor writes through set_person_note. */
+export interface NoteOp {
+  personId: number;
+  note: string;
+}
+
 /** #77/#165 — the routing ONE staged op runs through:
     - a NAME stage always leads with assign_person (its group argument
       carries create / UnknownN-rename; an existing target person's
@@ -112,6 +120,61 @@ export function planCommit(
     claimed: all.some((o) => (o.name ?? "").trim().length > 0),
     acceptScope: acceptIds && acceptIds.length > 0 ? acceptIds : union,
   };
+}
+
+/** #307 (v19.0) — the note ops of a commit run: the staged `note`
+    values resolved to per-person writes. Runs AFTER the field writes
+    (the same point the §4.38 group-list edits resolve their owners):
+    the staged deltas carry the fresh face→owner mapping, so a name
+    assignment in the same run lands the note on the surviving/created
+    person. Later stages win per person (the labels' later-ops-wins
+    merge); the add-mode expansion is per person:
+    - plain text → the note becomes the text (a replace);
+    - `|rest` → appended to the person's EXISTING note with a single
+      space (a person without a note gets the text);
+    - "" → the note is cleared.
+    The existing note comes from the applied deltas' person rows first
+    (fresh), falling back to the snapshot. Pure — App binds the IPC. */
+export function planNoteOps(
+  all: Stage[],
+  deltas: Delta[],
+  facesById: Map<number, Face>,
+  personsById: Map<number, Person>,
+): NoteOp[] {
+  const ownerOf = (faceId: number): number | null => {
+    for (let i = deltas.length - 1; i >= 0; i--) {
+      const f = deltas[i].faces?.find((x) => x.id === faceId);
+      if (f) return f.person_id ?? null;
+    }
+    return facesById.get(faceId)?.person_id ?? null;
+  };
+  // later stages win per person
+  const raw = new Map<number, string>();
+  for (const st of all) {
+    if (st.note == null) continue;
+    for (const id of st.faceIds) {
+      const pid = ownerOf(id);
+      if (pid != null) raw.set(pid, st.note);
+    }
+  }
+  const noteOf = (pid: number): string => {
+    for (let i = deltas.length - 1; i >= 0; i--) {
+      const p = deltas[i].persons?.find((x) => x.id === pid);
+      if (p) return p.note ?? "";
+    }
+    return personsById.get(pid)?.note ?? "";
+  };
+  return [...raw].map(([personId, v]) => {
+    const t = v.trim();
+    const note = t.startsWith("|")
+      ? (() => {
+          const rest = t.slice(1).trim();
+          const base = noteOf(personId);
+          return base ? `${base} ${rest}` : rest;
+        })()
+      : t;
+    return { personId, note };
+  });
 }
 
 /** F5 — the gap-proof mid-set failure: the applied prefix (ops
