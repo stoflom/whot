@@ -633,7 +633,12 @@ regression tests, both gui-mock drivers 65/65:
   New the drained person drops from the tree, shifting every successor
   one left — `pos > pos0` compared across two tree shapes. The check now
   pins the real contract (the anchor equals the first reviewable
-  successor read from the same step order).
+  successor read from the same step order). *(#308, 2026-11: the same
+   contract evolved — the verdict re-seats the drained person
+   New→Accepted, reshaping the post-verdict step order wholesale under
+   Show=all, so the successor is now mirrored POST-verdict,
+   exhaustAdvanceTarget's #159 rule evaluated on the order the app
+   actually advances in.)*
 - **Explicitly left as-is** — B-L3 (`sweep_stale_shells` GLOB: negligible
   per the review, and the NOT EXISTS probe is index-served), B-L4 (the
   two single-statement writes), and B-H3's in-call cosine memoisation
