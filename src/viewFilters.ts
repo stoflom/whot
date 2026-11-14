@@ -1,10 +1,9 @@
-// #99 (gui-design §4.10 / §4.9) / #165 — the persons-mode display
+// #99 (gui-design §4.10 / §4.9) / #165, #305 — the persons-mode display
 // switches, as pure helpers: the 4-state face-status filter that replaces
-// show_rejected (`all` = everything except rejected), the tree presence
-// rule, and the Description-mode grouping.
+// show_rejected (`all` = every face, including rejected), the tree
+// presence rule, and the Description-mode grouping.
 
 import type { Face } from "./api";
-import { isRejectedBin } from "./personNames";
 
 /** whotrc `face_filter` — 'confirmed' is labelled **Accepted** in the UI */
 export type FaceFilter = "all" | "provisional" | "confirmed" | "rejected";
@@ -12,10 +11,10 @@ export type FaceFilter = "all" | "provisional" | "confirmed" | "rejected";
 export type ClusterGroup = "accuracy" | "description";
 
 /** does a face of this link_status survive the filter? — `all` means
-    every face EXCEPT `rejected` (#165/§4.10: rejected faces are visible
-    only under Show → Rejected). */
+    EVERY face, including `rejected` (#305/§4.10: `Show → Rejected` is
+    the narrowed view of the rejected faces). */
 export function matchesStatusFilter(status: string, filter: FaceFilter): boolean {
-  return filter === "all" ? status !== "rejected" : status === filter;
+  return filter === "all" || status === filter;
 }
 
 /** #194 (§4.41) — the empty-state guidance: the anchored person holds no
@@ -41,13 +40,10 @@ export function emptyStateHint(totalFaces: number, filter: FaceFilter): string {
   return `No ${label}faces to show — pick another person in the list, or click › to step to the next person.`;
 }
 
-/** #152 (§4.10, rewritten by #165): the left-pane tree's person
-    presence. Under 'all' — everything except rejected — a person is
-    listed when it holds ≥ 1 non-rejected face, and faceless shells stay
-    findable (#127/#128); a person whose faces are ALL rejected drops
-    out, which singles out the reject-bin persons `RejectedN`
-    (§4.35/#266: listed only under Show → Rejected, and only while they
-    hold faces).
+/** #152 (§4.10, rewritten by #165, #305): the left-pane tree's person
+    presence. Under 'all' — every face, including rejected — EVERY person
+    is listed: face holders of any status, the faceless shells (#127/#128)
+    and the reject-bin persons `RejectedN` (§4.35/#266).
     Under New/Accepted/Rejected only persons holding ≥ 1 face of that
     status survive — a person with no matching face leaves the tree while
     the badges of those that stay carry raw totals (#129). */
@@ -56,20 +52,7 @@ export function personTreeMembers<P extends { id: number; name?: string }>(
   faces: { person_id: number | null; link_status: string }[],
   filter: FaceFilter,
 ): P[] {
-  if (filter === "all") {
-    const withVisible = new Set<number>();
-    const withAny = new Set<number>();
-    for (const f of faces) {
-      if (f.person_id == null) continue;
-      withAny.add(f.person_id);
-      if (f.link_status !== "rejected") withVisible.add(f.person_id);
-    }
-    return persons.filter((p) =>
-      isRejectedBin(p.name ?? "")
-        ? false // §4.35/#266: never under All — Show → Rejected only
-        : !withAny.has(p.id) || withVisible.has(p.id)
-    );
-  }
+  if (filter === "all") return persons;
   const visible = new Set<number>();
   for (const f of faces)
     if (f.person_id != null && matchesStatusFilter(f.link_status, filter))

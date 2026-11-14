@@ -12,7 +12,7 @@ export function PickPersonDialog({ onClose }: { onClose: () => void }) {
       title="Please select a person in the tree on the left"
       body={
         "Person mode works on the person anchored in the tree — under Show → All " +
-        "the status branches New and Accepted are listed (Rejected under Show → Rejected)."
+        "every status branch (New, Accepted, Rejected) is listed."
       }
       confirmLabel="Close"
       onlyConfirm
@@ -57,7 +57,7 @@ export function NoFacesDialog({
       }
       body={
         `This person holds no face under Show → ${filterLabel(faceFilter)}. ` +
-        "Show All brings every non-rejected face back."
+        "Show All brings every face back."
       }
       cancelLabel="Close"
       confirmLabel="Show All"

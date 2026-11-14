@@ -77,9 +77,10 @@ Checks (contract refs: docs/gui-design.md):
       space offers no menu at all, and the person dialog ADDS the typed
       path as another membership (current groups kept; Move keeps
       replace-all)
-  C29 Show=All excludes rejected entirely: the system person `Rejected`
-      and its branch list only under Show→Rejected, and the Show tooltip
-      spells the contract out (#165, §4.10)
+  C29 Show=All includes rejected: the reject-bin person (`RejectedN`
+      family) and its branch list under Show→All while it holds faces
+      (as well as Show→Rejected), and the Show tooltip spells the
+      contract out (#165, §4.10, #305)
   C30 with a live staged set, bar Accept commits the staged ops and
       accepts the DISPLAYED selection — not just the staged face ids
       (#166, §4.30/§4.24: stage on a few Description-mode faces, select
@@ -878,8 +879,9 @@ def c16_filter_prunes_tree(t):
 
 
 def c29_show_rejected_bin_165(t):
-    """#165/§4.10: Show=All excludes rejected entirely — the system
-    person `Rejected` and its branch list only under Show→Rejected, and
+    """#165/§4.10, #305: Show=All includes rejected — the reject-bin
+    person (the `RejectedN` cluster family) and its branch list under
+    Show→All while it holds faces, as well as under Show→Rejected, and
     the Show tooltip spells the contract out (read OUTSIDE Review —
     while Review is active the label instead spells the lock, #188/§4.40
     and C36; the Person tab's modeless picker may open, the tree behind
@@ -893,7 +895,7 @@ def c29_show_rejected_bin_165(t):
         .find(x => [...x.options].some(o => o.value === 'rejected'));
       return (s && s.closest('label') && s.closest('label').getAttribute('title')) || '';
     """)
-    tip_ok = "except rejected" in tip and "Show → Rejected" in tip
+    tip_ok = "All = every face, including rejected" in tip
 
     # #266: the legacy single bin `Rejected` is retired (one-shot split);
     # the cluster family `RejectedN` is the reject bin now — the check
@@ -905,7 +907,7 @@ def c29_show_rejected_bin_165(t):
       return p ? p.name : null;
     """)
     if cluster is None:
-        record("C29 Show=All excludes the rejected bin — only Show→Rejected lists it (#165/§4.10, #266 family)",
+        record("C29 Show=All includes the rejected bin — it lists under All and Show→Rejected (#165/§4.10, #266 family, #305)",
                False, f"no non-empty RejectedN cluster in the dump; tooltip ok={tip_ok}")
         return
     legacy = js(t, "return !!window.__MOCK_SNAP.persons.find(p => p.name === 'Rejected')")
@@ -927,11 +929,13 @@ def c29_show_rejected_bin_165(t):
 
     set_show_filter(t, "all")
     all_state = tree_state()
-    # Show=All/New: no Rejected branch, no cluster rows at all
-    all_ok = ((not all_state["branch"]) and all_state["rows"] == 0
-              and all_state["rejRows"] == 0)
+    # Show=All (#305): the Rejected status branch renders with the
+    # discovered cluster person's row under it
+    all_ok = (all_state["branch"] and all_state["rows"] >= 1
+              and all_state["rejRows"] >= 1)
     set_show_filter(t, "provisional")
     prov_state = tree_state()
+    # Show=New: no Rejected branch, no cluster rows at all
     prov_ok = ((not prov_state["branch"]) and prov_state["rows"] == 0
                and prov_state["rejRows"] == 0)
     set_show_filter(t, "rejected")
@@ -942,10 +946,10 @@ def c29_show_rejected_bin_165(t):
     set_show_filter(t, "all")
     ok = (tip_ok and all_ok and prov_ok and rej_ok
           and all_state["snapRejected"] > 0 and legacy is False)
-    record("C29 Show=All excludes the rejected bin — only Show→Rejected lists it (#165/§4.10, #266 family)",
+    record("C29 Show=All includes the rejected bin — it lists under All and Show→Rejected (#165/§4.10, #266 family, #305)",
            ok, f"tooltip ok={tip_ok} ({tip[:60]!r}); cluster={cluster}; "
                f"legacy Rejected present={legacy} (want False); "
-               f"all: branch={all_state['branch']} rows={all_state['rows']}; "
+               f"all: branch={all_state['branch']} rows={all_state['rows']} rejRows={all_state['rejRows']}; "
                f"new: branch={prov_state['branch']} rows={prov_state['rows']}; "
                f"rejected: branch={rej_state['branch']} rows={rej_state['rows']}; "
                f"snap rejected faces={all_state['snapRejected']}")
@@ -1369,7 +1373,8 @@ def c11_merge_focuses_target(t):
         const name = n.querySelector('.tree-name')?.textContent.trim() ?? '';
         const total = Number(n.querySelector('.tree-count.total')?.textContent ?? 0);
         return {name, total};
-      }).filter(r => r.name && !/^unknown/i.test(r.name) && r.total > 0);
+      }).filter(r => r.name && !/^unknown/i.test(r.name)
+                     && !/^rejected\d*$/i.test(r.name) && r.total > 0);
       if (rows.length < 2) return null;
       rows.sort((a, b) => b.total - a.total);
       return {source: rows[1].name, target: rows[0].name,
@@ -1615,9 +1620,9 @@ def c14_drag_sources(t):
       if (!row?.draggable) bad.push('tree-person not draggable');
       return bad;
     """)
-    # #165/§4.35 + #266: the reject-bin rows (the writer-owned
-    # `RejectedN` cluster family) are listed only under Show → Rejected
-    # and are never drag sources either
+    # #165/§4.35 + #266, #305: the reject-bin rows (the writer-owned
+    # `RejectedN` cluster family) are listed under All and Show →
+    # Rejected, and are never drag sources
     set_show_filter(t, "rejected")
     bad += js(t, r"""
       return [...document.querySelectorAll('.tree-person')]
@@ -5310,7 +5315,8 @@ def c50_merge_chips_pick_target(t):
         const total = Number(n.querySelector('.tree-count.total')?.textContent ?? 0);
         return {name, total};
       }).filter(r => r.name && !/^unknown/i.test(r.name)
-                    && !/^(new|accepted|rejected)$/i.test(r.name) && r.total > 0);
+                    && !/^(new|accepted|rejected)$/i.test(r.name)
+                    && !/^rejected\d*$/i.test(r.name) && r.total > 0);
       if (rows.length < 2) return null;
       rows.sort((a, b) => b.total - a.total);
       return {a: rows[0], b: rows[1]};
@@ -7279,7 +7285,9 @@ def c71_env_dialog(t):
                  and header["warn"])               # the .env overrides warning
 
     # the prefill: FACES_DB from the seeded env, PATH_MAP empty with
-    # the default placeholder, UNKNOWN_KEY not editable (still 13 rows)
+    # the optional-source placeholder (#306: the no-default harvesting
+    # paths say "will be ignored if empty", never "required"),
+    # UNKNOWN_KEY not editable (still 13 rows)
     fields = js(t, """
       const d = document.querySelector('.dialog.env');
       const f = (re) => {
@@ -7291,7 +7299,8 @@ def c71_env_dialog(t):
       };
     """)
     prefill_ok = (fields["faces"] and fields["faces"]["value"] == "/mock/data/faces.db"
-                  and fields["map"] and fields["map"]["value"] == "" and "no default" in fields["map"]["ph"]
+                  and fields["map"] and fields["map"]["value"] == ""
+                  and "ignored if empty" in fields["map"]["ph"]
                   and fields["harvest"] and fields["harvest"]["value"] == ""
                   and fields["harvest"]["ph"] == "data/harvest.db")
 

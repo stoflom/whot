@@ -31,8 +31,8 @@ describe("personTreeMembers (#152, rewritten by #165)", () => {
     { person_id: null, link_status: "provisional" }, // unowned — no person to list
   ];
 
-  it("'all' (everything except rejected) keeps non-rejected holders + faceless shells, drops all-rejected persons and the reject-bin family", () => {
-    expect(personTreeMembers(persons, faces, "all").map((p) => p.id)).toEqual([1, 2, 4, 5]);
+  it("'all' (#305) lists every person holding ≥ 1 face (any status) + the faceless shells — reject bins included", () => {
+    expect(personTreeMembers(persons, faces, "all").map((p) => p.id)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
   it("'provisional' lists only persons with ≥ 1 provisional face", () => {
@@ -47,18 +47,18 @@ describe("personTreeMembers (#152, rewritten by #165)", () => {
     expect(personTreeMembers(persons, faces, "rejected").map((p) => p.id)).toEqual([3, 4, 6, 7]);
   });
 
-  it("an empty face set: 'all' still lists the faceless persons (never the reject-bin family); a status filter lists nobody", () => {
+  it("an empty face set: 'all' lists every faceless person (reject bins included); a status filter lists nobody", () => {
     expect(personTreeMembers(persons, [], "provisional")).toEqual([]);
     expect(personTreeMembers(persons, [], "rejected")).toEqual([]);
-    expect(personTreeMembers(persons, [], "all").map((p) => p.id)).toEqual([1, 2, 3, 4, 5]);
+    expect(personTreeMembers(persons, [], "all").map((p) => p.id)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 });
 
 describe("matchesStatusFilter (#165)", () => {
-  it("'all' means every status EXCEPT rejected; the others match link_status exactly", () => {
+  it("'all' (#305) means every status, incl. rejected; the others match link_status exactly", () => {
     expect(matchesStatusFilter("provisional", "all")).toBe(true);
     expect(matchesStatusFilter("confirmed", "all")).toBe(true);
-    expect(matchesStatusFilter("rejected", "all")).toBe(false);
+    expect(matchesStatusFilter("rejected", "all")).toBe(true);
     expect(matchesStatusFilter("provisional", "provisional")).toBe(true);
     expect(matchesStatusFilter("confirmed", "confirmed")).toBe(true);
     expect(matchesStatusFilter("rejected", "rejected")).toBe(true);

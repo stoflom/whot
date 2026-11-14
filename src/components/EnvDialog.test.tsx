@@ -104,6 +104,30 @@ describe("EnvDialog (#303, rule 52)", () => {
     expect(harvest.placeholder).toBe("data/harvest.db");
   });
 
+  it("#306: the no-default harvesting paths say 'will be ignored if empty', never 'required'", async () => {
+    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none" });
+    mockSettings.mockResolvedValue(settings());
+    mount();
+    await waitFor(() => expect(field(/read-only archive/).disabled).toBe(false));
+    // exactly the empty-default ENV_KEYS rows carry the optional-source hint
+    const noDefault = ENV_KEYS.filter(([, def]) => def === "").map(([k]) => k);
+    expect(noDefault).toEqual([
+      "ARCHIVE_DIR", "DIGIKAM_DB", "DIGIKAM_RECOGNITION_DB",
+      "LR_CATALOG", "LR_SIDECARS_DIR", "PATH_MAP",
+    ]);
+    for (const title of [
+      /read-only archive/,
+      /digikam database/,
+      /recognition database/,
+      /lightroom catalog/,
+      /sidecar directory/,
+      /path map file/,
+    ]) {
+      expect(field(title).placeholder).toBe("will be ignored if empty");
+      expect(field(title).placeholder).not.toContain("required");
+    }
+  });
+
   it("save round-trips through set_settings: empty known keys dropped, unknown keys preserved, then closes", async () => {
     mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none" });
     mockSettings.mockResolvedValue(
