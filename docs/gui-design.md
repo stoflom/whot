@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 18.3** (#305; v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 18.4** (#306; v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2686,7 +2686,13 @@ dialog.
   key shows the default in the placeholder); `${VAR}` references are
   shown and saved LITERALLY (expansion happens on read,
   backend-design §2). The keys are fixed — only values are editable;
-  an empty value means the default / CLI-flag path applies. Unknown
+  an empty value means the default / CLI-flag path applies (v18.4,
+  #306: the keys with NO default — the harvesting input paths
+  `ARCHIVE_DIR`, `DIGIKAM_DB`, `DIGIKAM_RECOGNITION_DB`, `LR_CATALOG`,
+  `LR_SIDECARS_DIR`, `PATH_MAP` — are optional sources: their
+  placeholder reads **"will be ignored if empty"**, never
+  "required" — an empty value simply drops that source from the
+  harvest). Unknown
   env keys are preserved untouched by the round-trip but are not
   editable rows (the vocabulary is the scripts' known keys).
 - **Saving** goes through the EXISTING `set_settings` (the `env`
