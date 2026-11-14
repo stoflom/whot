@@ -125,6 +125,37 @@ describe("Edit dialog: Accept flushes the group list's pending drafts (#307)", (
   });
 });
 
+describe("the disambiguated field labels (#309, v19.1)", () => {
+  it("the fields read 'Person group' and 'Face description' (the scope seg keeps 'Group')", () => {
+    render(
+      <EditDialog
+        defaultScope="selection"
+        counts={{ card: 0, group: 0, selection: 1 }}
+        rejected={{ card: false, group: false, selection: false }}
+        prefills={{ card: {}, group: {}, selection: {} }}
+        persons={[]}
+        pathOptions={[]}
+        descOptions={[]}
+        onDone={() => {}}
+        onReject={() => {}}
+        onCancel={() => {}}
+      />
+    );
+    const labels = [...document.querySelectorAll(".edit-dialog label")].map(
+      (l) => l.firstChild?.textContent
+    );
+    expect(labels).toContain("Person group");
+    expect(labels).toContain("Face description");
+    expect(labels).not.toContain("Group");
+    expect(labels).not.toContain("Description");
+    // the scope selector keeps its plain wording (the live count rides it)
+    const seg = [...document.querySelectorAll(".edit-dialog .scope-seg button")].map(
+      (b) => b.textContent
+    );
+    expect(seg.some((s) => s?.startsWith("Group"))).toBe(true);
+  });
+});
+
 describe("the pane's Update person flushes the group drafts too (#307)", () => {
   const SNAP: Snapshot = {
     version: 1,

@@ -284,7 +284,7 @@ export default function EditDialog({
           </div>
         ) : (
           <label>
-            Group
+            Person group
             <PathTypeahead
               value={group}
               inputRef={(el) => (groupRef.current = el)}
@@ -301,7 +301,7 @@ export default function EditDialog({
           </label>
         )}
         <label>
-          Description
+          Face description
           {/* #262/#270 (§4.21): type-ahead over the existing description
               tags — free text stays free text, suggestions only assist.
               Matching runs over the CURRENT token (after the last `|`),

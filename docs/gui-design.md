@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 19.0** (#307; v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 19.1** (#309; v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1054,6 +1054,10 @@ setup dialog that edits it is #303):
       §4.21 suggestions (a picked name
       mirrors its group unless one was typed), plus a scope selector
       `Card | Group | Selection` with a live face count (H3).
+      **The field labels disambiguate the object level (v19.1, #309)**:
+      the group field reads **Person group** and the description field
+      reads **Face description** (the scope selector keeps its plain
+      `Group`; the pane's list header stays `Groups`).
       **Prefills are what the cards show**: the live pending set's
       staged overlay (the same later-ops-wins merge the labels use)
       over the committed values — the Apply → re-Edit loop appends to
