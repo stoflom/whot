@@ -7285,7 +7285,9 @@ def c71_env_dialog(t):
                  and header["warn"])               # the .env overrides warning
 
     # the prefill: FACES_DB from the seeded env, PATH_MAP empty with
-    # the default placeholder, UNKNOWN_KEY not editable (still 13 rows)
+    # the optional-source placeholder (#306: the no-default harvesting
+    # paths say "will be ignored if empty", never "required"),
+    # UNKNOWN_KEY not editable (still 13 rows)
     fields = js(t, """
       const d = document.querySelector('.dialog.env');
       const f = (re) => {
@@ -7297,7 +7299,8 @@ def c71_env_dialog(t):
       };
     """)
     prefill_ok = (fields["faces"] and fields["faces"]["value"] == "/mock/data/faces.db"
-                  and fields["map"] and fields["map"]["value"] == "" and "no default" in fields["map"]["ph"]
+                  and fields["map"] and fields["map"]["value"] == ""
+                  and "ignored if empty" in fields["map"]["ph"]
                   and fields["harvest"] and fields["harvest"]["value"] == ""
                   and fields["harvest"]["ph"] == "data/harvest.db")
 

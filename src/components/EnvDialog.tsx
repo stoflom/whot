@@ -20,7 +20,10 @@ import {
 import { useOwnsKeyboard } from "../overlays";
 
 /** the KNOWN env keys (backend-design §2) — one row each, with the
-    placeholder default and a tooltip description. Fixed order. */
+    placeholder default and a tooltip description. Fixed order. The
+    empty defaults are the no-default harvesting input paths (#306:
+    optional sources — their placeholder says the empty value is
+    ignored, never "required"). */
 export const ENV_KEYS: ReadonlyArray<readonly [string, string, string]> = [
   ["DATA_DIR", "data", "data directory (relative paths resolve against the project root)"],
   ["FACES_DB", "data/faces.db", "the faces database (sqlite)"],
@@ -129,7 +132,7 @@ export default function EnvDialog({ onSave, onClose, onError }: Props) {
             {k}
             <input
               value={values[k] ?? ""}
-              placeholder={def || "no default — required"}
+              placeholder={def || "will be ignored if empty"}
               disabled={busy || !settings}
               onChange={(e) => edit(k, e.target.value)}
             />
