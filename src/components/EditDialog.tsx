@@ -150,6 +150,11 @@ export default function EditDialog({
   const groupRef = useRef<HTMLInputElement | null>(null);
   const descRef = useRef<HTMLInputElement | null>(null);
   const noteRef = useRef<HTMLTextAreaElement | null>(null);
+  // #181 (§4.38): the group list's pending drafts (add row, inline
+  // re-home) — Accept acts as Enter in the focused field first, so a
+  // typed-but-unstaged entry must stage before the commit (v19.0:
+  // the blur-proof buttons never blur it)
+  const groupFlush = useRef<(() => GroupOp[]) | null>(null);
 
   const done = (kind: EditResult["kind"]) => {
     const live = (
@@ -163,6 +168,9 @@ export default function EditDialog({
     const g = live(groupRef.current, group);
     const d = live(descRef.current, desc);
     const nt = live(noteRef.current, note);
+    // the group list's pending drafts stage NOW (a no-op when none are
+    // pending) — the flushed set is what Accept commits
+    const flushed = groupFlush.current?.() ?? groupOps;
     onDone({
       kind,
       scope,
@@ -173,7 +181,7 @@ export default function EditDialog({
         desc: touched.desc || d.touched,
         note: touched.note || nt.touched,
       },
-      groupOps,
+      groupOps: flushed,
     });
   };
 
@@ -271,6 +279,7 @@ export default function EditDialog({
               onOps={setGroupOps}
               options={pathOptions}
               className="ed-groups"
+              flushRef={groupFlush}
             />
           </div>
         ) : (

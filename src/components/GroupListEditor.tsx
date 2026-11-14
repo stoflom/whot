@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PathTypeahead from "./PathTypeahead";
 import type { SuggestOption } from "./PathTypeahead";
 import {
@@ -36,6 +36,15 @@ interface Props {
   /** Enter in the add row commits the staged set (the pane, §4.38);
       the dialog commits only via Accept, so it omits this */
   onAddCommit?: (next: GroupOp[]) => void;
+  /** #307 (v19.0): the parent's commit button is blur-proof (mousedown
+      preventDefault — the §4.38 "Update person"/dialog-Accept idiom),
+      so a pending add-row or inline-re-home draft never sees a blur.
+      The parent invokes flush() right before committing: it stages the
+      pending drafts (each field's LIVE DOM value is the last word — an
+      engine-lost input event must not drop the typed path, the same
+      rule the four value fields follow) and returns the ops to commit
+      (unchanged ops when nothing is pending). */
+  flushRef?: { current: (() => GroupOp[]) | null };
 }
 
 export default function GroupListEditor({
@@ -45,9 +54,15 @@ export default function GroupListEditor({
   options,
   className,
   onAddCommit,
+  flushRef,
 }: Props) {
   const [addPath, setAddPath] = useState("");
   const [editing, setEditing] = useState<{ path: string; value: string } | null>(null);
+  // #307 (v19.0): the live DOM elements behind the drafts — the parent's
+  // commit reads them as the last word (an engine-lost input event must
+  // not drop the typed path)
+  const addInputRef = useRef<HTMLInputElement | null>(null);
+  const editInputRef = useRef<HTMLInputElement | null>(null);
   // the staged result — the REAL memberships with the ops applied (the
   // status seat is filtered out, §4.35/#233)
   const display = applyGroupOps(groups, ops);
@@ -66,6 +81,32 @@ export default function GroupListEditor({
     if (next) onOps(next);
     setEditing(null);
   };
+  // the flush the blur-proof parents invoke before committing —
+  // re-registered after every render so the closure never goes stale
+  useEffect(() => {
+    if (!flushRef) return;
+    flushRef.current = (): GroupOp[] => {
+      let out = ops;
+      if (editing) {
+        // the inline re-home draft: the live DOM value is the last word
+        const v = editInputRef.current?.value ?? editing.value;
+        const next = stageRehome(out, display, editing.path, v);
+        if (next) out = next;
+        setEditing(null);
+      }
+      const live = addInputRef.current;
+      const path = live && live.value !== addPath ? live.value : addPath;
+      if (path.trim()) {
+        const next = stageAdd(out, applyGroupOps(groups, out), path);
+        if (next) {
+          out = next;
+          setAddPath(""); // cleared only when it actually staged
+        }
+      }
+      if (out !== ops) onOps(out);
+      return out;
+    };
+  });
   return (
     <>
       <ul className={className}>
@@ -85,6 +126,7 @@ export default function GroupListEditor({
                   <PathTypeahead
                     className="input-group dp-group-edit"
                     value={editing.value}
+                    inputRef={(el) => (editInputRef.current = el)}
                     onChange={(v) => setEditing({ path: g, value: v })}
                     options={options}
                     autoFocus
@@ -123,6 +165,7 @@ export default function GroupListEditor({
         <PathTypeahead
           className="input-group"
           value={addPath}
+          inputRef={(el) => (addInputRef.current = el)}
           onChange={setAddPath}
           options={options}
           placeholder="e.g. family|smiths"

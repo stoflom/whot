@@ -194,6 +194,10 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
   const [ops, setOps] = useState<GroupOp[]>([]);
   const [nameDraft, setNameDraft] = useState(person.name);
   const [noteDraft, setNoteDraft] = useState(person.note ?? "");
+  // #307 (v19.0): the group list's pending drafts — Update person acts
+  // as Enter in the focused field first, so a typed-but-unstaged entry
+  // must stage before the commit (the blur-proof button never blurs it)
+  const groupFlush = useRef<(() => GroupOp[]) | null>(null);
   const pidRef = useRef(person.id);
   useEffect(() => {
     if (pidRef.current !== person.id) {
@@ -288,6 +292,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
             options={pathOptions}
             className="dp-groups"
             onAddCommit={commit}
+            flushRef={groupFlush}
           />
         </div>
       )}
@@ -321,7 +326,7 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
               ? "Commit the pending name/note and the staged group changes — same as Enter"
               : "Commit any pending name/note change — same as Enter"
           }
-          onClick={() => commit(ops)}
+          onClick={() => commit(groupFlush.current?.() ?? ops)}
         >
           ✓ Update person
         </button>
