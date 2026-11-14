@@ -211,6 +211,10 @@ Checks (contract refs: docs/gui-design.md):
       the text to EACH person's existing note — each keeps its own
       (the base notes are seeded via the person pane's Note field —
       a write path that leaves the faces untouched)
+  C74 the Edit dialog's add-group row flush (#307): a typed path with
+      NO Enter and NO 'Add group' click is committed by a direct dialog
+      Accept — the blur-proof buttons never blur the row, so the pending
+      draft stages before the commit (its live DOM value)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -7508,6 +7512,97 @@ def c73_edit_note_field(t):
            f"mixed={mixed_ok} notes={notes}")
 
 
+def c74_dialog_group_add_flush(t):
+    """#307 (v19.0): typing a path into the Edit dialog's add-group row
+    and clicking Accept DIRECTLY (no Enter, no 'Add group' button)
+    commits the membership — Accept acts as Enter in the focused field
+    first: the blur-proof buttons never blur the row, so the pending
+    draft is flushed into the staged set before the commit (its live
+    DOM value, an engine-lost input event included)."""
+    fresh(t)
+    # after fresh() the app sits on Review with Show pinned to NEW faces
+    # (the seed's provisional faces all belong to UnknownN clusters) —
+    # the person grid is where a FILED person's faces render
+    js(t, "document.querySelectorAll('.topbar nav button')[2]?.click()")
+    time.sleep(1.0)
+    set_show_filter(t, "all")
+    # anchor a FILED person (a real name + >= 1 real group) via the tree
+    pick = js(t, r"""
+      const snap = window.__MOCK_SNAP;
+      const SEATS = ['New', 'Accepted', 'Rejected'];
+      const p = snap.persons.find(p => !/^unknown/i.test(p.name) && p.name !== 'Rejected'
+                    && p.groups.some(g => !SEATS.includes(g))
+                    && snap.faces.some(f => f.person_id === p.id && f.link_status !== 'rejected'));
+      if (!p) return null;
+      document.querySelector(`.tree-person[data-person-id='${p.id}']`)?.click();
+      return {pid: p.id, name: p.name, groups: p.groups.slice()};
+    """)
+    if not pick:
+        record("C74 dialog add-group flush (#307)", True,
+               "no filed person in the seed — vacuous")
+        return
+    time.sleep(1.2)
+    fid = js(t, f"""
+      const byId = new Map(window.__MOCK_SNAP.faces.map(f => [f.id, f]));
+      for (const c of document.querySelectorAll('.face-card')) {{
+        const f = byId.get(+c.getAttribute('data-face-id'));
+        if (f && f.person_id === {pick['pid']} && f.link_status !== 'rejected') return f.id;
+      }}
+      return null;
+    """)
+    if fid is None:
+        record("C74 dialog add-group flush (#307)", False, "the anchored person's cards never rendered")
+        return
+    js(t, "arguments[0].scrollIntoView({block:'center'})",
+       t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{fid}']"))
+    time.sleep(0.3)
+    opened = js(t, r"""
+      const c = document.querySelector(`.face-card[data-face-id='${arguments[0]}']`);
+      if (!c) return false;
+      const b = [...c.querySelectorAll('button')].find(x => x.textContent.trim() === 'Edit…');
+      if (!b) return false;
+      b.click();
+      return true;
+    """, fid)
+    time.sleep(0.6)
+    listed = js(t, r"""
+      return {
+        list: !!document.querySelector('.edit-dialog .ed-groups'),
+        paths: [...document.querySelectorAll('.edit-dialog .ed-groups .dp-group-path')]
+          .map(x => x.textContent.trim()),
+      };
+    """)
+    if not (opened and listed["list"]):
+        record("C74 dialog add-group flush (#307)", False,
+               f"the group list did not front the prefilled name: opened={opened} rows={listed}")
+        return
+    # type into the add row, NO Enter, NO 'Add group' button
+    js(t, r"""
+      const el = document.querySelector('.edit-dialog .dp-add-group .typeahead input');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, arguments[0]);
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+    """, "Ck74|Flush")
+    time.sleep(0.4)
+    untouched = js(t, r"""
+      return (window.__MOCK_SNAP.persons.find(p => p.id === arguments[0])?.groups ?? []).slice();
+    """, pick["pid"]) == pick["groups"]
+    # direct dialog Accept
+    js(t, r"""
+      [...document.querySelectorAll('.edit-dialog .dialog-actions button')]
+        .find(x => x.textContent.trim() === 'Accept')?.click();
+    """)
+    time.sleep(1.5)
+    after = js(t, r"""
+      return (window.__MOCK_SNAP.persons.find(p => p.id === arguments[0])?.groups ?? []).slice();
+    """, pick["pid"])
+    dialog_gone = not js(t, "return !!document.querySelector('.edit-dialog')")
+    ok = (untouched and dialog_gone
+          and after == pick["groups"] + ["Ck74|Flush"])
+    record("C74 dialog add-group flush (#307)", ok,
+           f"listed={listed['paths']} untouched={untouched} after={after} closed={dialog_gone}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -7519,7 +7614,8 @@ def main():
       c63_rolls_image_stepping, c64_roll_branch_reimport_recursive, c65_person_pane_merge_similar,
       c66_refcrop_image_menu, c67_glyph_vocabulary, c68_session_persistence,
       c69_export_annotated_entry_points, c70_export_open_after_tick,
-      c71_env_dialog, c72_edit_accept_typed_text, c73_edit_note_field):
+      c71_env_dialog, c72_edit_accept_typed_text, c73_edit_note_field,
+      c74_dialog_group_add_flush):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)
