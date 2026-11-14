@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 18.4** (#306; v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 19.0** (#307; v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1049,8 +1049,9 @@ setup dialog that edits it is #303):
       Apply with **no changed field**
       raises the "nothing to apply" toast; Accept with no changes still
       accepts the scope (§4.30).
-    - **One shared dialog**: three labelled fields — name, group,
-      description — each carrying the §4.21 suggestions (a picked name
+    - **One shared dialog**: four labelled fields — name, group,
+      description, **note** (v19.0, #307) — the first three carrying the
+      §4.21 suggestions (a picked name
       mirrors its group unless one was typed), plus a scope selector
       `Card | Group | Selection` with a live face count (H3).
       **Prefills are what the cards show**: the live pending set's
@@ -1081,6 +1082,10 @@ setup dialog that edits it is #303):
       never silently discarded. The **group prefill is the person's
       first real group** — a status seat never prefills (a seated
       person's group field opens **empty** = ungrouped, §4.35/#233).
+      The **note prefill is the owners' note** (v19.0, #307): the scope's
+      faces resolve to their DISTINCT persons and the field opens with
+      that note — uniform across the scope, else the `various` placeholder
+      exactly like the other fields.
     - **Description add mode (`|` prefix)**: a description value
       starting with **|** is an *add*, not a replace — the tokens after
       the leading **|** (split on `|`, spaces trimmed as usual) are
@@ -1097,12 +1102,50 @@ setup dialog that edits it is #303):
       works in **every scope** (Card adds to that card's own value) and
       is the way to tag a scope without re-typing its prefill — in
       particular a `various` placeholder, which is empty by design.
+    - **Note field (v19.0, #307)**: the dialog exposes the person's
+      **Note** — the same free text the person details pane edits
+      (§4.37 `Editable label="Note"`, `person.note` via
+      `set_person_note`) — as a fourth field: a plain multiline input
+      (no suggestions; **Enter inserts a newline** there, Esc still
+      cancels, the buttons commit). The value semantics mirror the
+      description add-mode:
+      - **plain text (no leading `|`)**: every person in scope gets the
+        text as its note (a replace).
+      - **`|` prefix = concat add**: the remainder after the leading
+        `|` (trimmed, kept as ONE literal chunk — notes are free text,
+        not `|`-separated tags) is **appended to each person's existing
+        note** with a single space; a person without a note gets the
+        text as the note. With several persons in scope the add lands
+        on each one's OWN note — never one shared text.
+      - **touched + empty**: each person's note is cleared (the same
+        deliberate-clear semantics as group/description).
+      The op applies per **DISTINCT owner** of the scope's faces,
+      resolved AFTER the staged field writes (the same owner resolution
+      the §4.38 group-list edits use, #181) — so a name assignment in
+      the same Accept lands the note on the surviving/created person,
+      and a scope spanning several persons writes each one separately
+      (looped `set_person_note` calls, deltas collected like the group
+      ops). It stages with Apply and commits with Accept like every
+      field: `Stage` gains `note?` (the raw dialog value, add-mode
+      marker included — the expansion happens at commit), the staged
+      strip's summary gains a note line (`note “…”` / `note +“…”` /
+      `note → cleared`), and the cards do NOT preview it (a note is
+      person-level; the pane shows it).
     - **Buttons**: `Apply` = stage + close (screen preview), `Accept` =
       commit the staged ops, then accept the chosen scope (the shortcut
       — “Accept is what makes my changes permanent”), `Reject` = the
       scope’s verdict,
       `Cancel`/Esc = discard the pending set. **Enter = Accept**, **Esc
       = Cancel** — inside the dialog only.
+      **The buttons are blur-proof (v19.0, #307)**: clicking Apply or
+      Accept acts as if **Enter had been pressed in the focused field
+      first** — the buttons never take focus from the fields
+      (`onMouseDown` preventDefault, the §4.38 "Update person" idiom),
+      and the commit reads each field's **live DOM value** as the last
+      word (a DOM value diverging from the dialog state — an
+      engine-lost input event — counts as touched and is committed).
+      Typed text can no longer be lost to the click; the field staging
+      stays per-keystroke as before.
     - **Reject in the dialog**: acts on the chosen scope (Card →
       that face; Group → the cluster; Selection → the selected set),
       **commits immediately** (a verdict, not a field edit — the same
@@ -1120,7 +1163,7 @@ setup dialog that edits it is #303):
       anything runs — no confirmation dialog is needed.
     - **Stage / preview state — the pending set**: the
       stage is an **accumulating set of pending ops**, one per Apply —
-      `{faceIds, name?, group?, desc?}` bound to that Apply's scope.
+      `{faceIds, name?, group?, desc?, note?}` bound to that Apply's scope.
       The working loop is **Apply → change → Apply → … until Accept or
       Cancel**: Apply never commits, it only extends the set (screen
       preview on the labels, the `staged: …` strip shows the whole set;
@@ -1174,7 +1217,11 @@ setup dialog that edits it is #303):
       `assign_person` (group applied on create/UnknownN-rename, later
       explicit groups via `set_person_group`), a group-only change
       through `set_person_group`, a description change through its own
-      setter — an empty field counts as unchanged.
+      setter, and a note change through `set_person_note` **per distinct
+      owner, after the field writes** (v19.0, #307 — the expansion of
+      the `|` add-mode and the per-person final note are computed at
+      commit; an empty touched note clears) — an empty field counts as
+      unchanged.
       **Accept never un-rejects (§4.2):** a stage may display on a
       rejected face, a plain accept-commit skips it — while
       committing a **name** to it is the claim (§4.35: the assignment

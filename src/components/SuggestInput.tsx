@@ -47,6 +47,10 @@ interface Props {
       trimmed value) — the description field strips its leading `|`
       add-mode prefix so `|beard` still matches the `beard` tag */
   queryFor?: (value: string) => string;
+  /** #307: the inner <input> element — the Edit dialog's commit reads
+      the LIVE DOM value as the last word (an engine-lost input event
+      must not drop typed text) */
+  inputRef?: (el: HTMLInputElement | null) => void;
 }
 
 const MAX_SUGGESTIONS = 8;
@@ -66,6 +70,7 @@ export default function SuggestInput({
   select = "auto",
   caretEnd = false,
   queryFor,
+  inputRef,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1);
@@ -164,7 +169,10 @@ export default function SuggestInput({
     // suggestion picks must not re-select a face card or toggle a tree row)
     <span className="typeahead" onClick={(e) => e.stopPropagation()}>
       <input
-        ref={ref}
+        ref={(el) => {
+          ref.current = el;
+          inputRef?.(el);
+        }}
         className={className}
         value={value}
         placeholder={placeholder}

@@ -23,6 +23,8 @@ interface Props {
   onEscape?: () => void;
   /** focus left the widget — the parent's blur-commit (#97) */
   onLeave?: () => void;
+  /** #307: the inner <input> element (the dialog's live-DOM commit) */
+  inputRef?: (el: HTMLInputElement | null) => void;
   className?: string;
   placeholder?: string;
   autoFocus?: boolean;
@@ -38,6 +40,7 @@ export default function NameTypeahead({
   onSubmit,
   onEscape,
   onLeave,
+  inputRef,
   className,
   placeholder,
   autoFocus,
@@ -65,6 +68,7 @@ export default function NameTypeahead({
       onSubmit={onSubmit}
       onEscape={onEscape}
       onLeave={onLeave}
+      inputRef={inputRef}
       className={className}
       placeholder={placeholder}
       title={title}

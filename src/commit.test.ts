@@ -10,12 +10,14 @@ import type { Face, Person } from "./api";
 import {
   ownersForGroupOps,
   planCommit,
+  planNoteOps,
   planStageOps,
   remainingAfterFailure,
   reviewScope,
   routeAccept,
 } from "./commit";
 import { acceptAdvancePlan, type ReviewTarget } from "./reviewFlow";
+import type { Stage } from "./stage";
 
 const person = (id: number, name: string): Person => ({
   id,
@@ -195,6 +197,64 @@ describe("ownersForGroupOps (#259) — the #181 owners", () => {
   it("dedups to one owner per distinct person (one call per op over ALL owners, #209)", () => {
     const fs = faces([face(1, 7), face(2, 7), face(3, 9)]);
     expect(ownersForGroupOps([1, 2, 3], [], fs)).toEqual([7, 9]);
+  });
+});
+
+describe("planNoteOps (#307, v19.0) — the person-note writes", () => {
+  it("per DISTINCT owner of the note stages; later stages win per person", () => {
+    const fs = faces([face(1, 7), face(2, 7), face(3, 9)]);
+    const stages: Stage[] = [
+      { faceIds: [1], note: "first" },
+      { faceIds: [2, 3], note: "second" }, // person 7 covered again — later wins
+    ];
+    expect(planNoteOps(stages, [], fs, new Map())).toEqual([
+      { personId: 7, note: "second" },
+      { personId: 9, note: "second" },
+    ]);
+  });
+
+  it("the fresh deltas carry the owner (a same-Accept assignment) and the base note", () => {
+    const fs = faces([face(1, 7)]);
+    // the claim moved face 1 onto person 13 in this run
+    const deltas = [
+      {
+        faces: [{ id: 1, person_id: 13 }],
+        persons: [{ ...person(13, "New"), note: "existing" } as unknown as Person],
+      },
+    ];
+    expect(planNoteOps([{ faceIds: [1], note: "added" }], deltas as never, fs, new Map()))
+      .toEqual([{ personId: 13, note: "added" }]);
+    // add-mode appends to the FRESH person row's note
+    expect(planNoteOps([{ faceIds: [1], note: "|added" }], deltas as never, fs, new Map()))
+      .toEqual([{ personId: 13, note: "existing added" }]);
+  });
+
+  it("add-mode appends to the snapshot note (single-space concat); a noteless person gets the text", () => {
+    const fs = faces([face(1, 7), face(2, 9)]);
+    const ps = new Map<number, Person>([
+      [7, { ...person(7, "A"), note: "kept" } as unknown as Person],
+      // person 9 has no note — the text becomes the note
+      [9, { ...person(9, "B"), note: null } as unknown as Person],
+    ]);
+    expect(planNoteOps([{ faceIds: [1, 2], note: "|intro" }], [], fs, ps)).toEqual([
+      { personId: 7, note: "kept intro" },
+      { personId: 9, note: "intro" },
+    ]);
+  });
+
+  it("plain text replaces every owner's note; an empty value clears", () => {
+    const fs = faces([face(1, 7)]);
+    const ps = new Map<number, Person>([[7, { ...person(7, "A"), note: "old" } as unknown as Person]]);
+    expect(planNoteOps([{ faceIds: [1], note: "new" }], [], fs, ps))
+      .toEqual([{ personId: 7, note: "new" }]);
+    expect(planNoteOps([{ faceIds: [1], note: "" }], [], fs, ps))
+      .toEqual([{ personId: 7, note: "" }]);
+  });
+
+  it("stages without a note never write; a scope with no owners writes nothing", () => {
+    const fs = faces([face(1, null)]);
+    expect(planNoteOps([{ faceIds: [1], name: "x" }], [], fs, new Map())).toEqual([]);
+    expect(planNoteOps([{ faceIds: [1], note: "x" }], [], fs, new Map())).toEqual([]);
   });
 });
 

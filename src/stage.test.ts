@@ -33,19 +33,33 @@ describe("scopeFaceIds", () => {
 
 describe("buildStage (#77 routing kept)", () => {
   it("nothing touched → nothing to stage", () => {
-    expect(buildStage([1], { name: "Alice", group: "", desc: "" }, { name: false, group: false, desc: false })).toBeNull();
+    expect(buildStage([1], { name: "Alice", group: "", desc: "", note: "" }, { name: false, group: false, desc: false, note: false })).toBeNull();
   });
 
   it("an empty/untouched name means unchanged; group and desc may be cleared", () => {
-    const st = buildStage([1], { name: "  ", group: "", desc: "" }, { name: true, group: true, desc: false });
+    const st = buildStage([1], { name: "  ", group: "", desc: "", note: "" }, { name: true, group: true, desc: false, note: false });
     expect(st).toEqual({ faceIds: [1], group: "" });
-    const st2 = buildStage([1], { name: "Alice", group: "family", desc: "" }, { name: true, group: false, desc: true });
+    const st2 = buildStage([1], { name: "Alice", group: "family", desc: "", note: "" }, { name: true, group: false, desc: true, note: false });
     expect(st2).toEqual({ faceIds: [1], name: "Alice", desc: "" });
   });
 
   it("the stage binds the scope's faceIds (§4.24)", () => {
-    expect(buildStage([7, 8], { name: "Bob", group: "", desc: "" }, { name: true, group: false, desc: false }))
+    expect(buildStage([7, 8], { name: "Bob", group: "", desc: "", note: "" }, { name: true, group: false, desc: false, note: false }))
       .toEqual({ faceIds: [7, 8], name: "Bob" });
+  });
+
+  it("#307 (v19.0): a touched note stages raw — plain text, `|` add-mode marker included; empty clears; a lone `|` is a no-op", () => {
+    expect(buildStage([1], { name: "", group: "", desc: "", note: "intro" }, { name: false, group: false, desc: false, note: true }))
+      .toEqual({ faceIds: [1], note: "intro" });
+    // the add marker rides the stage raw — the expansion happens at commit
+    expect(buildStage([1], { name: "", group: "", desc: "", note: "|extra" }, { name: false, group: false, desc: false, note: true }))
+      .toEqual({ faceIds: [1], note: "|extra" });
+    // touched + empty = a deliberate clear
+    expect(buildStage([1], { name: "", group: "", desc: "", note: "" }, { name: false, group: false, desc: false, note: true }))
+      .toEqual({ faceIds: [1], note: "" });
+    // a lone `|` (nothing to add) never stages
+    expect(buildStage([1], { name: "", group: "", desc: "", note: "| " }, { name: false, group: false, desc: false, note: true }))
+      .toBeNull();
   });
 });
 
@@ -81,14 +95,20 @@ describe("the pending set (#123)", () => {
       .toBe("name “Alice” · 2 face(s)  /  description “beard” · 2 face(s) — 3 face(s) staged");
     expect(stageSummarySet([])).toBe("");
   });
+
+  it("#307 (v19.0): the summary names a note op — plain, add-mode (+) and cleared", () => {
+    expect(stageSummary({ faceIds: [1], note: "intro" })).toBe(`note “intro”`);
+    expect(stageSummary({ faceIds: [1], note: "|extra" })).toBe(`note +“extra”`);
+    expect(stageSummary({ faceIds: [1], note: "" })).toBe("note → cleared");
+  });
 });
 
 describe("prefillForFaces (#199 — the prefill is what the cards show)", () => {
   const committed = (id: number) => {
-    const map: Record<number, { name: string; group: string; desc: string }> = {
-      1: { name: "Alice", group: "Family", desc: "beard" },
-      2: { name: "Alice", group: "Family", desc: "glasses" },
-      3: { name: "Bob", group: "Friends", desc: "" },
+    const map: Record<number, { name: string; group: string; desc: string; note: string }> = {
+      1: { name: "Alice", group: "Family", desc: "beard", note: "" },
+      2: { name: "Alice", group: "Family", desc: "glasses", note: "" },
+      3: { name: "Bob", group: "Friends", desc: "", note: "" },
     };
     return map[id];
   };
@@ -98,8 +118,22 @@ describe("prefillForFaces (#199 — the prefill is what the cards show)", () => 
       name: "Alice",
       group: "Family",
       desc: "beard",
+      note: "",
     });
     expect(prefillForFaces([], committed, [])).toEqual({});
+  });
+
+  it("#307 (v19.0): the note prefill is the owners' note — uniform, or mixed when the scope spans persons with different notes", () => {
+    const noted = (id: number) => ({
+      ...committed(id),
+      note: id === 1 ? "one" : "two",
+    });
+    // faces of ONE person (1 and 2 belong to Alice here) share the note
+    expect(prefillForFaces([1], noted, [])).toEqual({ name: "Alice", group: "Family", desc: "beard", note: "one" });
+    // person 3 carries a different note → the note field opens mixed
+    const p = prefillForFaces([1, 3], noted, []);
+    expect(p.note).toBeUndefined();
+    expect(p.mixed).toEqual(["name", "group", "desc", "note"]);
   });
 
   it("the staged overlay wins over the committed value (the Apply → re-Edit loop)", () => {
@@ -137,6 +171,7 @@ describe("prefillForFaces (#199 — the prefill is what the cards show)", () => 
       name: "Alice",
       group: "Family",
       desc: "same",
+      note: "",
     });
   });
 
@@ -280,14 +315,14 @@ describe("add mode `|` (#231/#263, §4.24)", () => {
 
   it("buildStage: a lone `|` (no tokens) never stages — the 'nothing to apply' path", () => {
     expect(
-      buildStage([1], { name: " ", group: "", desc: "|" }, { name: true, group: false, desc: true })
+      buildStage([1], { name: " ", group: "", desc: "|", note: "" }, { name: true, group: false, desc: true, note: false })
     ).toBeNull();
     expect(
-      buildStage([1], { name: " ", group: "", desc: "| |" }, { name: true, group: false, desc: true })
+      buildStage([1], { name: " ", group: "", desc: "| |", note: "" }, { name: true, group: false, desc: true, note: false })
     ).toBeNull();
     // a `|` value WITH tokens still stages (the expansion happens at Apply)
     expect(
-      buildStage([1], { name: " ", group: "", desc: "|beard" }, { name: false, group: false, desc: true })
+      buildStage([1], { name: " ", group: "", desc: "|beard", note: "" }, { name: false, group: false, desc: true, note: false })
     ).toEqual({ faceIds: [1], desc: "|beard" });
   });
 

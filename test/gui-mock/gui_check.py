@@ -201,6 +201,16 @@ Checks (contract refs: docs/gui-design.md):
   C62 a verdict costs exactly ONE ipc data transfer (#219): the mutation
       delta lands locally — the mock's invocation counter sees the
       accept_faces call but NO further get_snapshot re-fetch
+  C72 the Edit dialog's own Accept commits typed text (#307, v19.0):
+      type a name + description with TRUSTED key input, click the
+      dialog's Accept directly (no Apply, no Enter) — the typed text is
+      committed and the dialog closes (Accept = Enter-then-click)
+  C73 the Edit dialog's Note field (#307, v19.0): the note prefill is
+      the owners' note (a scope spanning two persons with different
+      notes opens the field 'various'); a '|' add-mode Accept appends
+      the text to EACH person's existing note — each keeps its own
+      (the base notes are seeded via the person pane's Note field —
+      a write path that leaves the faces untouched)
   R1  layout geometry: heading above cards in every section (#120),
       empty labels are dimmed hints with normal row height (#119)
   R2  selection-toggle render time (informational, §4.31/#109)
@@ -7356,6 +7366,148 @@ def c71_env_dialog(t):
            f"reopened={reopened} (ok={reopen_ok})")
 
 
+def c72_edit_accept_typed_text(t):
+    """#307 (v19.0): typing into the Edit dialog and clicking the dialog's
+    OWN Accept commits the typed text — Accept must act as if Enter was
+    pressed in the focused field first (no Apply, no Enter in between).
+    Trusted key + trusted click, the exact engine path the bug rode."""
+    fresh(t)
+    fid = first_card_id(t)
+    t.find_element(By.CSS_SELECTOR, ".face-card .card-edit").click()
+    time.sleep(0.6)
+    inp = t.find_element(By.CSS_SELECTOR, ".edit-dialog .typeahead input")
+    inp.click()
+    inp.clear()
+    inp.send_keys("C72 Accept")
+    time.sleep(0.3)
+    desc = t.find_element(By.CSS_SELECTOR, ".edit-dialog .input-desc")
+    desc.click()
+    desc.send_keys("c72-desc")
+    time.sleep(0.3)
+    [b for b in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+     if b.text.strip() == "Accept"][0].click()
+    time.sleep(1.2)
+    strip = strip_text(t)
+    f = face_by_id(t, fid)
+    dlg = dialog_open(t)
+    ok = (strip == "no strip" and committed(t, fid, "C72 Accept") and not dlg)
+    record("C72 Edit Accept commits typed text (#307)", ok,
+           f"strip={strip!r} dlg_open={dlg} face {fid} -> "
+           f"{f and (f['status'], f['person'])}")
+
+
+def c73_edit_note_field(t):
+    """#307 (v19.0): the Edit dialog's Note field — the prefill is the
+    owners' note (two persons with different notes ⇒ the 'various'
+    placeholder), and a `|` add-mode dialog Accept appends the text to
+    EACH person's existing note (per-distinct-owner writes, resolved
+    after the field writes). The base notes are seeded through the
+    PERSON PANE's Note field (an app write path that never touches
+    faces — a dialog Accept would confirm the faces and drain the
+    persons from the review's new-face grid)."""
+    fresh(t)
+    pick = js(t, r"""
+      const vis = f => f.person_id != null && (f.state ?? '') !== 'discarded'
+                     && f.link_status !== 'rejected';
+      const byId = new Map(window.__MOCK_SNAP.faces.map(f => [f.id, f]));
+      const out = [];
+      const seen = new Set();
+      for (const c of document.querySelectorAll('.face-card')) {
+        const id = +c.getAttribute('data-face-id');
+        const f = byId.get(id);
+        if (!f || !vis(f) || seen.has(f.person_id)) continue;
+        seen.add(f.person_id);
+        out.push({fid: id, pid: f.person_id});
+        if (out.length >= 2) break;
+      }
+      return out;
+    """)
+    if len(pick) < 2:
+        record("C73 Edit dialog Note field (#307)", True,
+               "fewer than two visible persons in the first cards — vacuous")
+        return
+    (a, b) = pick[0], pick[1]
+
+    def anchor(pid, fid):
+        """re-anchor the review on the person (the grid window follows)
+        until the target card is rendered — retried: the re-anchor
+        scroll + grid re-render take a beat"""
+        for _ in range(8):
+            js(t, f"document.querySelector(\".tree-person[data-person-id='{pid}']\")?.click();")
+            time.sleep(0.7)
+            if js(t, f"return !!document.querySelector(\".face-card[data-face-id='{fid}']\")"):
+                return True
+        return False
+
+    def pane_note(pid, text):
+        """the person pane's Note field (DetailPane, §4.37): tree-click
+        the person, type into the Note textarea, blur = commit — the
+        app's own set_person_note path WITHOUT touching any face"""
+        js(t, f"document.querySelector(\".tree-person[data-person-id='{pid}']\")?.click();")
+        time.sleep(1.0)
+        ta = t.find_element(
+            By.CSS_SELECTOR,
+            ".dp-person textarea[title='Note — free text about this person']")
+        ta.click()
+        ta.clear()
+        ta.send_keys(text)
+        time.sleep(0.3)
+        ta.send_keys(Keys.TAB)  # blur = commit (Editable onBlur)
+        time.sleep(1.0)
+
+    pane_note(a["pid"], "base A")
+    pane_note(b["pid"], "base B")
+    notes = js(t, f"""
+      return window.__MOCK_SNAP.persons
+        .filter(p => [{a['pid']}, {b['pid']}].includes(p.id))
+        .map(p => p.note);
+    """)
+    if notes != ["base A", "base B"]:
+        record("C73 Edit dialog Note field (#307)", False,
+               f"the pane-note setup writes failed: notes={notes}")
+        return
+
+    # two-face selection across the two persons (both still hold NEW
+    # faces — nothing was confirmed; the selection survives a tree
+    # re-anchor): anchor a → click their card, anchor b → ctrl-click
+    # their card, then the BAR Edit… opens the dialog (scope Selection)
+    if not (anchor(a["pid"], a["fid"]) and anchor(b["pid"], b["fid"])):
+        record("C73 Edit dialog Note field (#307)", False, "cards never rendered")
+        return
+    anchor(a["pid"], a["fid"])  # end on a's section; both cards stay rendered
+    t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{a['fid']}']").click()
+    time.sleep(0.4)
+    modclick(t, Keys.CONTROL,
+             t.find_element(By.CSS_SELECTOR, f".face-card[data-face-id='{b['fid']}']"))
+    time.sleep(0.4)
+    count = js(t, "return document.querySelector('.rulebar b')?.textContent")
+    if count != "2":
+        record("C73 Edit dialog Note field (#307)", False, f"selection = {count}, want 2")
+        return
+    [btn for btn in t.find_elements(By.CSS_SELECTOR, ".rulebar button")
+     if btn.text.strip() == "Edit…"][0].click()
+    time.sleep(0.8)
+    note = t.find_element(By.CSS_SELECTOR, ".edit-dialog .input-note")
+    ph = note.get_attribute("placeholder") or ""
+    mixed_ok = "various" in ph and note.get_attribute("value") == ""
+    note.click()
+    note.send_keys("| extra")
+    time.sleep(0.3)
+    # direct dialog Accept — the note lands per person (per-distinct-owner
+    # writes resolved after the field writes)
+    [btn for btn in t.find_elements(By.CSS_SELECTOR, ".edit-dialog button")
+     if btn.text.strip() == "Accept"][0].click()
+    time.sleep(1.5)
+    notes = js(t, f"""
+      return window.__MOCK_SNAP.persons
+        .filter(p => [{a['pid']}, {b['pid']}].includes(p.id))
+        .map(p => p.note);
+    """)
+    ok = mixed_ok and notes == ["base A extra", "base B extra"]
+    record("C73 Edit dialog Note field (#307)", ok,
+           f"mixed={mixed_ok} notes={notes}")
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
     global URL
@@ -7367,7 +7519,7 @@ def main():
       c63_rolls_image_stepping, c64_roll_branch_reimport_recursive, c65_person_pane_merge_similar,
       c66_refcrop_image_menu, c67_glyph_vocabulary, c68_session_persistence,
       c69_export_annotated_entry_points, c70_export_open_after_tick,
-      c71_env_dialog):
+      c71_env_dialog, c72_edit_accept_typed_text, c73_edit_note_field):
         run_guarded(holder, fn.__name__, fn)
     # hard-kill the last session: a clean quit() would hang if it wedged
     proc = getattr(holder["t"], "_proc", None)
