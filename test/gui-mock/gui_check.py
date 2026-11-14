@@ -6271,29 +6271,16 @@ def c61_full_view_verdict_advances_review(t):
     # so the position is read AFTER the open (before it the right pane
     # is unanchored — pos -1)
     pos0 = navpos()
-    # The expected hand-over target, read from the SAME visible step
-    # order `navpos` walks: the first person AFTER the picked one that
-    # still has a new face. Comparing the anchor's identity (not raw
-    # positions) keeps the check sound when the drained person DROPS
-    # OUT of the filtered tree: the §4.40 Review-entry pin (Show → New)
-    # races `fresh`'s Show → All retry loop, so the filter at verdict
-    # time is whichever won — under New the drained person leaves the
-    # tree and every successor shifts one LEFT, so `pos > pos0` was
-    # comparing across two different tree shapes (a pre-existing
-    # order-flake that fired whenever the pin won the race).
-    want_next = js(t, r"""
-      const snap = window.__MOCK_SNAP;
-      const rows = [...document.querySelectorAll('.tree-person')];
-      const seen = new Set(); const order = [];
-      for (const r of rows) { const id = Number(r.dataset.personId);
-        if (!seen.has(id)) { seen.add(id); order.push(id); } }
-      const i = order.indexOf(arguments[0]);
-      const prov = (pid) => snap.faces.some(
-        f => f.person_id === pid && f.link_status === 'provisional');
-      for (let j = i + 1; j < order.length; j++)
-        if (prov(order[j])) return order[j];
-      return null;
-    """, pick["pid"])
+    # The expected hand-over target CANNOT be read from the pre-verdict
+    # tree: the verdict legitimately re-seats the drained person
+    # (New→Accepted seat, §4.35), which re-sorts them into the Accepted
+    # branch's confirmed tail and reshapes the step order wholesale
+    # (#308: under Show=all the pick jumped idx 133→761, so "first
+    # provisional person after the pick" changed identity between the
+    # two shapes). The app advances by the #159 rule ON THE POST-VERDICT
+    # order — so the expectation below is the same rule mirrored in the
+    # check, evaluated after the verdict (reviewFlow.exhaustAdvanceTarget
+    # is the contract this pins).
     # the verdict is made IN the full view: the film-roll card's ✓
     fcard = t.find_element(By.CSS_SELECTOR,
                            f".focus-pane .face-card[data-face-id='{pick['fid']}']")
@@ -6301,6 +6288,35 @@ def c61_full_view_verdict_advances_review(t):
     time.sleep(0.3)
     fcard.find_element(By.CSS_SELECTOR, ".card-accept").click()
     time.sleep(2.0)
+    # #308: the expectation is computed POST-verdict (see the comment
+    # above the accept) — the #159 rule mirrored: scan the CURRENT step
+    # order from the index captured at mark time, except when the marked
+    # person moved UP (their re-seat let the old predecessor into the
+    # captured gap — start past it); skip the marked person; the first
+    # person still holding a face of the review status wins.
+    want_next = (
+        js(t, r"""
+          const snap = window.__MOCK_SNAP;
+          const rows = [...document.querySelectorAll('.tree-person')];
+          const seen = new Set(); const order = [];
+          for (const r of rows) { const id = Number(r.dataset.personId);
+            if (!seen.has(id)) { seen.add(id); order.push(id); } }
+          const cur = order.indexOf(arguments[0]);   // -1: pruned (Show → New)
+          const s = document.querySelector('.topbar-right select');
+          const status = (s?.value === 'confirmed' || s?.value === 'rejected')
+            ? s.value : 'provisional';
+          const prov = (pid) => snap.faces.some(
+            f => f.person_id === pid && f.link_status === status);
+          const capturedAt = arguments[1];
+          const first = (cur !== -1 && cur < capturedAt)
+            ? Math.min(capturedAt + 1, order.length)
+            : Math.max(0, Math.min(capturedAt, order.length));
+          for (const id of order.slice(first))
+            if (id !== arguments[0] && prov(id)) return id;
+          return null;
+        """, pick["pid"], pos0)
+        if pos0 is not None else None
+    )
     st = js(t, r"""
       const active = document.querySelector('.topbar nav button.active');
       const s = document.querySelector('.topbar-right select');
