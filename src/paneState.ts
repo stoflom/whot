@@ -2,7 +2,7 @@
 // and the §4.39 Rolls browsing centre width (#174) as a hook: App keeps
 // the named state it always had, the layout rules live here.
 
-import { useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction } from "react";
 
 export interface PaneSizes {
   left: number;
@@ -57,8 +57,21 @@ export function usePaneSizes(
   const dragRef = useRef<{ edge: "left" | "right"; startX: number; start: number } | null>(
     null
   );
+  // #329: the active drag's teardown — pointercancel / window blur /
+  // unmount must all end the drag. An interrupted drag (the webview
+  // losing the pointer mid-drag) used to leave the window listeners
+  // attached and dragRef set, so every later mousemove kept resizing
+  // the panes.
+  const endDragRef = useRef<(() => void) | null>(null);
+  useEffect(
+    () => () => {
+      endDragRef.current?.();
+    },
+    []
+  );
   const startDrag = (edge: "left" | "right") => (e: ReactMouseEvent) => {
     e.preventDefault();
+    if (dragRef.current) return; // a drag is already live — never double-bind
     // read once at drag start — the layout class must not flip mid-drag
     const browse = rollsBrowse;
     dragRef.current = {
@@ -99,7 +112,10 @@ export function usePaneSizes(
         if (x != null) apply(x);
       });
     };
-    const up = () => {
+    // #329: ONE teardown for every drag end — mouseup, pointercancel
+    // and window blur. The commit is the same in each case (the
+    // pointer's last word); the listeners all come off.
+    const end = () => {
       if (raf) {
         cancelAnimationFrame(raf);
         raf = 0;
@@ -108,11 +124,19 @@ export function usePaneSizes(
       pendingX = null;
       if (x != null) apply(x); // commit the final size
       dragRef.current = null;
+      endDragRef.current = null;
       window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
+      window.removeEventListener("mouseup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("blur", end);
     };
     window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    window.addEventListener("mouseup", end);
+    // the webview can lose the pointer mid-drag (a cancelled pointer
+    // gesture, or focus leaving the window) — mouseup may never arrive
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("blur", end);
+    endDragRef.current = end;
   };
   return { paneSizes, setPaneSizes, rollCenter, rollCenterPx, setRollCenter, startDrag };
 }

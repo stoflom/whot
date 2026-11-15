@@ -107,3 +107,99 @@ describe("usePaneSizes — the drag rAF throttle (#226 F-M6 / #283 N8)", () => {
     expect(api?.paneSizes.right).toBe(200);
   });
 });
+
+// #329 — an interrupted drag (pointercancel, window blur, unmount) must
+// end it the way mouseup does: commit the last word, detach EVERY
+// listener. Before #329 only mouseup removed the listeners — an
+// interrupted drag left them attached and dragRef set, so every later
+// mousemove kept resizing the panes.
+describe("usePaneSizes — the drag end cleanup (#329)", () => {
+  let raf: ReturnType<typeof vi.fn>;
+
+  const mdown = (edge: "left" | "right", x: number) =>
+    act(() => {
+      (api as PaneSizesApi).startDrag(edge)(
+        new MouseEvent("mousedown", { clientX: x }) as never,
+      );
+    });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    raf = vi.fn(window.requestAnimationFrame);
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(raf as never);
+    render(<Probe />);
+  });
+  afterEach(() => {
+    fire("mouseup", 0); // end any live drag (its listeners detach)
+    cleanup();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("pointercancel ends the drag — later moves are ignored", () => {
+    mdown("left", 100);
+    act(() => {
+      fire("mousemove", 140);
+      vi.advanceTimersByTime(16); // frame commits left = 290
+    });
+    expect(api?.paneSizes.left).toBe(290);
+    const armed = raf.mock.calls.length;
+    act(() => {
+      fire("pointercancel", 0); // the webview lost the pointer
+      vi.advanceTimersByTime(64);
+      fire("mousemove", 300); // an interrupted drag must not resize
+    });
+    expect(raf).toHaveBeenCalledTimes(armed); // the listeners are gone
+    expect(api?.paneSizes.left).toBe(290);
+  });
+
+  it("window blur ends the drag (focus loss — mouseup may never arrive)", () => {
+    mdown("right", 300);
+    act(() => {
+      fire("mousemove", 320);
+      vi.advanceTimersByTime(16); // right = 290 − 20 = 270
+    });
+    expect(api?.paneSizes.right).toBe(270);
+    const armed = raf.mock.calls.length;
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+      vi.advanceTimersByTime(64);
+      fire("mousemove", 400); // must not resize after the focus loss
+    });
+    expect(raf).toHaveBeenCalledTimes(armed);
+    expect(api?.paneSizes.right).toBe(270);
+  });
+
+  it("unmount ends a live drag — no listener survives to arm frames", () => {
+    mdown("left", 100);
+    act(() => {
+      fire("mousemove", 140);
+      vi.advanceTimersByTime(16); // commit 290; the drag is still live
+    });
+    cleanup(); // the probe unmounts mid-drag
+    const armed = raf.mock.calls.length;
+    act(() => {
+      vi.advanceTimersByTime(64);
+      fire("mousemove", 300); // would re-arm if the listeners survived
+    });
+    expect(raf).toHaveBeenCalledTimes(armed);
+  });
+
+  it("a second mousedown mid-drag does not double-bind the listeners", () => {
+    mdown("left", 100);
+    mdown("right", 200); // a drag is live — must be a no-op
+    act(() => {
+      fire("mousemove", 140);
+      vi.advanceTimersByTime(16); // left = 290
+      fire("mouseup", 140); // the ONE end — it must detach everything
+    });
+    expect(api?.paneSizes.left).toBe(290);
+    const armed = raf.mock.calls.length;
+    act(() => {
+      vi.advanceTimersByTime(64);
+      fire("mousemove", 300); // a second bound pair would re-arm here
+    });
+    expect(raf).toHaveBeenCalledTimes(armed);
+    expect(api?.paneSizes.left).toBe(290);
+  });
+});
