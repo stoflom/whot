@@ -26,12 +26,6 @@ impl EnvVar {
         unsafe { std::env::set_var(key, value) };
         Self { key, old }
     }
-
-    fn clear(key: &'static str) -> Self {
-        let old = std::env::var(key).ok();
-        unsafe { std::env::remove_var(key) };
-        Self { key, old }
-    }
 }
 
 impl Drop for EnvVar {

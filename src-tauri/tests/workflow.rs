@@ -1618,10 +1618,10 @@ fn delta_drift_flags_stale_prewrite_219() {
     let con = db::connect(&p).unwrap();
     let v_now = db::data_version(&p).unwrap();
     // a stale pre-read (external write moved the stamp by > 1) ⇒ drift
-    let d = db::delta_after(&p, &*con, v_now - 5, &[], &[], &[], &[], Vec::new()).unwrap();
+    let d = db::delta_after(&p, &con, v_now - 5, &[], &[], &[], &[], Vec::new()).unwrap();
     assert!(d.drifted, "v2 > v1 + 1 ⇒ drift");
     // a fresh pre-read (no external write) ⇒ no drift
-    let d2 = db::delta_after(&p, &*con, v_now, &[], &[], &[], &[], Vec::new()).unwrap();
+    let d2 = db::delta_after(&p, &con, v_now, &[], &[], &[], &[], Vec::new()).unwrap();
     assert!(!d2.drifted, "no external write ⇒ no drift");
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }

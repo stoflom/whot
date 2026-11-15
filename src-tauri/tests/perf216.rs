@@ -30,7 +30,7 @@ fn paths() -> Option<Paths> {
 }
 
 fn provisional_faces(p: &Paths) -> Vec<i64> {
-    let ids = {
+    {
         let con = db::connect(p).unwrap();
         let mut st = con
             .prepare("SELECT id FROM faces WHERE link_status = 'provisional' ORDER BY id")
@@ -39,8 +39,7 @@ fn provisional_faces(p: &Paths) -> Vec<i64> {
             .unwrap()
             .map(std::result::Result::unwrap)
             .collect::<Vec<i64>>()
-    };
-    ids
+    }
 }
 
 fn mean_ms(v: &[f64]) -> f64 {
@@ -85,7 +84,7 @@ fn perf_verdict_commands() {
         acc.push((t0.elapsed().as_secs_f64() * 1000.0, ""));
         assert!(d.faces.is_some() || d.persons.is_some());
     }
-    eprint!("\n");
+    eprintln!();
     main_print("accept (1 face)", &acc);
 
     // ── reject one face repeatedly (the card ✗ path) ──
