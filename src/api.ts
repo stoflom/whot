@@ -235,6 +235,9 @@ export interface ConfigInfo {
   configPath: string;
   dbPath: string;
   envSource: "dotenv" | "user-config" | "none";
+  /** #322 — the settings file exists but does not parse: the defaults
+      are in effect and the dialog's header says so (never silent). */
+  configError: string | null;
 }
 export const getConfigInfo = () => invoke<ConfigInfo>("get_config_info");
 

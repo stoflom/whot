@@ -68,6 +68,7 @@ describe("EnvDialog (#303, rule 52)", () => {
       configPath: "/repo/config/whotrc.json",
       dbPath: "/repo/data/faces.db",
       envSource: "dotenv",
+      configError: null,
     });
     mockSettings.mockResolvedValue(settings());
     mount();
@@ -84,6 +85,7 @@ describe("EnvDialog (#303, rule 52)", () => {
       configPath: "~/.config/whot/whotrc.json",
       dbPath: "~/.local/share/whot/faces.db",
       envSource: "none",
+      configError: null,
     });
     mockSettings.mockResolvedValue(settings());
     mount();
@@ -92,8 +94,27 @@ describe("EnvDialog (#303, rule 52)", () => {
     expect(screen.getByText(/no environment source/)).toBeTruthy();
   });
 
+  // #322 — a malformed settings file is reported in the header, not
+  // silently replaced by the default values
+  it("a malformed settings file shows the warning line in the header", async () => {
+    mockInfo.mockResolvedValue({
+      mode: "repo",
+      configPath: "/c",
+      dbPath: "/d",
+      envSource: "none",
+      configError:
+        "settings file is malformed (expected value at line 1 column 2) — the default settings are in effect",
+    });
+    mockSettings.mockResolvedValue(settings());
+    mount();
+    await waitFor(() =>
+      expect(screen.getByText(/settings file is malformed/)).toBeTruthy()
+    );
+    expect(screen.getByText(/default settings are in effect/)).toBeTruthy();
+  });
+
   it("prefills the known keys from settings.env; a missing key shows the default placeholder", async () => {
-    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none" });
+    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none", configError: null });
     mockSettings.mockResolvedValue(settings({ FACES_DB: "/elsewhere/faces.db", PATH_MAP: "/legacy/map.txt" }));
     mount();
     await waitFor(() => expect(field(/the faces database/).value).toBe("/elsewhere/faces.db"));
@@ -105,7 +126,7 @@ describe("EnvDialog (#303, rule 52)", () => {
   });
 
   it("#306: the no-default harvesting paths say 'will be ignored if empty', never 'required'", async () => {
-    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none" });
+    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none", configError: null });
     mockSettings.mockResolvedValue(settings());
     mount();
     await waitFor(() => expect(field(/read-only archive/).disabled).toBe(false));
@@ -129,7 +150,7 @@ describe("EnvDialog (#303, rule 52)", () => {
   });
 
   it("save round-trips through set_settings: empty known keys dropped, unknown keys preserved, then closes", async () => {
-    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none" });
+    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none", configError: null });
     mockSettings.mockResolvedValue(
       settings({ FACES_DB: "", HARVEST_DB: "/staging.db", UNKNOWN_KEY: "/keep/me" })
     );
@@ -153,7 +174,7 @@ describe("EnvDialog (#303, rule 52)", () => {
   });
 
   it("save is disabled until the settings load (the first run has no snapshot to lose)", async () => {
-    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none" });
+    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none", configError: null });
     let resolve!: (s: Settings) => void;
     mockSettings.mockReturnValue(new Promise((r) => (resolve = r)));
     mount();
@@ -164,7 +185,7 @@ describe("EnvDialog (#303, rule 52)", () => {
   });
 
   it("Esc closes; cancel closes without saving", async () => {
-    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none" });
+    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none", configError: null });
     mockSettings.mockResolvedValue(settings());
     const onClose = vi.fn();
     const onSave = vi.fn();
@@ -190,7 +211,7 @@ describe("EnvDialog (#303, rule 52)", () => {
   });
 
   it("a save failure reaches onError and the dialog stays open (busy clears)", async () => {
-    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none" });
+    mockInfo.mockResolvedValue({ mode: "repo", configPath: "/c", dbPath: "/d", envSource: "none", configError: null });
     mockSettings.mockResolvedValue(settings());
     const onSave = vi.fn().mockRejectedValue(new Error("write failed"));
     const onClose = vi.fn();

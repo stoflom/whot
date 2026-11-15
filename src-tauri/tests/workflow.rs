@@ -826,9 +826,52 @@ fn corrupt_settings_file_falls_back_to_defaults() {
     std::fs::write(&p.config, "{ not json !").unwrap();
     assert_eq!(db::get_settings(&p).unwrap(), db::Settings::default());
     // a well-formed file still wins
-    let s2 = db::Settings { refcrop_n: 7, ..db::Settings::default() };
+    let s2 = db::Settings {
+        refcrop_n: 7,
+        ..db::Settings::default()
+    };
     db::set_settings(&p, s2).unwrap();
     assert_eq!(db::get_settings(&p).unwrap().refcrop_n, 7);
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
+/// #322 — the malformed-settings state is CARRIED, not just logged:
+/// config_info reports it (the Env dialog's header warning) exactly
+/// when get_settings would fall back to the defaults; a missing file
+/// (first run) is not an error.
+#[test]
+fn config_info_reports_malformed_settings_322() {
+    let p = fixture_paths("cfgerr322");
+    // first run: no config file — not an error
+    assert!(!p.config.exists());
+    let info = db::config_info(&p).unwrap();
+    assert!(
+        info.config_error.is_none(),
+        "a missing file is first run, not an error"
+    );
+    // malformed: reported, and get_settings falls back in the same state
+    std::fs::write(&p.config, "{ not json !").unwrap();
+    let info = db::config_info(&p).unwrap();
+    assert!(
+        info.config_error.is_some(),
+        "the malformed state is carried"
+    );
+    assert_eq!(db::get_settings(&p).unwrap(), db::Settings::default());
+    // re-read at call time: a repaired file clears the report
+    db::set_settings(
+        &p,
+        db::Settings {
+            refcrop_n: 7,
+            ..db::Settings::default()
+        },
+    )
+    .unwrap();
+    let info = db::config_info(&p).unwrap();
+    assert!(
+        info.config_error.is_none(),
+        "a well-formed file is not an error: {:?}",
+        info.config_error
+    );
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
