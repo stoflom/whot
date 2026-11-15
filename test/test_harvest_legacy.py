@@ -413,13 +413,21 @@ class EndToEndTests(HarvestFixture):
             SELECT s.name src, p.name person, f.* FROM faces f
             JOIN persons p ON p.id=f.person_id
             JOIN sources s ON s.id=f.source_id""")
-        by_src = {r["src"]: r for r in rows}
-        mw = by_src["sidecars-mwgrs"]
+        by_person = {(r["src"], r["person"]): r for r in rows}
+        # two faces share the source sidecars-mwgrs (John Smith in element
+        # form from a.jpg.xmp, Koos Kat in attribute form from c.PEF.xmp) —
+        # keying by src alone kept whichever row SQLite returned last,
+        # which is order-dependent and differed on CI (Python 3.12 row
+        # order vs local): assert each person explicitly
+        mw = by_person["sidecars-mwgrs", "John Smith"]
         self.assertEqual((mw["x"], mw["y"], mw["w"], mw["h"]),
                          (0.1, 0.2, 0.3, 0.4))
         self.assertEqual((mw["unit"], mw["img_w"], mw["img_h"]),
                          ("normalized", 4000, 3000))
-        lr = by_src["lightroom-catalog"]
+        ka = by_person["sidecars-mwgrs", "Koos Kat"]
+        self.assertEqual((ka["x"], ka["y"], ka["w"], ka["h"]),
+                         (0.5, 0.5, 0.25, 0.25))
+        lr = by_person["lightroom-catalog", "John Smith"]
         # banker's rounding of tl(0.1,0.2)..(0.4,0.6) over 4000x3000
         self.assertEqual((lr["x"], lr["y"], lr["w"], lr["h"]),
                          (400, 600, 1200, 1200))
