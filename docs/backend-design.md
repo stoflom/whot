@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 2.2** (#318) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.3** (#320) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -288,7 +288,14 @@ person) — see `docs/schema-design.md` §5.
 - `l2_vectors()` loads `face_embeddings.vector` BLOBs as little-endian
   `float32[dim]` and **re-normalises defensively** (schema says
   L2-normalised; a corrupt row degrades to a wrong similarity instead of
-  a panic).
+  a panic). A blob whose byte length is **not a multiple of 4** is
+  treated as **no vector** for that face (a diagnostic is logged, #320 —
+  the face then participates as "no embedding", the same 0.0 path as
+  #41/#149): before #320 `l2_vectors` bailed, so one corrupt row held
+  the person's whole similarity view and every reject/re-home
+  involving that face hostage. The bin vectors in
+  `resolve_rejected_clusters` already had the skip behaviour — #320
+  made the two sites consistent.
 - `cosine()` is a dot product over the normalised vectors (identical
   maths to `import_roll.py`'s `associate` — same corpus rules, see
   gui-design §4.12).

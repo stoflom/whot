@@ -734,10 +734,13 @@ fn embeddingless_face_reports_zero_sim() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
-/// #45 — a corrupt embedding blob (length not a multiple of 4) is reported
-/// with the face id instead of being silently truncated by as_chunks.
+/// #45/#320 — a corrupt embedding blob (length not a multiple of 4)
+/// degrades to "no vector" (a diagnostic is logged) — it must never
+/// bail the whole call. Before #320, a single corrupt row made
+/// person_face_clusters error out for the person's WHOLE similarity
+/// view, and failed every reject/re-home that included that face.
 #[test]
-fn corrupt_embedding_blob_is_reported() {
+fn corrupt_embedding_blob_degrades_not_bails_320() {
     let p = fixture_paths("corrupt");
     db::set_link_status(&p, &[1, 2, 6], "confirmed").unwrap();
     {
@@ -748,10 +751,35 @@ fn corrupt_embedding_blob_is_reported() {
         )
         .unwrap();
     }
-    let err = db::person_face_clusters(&p, 1, 0.5).unwrap_err();
-    let msg = err.to_string();
-    assert!(msg.contains("face 6"), "{msg}");
-    assert!(msg.contains("not a multiple of 4"), "{msg}");
+    // must return Ok — the corrupt face participates as "no vector"
+    let cl = db::person_face_clusters(&p, 1, 0.5).unwrap();
+    let all: Vec<&db::ClusterFace> = cl
+        .iter()
+        .flat_map(|g| g.clusters.iter().flatten())
+        .collect();
+    let f6 = all
+        .iter()
+        .find(|c| c.face_id == 6)
+        .copied()
+        .expect("face 6 must be shown");
+    assert_eq!(f6.sim, 0.0, "a corrupt blob is no similarity evidence");
+    // and a reject/re-home INCLUDING the corrupt face succeeds: the
+    // bin resolution skips the corrupt vector, the face starts a fresh
+    // RejectedN (no match evidence)
+    db::set_link_status(&p, &[6], "rejected").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let f6 = s.faces.iter().find(|f| f.id == 6).unwrap();
+    assert_eq!(f6.link_status, "rejected");
+    let rej = s
+        .persons
+        .iter()
+        .find(|x| x.id == f6.person_id.unwrap())
+        .expect("the corrupt face re-homed onto a cluster person");
+    assert!(
+        rej.name.to_ascii_lowercase().starts_with("rejected"),
+        "re-homed onto a RejectedN cluster person: {}",
+        rej.name
+    );
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 

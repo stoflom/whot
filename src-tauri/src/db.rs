@@ -3110,14 +3110,20 @@ fn l2_vectors(con: &Connection, face_ids: &[i64]) -> Result<Vec<Vec<f32>>> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut map: HashMap<i64, Vec<f32>> = HashMap::new();
     for (fid, blob) in rows {
-        // #45: a blob whose length is not a multiple of 4 is corrupt —
-        // as_chunks::<4> would silently drop the trailing bytes and every
-        // subsequent similarity from that face would be wrong
+        // #45/#320: a blob whose length is not a multiple of 4 is
+        // corrupt — as_chunks::<4> would silently drop the trailing
+        // bytes and every subsequent similarity from that face would
+        // be wrong. Treat it like the bin case in
+        // resolve_rejected_clusters: NO vector (the face then
+        // participates as "no embedding"), with a diagnostic — never
+        // bail. One corrupt row must not hold the person's whole
+        // similarity view or every reject/re-home hostage.
         if blob.len() % 4 != 0 {
-            bail!(
-                "corrupt embedding for face {fid}: {} bytes is not a multiple of 4 (insightface:buffalo_l)",
+            eprintln!(
+                "[db] corrupt embedding for face {fid}: {} bytes is not a multiple of 4 ({MODEL_TAG}) — treated as no vector",
                 blob.len()
             );
+            continue;
         }
         let v: Vec<f32> = blob.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
         map.insert(fid, v);
