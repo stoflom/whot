@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 2.4** (#321) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.5** (#322) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -126,11 +126,17 @@ whotrc `env` → built-in defaults.**
 
 `get_config_info` (#303) reports the resolution as it was resolved at
 startup — `{mode: "repo"|"installed", configPath, dbPath,
-envSource: "dotenv"|"user-config"|"none"}` — carried on `Paths`
-itself (`repo_paths` reports `dotenv` when the root's `.env` exists,
-else `none`; installed mode reports `user-config` when the user
-whotrc exists after the first-use copy, else `none`); the
-environment dialog's header (gui-design §4 rule 52) renders it.
+envSource: "dotenv"|"user-config"|"none",
+configError: string|null}` — carried on `Paths` itself (`repo_paths`
+reports `dotenv` when the root's `.env` exists, else `none`; installed
+mode reports `user-config` when the user whotrc exists after the
+first-use copy, else `none`); the environment dialog's header
+(gui-design §4 rule 52) renders it. `configError` (#322) is `Some`
+when the settings file exists but does not parse — the exact condition
+under which `get_settings` falls back to the defaults (#44) — so a
+malformed whotrc.json is surfaced in the dialog instead of vanishing
+behind the default values; a missing file (first run) is `None`. It is
+re-read at call time, not only at startup.
 
 GUI settings are **not** in the database: `get_settings`/`set_settings`
 read and write the resolved whotrc.json (`config/whotrc.json` in repo

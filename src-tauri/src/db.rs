@@ -205,9 +205,9 @@ fn default_config_text() -> Option<String> {
 }
 
 /// #302 — the `env` object of a whotrc.json, unexpanded (empty when the
-/// file is missing or malformed — `get_settings` reports malformed
-/// configs separately, #44). Parsed from the raw JSON so the `env`
-/// extraction never depends on the Settings schema's evolution.
+/// file is missing or malformed — `get_config_info` reports malformed
+/// configs to the user since #322, #44). Parsed from the raw JSON so the
+/// `env` extraction never depends on the Settings schema's evolution.
 fn read_env_object(path: &Path) -> BTreeMap<String, String> {
     std::fs::read_to_string(path)
         .ok()
@@ -462,14 +462,29 @@ pub struct ConfigInfo {
     pub config_path: String,
     pub db_path: String,
     pub env_source: &'static str,
+    /// #322 — Some when the settings file EXISTS but does not parse
+    /// (the exact condition under which `get_settings` falls back to
+    /// the defaults, #44): the dialog's header shows it, so a
+    /// malformed whotrc.json can no longer vanish silently behind the
+    /// default values. A missing file (first run) is not an error.
+    pub config_error: Option<String>,
 }
 
 pub fn config_info(paths: &Paths) -> Result<ConfigInfo> {
+    // #322 — re-read the file at call time (it is small) so the header
+    // reflects the CURRENT state, not just the startup one
+    let config_error = match std::fs::read_to_string(&paths.config) {
+        Ok(text) => serde_json::from_str::<Settings>(&text).err().map(|e| {
+            format!("settings file is malformed ({e}) — the default settings are in effect",)
+        }),
+        Err(_) => None, // first run: no config file yet
+    };
     Ok(ConfigInfo {
         mode: paths.mode,
         config_path: paths.config.display().to_string(),
         db_path: paths.db.display().to_string(),
         env_source: paths.env_source,
+        config_error,
     })
 }
 
@@ -577,8 +592,11 @@ pub fn get_settings(paths: &Paths) -> Result<Settings> {
                 Ok(s)
             }
             Err(e) => {
-                // #44: a malformed whotrc.json must not vanish silently —
-                // warn and fall back to defaults so the app keeps working
+                // #44/#322: a malformed whotrc.json must not vanish
+                // silently — log here, the USER-FACING report is the
+                // config_error on get_config_info (the Env dialog
+                // header, gui-design rule 52); the app keeps working
+                // on the defaults
                 eprintln!(
                     "warning: could not parse {} ({e}); using default settings",
                     paths.config.display()

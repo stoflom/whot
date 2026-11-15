@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 19.2** (#316, #317; v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 19.3** (#322; v19.2 #316/#317, v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2752,7 +2752,13 @@ dialog.
   path, and where the environment comes from. A repo `.env` present
   is a warning line: **the `.env` overrides these values** (edits to
   whotrc's `env` are inert until the `.env` goes away — #302's
-  precedence rule). The header comes from the one-shot
+  precedence rule). A **malformed** settings file (it exists but does
+  not parse) is a warning line too (v19.3, #322): **settings file is
+  malformed (…reason…) — the default settings are in effect** — the
+  `get_settings` fallback (#44) used to leave the user's edits
+  silently replaced by the defaults; `get_config_info` now carries
+  the parse error (`configError`) and the header shows it. A missing
+  file (first run) is not an error. The header comes from the one-shot
   `get_config_info` IPC (backend-design §2).
 - **The fields**: one row per KNOWN env key — `DATA_DIR`, `FACES_DB`,
   `HARVEST_DB`, `CONFIG_DIR`, `CONFIG_FILE`, `INSIGHTFACE_PATH`,
@@ -2785,7 +2791,8 @@ dialog.
 - **gui-mock**: a dedicated check pins the settings-popover entry
   point (the button opens the dialog), the header contract
   (mode/config path/db path/env source + the `.env` override
-  warning), the prefill from the resolved env, and the save
+  warning + the malformed-settings warning when `configError` is set,
+  v19.3), the prefill from the resolved env, and the save
   round-trip (`set_settings` invoked with the edited env; a reopened
   dialog shows the saved value). C47 gains the first-run
   `environment…` button (present; under `?no_db=1` it opens the same

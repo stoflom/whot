@@ -119,6 +119,9 @@ export default function EnvDialog({ onSave, onClose, onError }: Props) {
         ) : (
           <p className="dim">resolving the configuration…</p>
         )}
+        {/* #322: a malformed settings file must not vanish behind the
+            default values — the header says what the user's edits hit */}
+        {info?.configError && <p className="env-error">{info.configError}</p>}
         {info?.envSource === "dotenv" && (
           <p className="env-note">
             a .env in the project root overrides these values

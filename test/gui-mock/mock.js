@@ -493,6 +493,8 @@
       configPath: "/mock/config/whotrc.json",
       dbPath: "/mock/data/faces.db",
       envSource: "dotenv",
+      // #322: the malformed-settings report is absent in the mock
+      configError: null,
     }),
     // #212: binary image delivery — ONE framed batch per call (the
     // WHOTIMG container of db::encode_image_batch / src/imageBatch.ts);

@@ -1110,6 +1110,8 @@ button.dp-group-path:hover:not(:disabled) { border-color: var(--border); }
 /* #303 — the environment dialog: 13 rows scroll under the C15-style cap */
 .dialog.env { max-height: 86vh; overflow-y: auto; }
 .env-note { color: var(--warn); }
+/* #322 — a malformed settings file: the user's edits did not load */
+.env-error { color: var(--bad); }
 .merge-list {
   overflow-y: auto;
   min-height: 0;
