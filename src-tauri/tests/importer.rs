@@ -7,9 +7,8 @@ use std::sync::{Mutex, MutexGuard};
 use whotapp_lib::importer::{build_args, scan_import_dir, ImportOptions, ImportRunner};
 
 // the env is process-global shared state and cargo test runs these tests
-// in parallel threads; the runner-lifecycle tests set WHOT_IMPORT_PYTHON
-// and must not race each other's setenv/getenv (the config_paths.rs
-// user_dir_chains flake, run 43697386310)
+// in parallel threads; the runner-lifecycle tests set WHOT_IMPORT_PYTHON,
+// so one lock serialises them (same pattern as tests/config_paths.rs)
 static ENV: Mutex<()> = Mutex::new(());
 
 fn env_lock() -> MutexGuard<'static, ()> {

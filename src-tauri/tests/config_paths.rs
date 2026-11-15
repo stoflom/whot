@@ -14,11 +14,10 @@ use std::sync::{Mutex, MutexGuard};
 
 use whotapp_lib::db::{expand_env, installed_paths, repo_paths, user_config_dir, app_data_home, Paths, Settings};
 
-// the env is process-global shared state and cargo test runs these tests
-// in parallel threads — a setenv/getenv race (user_dir_chains flaked on
-// CI: the test's HOME write lost to a concurrent setter's read, run
-// 43697386310). The header's original "ONE sequential test" design was
-// diluted by later tests; one lock restores the serialisation.
+// the env is process-global shared state; these tests mutate it
+// concurrently under cargo test's default thread-per-test, so one lock
+// serialises them (the header's original "ONE sequential test" design
+// was diluted by later tests)
 static ENV: Mutex<()> = Mutex::new(());
 
 fn env_lock() -> MutexGuard<'static, ()> {
@@ -246,6 +245,12 @@ fn user_dir_chains() {
     // platform default under HOME when neither
     drop(_g3);
     drop(_g4);
+    // the runner pre-sets XDG_CONFIG_HOME (observed /home/runner/.config
+    // on GitHub Actions — run 43698005921) and drop(_g3) RESTORES it, so
+    // the "when neither" block must neutralise explicitly: empty values
+    // are skipped by nonempty_env, whatever the environment pre-set
+    let _x1 = EnvVar::set("XDG_CONFIG_HOME", "");
+    let _x2 = EnvVar::set("XDG_DATA_HOME", "");
     let home = mkdirs(&tmp, &["home"]);
     let _g5 = EnvVar::set("HOME", home.to_str().unwrap());
     match std::env::consts::OS {
