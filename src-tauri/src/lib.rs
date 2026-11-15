@@ -37,9 +37,14 @@ async fn get_snapshot(state: State<'_, AppState>) -> Result<db::Snapshot, String
 }
 
 /// #208 — the cheap change stamp for the GUI's focus/visibility reload
-/// skip (equal to the snapshot's `version` ⇒ nothing to reload)
+/// skip (equal to the snapshot's `version` ⇒ nothing to reload).
+/// #323 — `async fn` like every DB-backed command (#218): the probe's
+/// FIRST open for a path is a real connection open with a 5 s
+/// busy_timeout, and it must not stall the UI main thread while the
+/// importer holds the write lock.
 #[tauri::command]
-fn get_data_version(state: State<AppState>) -> Result<i64, String> {    db::data_version(state.paths()?).map_err(|e| e.to_string())
+async fn get_data_version(state: State<'_, AppState>) -> Result<i64, String> {
+    db::data_version(state.paths()?).map_err(|e| e.to_string())
 }
 
 /// #212 — raw image bytes, no base64: ONE binary response per batch

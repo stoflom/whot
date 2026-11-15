@@ -1639,8 +1639,9 @@ fn concurrent_readers_and_writers_serialised_218() {
 #[test]
 fn commands_run_off_the_main_thread_218() {
     // runner-mutex / config-file only: no DB, no blobs, no fs walks
-    const ALLOW_SYNC: [&str; 6] = [
-        "get_data_version", // one PRAGMA on the persistent probe connection
+    // (#323: get_data_version left this list — its first probe open is
+    // DB I/O with a 5 s busy_timeout, so it is async like #218 wants)
+    const ALLOW_SYNC: [&str; 5] = [
         "get_settings",     // config file read
         "set_settings",     // config file write
         "start_import",     // runner mutex + one spawn + one fs is_file check

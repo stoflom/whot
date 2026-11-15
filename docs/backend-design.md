@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 2.5** (#322) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.6** (#323) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -37,7 +37,11 @@ src-tauri/tests/
   runs it on the async runtime's thread pool instead of the UI main
   thread (argument shapes and TS-side `invoke` calls are unchanged; the
   runner-mutex/config-file exceptions are guarded by the
-  `commands_run_off_the_main_thread_218` workflow test).
+  `commands_run_off_the_main_thread_218` workflow test). #323:
+  `get_data_version` LEFT the sync exceptions — its first probe open
+  per path is a real connection open with a 5 s `busy_timeout` (DB I/O
+  that can stall the UI main thread while the importer holds the write
+  lock), so it is `async fn` like the rest of the DB surface.
   #219: every mutating command returns a `db::Delta` (the touched
   rows + the new change stamp) instead of `()`/`i64` — the GUI applies
   the diff locally instead of re-fetching the whole snapshot. Read-only
@@ -342,6 +346,15 @@ Behaviour rules: gui-design §4.36. Structure:
   and the eventual `Option<i32>` exit code / `killed` marker. Two reader
   threads (stdout, stderr) push lines; `start_import` refuses while a
   live child exists (`an import is already running`).
+  #323: the runner is poison-safe like the DB locks (#318) — a PANIC
+  while the state or the shared line buffer is held recovers via
+  `into_inner` (log line lost on a poisoned buffer was the user's only
+  import visibility; a fake `running:false` on a poisoned state lock
+  would let a live import be double-started). A `try_wait` ERROR (the
+  child's state unreadable — it may be ALIVE) is treated like a stop:
+  kill + wait, the `killed` flag set, and a `[whot]` line in the log —
+  never a dropped child (the old code dropped it, reporting
+  `running:false` for a live import).
 - **Interpreter**: `WHOT_IMPORT_PYTHON` env var, else `python3`; script
   path `<root>/scripts/import_roll.py`, cwd `<root>` — the script
   resolves `.env`/DB itself from the project root, exactly like a
