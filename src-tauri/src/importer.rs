@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// the script's IMAGE_SUFFIXES (import_roll.py) — exact parity (#169),
-/// incl. the RAW formats the importer decodes
-const IMAGE_SUFFIXES: [&str; 14] = [
+/// incl. the RAW formats the importer decodes. `pub` so the
+/// `open_image_file` command (#317) can gate on the same set.
+pub const IMAGE_SUFFIXES: [&str; 14] = [
     ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".pef", ".dng", ".cr2", ".cr3", ".nef",
     ".arw", ".rw2", ".orf", // ".heic"/".avif" are NOT the script's — never probe them
 ];

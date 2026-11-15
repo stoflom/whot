@@ -66,9 +66,61 @@ async fn get_refcrops(state: State<'_, AppState>, person_id: i64) -> Result<Vec<
 /// write the frontend's canvas-encoded bytes (PNG/JPEG/WebP) to the
 /// path the native save dialog chose. A dumb writer — no DB, no
 /// decode; a failure names the path (the caller's error toast, #144).
+///
+/// #316 — the webview is not a trusted boundary and this command was
+/// an arbitrary-file-write primitive (any path, any bytes). The write
+/// is now confined to an annotated-export file: the extension must be
+/// one of the export formats (rule 51's dialog filters), the payload
+/// is size-capped, an EXISTING target must be a regular file (a
+/// symlink named `x.png` may not be followed into
+/// `authorized_keys`), and the parent directory must already exist —
+/// the writer never creates directories.
+const EXPORT_EXTENSIONS: [&str; 4] = [".png", ".jpg", ".jpeg", ".webp"];
+/// #316 — the export payload cap: a real annotated export is a few MB
+/// even at 4k, so 64 MiB is far beyond any legitimate write while
+/// bounding the disk + IPC memory a compromised webview could abuse.
+const MAX_EXPORT_BYTES: usize = 64 * 1024 * 1024;
+
+/// #316 — the save_image_file gate (separated so the unit tests don't
+/// need a Tauri runtime).
+fn check_export_target(path: &str, p: &std::path::Path, len: usize) -> Result<(), String> {
+    let ext = p
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+        .unwrap_or_default();
+    if !EXPORT_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!(
+            "cannot write {path}: the export must be a .png, .jpg, .jpeg or .webp file"
+        ));
+    }
+    if len > MAX_EXPORT_BYTES {
+        return Err(format!(
+            "cannot write {path}: export too large ({} MiB, maximum {} MiB)",
+            len / (1024 * 1024),
+            MAX_EXPORT_BYTES / (1024 * 1024),
+        ));
+    }
+    if std::fs::symlink_metadata(p).is_ok_and(|m| !m.is_file()) {
+        return Err(format!(
+            "cannot write {path}: an existing path is not a regular file"
+        ));
+    }
+    // parent() of a bare filename is "" — that's the CWD, fine
+    if p.parent()
+        .is_some_and(|par| !par.as_os_str().is_empty() && !par.is_dir())
+    {
+        return Err(format!(
+            "cannot write {path}: the parent directory does not exist"
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn save_image_file(path: String, data: Vec<u8>) -> Result<(), String> {
-    std::fs::write(&path, &data).map_err(|e| format!("cannot write {path}: {e}"))
+    let p = std::path::Path::new(&path);
+    check_export_target(&path, p, data.len())?;
+    std::fs::write(p, &data).map_err(|e| format!("cannot write {path}: {e}"))
 }
 
 /// #300 (gui-design v17.0, rule 51) — the annotated export's *open
@@ -78,9 +130,22 @@ async fn save_image_file(path: String, data: Vec<u8>) -> Result<(), String> {
 /// path (deleted between the write and the open) is a rejection like
 /// `open_dir`'s (#144 — the caller's error toast); it never fails the
 /// export itself, which already succeeded.
+///
+/// #317 — the path is renderer-supplied and the webview is not a
+/// trusted boundary: the extension must be an image (the import
+/// scanner's exact IMAGE_SUFFIXES set) — a compromised webview cannot
+/// hand arbitrary files to the viewer through this command.
 #[tauri::command]
 async fn open_image_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    if !std::path::Path::new(&path).is_file() {
+    let p = std::path::Path::new(&path);
+    let ext = p
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+        .unwrap_or_default();
+    if !importer::IMAGE_SUFFIXES.contains(&ext.as_str()) {
+        return Err(format!("not an image file: {path}"));
+    }
+    if !p.is_file() {
         return Err(format!("file no longer exists: {path}"));
     }
     let settings = db::get_settings(state.paths()?).map_err(|e| e.to_string())?;
@@ -457,4 +522,76 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhoT Face Manager");
+}
+
+#[cfg(test)]
+mod tests {
+    // #316 — the save_image_file gate: extension allowlist, size cap,
+    // existing-target must be a regular file, parent must exist.
+    use super::check_export_target;
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn export_gate_rejects_non_image_extensions() {
+        let tmp = std::env::temp_dir().join(format!("whot-export-gate-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let no_ext = tmp.join("noext");
+        let bad = tmp.join("authorized_keys");
+        let db = tmp.join("faces.db");
+        for p in [no_ext.as_path(), bad.as_path(), db.as_path()] {
+            let e = check_export_target(&p.display().to_string(), p, 10).unwrap_err();
+            assert!(e.contains("must be a .png"), "{e}");
+        }
+        // case-insensitive
+        assert!(check_export_target("x.PNG", Path::new("x.PNG"), 10).is_ok());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn export_gate_rejects_oversized_payload() {
+        let tmp = std::env::temp_dir().join(format!("whot-export-gate2-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        let p = tmp.join("big.png");
+        let e = check_export_target(
+            &p.display().to_string(),
+            p.as_path(),
+            super::MAX_EXPORT_BYTES + 1,
+        )
+        .unwrap_err();
+        assert!(e.contains("too large"), "{e}");
+        assert!(check_export_target(&p.display().to_string(), p.as_path(), 10).is_ok());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn export_gate_rejects_symlink_and_dir_targets() {
+        let tmp = std::env::temp_dir().join(format!("whot-export-gate3-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        // a symlink named x.png must not be followed into the target
+        let target = tmp.join("real-target");
+        fs::write(&target, b"").unwrap();
+        let link = tmp.join("x.png");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(unix)]
+        {
+            let e = check_export_target(&link.display().to_string(), &link, 10).unwrap_err();
+            assert!(e.contains("not a regular file"), "{e}");
+        }
+        // an existing DIRECTORY named y.png
+        let dir = tmp.join("y.png");
+        fs::create_dir_all(&dir).unwrap();
+        let e = check_export_target(&dir.display().to_string(), &dir, 10).unwrap_err();
+        assert!(e.contains("not a regular file"), "{e}");
+        // a plain existing regular file is fine (re-export overwrite)
+        let ok = tmp.join("ok.png");
+        fs::write(&ok, b"old").unwrap();
+        assert!(check_export_target(&ok.display().to_string(), &ok, 10).is_ok());
+        // the PARENT must exist
+        let missing = tmp.join("no-such-dir/z.png");
+        let e = check_export_target(&missing.display().to_string(), &missing, 10).unwrap_err();
+        assert!(e.contains("parent directory"), "{e}");
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 19.1** (#309; v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 19.2** (#316, #317; v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -1921,6 +1921,16 @@ setup dialog that edits it is #303):
      walk happens for a path that already matches snapshot images).
      A path that is not such a directory keeps the dim refusal hint
      (`no images under …`) and the current root.
+     The path is deliberately NOT confined to the project root (v19.2,
+     #317): rolls live wherever the user keeps them, and the probe's
+     root is the same directory `start_import` hands to
+     `import_roll.py` moments later — the probe is strictly weaker
+     than that primitive (read-only, depth 32, hidden dirs skipped,
+     early-exit on the first hit), so confining it would add no
+     protection. `open_dir` (Open roll path) is the same class: it
+     hands the branch's own directory to the file manager — a
+     designed user action, and its worst case is a file-manager
+     window.
    - **The import pane** replaces the **right pane** (DetailPane's slot)
      while open; it is rolls-scoped UI state (session-only, like the
      Rolls root), closed by its own ✕ button (DetailPane returns), and
@@ -2693,6 +2703,21 @@ open the same dialog.
   (path → the #273 image viewer / system default — the `open_with`
   opener, like `open_image`).
   success is a quiet info toast naming the path.
+  - **Server-side gates** (v19.2, #316): the webview is not a
+    trusted boundary, so the "dumb writer" is confined to an
+    annotated-export file before any write — the extension must be
+    one of the export formats (`.png`/`.jpg`/`.jpeg`/`.webp` — the
+    dialog's own filters), the payload ≤ 64 MiB (a real export is a
+    few MB even at 4k), an EXISTING target must be a regular file
+    (a symlink named `x.png` may not be followed into
+    `authorized_keys`), and the parent directory must already exist
+    (the writer never creates directories). Every violation reaches
+    the error toast naming the path, like any other write failure.
+  - **`open_image_file` gate** (v19.2, #317): likewise — the path
+    must carry an image extension (the import scanner's exact
+    `IMAGE_SUFFIXES` set) before it is handed to the viewer, so a
+    compromised webview cannot hand arbitrary files to the image
+    viewer through this command.
 - **The label chip is measured in the label font** (v18.1, #304):
   `ctx.font` is set BEFORE `fitLabel`/`measureText` — `measureText`
   reads the canvas's CURRENT font, and the default (10px sans-serif)
