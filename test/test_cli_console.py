@@ -173,7 +173,19 @@ class ImportRollConsoleTests(unittest.TestCase):
     """main() on an empty dir exits before any model/DB work."""
 
     def run_main(self, *args):
-        with tempfile.TemporaryDirectory() as d:
+        # isolation: main() checks the DATABASE before scanning the roll
+        # dir (#90 — a missing DB must not be misreported as something
+        # else), so these tests must not depend on the repo's
+        # data/faces.db existing: run against a miniature project root
+        # whose .env pins FACES_DB at an existing empty file (never
+        # opened — the empty-dir exit precedes the connection), the same
+        # pattern ItemOutputContractTests uses
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / ".env").write_text(f"FACES_DB={tmp / 'faces.db'}\n")
+        (tmp / "faces.db").write_bytes(b"")
+        with mock.patch.object(ir, "PROJECT_ROOT", tmp), \
+                tempfile.TemporaryDirectory() as d:
             return run_captured(ir.main, [*args, str(Path(d))])
 
     def test_default_header_then_status_then_summary(self):
