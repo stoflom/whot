@@ -77,6 +77,7 @@ def apply_user_work(db: Path) -> None:
     con.close()
 
 
+
 class RoundTripTest(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="whot-ansi-"))
@@ -89,6 +90,46 @@ class RoundTripTest(unittest.TestCase):
     def tearDown(self):
         import shutil
         shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_restore_sweep_uses_the_canonical_rejected_matcher_319(self):
+        """#319: the restore sweep must apply the SAME canonical family
+        matcher as db.rs — `Rejected<digits>` in i64 range is family
+        (an empty shell sweeps, even past u32::MAX, which the old
+        u32-based backend validator let users create), while a
+        non-digit tail or an out-of-i64-range number is an ordinary
+        named person and survives."""
+        # matcher parity with db.rs is_rejected_cluster_name
+        for name in ["Rejected1", "Rejected4294967296", "rejected7"]:
+            self.assertTrue(ansi._is_rejected_cluster(name), name)
+        for name in ["Rejected", "Rejected123abc", "Rejected9223372036854775808",
+                     "Rejected+7", "Rejected1.5"]:
+            self.assertFalse(ansi._is_rejected_cluster(name), name)
+        con = sqlite3.connect(self.new)
+        for (id, name) in [(90, "Rejected90"),
+                           (91, "Rejected4294967296"),
+                           (92, "Rejected123abc"),
+                           (93, "Rejected9223372036854775808")]:
+            con.execute(
+                "INSERT INTO persons(id, name, state, created_at) VALUES (?, ?, 'created', ?)",
+                (id, name, NOW))
+        con.commit(); con.close()
+        data = {
+            "format": 1, "source_schema": "1.6", "exported_at": NOW,
+            "persons": [], "faces": [], "pins": [], "skipped_unknown_pins": 0,
+        }
+        stats = ansi.do_restore(data, self.new)
+        self.assertEqual(stats["unmatched_faces"], 0)
+        con = sqlite3.connect(self.new)
+        names = {r[0] for r in con.execute(
+            "SELECT name FROM persons WHERE id IN (90, 91, 92, 93)")}
+        con.close()
+        self.assertNotIn("Rejected90", names, "an empty family shell sweeps")
+        self.assertNotIn("Rejected4294967296", names,
+                         "past u32::MAX is still family (i64 bounds — #319)")
+        self.assertIn("Rejected123abc", names,
+                      "a non-digit tail is an ordinary named person, never swept")
+        self.assertIn("Rejected9223372036854775808", names,
+                      "an out-of-i64-range number is an ordinary named person, never swept")
 
     def test_export_reports_schema_and_decisions(self):
         data = ansi.do_export(self.old)

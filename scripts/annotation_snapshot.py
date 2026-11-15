@@ -182,6 +182,20 @@ def is_known(name: str | None) -> bool:
     return bool(name) and not name.lower().startswith("unknown")
 
 
+def _is_rejected_cluster(name: str) -> bool:
+    # #319 — the canonical `RejectedN` family matcher (parity with db.rs
+    # is_rejected_cluster_name): case-insensitive `rejected` prefix +
+    # ALL digits, with the number in i64 range. A non-digit tail or a
+    # number past i64::MAX is an ordinary named person — never a family
+    # member — so the restore sweep (like db.rs's) must not delete it.
+    if len(name) < 9 or name[:8].lower() != "rejected":
+        return False
+    rest = name[8:]
+    if not (rest.isascii() and rest.isdigit()):
+        return False
+    return int(rest) <= 0x7FFFFFFFFFFFFFFF  # i64::MAX
+
+
 # ---------------------------------------------------------------- export
 
 def do_export(db: Path) -> dict:
@@ -480,11 +494,24 @@ def do_restore(data: dict, db: Path, iou_threshold: float = 0.75) -> dict:
             backfill_primary(con, pid)
         for pid in restored.values():
             stats["refcrops"] += recompute_refcrops(con, pid, n)
-        cur = con.execute(
-            "DELETE FROM persons WHERE (name LIKE 'Unknown%' "
+        # #319 — the GLOBs are pre-filters: Rejected candidates must
+        # pass the canonical family matcher (parity with db.rs
+        # is_rejected_cluster_name — 'Rejected' + all digits, i64
+        # range), so a non-family `Rejected<digit>…` name stays an
+        # ordinary named person and is never swept.
+        rows = con.execute(
+            "SELECT id, name FROM persons WHERE (name LIKE 'Unknown%' "
             "OR name GLOB 'Rejected[0-9]*') "
-            "AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)")
-        stats["shells_deleted"] = cur.rowcount
+            "AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)"
+        ).fetchall()
+        ids = [
+            pid for pid, name in rows
+            if name.startswith("Unknown") or _is_rejected_cluster(name)
+        ]
+        if ids:
+            cur = con.execute(
+                "DELETE FROM persons WHERE id IN (%s)" % ",".join("?" * len(ids)), ids)
+            stats["shells_deleted"] = cur.rowcount
 
         con.commit()
     except BaseException:
