@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 2.1** (#303) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.2** (#318) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -164,6 +164,17 @@ is the 4-state `face_filter`, gui-design §4.10).
   one-shot idempotent split that rides the reject writers.
 - Reads that only need one row batch use short-lived connections;
   mutations open one connection, run **one transaction** and commit.
+- **Lock poisoning never bricks the surface** (v2.2, #318): the pool,
+  the `data_version` probe and the cluster cache each serialise behind
+  a process-global `std::Mutex`; a PANIC while one of them is held
+  (rusqlite errors are `Err`s, never panics — a panic means a real bug
+  in DB code) used to turn every subsequent DB command into a
+  permanent "lock poisoned" error until the app restarted. All three
+  lock helpers now recover via `PoisonError::into_inner()` (the
+  pooled connections / cache contents are still valid) and log a
+  diagnostic — the app degrades to retrying the buggy call, not to a
+  dead database. Regression tests poison each static in a holder
+  thread and assert the recovered lock serves a full `connect()`.
 - All connections set `PRAGMA foreign_keys = ON` explicitly — the DDL's
   `PRAGMA` only affects the session that created the file.
 
