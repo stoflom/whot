@@ -716,7 +716,15 @@ pub fn data_version(paths: &Paths) -> Result<i64> {
     let mut guard = probe_lock()?;
     let map = guard.get_or_insert_with(HashMap::new);
     if !map.contains_key(&paths.db) {
-        let con = Connection::open(&paths.db)
+        // #321 — READ-ONLY, like the #252 has_schema fix: the probe
+        // must never MATERIALISE an empty data/faces.db as a side
+        // effect — it fires on every GUI focus/visibility event, so on
+        // a fresh install (no database yet) the old Connection::open
+        // left the exact empty file #252 removed from the db_exists
+        // check. A missing database reports "cannot open" (the GUI's
+        // refreshIfChanged already swallows the error — nothing to
+        // sync while the no-DB screen is up).
+        let con = Connection::open_with_flags(&paths.db, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("cannot open {}", paths.db.display()))?;
         // the importer may hold the write lock — same patience as `connect`
         con.pragma_update(None, "busy_timeout", 5000)?;

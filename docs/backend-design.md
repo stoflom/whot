@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 2.3** (#320) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.4** (#321) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -254,6 +254,15 @@ person) — see `docs/schema-design.md` §5.
   wholesale after every mutation. It is **pure** (#208): the stale-shell
   sweep (gui-design §4.27) rides the writers that can empty a person
   (assign/merge, reject-moves); named persons are never swept.
+- **The `data_version` probe is READ-ONLY** (v2.4, #321 — parity with
+  the #252 `has_schema` fix): it fires on every GUI focus/visibility
+  event, and the old `Connection::open` materialised an empty
+  `data/faces.db` on a fresh install as a pure side effect of the
+  first probe. It now opens with `SQLITE_OPEN_READ_ONLY`, so a missing
+  database reports "cannot open" (the GUI's `refreshIfChanged` already
+  swallows the error — nothing to sync while the no-DB screen is up);
+  the cached read-only probe still observes every other connection's
+  commits (`PRAGMA data_version` is a database-level counter, #208).
 - Image/face content lives in the DB as BLOBs and leaves as **raw
   bytes** (#212): `get_image_batch` answers one framed `WHOTIMG`
   container per call (`tauri::ipc::Response` → ArrayBuffer → Blob URLs
