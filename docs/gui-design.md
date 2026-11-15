@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 19.3** (#322; v19.2 #316/#317, v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 19.4** (#325; v19.3 #322, v19.2 #316/#317, v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2440,7 +2440,14 @@ acted-upon face rows are replaced, so memoized cards elsewhere skip
 re-render (#222). The §219 delta overwrites those rows with the
 authoritative state on arrival. If the IPC fails, the pre-flip rows
 are restored, the failed verdict's exhaust mark (§4.30) is cleared,
-and the error toast is shown as before.
+and the error toast is shown as before. The rollback is **guarded**
+(v19.4, #325): a pre-flip row is restored only when the current row
+is still exactly this verdict's optimistic flip (field-equal) — an
+authoritative row that landed mid-flight (a concurrent verdict's
+applied delta, an import delta, a focus/visibility `refreshIfChanged`)
+is never reverted, so a failed verdict can no longer clobber another
+verdict's outcome or leave the UI disagreeing with the DB until the
+next full refresh.
 
 While a verdict is in flight (click → delta landed, or failure), the
 acted-upon cards' ✓/✗ and the cluster header's ✓/✗ are disabled and
