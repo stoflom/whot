@@ -432,8 +432,18 @@ fn check_schema(con: &Connection, db: &Path) -> Result<()> {
         })?;
     if v != SCHEMA_VERSION {
         let remedy = if v == "1.6" {
+            // #324 — the script only LANDS v1.7; the remedy must say so
+            // and name what remains (the v1.7→v1.8→v1.9 in-place steps
+            // in the schema.sql header), not promise the upgrade is done
             format!(
-                "upgrade it in place (backup first):\n  python3 scripts/fix_status_groups.py {}",
+                "upgrade it in place (backup first). The fix script only \
+reaches v1.7 — after it, apply the v1.7 -> v1.8 and v1.8 -> v1.9 \
+in-place steps from the database/schema.sql header:\n  1. python3 \
+scripts/fix_status_groups.py {}\n  2. the schema.sql header steps (v1.7 \
+-> v1.8 -> v1.9, backup each step)\n  — or preserve the annotations \
+instead:\n  scripts/annotation_snapshot.py export, then\n  sqlite3 {} \
+< database/schema.sql, then\n  scripts/annotation_snapshot.py restore",
+                db.display(),
                 db.display()
             )
         } else {

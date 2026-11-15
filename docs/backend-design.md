@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 2.6** (#323) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.7** (#324) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -163,9 +163,13 @@ is the 4-state `face_filter`, gui-design §4.10).
   `check_schema`: exact match against `SCHEMA_VERSION` (currently
   `'1.9'`, equal to `database/schema.sql`'s marker row) — a mismatch is
   refused: a stale `'1.6'` marker is pointed at
-  `scripts/fix_status_groups.py` (gui-design §4.35), anything else
-  at recreate instructions; never worked around (no
-  migrations; `docs/schema-design.md` §5).
+  `scripts/fix_status_groups.py` (gui-design §4.35) — and since #324
+  the remedy says the script **only reaches v1.7**, naming the
+  remaining v1.7→v1.8→v1.9 in-place steps in the `schema.sql` header
+  (plus the export→recreate→restore alternative), so the message no
+  longer promises the script alone completes the upgrade; anything
+  else is pointed at recreate instructions. Never worked around
+  (no migrations; `docs/schema-design.md` §5).
 - The derived-state machinery of `db.rs` (names, primaries, refcrops)
   additionally owns the **status seats** and the **`RejectedN`
   cluster-person family** (#266) — behaviour rules in gui-design §4.35; both are

@@ -485,6 +485,37 @@ fn schema_version_compatibility_gate() {
     std::fs::remove_dir_all(p2.db.parent().unwrap()).ok();
 }
 
+/// #324 — the v1.6 remedy must say the fix script only reaches v1.7
+/// and name the remaining steps, not promise the upgrade is done by it.
+#[test]
+fn schema_gate_v16_remedy_names_remaining_steps() {
+    let p = fixture_paths("schemaver16");
+    {
+        let con = Connection::open(&p.db).unwrap();
+        con.execute("UPDATE schema_version SET version = '1.6'", [])
+            .unwrap();
+    }
+    let msg = db::connect(&p).unwrap_err().to_string();
+    assert!(msg.contains("fix_status_groups.py"), "{msg}");
+    assert!(
+        msg.contains("only reaches v1.7"),
+        "the script's ceiling must be stated: {msg}"
+    );
+    assert!(
+        msg.contains("v1.7 -> v1.8"),
+        "the next step must be named: {msg}"
+    );
+    assert!(
+        msg.contains("v1.8 -> v1.9"),
+        "the final step must be named: {msg}"
+    );
+    assert!(
+        msg.contains("database/schema.sql header"),
+        "the steps' location must be pointed to: {msg}"
+    );
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// §4.9/§4.12 — the person view partitions faces by appearance and clusters
 /// by similarity *inside* each partition; the primary's appearance first.
 #[test]
