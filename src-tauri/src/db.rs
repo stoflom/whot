@@ -4,7 +4,7 @@
 //! primary faces, refcrops) lives here. See docs/gui-design.md §4 for the
 //! behaviour rules implemented in this file.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -371,8 +371,21 @@ impl std::fmt::Debug for DbConn {
     }
 }
 
+/// #318 — a poisoned lock (a PANIC while some DB call held it) must not
+/// brick every DB command for the process's remaining lifetime: the
+/// map is an Option<HashMap> the panicking thread left behind, and the
+/// pooled connections in it are still valid (rusqlite errors are Errs,
+/// never panics) — recover via into_inner and log. A panic in DB code
+/// is a real bug; the app degrades to logging + retrying it, not to a
+/// permanently dead database surface.
 fn pool_lock() -> Result<MutexGuard<'static, Option<HashMap<PathBuf, Connection>>>> {
-    POOL.lock().map_err(|_| anyhow!("database pool lock poisoned"))
+    match POOL.lock() {
+        Ok(guard) => Ok(guard),
+        Err(poisoned) => {
+            eprintln!("[db] POOL lock poisoned (a previous DB call panicked) — recovering");
+            Ok(poisoned.into_inner())
+        }
+    }
 }
 
 pub fn connect(paths: &Paths) -> Result<DbConn> {
@@ -681,9 +694,17 @@ pub struct Snapshot {
 /// pooling is #207.
 static PROBE: Mutex<Option<HashMap<PathBuf, Connection>>> = Mutex::new(None);
 
-fn probe_lock(
-) -> Result<std::sync::MutexGuard<'static, Option<HashMap<PathBuf, Connection>>>> {
-    PROBE.lock().map_err(|_| anyhow!("data_version probe lock poisoned"))
+/// #318 — poison recovery like `pool_lock` (see there).
+fn probe_lock() -> Result<std::sync::MutexGuard<'static, Option<HashMap<PathBuf, Connection>>>> {
+    match PROBE.lock() {
+        Ok(guard) => Ok(guard),
+        Err(poisoned) => {
+            eprintln!(
+                "[db] PROBE lock poisoned (a previous data_version call panicked) — recovering"
+            );
+            Ok(poisoned.into_inner())
+        }
+    }
 }
 
 /// Cheap "has anything changed since?" stamp for the frontend's
@@ -3188,8 +3209,19 @@ mod cluster_cache_tests {
     }
 }
 
+/// #318 — poison recovery like `pool_lock` (see there); the cache is
+/// disposable, so a recovered guard can only serve a stale-but-valid
+/// cache, never a brick.
 fn cluster_lock() -> Result<std::sync::MutexGuard<'static, Option<ClusterCache>>> {
-    CLUSTER_CACHE.lock().map_err(|_| anyhow!("cluster cache lock poisoned"))
+    match CLUSTER_CACHE.lock() {
+        Ok(guard) => Ok(guard),
+        Err(poisoned) => {
+            eprintln!(
+                "[db] CLUSTER_CACHE lock poisoned (a previous cluster call panicked) — recovering"
+            );
+            Ok(poisoned.into_inner())
+        }
+    }
 }
 
 /// The cluster inputs as one string — any difference means a possibly
@@ -3415,3 +3447,72 @@ pub fn get_refcrops(paths: &Paths, person_id: i64) -> Result<Vec<Refcrop>> {
 }
 
 
+
+#[cfg(test)]
+mod poison_recovery_tests {
+    // #318 — a panic while a DB call holds the lock used to brick the
+    // WHOLE database surface for the process's lifetime ("database
+    // pool lock poisoned" on every command until restart). All three
+    // lock helpers now recover via into_inner: the app degrades to
+    // logging + retrying the panicking call, never to a dead DB.
+    use super::{CLUSTER_CACHE, POOL, PROBE, Paths, cluster_lock, connect, pool_lock, probe_lock};
+
+    /// poison POOL/PROBE/CLUSTER_CACHE: a thread locks + panics while
+    /// holding (statics — the closure captures nothing)
+    macro_rules! poison {
+        ($m:expr) => {{
+            let t = std::thread::spawn(|| {
+                let _g = $m.lock().unwrap();
+                panic!("poison the lock");
+            });
+            assert!(t.join().is_err(), "the holder panicked, as intended");
+        }};
+    }
+
+    #[test]
+    fn pool_lock_recovers_from_poison() {
+        poison!(POOL);
+        let g = pool_lock().expect("a poisoned pool lock must not brick the surface");
+        drop(g);
+        assert!(pool_lock().is_ok(), "recovery must hold across calls");
+        // functional: a full connect still works through the recovered lock
+        let tmp = std::env::temp_dir().join(format!("whot-poison-pool-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let schema =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../database/schema.sql");
+        let sql = std::fs::read_to_string(&schema).unwrap();
+        let paths = Paths {
+            root: tmp.clone(),
+            db: tmp.join("p.db"),
+            config: tmp.join("c.json"),
+            mode: "repo",
+            env_source: "dotenv",
+        };
+        // build a valid schema so connect's compatibility gate passes
+        {
+            let con = rusqlite::Connection::open(&paths.db).unwrap();
+            con.execute_batch(&sql).unwrap();
+        }
+        let con = connect(&paths).expect("connect after pool poison");
+        let n: i64 = con
+            .query_row("SELECT count(*) FROM persons", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn probe_lock_recovers_from_poison() {
+        poison!(PROBE);
+        assert!(probe_lock().is_ok());
+        assert!(probe_lock().is_ok());
+    }
+
+    #[test]
+    fn cluster_lock_recovers_from_poison() {
+        poison!(CLUSTER_CACHE);
+        assert!(cluster_lock().is_ok());
+        assert!(cluster_lock().is_ok());
+    }
+}
