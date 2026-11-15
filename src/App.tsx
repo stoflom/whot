@@ -901,8 +901,11 @@ export default function App() {
           // roll the flip back and clear THIS verdict's exhaust mark
           // (#148 — it used to be cleared in the focus callback, which
           // never ran on failure)
+          // #325: guarded rollback — restores only the faces this
+          // verdict flipped that no authoritative delta has since
+          // touched
           if (prior && prior.size > 0)
-            setSnap((cur) => (cur ? restoreLinkStatus(cur, prior) : cur));
+            setSnap((cur) => (cur ? restoreLinkStatus(cur, prior, to) : cur));
           exhaustAtRef.current = -1;
           exhaustPidRef.current = null;
         }

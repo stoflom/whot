@@ -51,17 +51,60 @@ export function flipLinkStatus(
   return changed ? { next: { ...snap, faces }, prior } : { next: snap, prior };
 }
 
+/** Field equality over the whole IPC face row — the §219 delta replaces
+    rows wholesale, so identity alone can't tell "our optimistic flip is
+    still in place" from "an authoritative row landed with the same
+    fields". */
+function sameRow(a: Face, b: Face): boolean {
+  return (
+    a.id === b.id &&
+    a.image_id === b.image_id &&
+    a.person_id === b.person_id &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.w === b.w &&
+    a.h === b.h &&
+    a.name === b.name &&
+    a.seq === b.seq &&
+    a.description === b.description &&
+    a.confidence === b.confidence &&
+    a.link_status === b.link_status &&
+    a.state === b.state &&
+    a.rotation === b.rotation &&
+    a.import_id === b.import_id &&
+    a.created_at === b.created_at
+  );
+}
+
 /** Restore the pre-flip rows into `snap` (rollback of a failed
-    verdict). Id order is preserved — the Map is built from `snap.faces`
-    and re-setting an existing key does not move it. `snap` is returned
-    unchanged when `prior` is empty. */
+    verdict). #325 — GUARDED: a prior row is restored only when the
+    current row is still exactly the row THIS flip produced (field-equal
+    to `{...row, link_status: to}`) — i.e. nothing authoritative (a
+    concurrent verdict's applied delta, an import delta, a
+    focus/visibility `refreshIfChanged`) has touched the face since.
+    An unconditional overwrite would revert those faces' statuses to
+    pre-verdict values and the UI would disagree with the DB until the
+    next full refresh; it also made overlapping verdicts' restores
+    order-dependent. Id order is preserved — the Map is built from
+    `snap.faces` and re-setting an existing key does not move it. `snap`
+    is returned unchanged when `prior` is empty. */
 export function restoreLinkStatus(
   snap: Snapshot,
   prior: Map<number, Face>,
+  to: Verdict,
 ): Snapshot {
   if (prior.size === 0) return snap;
+  const cur = new Map<number, Face>();
+  for (const f of snap.faces) cur.set(f.id, f);
   const m = new Map<number, Face>();
   for (const f of snap.faces) m.set(f.id, f);
-  for (const [id, row] of prior) m.set(id, row);
+  for (const [id, row] of prior) {
+    const c = cur.get(id);
+    // skip when the face moved on: an authoritative row (or a different
+    // verdict's flip) replaced ours, so rolling this verdict back must
+    // not clobber it
+    if (!c || !sameRow(c, { ...row, link_status: to })) continue;
+    m.set(id, row);
+  }
   return { ...snap, faces: [...m.values()] };
 }

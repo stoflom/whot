@@ -131,7 +131,7 @@ describe("restoreLinkStatus — the rollback", () => {
       faceOf(3, "provisional"),
     ]);
     const r = flipLinkStatus(snap, [1, 3], "rejected");
-    const back = restoreLinkStatus(r.next, r.prior);
+    const back = restoreLinkStatus(r.next, r.prior, "rejected");
     expect(back.faces.map((f) => f.id)).toEqual([1, 2, 3]);
     expect(back.faces[0]).toBe(snap.faces[0]);
     expect(back.faces[1]).toBe(snap.faces[1]);
@@ -140,22 +140,81 @@ describe("restoreLinkStatus — the rollback", () => {
 
   it("an empty prior returns the snapshot unchanged", () => {
     const snap = snapOf([faceOf(1, "provisional")]);
-    expect(restoreLinkStatus(snap, new Map())).toBe(snap);
+    expect(restoreLinkStatus(snap, new Map(), "rejected")).toBe(snap);
   });
 
   it("restores onto a snapshot that moved on (the delta interleaved)", () => {
-    // the authoritative delta replaced the row with a re-homed one; the
-    // rollback must still put the pre-flip row back (failure path: the
-    // delta never landed, the snapshot is the optimistic one + anything
-    // else that moved)
+    // an unrelated face moved on (the delta interleaved); the rollback
+    // restores this verdict's row and leaves the interleave alone
     const snap = snapOf([faceOf(1, "provisional"), faceOf(2, "confirmed")]);
     const r = flipLinkStatus(snap, [1], "rejected");
     const moved: Snapshot = {
       ...r.next,
       faces: [r.next.faces[0], { ...r.next.faces[1], name: "x" }],
     };
-    const back = restoreLinkStatus(moved, r.prior);
+    const back = restoreLinkStatus(moved, r.prior, "rejected");
     expect(back.faces[0]).toBe(snap.faces[0]); // restored
     expect(back.faces[1].name).toBe("x"); // the interleave survives
+  });
+
+  // #325 — the rollback is GUARDED: a prior row is restored only when
+  // the current row is still exactly this verdict's optimistic flip
+  // (nothing authoritative has since touched the face).
+  it("does not clobber an authoritative delta that landed mid-flight", () => {
+    const snap = snapOf([faceOf(1, "provisional"), faceOf(2, "confirmed")]);
+    const r = flipLinkStatus(snap, [1, 2], "rejected");
+    // between the flip and the failure, a concurrent verdict's
+    // authoritative delta replaced row 1 (re-homed, name re-derived):
+    // the DB owns that row now — the rollback must leave it alone
+    const authoritative1: Face = {
+      ...r.prior.get(1)!,
+      person_id: 7,
+      name: "Rejected1",
+      link_status: "rejected",
+    };
+    const mid: Snapshot = {
+      ...r.next,
+      faces: [authoritative1, r.next.faces[1]],
+    };
+    const back = restoreLinkStatus(mid, r.prior, "rejected");
+    expect(back.faces[0]).toBe(authoritative1); // NOT clobbered
+    expect(back.faces[1]).toBe(snap.faces[1]); // the untouched flip rolls back
+  });
+
+  it("does not restore when the status matches but the row moved (re-homed by another writer)", () => {
+    const snap = snapOf([faceOf(1, "provisional")]);
+    const r = flipLinkStatus(snap, [1], "rejected");
+    // an external reject of the same face landed: same link_status as
+    // the optimistic value, but the row was re-homed (person + name)
+    const externalReject: Face = {
+      ...r.next.faces[0],
+      person_id: 9,
+      name: "Rejected3",
+    };
+    const back = restoreLinkStatus(
+      { ...r.next, faces: [externalReject] },
+      r.prior,
+      "rejected",
+    );
+    expect(back.faces[0]).toBe(externalReject); // the status match is not enough
+  });
+
+  it("overlapping verdicts: a later failed verdict does not revert an earlier verdict's intact flip", () => {
+    // A accepts {1,2}; B (overlapping) rejects {2,3} — B's prior for
+    // face 2 was captured AFTER A's flip. B fails first: its restore
+    // puts face 2 back to A's optimistic flip (the value B saw), and
+    // A's still-in-flight flip remains in place — no stale clobber
+    const snap = snapOf([
+      faceOf(1, "provisional"),
+      faceOf(2, "provisional"),
+      faceOf(3, "provisional"),
+    ]);
+    const a = flipLinkStatus(snap, [1, 2], "confirmed");
+    const b = flipLinkStatus(a.next, [2, 3], "rejected");
+    const afterB = restoreLinkStatus(b.next, b.prior, "rejected");
+    expect(afterB.faces[0].link_status).toBe("confirmed"); // A's flip intact
+    expect(afterB.faces[0]).toBe(a.next.faces[0]); // identity: still A's row
+    expect(afterB.faces[1].link_status).toBe("confirmed"); // back to what B saw
+    expect(afterB.faces[2].link_status).toBe("provisional"); // B rolled its own back
   });
 });
