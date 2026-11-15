@@ -1266,6 +1266,33 @@ fn has_schema_probes_usable_database_185() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #321 — the data_version probe is READ-ONLY (the #252 has_schema
+/// parity): it fires on every GUI focus/visibility event, so on a
+/// fresh install (no database yet) it must report "cannot open"
+/// instead of materialising the empty data/faces.db that the old
+/// Connection::open left behind.
+#[test]
+fn data_version_probe_does_not_create_database_321() {
+    // the fixture is usable — the probe caches a connection for this path
+    let p = fixture_paths("probe321a");
+    assert!(db::data_version(&p).is_ok(), "the fixture is usable");
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+    // a fresh path the probe has never seen, whose file is removed:
+    // an error, never a created file
+    let q = fixture_paths("probe321b");
+    std::fs::remove_file(&q.db).unwrap();
+    assert!(!q.db.exists());
+    assert!(
+        db::data_version(&q).is_err(),
+        "a missing database is an error, not a creation"
+    );
+    assert!(
+        !q.db.exists(),
+        "the probe must not create a missing database (#252 parity)"
+    );
+    std::fs::remove_dir_all(q.db.parent().unwrap()).ok();
+}
+
 // ------------------------------------------- session 1 performance (#207–#216)
 
 /// #209 — batch image rotation: one call rotates every image and
