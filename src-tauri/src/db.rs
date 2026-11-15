@@ -193,10 +193,10 @@ fn home_dir() -> Option<PathBuf> {
 /// (`config/whotrc.default.json`; `$WHOT_DEFAULT_CONFIG` overrides —
 /// the test hook).
 fn default_config_text() -> Option<String> {
-    if let Some(p) = nonempty_env("WHOT_DEFAULT_CONFIG") {
-        if let Ok(text) = std::fs::read_to_string(p) {
-            return Some(text);
-        }
+    if let Some(p) = nonempty_env("WHOT_DEFAULT_CONFIG")
+        && let Ok(text) = std::fs::read_to_string(p)
+    {
+        return Some(text);
     }
     if let Ok(text) = std::fs::read_to_string("/usr/share/whot/whotrc.json") {
         return Some(text);
@@ -987,6 +987,9 @@ fn image_rows(con: &Connection, ids: &[i64]) -> Result<Vec<ImageRow>> {
 /// by the caller's `DbConn` guard — calling `connect` here would
 /// deadlock). The rows are read through it after the write, so they see
 /// the committed state.
+// #315 — the five id-list arguments are each a distinct delta scope;
+// folding them into a struct would blur the call sites for no gain
+#[allow(clippy::too_many_arguments)]
 pub fn delta_after(
     paths: &Paths,
     con: &Connection,
@@ -1614,10 +1617,10 @@ fn next_rejected_number(tx: &Connection) -> Result<i64> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut max_n = 0i64;
     for n in &rows {
-        if let Some(d) = n.to_ascii_lowercase().strip_prefix("rejected") {
-            if let Ok(v) = d.parse::<i64>() {
-                max_n = max_n.max(v);
-            }
+        if let Some(d) = n.to_ascii_lowercase().strip_prefix("rejected")
+            && let Ok(v) = d.parse::<i64>()
+        {
+            max_n = max_n.max(v);
         }
     }
     Ok(max_n + 1)
@@ -1692,13 +1695,12 @@ fn resolve_rejected_clusters(
                     break;
                 }
             }
-            if target.is_none() {
-                if let Some((_, t)) = assigned
+            if target.is_none()
+                && let Some((_, t)) = assigned
                     .iter()
                     .find(|(pv, _)| !pv.is_empty() && cosine(v, pv) >= threshold)
-                {
-                    target = Some(*t);
-                }
+            {
+                target = Some(*t);
             }
         }
         let t = match target {
@@ -2151,7 +2153,7 @@ pub fn assign_person(paths: &Paths, face_ids: &[i64], name: &str, group_path: &s
     // are the selected ids; removed = old owners emptied by the move.
     delta_after(
         paths,
-        &*con,
+        &con,
         v1,
         &affected,
         &[target],
@@ -2212,7 +2214,7 @@ pub fn set_link_status(paths: &Paths, face_ids: &[i64], status: &str) -> Result<
     // person's full face set needs re-fetching.
     let mut all_faces: Vec<i64> = face_ids.to_vec();
     all_faces.extend(extra_faces);
-    delta_after(paths, &*con, v1, &affected, &[], &all_faces, &[], removed)
+    delta_after(paths, &con, v1, &affected, &[], &all_faces, &[], removed)
 }
 
 /// #122/#183 — image display rotation, set-based (#283 N4): the images
@@ -2232,7 +2234,7 @@ fn rotate_images_tx(
     image_ids: &[i64],
     delta: i64,
 ) -> Result<Vec<i64>> {
-    let d = ((delta % 360) + 360) % 360;
+    let d = delta.rem_euclid(360);
     let list = ids_list(image_ids);
     let n = tx.execute(
         &format!("UPDATE images SET rotation = (rotation + {d}) % 360 WHERE id IN ({list})"),
@@ -2269,7 +2271,7 @@ pub fn rotate_image(paths: &Paths, image_id: i64, delta: i64) -> Result<Delta> {
     tx.commit()?;
     // #219 — the image row and every face on it change rotation; no
     // person rows are affected.
-    delta_after(paths, &*con, v1, &[], &[], &face_ids, &[image_id], Vec::new())
+    delta_after(paths, &con, v1, &[], &[], &face_ids, &[image_id], Vec::new())
 }
 
 /// #209 — batch display rotation: N images in ONE transaction behind one
@@ -2292,7 +2294,7 @@ pub fn rotate_images(paths: &Paths, image_ids: &[i64], delta: i64) -> Result<Del
     tx.commit()?;
     // #219 — the image rows and every face on them change rotation; no
     // person rows are affected.
-    delta_after(paths, &*con, v1, &[], &[], &face_ids, &ids, Vec::new())
+    delta_after(paths, &con, v1, &[], &[], &face_ids, &ids, Vec::new())
 }
 
 /// #122/#183 — face-crop display rotation (server state): the per-crop
@@ -2300,7 +2302,7 @@ pub fn rotate_images(paths: &Paths, image_ids: &[i64], delta: i64) -> Result<Del
 /// direction only (rotating the image cascades to its crops, this never
 /// touches the image); same ±90 quarter-turn contract as `rotate_image`.
 pub fn rotate_face(paths: &Paths, face_id: i64, delta: i64) -> Result<Delta> {
-    let d = ((delta % 360) + 360) % 360;
+    let d = delta.rem_euclid(360);
     // #219 — the stamp before the write, for drift detection.
     let v1 = data_version(paths)?;
     let mut con = connect(paths)?;
@@ -2319,7 +2321,7 @@ pub fn rotate_face(paths: &Paths, face_id: i64, delta: i64) -> Result<Delta> {
     tx.execute("UPDATE faces SET rotation = ? WHERE id = ?", params![next, face_id])?;
     tx.commit()?;
     // #219 — only this face's crop rotation changes.
-    delta_after(paths, &*con, v1, &[], &[], &[face_id], &[], Vec::new())
+    delta_after(paths, &con, v1, &[], &[], &[face_id], &[], Vec::new())
 }
 
 /// The per-face core of `set_face_description` inside the caller's
@@ -2388,7 +2390,7 @@ pub fn set_face_description(paths: &Paths, face_id: i64, raw: &str) -> Result<De
     // #219 — this face's description/seq/label changed; its owner's
     // primary may have been re-derived by recompute_person.
     let person_ids: Vec<i64> = owner.into_iter().collect();
-    delta_after(paths, &*con, v1, &person_ids, &[], &[face_id], &[], Vec::new())
+    delta_after(paths, &con, v1, &person_ids, &[], &[face_id], &[], Vec::new())
 }
 
 /// #209 — batch description write behind one IPC call: one transaction,
@@ -2407,11 +2409,10 @@ pub fn set_face_descriptions(paths: &Paths, face_ids: &[i64], raw: &str) -> Resu
     // over the whole batch (O(n²) on a large --all description write)
     let mut touched_set: HashSet<i64> = HashSet::new();
     for face_id in face_ids {
-        if let Some(pid) = set_face_description_tx(&tx, *face_id, &desc)? {
-            if touched_set.insert(pid) {
+        if let Some(pid) = set_face_description_tx(&tx, *face_id, &desc)?
+            && touched_set.insert(pid) {
                 touched.push(pid);
             }
-        }
     }
     for pid in &touched {
         recompute_person(&tx, *pid, &settings)?;
@@ -2419,7 +2420,7 @@ pub fn set_face_descriptions(paths: &Paths, face_ids: &[i64], raw: &str) -> Resu
     tx.commit()?;
     // #219 — the described faces changed; each touched owner's primary may
     // have been re-derived (names are untouched — no refresh_person_names).
-    delta_after(paths, &*con, v1, &touched, &[], face_ids, &[], Vec::new())
+    delta_after(paths, &con, v1, &touched, &[], face_ids, &[], Vec::new())
 }
 
 /// §4.5 — user-pinned primary face.
@@ -2447,7 +2448,7 @@ pub fn set_primary_face(paths: &Paths, person_id: i64, face_id: i64) -> Result<D
     recompute_person(&tx, person_id, &settings)?;
     tx.commit()?;
     // #219 — only the person row (primary pointer) changed.
-    delta_after(paths, &*con, v1, &[person_id], &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &[person_id], &[], &[], &[], Vec::new())
 }
 
 pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<Delta> {
@@ -2487,7 +2488,7 @@ pub fn set_person_name(paths: &Paths, person_id: i64, name: &str) -> Result<Delt
     tx.commit()?;
     // #219 — the person row changed and ALL its faces were re-named by
     // refresh_person_names (person_face_ids).
-    delta_after(paths, &*con, v1, &[person_id], &[person_id], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &[person_id], &[person_id], &[], &[], Vec::new())
 }
 
 /// #42 — normalise a group path on the write side: trim each segment and
@@ -2527,7 +2528,7 @@ pub fn set_person_group(paths: &Paths, person_id: i64, path: &str) -> Result<Del
     )?;
     tx.commit()?;
     // #219 — only the person row (groups) changed.
-    delta_after(paths, &*con, v1, &[person_id], &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &[person_id], &[], &[], &[], Vec::new())
 }
 
 /// §4.16 (#50/#165) — group paths are normalised (#42) and five segments
@@ -2537,7 +2538,7 @@ pub fn set_person_group(paths: &Paths, person_id: i64, path: &str) -> Result<Del
 /// produce them; their branches carry no menu and accept no drops).
 fn validate_group_path(path: &str) -> Result<()> {
     const RESERVED: [&str; 5] = ["Ungrouped", "New", "Accepted", "Rejected", "Unknown"];
-    if let Some(seg) = path.split('|').find(|s| RESERVED.contains(&s)) {
+    if let Some(seg) = path.split('|').find(|s| RESERVED.contains(s)) {
         bail!("'{seg}' is a reserved group name (#165: status seats and retired segments)");
     }
     Ok(())
@@ -2633,7 +2634,7 @@ pub fn rename_group(paths: &Paths, old_path: &str, new_path: &str) -> Result<Del
     }
     tx.commit()?;
     // #219 — the persons in the branch have new group paths (person rows).
-    delta_after(paths, &*con, v1, &affected, &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &affected, &[], &[], &[], Vec::new())
 }
 
 /// §4.16 (#50/#165) — delete a group branch: the `person_groups` rows of
@@ -2672,7 +2673,7 @@ pub fn delete_group(paths: &Paths, path: &str) -> Result<Delta> {
     }
     tx.commit()?;
     // #219 — the persons in the branch have new group paths (person rows).
-    delta_after(paths, &*con, v1, &affected, &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &affected, &[], &[], &[], Vec::new())
 }
 
 /// §4.16 (#50/#165) — move persons to a (possibly new) group: each
@@ -2745,7 +2746,7 @@ pub fn move_persons_to_group(paths: &Paths, person_ids: &[i64], group: &str) -> 
     }
     tx.commit()?;
     // #219 — the moved persons have new group paths (person rows).
-    delta_after(paths, &*con, v1, &id_list, &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &id_list, &[], &[], &[], Vec::new())
 }
 
 /// §4.16 (#157, v3.59/#165) — tree D&D move for the §9 multi-row world:
@@ -2850,7 +2851,7 @@ pub fn move_persons_between_groups(
     }
     tx.commit()?;
     // #219 — the moved persons have new group paths (person rows).
-    delta_after(paths, &*con, v1, &id_list, &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &id_list, &[], &[], &[], Vec::new())
 }
 
 pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<Delta> {
@@ -2862,7 +2863,7 @@ pub fn set_person_note(paths: &Paths, person_id: i64, note: &str) -> Result<Delt
         params![if note.trim().is_empty() { None } else { Some(note.trim()) }, person_id],
     )?;
     // #219 — only the person row (note) changed.
-    delta_after(paths, &*con, v1, &[person_id], &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &[person_id], &[], &[], &[], Vec::new())
 }
 
 /// §4.13 (#35/#165/#266) — remove unwanted persons: every face becomes
@@ -2952,7 +2953,7 @@ pub fn remove_persons(paths: &Paths, person_ids: &[i64]) -> Result<Delta> {
     all_removed.extend(removed_extra);
     let mut all_faces: Vec<i64> = rehomed_faces.clone();
     all_faces.extend(extra_faces);
-    delta_after(paths, &*con, v1, &touched, &[], &all_faces, &[], all_removed)
+    delta_after(paths, &con, v1, &touched, &[], &all_faces, &[], all_removed)
 }
 
 /// §4.6 — manually promote a confirmed face into refcrops (survives rebuilds).
@@ -3023,7 +3024,7 @@ pub fn add_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<Delta>
     // #219 — only person_refcrops changed (metadata, not in the
     // snapshot); the frontend tracks refcrops via refcropEpoch. The delta
     // carries the new stamp only.
-    delta_after(paths, &*con, v1, &[], &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &[], &[], &[], &[], Vec::new())
 }
 
 pub fn remove_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<Delta> {
@@ -3036,7 +3037,7 @@ pub fn remove_refcrop(paths: &Paths, person_id: i64, face_id: i64) -> Result<Del
     )?;
     // #219 — only person_refcrops changed (metadata, not in the
     // snapshot); the delta carries the new stamp only.
-    delta_after(paths, &*con, v1, &[], &[], &[], &[], Vec::new())
+    delta_after(paths, &con, v1, &[], &[], &[], &[], Vec::new())
 }
 
 // ---------------------------------------------------------------- similarity
@@ -3100,20 +3101,26 @@ pub struct AppearanceGroup {
 /// (e.g. a provisional→confirmed verdict) hits. Bounded crudely by
 /// clearing — the GUI only ever asks for the anchored person's clusters;
 /// the map is a per-process working set, not a store.
+/// cache key: (database path, person id, threshold bits) — the #211
+/// fingerprint lives in the value, not the key
+type ClusterKey = (PathBuf, i64, u64);
+/// cache value: (fingerprint, groups, hit count)
+type ClusterValue = (String, Vec<AppearanceGroup>, usize);
+
 struct ClusterCache {
     /// #249 — recency order: front = most-recently-used, back = evicted
     /// first. The old full-clear on the 257th distinct key degenerated to
     /// recompute-every-time once more than 256 persons were browsed; the
     /// LRU keeps the hot set.
-    order: Vec<(PathBuf, i64, u64)>,
-    map: HashMap<(PathBuf, i64, u64), (String, Vec<AppearanceGroup>, usize)>,
+    order: Vec<ClusterKey>,
+    map: HashMap<ClusterKey, ClusterValue>,
 }
 const CLUSTER_CACHE_MAX: usize = 256;
 static CLUSTER_CACHE: Mutex<Option<ClusterCache>> = Mutex::new(None);
 
 impl ClusterCache {
     /// promote `key` to most-recently-used (a served cache hit).
-    fn touch(&mut self, key: &(PathBuf, i64, u64)) {
+    fn touch(&mut self, key: &ClusterKey) {
         if let Some(pos) = self.order.iter().position(|k| k == key) {
             let k = self.order.remove(pos);
             self.order.insert(0, k);
@@ -3122,20 +3129,15 @@ impl ClusterCache {
     /// insert/replace, keeping at most `CLUSTER_CACHE_MAX` entries (LRU):
     /// a new key is pushed to the front and the coldest is evicted; a
     /// recompute of an existing key (stale fingerprint) just promotes it.
-    fn put(
-        &mut self,
-        key: (PathBuf, i64, u64),
-        val: (String, Vec<AppearanceGroup>, usize),
-    ) {
+    fn put(&mut self, key: ClusterKey, val: ClusterValue) {
         let is_new = !self.map.contains_key(&key);
         self.map.insert(key.clone(), val);
         if is_new {
             self.order.insert(0, key);
-            if self.order.len() > CLUSTER_CACHE_MAX {
-                if let Some(cold) = self.order.pop() {
+            if self.order.len() > CLUSTER_CACHE_MAX
+                && let Some(cold) = self.order.pop() {
                     self.map.remove(&cold);
                 }
-            }
         } else {
             self.touch(&key);
         }
@@ -3144,14 +3146,14 @@ impl ClusterCache {
 
 #[cfg(test)]
 mod cluster_cache_tests {
-    use super::{AppearanceGroup, ClusterCache};
+    use super::{ClusterCache, ClusterKey, ClusterValue};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    fn key(i: i64) -> (PathBuf, i64, u64) {
+    fn key(i: i64) -> ClusterKey {
         (PathBuf::from("/tmp"), i, 0u64)
     }
-    fn val(i: i64) -> (String, Vec<AppearanceGroup>, usize) {
+    fn val(i: i64) -> ClusterValue {
         (format!("{i}"), Vec::new(), 0)
     }
 

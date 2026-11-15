@@ -402,7 +402,7 @@ async fn get_import_info(state: State<'_, AppState>) -> Result<ImportInfo, Strin
     let paths = state.paths()?;
     Ok(ImportInfo {
         db_path: paths.db.display().to_string(),
-        db_exists: db::has_schema(&paths),
+        db_exists: db::has_schema(paths),
     })
 }
 

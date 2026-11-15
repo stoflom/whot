@@ -51,5 +51,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install numpy
+      - run: pip install numpy blake3   # harvest_legacy hashes images (#310)
       - run: python -m unittest discover -s test

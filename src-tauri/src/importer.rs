@@ -223,7 +223,6 @@ impl ImportRunner {
             shared: Arc::new(Mutex::new(Vec::new())),
         }
     }
-
     /// spawn the child (refusing while one is live) and start the two
     /// reader threads; the pane polls `status(0)` from a fresh cursor
     pub fn start(&self, root: &Path, opts: &ImportOptions) -> Result<ImportStatus, String> {
@@ -307,6 +306,12 @@ impl ImportRunner {
         st.killed = true;
         st.exit_code = None;
         Ok(true)
+    }
+}
+
+impl Default for ImportRunner {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
