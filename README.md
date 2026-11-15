@@ -524,7 +524,11 @@ npx tsc --noEmit                  # TypeScript
 npm run lint                      # ESLint (incl. react-hooks rules)
 npm run build                     # dist/ first — cargo test and gui-mock need it
 (cd src-tauri && cargo test)      # Rust integration tests (fixture DB built from database/schema.sql)
-python3 -m unittest discover -s test   # Python: harvest + import + annotation helpers (needs numpy + blake3)
+python3 -m pytest test/ -q       # Python: harvest + import + annotation helpers
+                                 # (needs numpy + blake3; the import_roll
+                                 # decode/detector tests run when cv2, PIL and
+                                 # tifffile are also installed — CI covers them
+                                 # nightly)
 
 # GUI contract checks against the mocked backend (WebKitGTK by
 # default — the engine Tauri ships; needs selenium, the system

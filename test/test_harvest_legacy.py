@@ -60,6 +60,7 @@ def _has(module: str) -> bool:
 # that run with hashing skip instead of erroring (test_no_hash_flag rides
 # along; it only runs when the rest can)
 _HAS_BLAKE3 = _has("blake3")
+_HAS_PIL = _has("PIL")
 
 MWG_ELEMENT = """<x:xmpmeta><rdf:RDF><rdf:Description>
 <mwg-rs:Regions>
@@ -747,6 +748,7 @@ class ExifRotationTests(HarvestFixture):
             im.save(p, exif=exif)
         return p
 
+    @unittest.skipUnless(_HAS_PIL, "PIL not installed (pip install pillow) — #310")
     def test_exif_rotation_tag_mapping(self):
         self.assertEqual(hl.exif_rotation(self._jpeg("e1.jpg", 1)), 0)
         self.assertEqual(hl.exif_rotation(self._jpeg("e3.jpg", 3)), 180)
@@ -758,6 +760,7 @@ class ExifRotationTests(HarvestFixture):
         self.assertIsNone(hl.exif_rotation(self.pics / "dup.jpg"))
         self.assertIsNone(hl.exif_rotation(self.pics / "nope.jpg"))
 
+    @unittest.skipUnless(_HAS_PIL, "PIL not installed (pip install pillow) — #310")
     def test_sidecar_harvest_lands_rotation(self):
         p = self._jpeg("r.jpg", 6)
         (self.pics / "r.jpg.xmp").write_text(MWG_ELEMENT)
