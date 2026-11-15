@@ -4,7 +4,7 @@
 // issues: the text is selectable and wraps instead of clipping, a Copy
 // button puts the FULL message on the clipboard, and dismissal is an
 // explicit ✕ — clicking/selecting the text never dismisses it.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 async function copyText(text: string): Promise<boolean> {
   // secure contexts (tauri://) have the async clipboard API...
@@ -38,6 +38,11 @@ async function copyText(text: string): Promise<boolean> {
     piece of text the user may want to grab (error toasts, image paths). */
 export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [state, setState] = useState<"idle" | "ok" | "fail">("idle");
+  // #328: the "✓ copied" reset timer — cleared on re-click (a second
+  // click's ok state must not be clobbered by the first click's timer)
+  // and on unmount (toasts can be dismissed mid-window)
+  const timerRef = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timerRef.current), []);
   const title = state === "ok" ? "copied!" : state === "fail" ? "copy failed — select the text and copy manually" : "copy to clipboard";
   return (
     <button
@@ -46,8 +51,9 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
       title={title}
       onClick={() => {
         void copyText(text).then((ok) => {
+          window.clearTimeout(timerRef.current);
           setState(ok ? "ok" : "fail");
-          window.setTimeout(() => setState("idle"), 1500);
+          timerRef.current = window.setTimeout(() => setState("idle"), 1500);
         });
       }}
     >
