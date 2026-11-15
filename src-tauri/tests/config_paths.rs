@@ -10,8 +10,20 @@
 //! sequential #[test] under an RAII guard.
 
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 use whotapp_lib::db::{expand_env, installed_paths, repo_paths, user_config_dir, app_data_home, Paths, Settings};
+
+// the env is process-global shared state and cargo test runs these tests
+// in parallel threads — a setenv/getenv race (user_dir_chains flaked on
+// CI: the test's HOME write lost to a concurrent setter's read, run
+// 43697386310). The header's original "ONE sequential test" design was
+// diluted by later tests; one lock restores the serialisation.
+static ENV: Mutex<()> = Mutex::new(());
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    ENV.lock().unwrap_or_else(|p| p.into_inner())
+}
 
 /// A scoped env override: set on construction, restored on drop.
 struct EnvVar {
@@ -58,6 +70,7 @@ fn mkdirs(root: &std::path::Path, parts: &[&str]) -> PathBuf {
 /// references stay literal.
 #[test]
 fn env_object_expansion_302() {
+    let _env = env_lock();
     unsafe { std::env::set_var("WHOT_TEST_HOME_BASE_302", "/srv/whot") };
     let env = expand_env(
         [
@@ -87,6 +100,7 @@ fn env_object_expansion_302() {
 /// (FACES_DB / CONFIG_FILE from the .env, joined onto the root).
 #[test]
 fn repository_mode_unchanged() {
+    let _env = env_lock();
     let tmp = scratch("repo");
     let root = mkdirs(&tmp, &["repo"]);
     std::fs::write(root.join(".env"), "FACES_DB=custom/faces.db\n").unwrap();
@@ -109,6 +123,7 @@ fn repository_mode_unchanged() {
 /// `${HOME}`-absolute default resolves through the process env.
 #[test]
 fn installed_mode_first_use_copies_the_default() {
+    let _env = env_lock();
     let tmp = scratch("t1");
     let cfg = mkdirs(&tmp, &["cfg"]);
     let data = mkdirs(&tmp, &["data"]);
@@ -138,6 +153,7 @@ fn installed_mode_first_use_copies_the_default() {
 /// NOT re-made, and the env object is re-read from the user file.
 #[test]
 fn installed_mode_user_edit_wins() {
+    let _env = env_lock();
     let tmp = scratch("t3");
     let cfg = mkdirs(&tmp, &["cfg"]);
     let data = mkdirs(&tmp, &["data"]);
@@ -159,6 +175,7 @@ fn installed_mode_user_edit_wins() {
 /// binary-embedded default is used (the copy always succeeds).
 #[test]
 fn installed_mode_embedded_default() {
+    let _env = env_lock();
     let tmp = scratch("t2");
     let cfg = mkdirs(&tmp, &["cfg"]);
     let data = mkdirs(&tmp, &["data"]);
@@ -180,6 +197,7 @@ fn installed_mode_embedded_default() {
 /// (a GUI settings save never clobbers it, backend-design §2).
 #[test]
 fn settings_round_trip_preserves_env() {
+    let _env = env_lock();
     let tmp = scratch("t4");
     let cfg = mkdirs(&tmp, &["cfg"]);
     std::fs::write(
@@ -207,6 +225,7 @@ fn settings_round_trip_preserves_env() {
 /// platform default. One sequential #[test] — process-global env.
 #[test]
 fn user_dir_chains() {
+    let _env = env_lock();
     let tmp = scratch("t5");
     // overrides first
     let _g1 = EnvVar::set("WHOT_CONFIG_DIR", tmp.join("c").to_str().unwrap());

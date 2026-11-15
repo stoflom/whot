@@ -2,7 +2,19 @@
 //! building, `scan_import_dir` over a temp tree, and a real child-process
 //! lifecycle against a stub script.
 
+use std::sync::{Mutex, MutexGuard};
+
 use whotapp_lib::importer::{build_args, scan_import_dir, ImportOptions, ImportRunner};
+
+// the env is process-global shared state and cargo test runs these tests
+// in parallel threads; the runner-lifecycle tests set WHOT_IMPORT_PYTHON
+// and must not race each other's setenv/getenv (the config_paths.rs
+// user_dir_chains flake, run 43697386310)
+static ENV: Mutex<()> = Mutex::new(());
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    ENV.lock().unwrap_or_else(|p| p.into_inner())
+}
 
 fn opts(
     dry_run: bool,
@@ -123,6 +135,7 @@ fn scan_import_dir_finds_images_at_any_depth() {
 /// /bin/sh so no python is needed.
 #[test]
 fn runner_lifecycle_start_status_stop() {
+    let _env = env_lock();
     let root = std::env::temp_dir().join(format!("whot-runner-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("scripts")).unwrap();
@@ -131,7 +144,7 @@ fn runner_lifecycle_start_status_stop() {
         "#!/bin/sh\necho line-one\necho line-two >&2\nsleep 30\n",
     )
     .unwrap();
-    // SAFETY: single-threaded test setup before the runner spawns
+    // SAFETY: the env tests are serialised by env_lock() above
     unsafe { std::env::set_var("WHOT_IMPORT_PYTHON", "/bin/sh") };
 
     let runner = ImportRunner::new();
@@ -171,6 +184,7 @@ fn runner_lifecycle_start_status_stop() {
 /// its exit code (gui-design §4.36: `exit n` in the pane)
 #[test]
 fn runner_exit_code_reaped_on_poll() {
+    let _env = env_lock();
     let root = std::env::temp_dir().join(format!("whot-exit-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("scripts")).unwrap();
@@ -179,7 +193,7 @@ fn runner_exit_code_reaped_on_poll() {
         "#!/bin/sh\necho done\nexit 3\n",
     )
     .unwrap();
-    // SAFETY: single-threaded test setup before the runner spawns
+    // SAFETY: the env tests are serialised by env_lock() above
     unsafe { std::env::set_var("WHOT_IMPORT_PYTHON", "/bin/sh") };
 
     let runner = ImportRunner::new();
