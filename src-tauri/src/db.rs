@@ -1311,13 +1311,26 @@ fn refresh_person_names(con: &Connection, person_id: i64) -> Result<()> {
 /// otherwise linger until the next full refresh).
 fn sweep_stale_shells(con: &Connection) -> Result<Vec<i64>> {
     let ids: Vec<i64> = {
+        // #319: the GLOBs are pre-filters — Rejected candidates must
+        // pass the CANONICAL matcher, so a non-family name that merely
+        // starts with `Rejected<digit>` (a non-digit tail, an
+        // out-of-i64-range number) stays an ordinary named person and
+        // is never swept.
         let mut st = con.prepare(
-            "SELECT id FROM persons
+            "SELECT id, name FROM persons
               WHERE (name GLOB 'Unknown*' OR name GLOB 'Rejected[0-9]*')
                 AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.person_id = persons.id)",
         )?;
-        st.query_map([], |r| r.get::<_, i64>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?
+        let rows: Vec<(i64, String)> = st
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .filter(|(_, name)| {
+                let lower = name.to_ascii_lowercase();
+                !lower.starts_with("rejected") || is_rejected_cluster_name(name)
+            })
+            .map(|(id, _)| id)
+            .collect()
     };
     if !ids.is_empty() {
         // dependent rows (groups/refcrops) cascade with the FK — the
@@ -1617,14 +1630,24 @@ fn reseat(con: &Connection, person_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// #266 — the `RejectedN` cluster-person name family: `Rejected` +
-/// digits (case-insensitive, like the `Unknown*` rule). The exact name
-/// `Rejected` (no number) is the legacy system person, handled
-/// separately.
+/// #266/#319 — the CANONICAL `RejectedN` cluster-person matcher:
+/// `Rejected` + all digits (case-insensitive, like the `Unknown*`
+/// rule), with the number in i64 range. Every use of the family goes
+/// through this function — `validate_person_name` (reserved),
+/// `sweep_stale_shells` (family shells only) and
+/// `resolve_rejected_clusters` (bin candidates) — so a name that the
+/// SQL `GLOB 'Rejected[0-9]*'` pre-filter matches but this does not
+/// (a non-digit tail, an out-of-i64-range number) is an ordinary
+/// NAMED person everywhere: never reserved, never swept, never a
+/// reject bin. (The u32 parse that preceded #319 let
+/// `Rejected4294967296` through validation while the sweep GLOB still
+/// matched it — a zero-face shell would be silently deleted.) The
+/// exact name `Rejected` (no number) is the legacy system person,
+/// handled separately.
 fn is_rejected_cluster_name(name: &str) -> bool {
     name.to_ascii_lowercase()
         .strip_prefix("rejected")
-        .and_then(|rest| rest.parse::<u32>().ok())
+        .and_then(|rest| rest.parse::<i64>().ok())
         .is_some()
 }
 
@@ -1680,16 +1703,28 @@ fn resolve_rejected_clusters(
     // every existing bin with all of its face vectors, one pass
     let mut bins: BTreeMap<i64, Vec<Vec<f32>>> = BTreeMap::new();
     {
+        // #319: the GLOB is a pre-filter — the person name must pass
+        // the CANONICAL matcher, so a non-family `Rejected<digit>…`
+        // shell (non-digit tail / out-of-i64-range) is never a bin.
         let mut st = tx.prepare(
-            "SELECT f.person_id, e.vector FROM face_embeddings e
+            "SELECT f.person_id, p.name, e.vector FROM face_embeddings e
               JOIN faces f ON f.id = e.face_id
-              WHERE e.model = ? AND f.person_id IN
-                  (SELECT id FROM persons WHERE name GLOB 'Rejected[0-9]*')",
+              JOIN persons p ON p.id = f.person_id
+              WHERE e.model = ? AND p.name GLOB 'Rejected[0-9]*'",
         )?;
-        let rows: Vec<(i64, Vec<u8>)> = st
-            .query_map(params![MODEL_TAG], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?
+        let rows: Vec<(i64, String, Vec<u8>)> = st
+            .query_map(params![MODEL_TAG], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                ))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        for (pid, blob) in rows {
+        for (pid, name, blob) in rows {
+            if !is_rejected_cluster_name(&name) {
+                continue;
+            }
             if blob.len() % 4 != 0 {
                 // #45: a corrupt blob cannot match — treat it as no
                 // vector, never a panic

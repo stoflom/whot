@@ -570,6 +570,53 @@ fn writers_sweep_stale_unknown_shells_208() {
     std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
 }
 
+/// #319 — ONE canonical `RejectedN` matcher across validation, sweep
+/// and reject-bin resolution: `Rejected<digits>` in i64 range is
+/// family (an empty shell sweeps — even past u32::MAX, which the old
+/// u32-based validator let users create and the sweep GLOB then
+/// silently deleted); a non-digit tail or an out-of-i64-range number
+/// is an ordinary named person (creatable, never swept).
+#[test]
+fn sweep_uses_the_canonical_rejected_matcher_319() {
+    let p = fixture_paths("sweep319");
+    {
+        let con = rusqlite::Connection::open(&p.db).unwrap();
+        for (id, name) in [
+            (90, "Rejected90"),
+            (91, "Rejected4294967296"),
+            (92, "Rejected123abc"),
+            (93, "Rejected9223372036854775808"),
+        ] {
+            con.execute(
+                "INSERT INTO persons(id, name, state, created_at) VALUES (?, ?, 'created', ?)",
+                params![id, name, NOW],
+            )
+            .unwrap();
+        }
+    }
+    // the next writer sweeps (§4.27)
+    db::set_link_status(&p, &[1], "confirmed").unwrap();
+    let s = db::snapshot(&p).unwrap();
+    let names: Vec<&str> = s.persons.iter().map(|x| x.name.as_str()).collect();
+    assert!(
+        !names.contains(&"Rejected90"),
+        "an empty family shell sweeps: {names:?}"
+    );
+    assert!(
+        !names.contains(&"Rejected4294967296"),
+        "past u32::MAX is still family — i64 bounds (#319): {names:?}"
+    );
+    assert!(
+        names.contains(&"Rejected123abc"),
+        "a non-digit tail is an ordinary named person, never swept: {names:?}"
+    );
+    assert!(
+        names.contains(&"Rejected9223372036854775808"),
+        "an out-of-i64-range number is an ordinary named person, never swept: {names:?}"
+    );
+    std::fs::remove_dir_all(p.db.parent().unwrap()).ok();
+}
+
 /// #210/#212 — refcrop rows are metadata: the filename derives at read
 /// from the face (`faces.name + "-" + seq + ".jpg"`) and the crop pixels
 /// load through the binary image pipeline (the rows carry no image);
@@ -1046,9 +1093,26 @@ fn status_seats_and_system_person_guards_165() {
     // reserved person names (target side of every name-writing path)
     assert!(db::assign_person(&p, &[1, 2], "Rejected", "").is_err());
     assert!(db::set_person_name(&p, 1, "Rejected").is_err());
-    assert!(db::set_person_name(&p, 1, "rejected").is_err(), "case-insensitive (#165)");
-    assert!(db::set_person_name(&p, 1, "Rejected1").is_err(), "the family is reserved (#266)");
-    assert!(db::assign_person(&p, &[1, 2], "Rejected7", "").is_err(), "the family is reserved (#266)");
+    assert!(
+        db::set_person_name(&p, 1, "rejected").is_err(),
+        "case-insensitive (#165)"
+    );
+    assert!(
+        db::set_person_name(&p, 1, "Rejected1").is_err(),
+        "the family is reserved (#266)"
+    );
+    assert!(
+        db::assign_person(&p, &[1, 2], "Rejected7", "").is_err(),
+        "the family is reserved (#266)"
+    );
+    assert!(
+        db::set_person_name(&p, 1, "Rejected4294967296").is_err(),
+        "the family is reserved past u32::MAX — i64 bounds (#319)"
+    );
+    // the non-family names that the old GLOB alone would have matched
+    // are ordinary persons — creatable (validation must not reserve them)
+    db::set_person_name(&p, 1, "Rejected123abc")
+        .expect("a non-digit tail is not family (#319)");
 
     // reject re-homes onto a RejectedN cluster person, created on demand
     db::set_link_status(&p, &[1], "rejected").unwrap();
