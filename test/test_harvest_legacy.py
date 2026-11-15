@@ -14,6 +14,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import importlib.util
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -44,6 +45,21 @@ def setUpModule() -> None:
 
 def tearDownModule() -> None:
     dbutil.load_env = _ORIG_LOAD_ENV
+
+
+def _has(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+# the same self-skip pattern as test_import_roll's decoder class (#310):
+# harvest hashes images by default (H3) and the script hard-errors with a
+# clear message when blake3 is absent — the five HarvestFixture classes
+# that run with hashing skip instead of erroring (test_no_hash_flag rides
+# along; it only runs when the rest can)
+_HAS_BLAKE3 = _has("blake3")
 
 MWG_ELEMENT = """<x:xmpmeta><rdf:RDF><rdf:Description>
 <mwg-rs:Regions>
@@ -365,6 +381,7 @@ class StagingLifecycleTests(unittest.TestCase):
 
 # -------------------------------------------------------- end-to-end run
 
+@unittest.skipUnless(_HAS_BLAKE3, "blake3 not installed (pip install blake3) — #310")
 class EndToEndTests(HarvestFixture):
     def test_stats_and_provenance(self):
         stats = self.run_harvest()
@@ -515,6 +532,7 @@ class EndToEndTests(HarvestFixture):
 
 # ------------------------------------------ path map & coverage (#83/#85)
 
+@unittest.skipUnless(_HAS_BLAKE3, "blake3 not installed (pip install blake3) — #310")
 class PathMapHarvestTests(HarvestFixture):
     """§8.6: the path-map file feeds LR roots and the index (#85)."""
 
@@ -558,6 +576,7 @@ class PathMapHarvestTests(HarvestFixture):
             pathmap.parse_path_map("just some text")
 
 
+@unittest.skipUnless(_HAS_BLAKE3, "blake3 not installed (pip install blake3) — #310")
 class CoverageWarningTests(HarvestFixture):
     """§8.6 (#83): >20% unusable => prominent stderr warning, never
     -q-suppressed, naming the unmapped roots (#85)."""
@@ -605,6 +624,7 @@ class CoverageWarningTests(HarvestFixture):
         self.assertNotIn("WARNING:", err)
 
 
+@unittest.skipUnless(_HAS_BLAKE3, "blake3 not installed (pip install blake3) — #310")
 class ResumeTests(HarvestFixture):
     """--resume rerun over an existing staging DB (§8.7, #104): recorded
     hashes are reused, already-hashed full paths are never read again,
@@ -711,6 +731,7 @@ class ResumeTests(HarvestFixture):
             hl.create_staging(self.out)
 
 
+@unittest.skipUnless(_HAS_BLAKE3, "blake3 not installed (pip install blake3) — #310")
 class ExifRotationTests(HarvestFixture):
     """#118 (v5.2): the harvested EXIF display rotation (H3 gate)."""
 
