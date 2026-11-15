@@ -179,22 +179,31 @@ impl ImportState {
 
     fn status(&mut self, shared: &Arc<Mutex<Vec<String>>>, since: usize) -> ImportStatus {
         // absorb whatever the reader threads have produced
-        if let Ok(mut buf) = shared.lock() {
-            for line in buf.drain(..) {
-                self.push_line(line);
-            }
+        // (#323: a poisoned buffer lock must not drop the import log —
+        // recover it; the log is the user's only visibility)
+        let mut buf = recover(shared.lock());
+        for line in buf.drain(..) {
+            self.push_line(line);
         }
         // reap a finished child
-        if let Some(child) = self.child.as_mut() {
+        if let Some(mut child) = self.child.take() {
             match child.try_wait() {
-                Ok(None) => {}
-                Ok(Some(status)) => {
-                    self.exit_code = status.code();
-                    self.child = None;
-                }
-                Err(_) => {
-                    self.exit_code = None;
-                    self.child = None;
+                Ok(None) => self.child = Some(child),
+                Ok(Some(status)) => self.exit_code = status.code(),
+                // #323: a try_wait ERROR means the child's state could
+                // not be read — it may still be ALIVE. Dropping it here
+                // would report running:false for a live import and the
+                // next start would double-launch a second importer on
+                // the same DB. Treat it like a stop: kill + wait, set
+                // the killed flag, and leave a line the user can see.
+                Err(e) => {
+                    eprintln!("[importer] try_wait failed ({e}) — killing the import");
+                    let _ = child.kill();
+                    self.exit_code = child.wait().ok().and_then(|s| s.code());
+                    self.killed = true;
+                    self.push_line(format!(
+                        "[whot] the import was stopped: the process state could not be read ({e})"
+                    ));
                 }
             }
         }
@@ -217,6 +226,20 @@ pub struct ImportRunner {
     shared: Arc<Mutex<Vec<String>>>,
 }
 
+/// #323 — a poisoned runner lock (a PANIC while some other thread held
+/// it) must not drop the import's state or its log: the guarded data
+/// is still valid — recover it via into_inner and log a diagnostic
+/// (the same policy as the db.rs lock helpers, #318).
+fn recover<T>(guard: std::sync::LockResult<T>) -> T {
+    match guard {
+        Ok(g) => g,
+        Err(poisoned) => {
+            eprintln!("[importer] runner lock poisoned (a previous call panicked) — recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 impl ImportRunner {
     pub fn new() -> Self {
         ImportRunner {
@@ -228,7 +251,7 @@ impl ImportRunner {
     /// reader threads; the pane polls `status(0)` from a fresh cursor
     pub fn start(&self, root: &Path, opts: &ImportOptions) -> Result<ImportStatus, String> {
         let args = build_args(opts)?;
-        let mut st = self.state.lock().map_err(|e| e.to_string())?;
+        let mut st = recover(self.state.lock());
         // reap a finished child so a new run is allowed; refuse a live one
         if let Some(child) = st.child.as_mut() {
             match child.try_wait() {
@@ -237,6 +260,8 @@ impl ImportRunner {
                     st.exit_code = status.code();
                     st.child = None;
                 }
+                // #323: a live child whose state we cannot read is
+                // treated as live (refuse) — never as gone
                 Err(e) => return Err(format!("cannot inspect the running import: {e}")),
             }
         }
@@ -261,9 +286,8 @@ impl ImportRunner {
         let stderr = child.stderr.take().expect("stderr piped");
 
         // fresh run: the buffer is the readers' — cleared before they start
-        if let Ok(mut buf) = self.shared.lock() {
-            buf.clear();
-        }
+        // (#323: recover, never drop, a poisoned buffer lock)
+        recover(self.shared.lock()).clear();
         st.lines.clear();
         st.killed = false;
         st.exit_code = None;
@@ -279,24 +303,17 @@ impl ImportRunner {
     }
 
     /// append the readers' new lines, reap if the child has exited, and
-    /// return the slice `[since..]` (the pane's poll, 300 ms)
+    /// return the slice `[since..]` (the pane's poll, 300 ms).
+    /// #323: a poisoned state lock recovers (never a fake
+    /// running:false — that would let a live import be double-started).
     pub fn status(&self, since: usize) -> ImportStatus {
-        match self.state.lock() {
-            Ok(mut st) => st.status(&self.shared, since),
-            Err(_) => ImportStatus {
-                running: false,
-                killed: false,
-                exit_code: None,
-                elapsed: None,
-                next_since: since,
-                lines: Vec::new(),
-            },
-        }
+        let mut st = recover(self.state.lock());
+        st.status(&self.shared, since)
     }
 
     /// kill the child, if any; reports whether one was killed
     pub fn stop(&self) -> Result<bool, String> {
-        let mut st = self.state.lock().map_err(|e| e.to_string())?;
+        let mut st = recover(self.state.lock());
         let Some(mut child) = st.child.take() else {
             return Ok(false);
         };
@@ -320,16 +337,88 @@ impl Default for ImportRunner {
 fn drain<R: std::io::Read>(pipe: R, lines: &Arc<Mutex<Vec<String>>>) {
     for line in BufReader::new(pipe).lines() {
         match line {
+            // #323: a poisoned buffer lock must not eat the import log
             Ok(l) => {
-                if let Ok(mut buf) = lines.lock() {
-                    buf.push(l);
-                    if buf.len() > MAX_LINES {
-                        let drop = buf.len() - MAX_LINES;
-                        buf.drain(0..drop);
-                    }
+                let mut buf = recover(lines.lock());
+                buf.push(l);
+                if buf.len() > MAX_LINES {
+                    let drop = buf.len() - MAX_LINES;
+                    buf.drain(0..drop);
                 }
             }
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // #323 — a poisoned runner lock (a PANIC while another thread held
+    // it) must not drop the import's state or its log: the guarded
+    // data is still valid — the helpers recover via into_inner.
+    use super::{ImportRunner, drain};
+    use std::sync::Arc;
+
+    /// poison `m` from a thread that panics while holding it
+    macro_rules! poison {
+        ($m:expr) => {{
+            let t = std::thread::spawn(move || {
+                let _g = $m.lock().unwrap();
+                panic!("poison the lock");
+            });
+            assert!(t.join().is_err(), "the holder panicked, as intended");
+        }};
+    }
+
+    #[test]
+    fn poisoned_state_lock_still_reports_live_child() {
+        let runner = Arc::new(ImportRunner::new());
+        {
+            let child = std::process::Command::new("sleep")
+                .arg("30")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let mut st = runner.state.lock().unwrap();
+            st.child = Some(child);
+            st.started = Some(std::time::Instant::now());
+        }
+        let r2 = Arc::clone(&runner);
+        poison!(&r2.state);
+        // before #323 the poisoned state lock returned a FAKE
+        // running:false for a live import — the double-start risk
+        let st = runner.status(0);
+        assert!(
+            st.running,
+            "a live child reports running despite the poisoned lock"
+        );
+        // stop() recovers the same lock and kills the child
+        assert!(runner.stop().unwrap(), "stop reaps the live child");
+        assert!(!runner.status(0).running, "the child is gone after stop");
+    }
+
+    #[test]
+    fn poisoned_shared_buffer_does_not_drop_lines() {
+        let runner = Arc::new(ImportRunner::new());
+        runner.shared.lock().unwrap().push("line-1".into());
+        let r2 = Arc::clone(&runner);
+        poison!(&r2.shared);
+        // the status poll must recover the buffer and report the line
+        let st = runner.status(0);
+        assert_eq!(st.lines, vec!["line-1".to_string()]);
+        // and the drain path (the reader threads) still lands pushes
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("echo line-2")
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pipe = child.stdout.take().unwrap();
+        drain(pipe, &runner.shared);
+        child.wait().unwrap();
+        let st = runner.status(st.next_since);
+        assert_eq!(st.lines, vec!["line-2".to_string()]);
     }
 }
