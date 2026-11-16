@@ -16,6 +16,24 @@ export interface DirNode {
   images: ImageRow[];
 }
 
+/** #333 — the ONE parent-directory parse: everything before the last
+    "/", or "" when the path has no directory part (a bare filename —
+    the export naming's BLOB-only case). The Rolls-tree callers want
+    the branch form (dirBranch). */
+export function pathParent(p: string): string {
+  const i = p.lastIndexOf("/");
+  return i > 0 ? p.slice(0, i) : "";
+}
+
+/** #333 — the branch form of pathParent: a path with no directory part
+    lives at the tree's root branch "/" (#174). Shared by the right-pane
+    branch thumbs (branchThumbs), branch navigation (openRollBranch)
+    and the tree's Left-climb (RollsPane). */
+export function dirBranch(p: string): string {
+  const d = pathParent(p);
+  return d === "" ? "/" : d;
+}
+
 /** raw counters over a set of images */
 export interface Totals {
   img: number;

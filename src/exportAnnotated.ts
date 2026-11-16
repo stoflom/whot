@@ -14,6 +14,7 @@
 import { imagePreview } from "./api";
 import type { Face, ImageRow } from "./api";
 import { displayDims, rotatedRect } from "./rotation";
+import { pathParent } from "./rollsTree";
 
 export type ExportFormat = "png" | "jpeg" | "webp";
 
@@ -81,10 +82,10 @@ export function defaultExportName(image: ImageRow, format: ExportFormat): string
   return `${stem}-annotated.${FORMAT_EXT[format]}`;
 }
 
-/** the directory part of `primary_path` ("" when none / BLOB-only) */
+/** the directory part of `primary_path` ("" when none / BLOB-only) —
+    #333: the shared parse (rollsTree.ts pathParent) */
 export function originalDir(image: ImageRow): string {
-  const i = image.primary_path.lastIndexOf("/");
-  return i > 0 ? image.primary_path.slice(0, i) : "";
+  return pathParent(image.primary_path);
 }
 
 interface RectSpec {

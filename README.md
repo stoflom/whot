@@ -482,6 +482,7 @@ whot/
     paneState.ts  clickPair.ts  appKeys.ts  descTags.ts  verdictFlip.ts # §4.44 pure + verdict rules
     useFaceDrag.ts  useSelectionState.ts  useSnapshotSync.ts  useMergeFlow.ts  reviewVerdicts.ts  # §4.44 hooks
     gridMount.ts  personSig.ts  treeIndex.ts  rollsTree.ts  scrollPlace.ts  # view/grid logic
+    treeKeys.ts                                                   # the APG tree-key handler (#333)
     groupList.ts  imageSelect.ts  nameCluster.ts  personNames.ts  autoText.ts  # helpers
     imageBatch.ts  lruCache.ts  importPoll.ts  prefetch.ts  rotation.ts  hooks.ts  # helpers
     overlays.tsx                   # one overlay registry (Esc/keys)
