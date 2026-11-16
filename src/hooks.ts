@@ -27,7 +27,6 @@ function useCached(loader: (id: number) => Promise<string | null>, id: number | 
 
 export const useFaceImage = (id: number | null) => useCached(facePreview, id);
 export const useImageThumbImg = (id: number) => useCached(imageThumb, id);
-export const useImagePreviewImg = (id: number) => useCached(imagePreview, id);
 
 // #122 — display rotation is server state (faces.rotation /
 // images.rotation, 0/90/180/270 CW). The renderer applies it by rotating

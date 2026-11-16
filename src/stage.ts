@@ -27,13 +27,6 @@ export interface Prefill {
   mixed?: ("name" | "group" | "desc" | "note")[];
 }
 
-export function scopeFaceIds(
-  scope: StageScope,
-  sets: { card: number[]; group: number[]; selection: number[] },
-): number[] {
-  return scope === "card" ? sets.card : scope === "group" ? sets.group : sets.selection;
-}
-
 /** #77 routing kept: an empty/untouched name means unchanged; group and
     description may be deliberately cleared (empty string). No field
     touched ⇒ nothing to stage (null). */
@@ -193,23 +186,6 @@ export function indexStagedSet(set: Stage[]): Map<number, StagedEntry> {
     }
   });
   return idx;
-}
-
-/** #224: one face's staged fields — an O(1) map read (the identical
-    merge the per-op scan produced, later ops win). The internal
-    winning-op positions stay in the entry; this returns the plain
-    fields. */
-export function stagedFieldsForIndex(
-  idx: Map<number, StagedEntry>,
-  faceId: number,
-): StagedFields {
-  const e = idx.get(faceId);
-  if (!e) return {};
-  const out: StagedFields = {};
-  if (e.name !== undefined) out.name = e.name;
-  if (e.group !== undefined) out.group = e.group;
-  if (e.desc !== undefined) out.desc = e.desc;
-  return out;
 }
 
 /** #224: the section-level merge over the index — equivalent to
