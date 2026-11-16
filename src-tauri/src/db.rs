@@ -32,6 +32,10 @@ pub const EMBEDDED_DEFAULT_CONFIG: &str = include_str!(concat!(
 
 // ---------------------------------------------------------------- paths
 
+/// #343: Clone — the `#[tauri::command]` bodies move onto the async
+/// runtime's blocking pool (`run_blocking`, lib.rs), and a spawned
+/// closure needs an owned copy of the resolved paths.
+#[derive(Clone)]
 pub struct Paths {
     /// the resolved project root (#167: the importer locates its script
     /// and sets the child process's cwd there)

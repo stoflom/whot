@@ -10,6 +10,12 @@
 //! mutex (#207). The honest-possible sync exceptions (runner mutex,
 //! config file only) are guarded by the
 //! `commands_run_off_the_main_thread_218` workflow test.
+//!
+//! #343 — an `async fn` body runs on the async runtime's WORKER
+//! threads, where blocking work starves the other tasks; the bodies
+//! therefore run on the runtime's dedicated BLOCKING pool
+//! (`run_blocking`, below) instead. The DB surface keeps its
+//! serialisation (`db::POOL`) — the one-operator UI is serial anyway.
 
 pub mod db;
 pub mod importer;
@@ -31,9 +37,39 @@ impl AppState {
     }
 }
 
+/// #343 — the async commands' bodies are BLOCKING work (rusqlite calls
+/// behind the `db::POOL` mutex, blob copies, fs walks and writes), and
+/// #218 deliberately keeps them off the UI main thread by declaring the
+/// commands `async fn` — but an `async fn` body runs on the async
+/// runtime's WORKER threads, so a `get_image_batch` (up to a 32 MiB
+/// copy) or a snapshot stalled every other command AND tied up a worker
+/// for its duration. The body now runs on the runtime's dedicated
+/// BLOCKING pool instead: the workers stay free, the #218 pin (every
+/// command `async fn`) keeps its shape, and the DB layer's own
+/// serialisation (`db::POOL`) is unchanged — the one-operator UI is
+/// serial anyway, so head-of-line blocking behind the pool lock is not
+/// a real bottleneck (that is why the bounded-connection-pool
+/// alternative stays undone; see backend-design §lib.rs).
+///
+/// A panicked body (a DB-code bug) is an Err here, not a bricked worker
+/// — the same degradation the #318 lock-poison recovery already gives
+/// the pool lock.
+async fn run_blocking<T, F>(body: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    match tauri::async_runtime::spawn_blocking(body).await {
+        Ok(r) => r,
+        Err(e) => Err(format!("command task failed: {e}")),
+    }
+}
+
 #[tauri::command]
 async fn get_snapshot(state: State<'_, AppState>) -> Result<db::Snapshot, String> {
-    db::snapshot(state.paths()?).map_err(|e| e.to_string())
+    // #343: the body runs on the blocking pool (run_blocking, and below)
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::snapshot(&paths).map_err(|e| e.to_string())).await
 }
 
 /// #208 — the cheap change stamp for the GUI's focus/visibility reload
@@ -44,7 +80,8 @@ async fn get_snapshot(state: State<'_, AppState>) -> Result<db::Snapshot, String
 /// importer holds the write lock.
 #[tauri::command]
 async fn get_data_version(state: State<'_, AppState>) -> Result<i64, String> {
-    db::data_version(state.paths()?).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::data_version(&paths).map_err(|e| e.to_string())).await
 }
 
 /// #212 — raw image bytes, no base64: ONE binary response per batch
@@ -58,13 +95,20 @@ async fn get_image_batch(
     kind: String,
     ids: Vec<i64>,
 ) -> Result<tauri::ipc::Response, String> {
-    let bytes = db::image_batch_bytes(state.paths()?, &kind, &ids).map_err(|e| e.to_string())?;
-    Ok(tauri::ipc::Response::new(bytes))
+    // #343: the framing copy (up to ~32 MiB) runs on the blocking pool
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::image_batch_bytes(&paths, &kind, &ids)
+            .map_err(|e| e.to_string())
+            .map(tauri::ipc::Response::new)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn get_refcrops(state: State<'_, AppState>, person_id: i64) -> Result<Vec<db::Refcrop>, String> {
-    db::get_refcrops(state.paths()?, person_id).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::get_refcrops(&paths, person_id).map_err(|e| e.to_string())).await
 }
 
 /// #298 (gui-design v16.0, rule 51) — the annotated-image export:
@@ -123,9 +167,13 @@ fn check_export_target(path: &str, p: &std::path::Path, len: usize) -> Result<()
 
 #[tauri::command]
 async fn save_image_file(path: String, data: Vec<u8>) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
-    check_export_target(&path, p, data.len())?;
-    std::fs::write(p, &data).map_err(|e| format!("cannot write {path}: {e}"))
+    // #343: the (up to 64 MiB) write runs on the blocking pool
+    run_blocking(move || {
+        let p = std::path::Path::new(&path);
+        check_export_target(&path, p, data.len())?;
+        std::fs::write(p, &data).map_err(|e| format!("cannot write {path}: {e}"))
+    })
+    .await
 }
 
 /// #300 (gui-design v17.0, rule 51) — the annotated export's *open
@@ -142,22 +190,27 @@ async fn save_image_file(path: String, data: Vec<u8>) -> Result<(), String> {
 /// hand arbitrary files to the viewer through this command.
 #[tauri::command]
 async fn open_image_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
-    let ext = p
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
-        .unwrap_or_default();
-    if !importer::IMAGE_SUFFIXES.contains(&ext.as_str()) {
-        return Err(format!("not an image file: {path}"));
-    }
-    if !p.is_file() {
-        return Err(format!("file no longer exists: {path}"));
-    }
-    let settings = db::get_settings(state.paths()?).map_err(|e| e.to_string())?;
-    open_with(&settings.image_viewer, &path)?;
-    // diagnostic line in the spirit of #144 (which path was opened)
-    eprintln!("[open_image_file] opened {path}");
-    Ok(())
+    let paths = state.paths()?.clone();
+    // #343: the settings read + viewer launch run on the blocking pool
+    run_blocking(move || {
+        let p = std::path::Path::new(&path);
+        let ext = p
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+            .unwrap_or_default();
+        if !importer::IMAGE_SUFFIXES.contains(&ext.as_str()) {
+            return Err(format!("not an image file: {path}"));
+        }
+        if !p.is_file() {
+            return Err(format!("file no longer exists: {path}"));
+        }
+        let settings = db::get_settings(&paths).map_err(|e| e.to_string())?;
+        open_with(&settings.image_viewer, &path)?;
+        // diagnostic line in the spirit of #144 (which path was opened)
+        eprintln!("[open_image_file] opened {path}");
+        Ok(())
+    })
+    .await
 }
 
 /// Full-image context menu (#33): open the image with the system
@@ -173,37 +226,51 @@ async fn open_image_file(state: State<'_, AppState>, path: String) -> Result<(),
 /// branch) becomes the frontend's quiet info toast.
 #[tauri::command]
 async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String, String> {
-    let paths = state.paths()?;
-    let settings = db::get_settings(paths).map_err(|e| e.to_string())?;
-    if let db::OpenImageTarget::Original(p) =
-        db::resolve_open_image_target(paths, image_id).map_err(|e| e.to_string())?
-    {
-        open_with(&settings.image_viewer, &p)?;
-        // diagnostic line in the spirit of #144 (which path was opened)
-        eprintln!("[open_image] image {image_id}: opened original {p}");
-        return Ok(String::new());
-    }
-    let bytes = db::image_preview_bytes(paths, image_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("image {image_id} has no preview"))?;
-    // #144: the name used to be a fixed `whot-image-{image_id}.jpg` —
-    // predictable (path pre-squatting by another local user) and shared by
-    // every open, so a slow viewer still reading the file raced the next
-    // overwrite. Unique per open (pid + unix nanos); the viewer holding
-    // the old path is never disturbed by a later open.
-    let ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    // extension follows the pixel magic; JPEG is the only format the
-    // importer/GUI ever write, PNG is recognised defensively
-    let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) { "png" } else { "jpg" };
-    let path = std::env::temp_dir().join(format!("whot-image-{image_id}-{}-{ns}.{ext}", std::process::id()));
-    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    open_with(&settings.image_viewer, path.to_string_lossy().as_ref())?;
-    // #268/#285: no recorded location at all (BLOB-only) — quiet info
-    // toast (a recorded-but-missing path already rejected above, #285)
-    Ok(format!("image has no recorded location — opened a temporary copy ({image_id})"))
+    let paths = state.paths()?.clone();
+    // #343: the DB reads, the temp write and the viewer launch run on
+    // the blocking pool
+    run_blocking(move || {
+        let settings = db::get_settings(&paths).map_err(|e| e.to_string())?;
+        if let db::OpenImageTarget::Original(p) =
+            db::resolve_open_image_target(&paths, image_id).map_err(|e| e.to_string())?
+        {
+            open_with(&settings.image_viewer, &p)?;
+            // diagnostic line in the spirit of #144 (which path was opened)
+            eprintln!("[open_image] image {image_id}: opened original {p}");
+            return Ok(String::new());
+        }
+        let bytes = db::image_preview_bytes(&paths, image_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("image {image_id} has no preview"))?;
+        // #144: the name used to be a fixed `whot-image-{image_id}.jpg` —
+        // predictable (path pre-squatting by another local user) and shared by
+        // every open, so a slow viewer still reading the file raced the next
+        // overwrite. Unique per open (pid + unix nanos); the viewer holding
+        // the old path is never disturbed by a later open.
+        let ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        // extension follows the pixel magic; JPEG is the only format the
+        // importer/GUI ever write, PNG is recognised defensively
+        let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+            "png"
+        } else {
+            "jpg"
+        };
+        let path = std::env::temp_dir().join(format!(
+            "whot-image-{image_id}-{}-{ns}.{ext}",
+            std::process::id()
+        ));
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        open_with(&settings.image_viewer, path.to_string_lossy().as_ref())?;
+        // #268/#285: no recorded location at all (BLOB-only) — quiet info
+        // toast (a recorded-but-missing path already rejected above, #285)
+        Ok(format!(
+            "image has no recorded location — opened a temporary copy ({image_id})"
+        ))
+    })
+    .await
 }
 
 /// v12.5 (#284) — 'Open roll path' on a Rolls tree branch (gui-design
@@ -215,14 +282,19 @@ async fn open_image(state: State<'_, AppState>, image_id: i64) -> Result<String,
 /// toast names the path.
 #[tauri::command]
 async fn open_dir(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    if !std::path::Path::new(&path).is_dir() {
-        return Err(format!("directory no longer exists: {path}"));
-    }
-    let settings = db::get_settings(state.paths()?).map_err(|e| e.to_string())?;
-    open_with(&settings.directory_viewer, &path)?;
-    // diagnostic line in the spirit of #144 (which path was opened)
-    eprintln!("[open_dir] opened {path}");
-    Ok(())
+    let paths = state.paths()?.clone();
+    // #343: the settings read + viewer launch run on the blocking pool
+    run_blocking(move || {
+        if !std::path::Path::new(&path).is_dir() {
+            return Err(format!("directory no longer exists: {path}"));
+        }
+        let settings = db::get_settings(&paths).map_err(|e| e.to_string())?;
+        open_with(&settings.directory_viewer, &path)?;
+        // diagnostic line in the spirit of #144 (which path was opened)
+        eprintln!("[open_dir] opened {path}");
+        Ok(())
+    })
+    .await
 }
 
 /// #273 — hand `path` to the opener plugin: the configured program
@@ -246,18 +318,22 @@ fn open_with(viewer: &str, path: &str) -> Result<(), String> {
 /// (#144) — the caller's error toast names the path.
 #[tauri::command]
 async fn open_roll(state: State<'_, AppState>, image_id: i64) -> Result<(), String> {
-    let paths = state.paths()?;
-    let p = db::image_file_dir(paths, image_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("image {image_id} is not recorded"))?;
-    if !std::path::Path::new(&p).exists() {
-        return Err(format!("image directory no longer exists: {p}"));
-    }
-    let settings = db::get_settings(paths).map_err(|e| e.to_string())?;
-    open_with(&settings.directory_viewer, &p)?;
-    // diagnostic line in the spirit of #144 (which path was opened)
-    eprintln!("[open_roll] image {image_id}: opened {p}");
-    Ok(())
+    let paths = state.paths()?.clone();
+    // #343: the DB reads + viewer launch run on the blocking pool
+    run_blocking(move || {
+        let p = db::image_file_dir(&paths, image_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("image {image_id} is not recorded"))?;
+        if !std::path::Path::new(&p).exists() {
+            return Err(format!("image directory no longer exists: {p}"));
+        }
+        let settings = db::get_settings(&paths).map_err(|e| e.to_string())?;
+        open_with(&settings.directory_viewer, &p)?;
+        // diagnostic line in the spirit of #144 (which path was opened)
+        eprintln!("[open_roll] image {image_id}: opened {p}");
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -266,7 +342,12 @@ async fn person_face_clusters(
     person_id: i64,
     threshold: f64,
 ) -> Result<Vec<db::AppearanceGroup>, String> {
-    db::person_face_clusters(state.paths()?, person_id, threshold).map_err(|e| e.to_string())
+    // #343: the O(n²) clustering runs on the blocking pool
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::person_face_clusters(&paths, person_id, threshold).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -276,36 +357,52 @@ async fn assign_person(
     name: String,
     group: String,
 ) -> Result<Delta, String> {
-    db::assign_person(state.paths()?, &face_ids, &name, &group).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::assign_person(&paths, &face_ids, &name, &group).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
 async fn accept_faces(state: State<'_, AppState>, face_ids: Vec<i64>) -> Result<Delta, String> {
-    db::set_link_status(state.paths()?, &face_ids, "confirmed").map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::set_link_status(&paths, &face_ids, "confirmed").map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
 async fn reject_faces(state: State<'_, AppState>, face_ids: Vec<i64>) -> Result<Delta, String> {
-    db::set_link_status(state.paths()?, &face_ids, "rejected").map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::set_link_status(&paths, &face_ids, "rejected").map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// #122 — rotate the full image ±90° (server state; refresh follows).
 #[tauri::command]
 async fn rotate_image(state: State<'_, AppState>, image_id: i64, delta: i64) -> Result<Delta, String> {
-    db::rotate_image(state.paths()?, image_id, delta).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::rotate_image(&paths, image_id, delta).map_err(|e| e.to_string())).await
 }
 
 /// #209 — one call per user action for a multi-image rotate (the GUI's
 /// thumbnail-scope rotation), same per-image semantics as `rotate_image`
 #[tauri::command]
 async fn rotate_images(state: State<'_, AppState>, image_ids: Vec<i64>, delta: i64) -> Result<Delta, String> {
-    db::rotate_images(state.paths()?, &image_ids, delta).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::rotate_images(&paths, &image_ids, delta).map_err(|e| e.to_string()))
+        .await
 }
 
 /// #122 — rotate the face crop ±90° (server state; refresh follows).
 #[tauri::command]
 async fn rotate_face(state: State<'_, AppState>, face_id: i64, delta: i64) -> Result<Delta, String> {
-    db::rotate_face(state.paths()?, face_id, delta).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::rotate_face(&paths, face_id, delta).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
@@ -314,7 +411,11 @@ async fn set_face_description(
     face_id: i64,
     description: String,
 ) -> Result<Delta, String> {
-    db::set_face_description(state.paths()?, face_id, &description).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::set_face_description(&paths, face_id, &description).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// #209 — one call per staged batch: the sequential per-face seq
@@ -325,7 +426,11 @@ async fn set_face_descriptions(
     face_ids: Vec<i64>,
     description: String,
 ) -> Result<Delta, String> {
-    db::set_face_descriptions(state.paths()?, &face_ids, &description).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::set_face_descriptions(&paths, &face_ids, &description).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -334,22 +439,32 @@ async fn set_primary_face(
     person_id: i64,
     face_id: i64,
 ) -> Result<Delta, String> {
-    db::set_primary_face(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::set_primary_face(&paths, person_id, face_id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
 async fn set_person_name(state: State<'_, AppState>, person_id: i64, name: String) -> Result<Delta, String> {
-    db::set_person_name(state.paths()?, person_id, &name).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::set_person_name(&paths, person_id, &name).map_err(|e| e.to_string()))
+        .await
 }
 
 #[tauri::command]
 async fn set_person_group(state: State<'_, AppState>, person_id: i64, group: String) -> Result<Delta, String> {
-    db::set_person_group(state.paths()?, person_id, &group).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::set_person_group(&paths, person_id, &group).map_err(|e| e.to_string()))
+        .await
 }
 
 #[tauri::command]
 async fn set_person_note(state: State<'_, AppState>, person_id: i64, note: String) -> Result<Delta, String> {
-    db::set_person_note(state.paths()?, person_id, &note).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::set_person_note(&paths, person_id, &note).map_err(|e| e.to_string()))
+        .await
 }
 
 /// §4.13/#35/#165/#266 — remove persons: reject + re-home their faces
@@ -361,7 +476,11 @@ async fn move_persons_to_group(
     person_ids: Vec<i64>,
     group: String,
 ) -> Result<Delta, String> {
-    db::move_persons_to_group(state.paths()?, &person_ids, &group).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::move_persons_to_group(&paths, &person_ids, &group).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// §4.16 (#157, v3.59) — tree D&D: re-home ONE membership of each dragged
@@ -374,35 +493,47 @@ async fn move_persons_between_groups(
     from_group: String,
     to_group: String,
 ) -> Result<Delta, String> {
-    db::move_persons_between_groups(state.paths()?, &person_ids, &from_group, &to_group)
-        .map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        db::move_persons_between_groups(&paths, &person_ids, &from_group, &to_group)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// §4.16 (#50) — rename/move a group branch (path-prefix rewrite).
 #[tauri::command]
 async fn rename_group(state: State<'_, AppState>, old_path: String, new_path: String) -> Result<Delta, String> {
-    db::rename_group(state.paths()?, &old_path, &new_path).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::rename_group(&paths, &old_path, &new_path).map_err(|e| e.to_string()))
+        .await
 }
 
 /// §4.16 (#50) — delete a group branch (members fall to Ungrouped).
 #[tauri::command]
 async fn delete_group(state: State<'_, AppState>, path: String) -> Result<Delta, String> {
-    db::delete_group(state.paths()?, &path).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::delete_group(&paths, &path).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
 async fn remove_persons(state: State<'_, AppState>, person_ids: Vec<i64>) -> Result<Delta, String> {
-    db::remove_persons(state.paths()?, &person_ids).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::remove_persons(&paths, &person_ids).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
 async fn add_refcrop(state: State<'_, AppState>, person_id: i64, face_id: i64) -> Result<Delta, String> {
-    db::add_refcrop(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::add_refcrop(&paths, person_id, face_id).map_err(|e| e.to_string()))
+        .await
 }
 
 #[tauri::command]
 async fn remove_refcrop(state: State<'_, AppState>, person_id: i64, face_id: i64) -> Result<Delta, String> {
-    db::remove_refcrop(state.paths()?, person_id, face_id).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::remove_refcrop(&paths, person_id, face_id).map_err(|e| e.to_string()))
+        .await
 }
 
 #[tauri::command]
@@ -420,7 +551,8 @@ fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), String
 /// one-shot read runs off the main thread with the other commands.
 #[tauri::command]
 async fn get_config_info(state: State<'_, AppState>) -> Result<db::ConfigInfo, String> {
-    db::config_info(state.paths()?).map_err(|e| e.to_string())
+    let paths = state.paths()?.clone();
+    run_blocking(move || db::config_info(&paths).map_err(|e| e.to_string())).await
 }
 
 /// #167 (§4.36) — fs probe for the Rolls path filter: does the path hold
@@ -431,7 +563,9 @@ async fn get_config_info(state: State<'_, AppState>) -> Result<db::ConfigInfo, S
 async fn scan_import_dir(state: State<'_, AppState>, path: String) -> Result<bool, String> {
     // join semantics: an absolute path (the native picker) replaces the
     // root, a relative one is resolved against it
-    Ok(importer::scan_import_dir(&state.paths()?.root.join(path)))
+    // #343: the (depth-32) fs walk runs on the blocking pool
+    let root = state.paths()?.root.clone();
+    run_blocking(move || Ok(importer::scan_import_dir(&root.join(path)))).await
 }
 
 /// #167 (§4.36) — spawn scripts/import_roll.py as an independent child
@@ -469,11 +603,15 @@ struct ImportInfo {
 
 #[tauri::command]
 async fn get_import_info(state: State<'_, AppState>) -> Result<ImportInfo, String> {
-    let paths = state.paths()?;
-    Ok(ImportInfo {
-        db_path: paths.db.display().to_string(),
-        db_exists: db::has_schema(paths),
+    // #343: has_schema's first-open DB I/O runs on the blocking pool
+    let paths = state.paths()?.clone();
+    run_blocking(move || {
+        Ok(ImportInfo {
+            db_path: paths.db.display().to_string(),
+            db_exists: db::has_schema(&paths),
+        })
     })
+    .await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -598,5 +736,29 @@ mod tests {
         let e = check_export_target(&missing.display().to_string(), &missing, 10).unwrap_err();
         assert!(e.contains("parent directory"), "{e}");
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // #343 — the blocking-pool runner: the body's Err travels through,
+    // and a PANICKING body is an Err (not a poisoned worker/pool) —
+    // the same degradation #318's lock-poison recovery gives the pool.
+    use super::run_blocking;
+
+    #[test]
+    fn run_blocking_carries_the_body_result() {
+        let ok = tauri::async_runtime::block_on(run_blocking(|| Ok::<i64, String>(41 + 1)));
+        assert_eq!(ok.unwrap(), 42);
+        let err = tauri::async_runtime::block_on(run_blocking(|| -> Result<(), String> {
+            Err("db gone".into())
+        }));
+        assert_eq!(err.unwrap_err(), "db gone");
+    }
+
+    #[test]
+    fn run_blocking_maps_a_panicking_body_to_an_err() {
+        let r = tauri::async_runtime::block_on(run_blocking(|| -> Result<(), String> {
+            panic!("db code bug")
+        }));
+        let e = r.unwrap_err();
+        assert!(e.contains("command task failed"), "{e}");
     }
 }
