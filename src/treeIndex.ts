@@ -154,8 +154,3 @@ export function orderedVisiblePersonIdsFromTree(
   return out;
 }
 
-/** the standalone form (tree built here) — App uses the FromTree form
-    so the tree is built once and shared with the pane (#223) */
-export function orderedVisiblePersonIds(persons: Person[], filter: string): number[] {
-  return orderedVisiblePersonIdsFromTree(buildTree(persons), persons, filter);
-}

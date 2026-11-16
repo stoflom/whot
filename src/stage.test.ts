@@ -10,26 +10,15 @@ import {
   indexStagedSet,
   objectInsideSelection,
   sameIdSet,
-  scopeFaceIds,
   stageSummary,
   stageSummarySet,
   stagedFieldsForCard,
-  stagedFieldsForIndex,
   stagedFieldsForSection,
   stagedFieldsForSectionIndex,
   upsertStage,
   prefillForFaces,
   type Stage,
 } from "./stage";
-
-describe("scopeFaceIds", () => {
-  const sets = { card: [1], group: [1, 2, 3], selection: [2, 4] };
-  it("preselects per invocation site (§4.24): card → Card, header → Group, bar → Selection", () => {
-    expect(scopeFaceIds("card", sets)).toEqual([1]);
-    expect(scopeFaceIds("group", sets)).toEqual([1, 2, 3]);
-    expect(scopeFaceIds("selection", sets)).toEqual([2, 4]);
-  });
-});
 
 describe("buildStage (#77 routing kept)", () => {
   it("nothing touched → nothing to stage", () => {
@@ -207,15 +196,11 @@ describe("indexStagedSet (#224 — the pending set indexed once per change)", ()
     { faceIds: [1], name: "Alicia" }, // later op wins the name on face 1
   ];
 
-  it("per-face lookups equal stagedFieldsForCard for every face (later ops win)", () => {
-    const idx = indexStagedSet(ops);
-    for (const id of [1, 2, 3, 9]) {
-      expect(stagedFieldsForIndex(idx, id)).toEqual(stagedFieldsForCard(ops, id));
-    }
-    expect(stagedFieldsForIndex(idx, 1)).toEqual({ name: "Alicia", desc: "beard" });
-    expect(stagedFieldsForIndex(idx, 2)).toEqual({ name: "Alice", desc: "beard", group: "" });
-    expect(stagedFieldsForIndex(idx, 3)).toEqual({ desc: "glasses", group: "" });
-    expect(stagedFieldsForIndex(idx, 9)).toEqual({});
+  it("per-face fields: later ops win, per field (stagedFieldsForCard)", () => {
+    expect(stagedFieldsForCard(ops, 1)).toEqual({ name: "Alicia", desc: "beard" });
+    expect(stagedFieldsForCard(ops, 2)).toEqual({ name: "Alice", desc: "beard", group: "" });
+    expect(stagedFieldsForCard(ops, 3)).toEqual({ desc: "glasses", group: "" });
+    expect(stagedFieldsForCard(ops, 9)).toEqual({});
   });
 
   it("every section subset merges identically to stagedFieldsForSection — in either id order", () => {
@@ -247,7 +232,7 @@ describe("indexStagedSet (#224 — the pending set indexed once per change)", ()
       { faceIds: [1, 2], group: "" },
     ];
     const idx = indexStagedSet(set);
-    expect(stagedFieldsForIndex(idx, 1)).toEqual({ name: "Alice", group: "" });
+    expect(stagedFieldsForCard(set, 1)).toEqual({ name: "Alice", group: "" });
     expect(stagedFieldsForSection(set, [1, 2])).toEqual({ name: "Alice", group: "" });
     expect(stagedFieldsForSectionIndex(idx, [1, 2])).toEqual(
       stagedFieldsForSection(set, [1, 2])
@@ -265,8 +250,8 @@ describe("indexStagedSet (#224 — the pending set indexed once per change)", ()
     const idx = indexStagedSet(big);
     expect(idx).toBeInstanceOf(Map);
     expect(idx.size).toBe(501); // one entry per distinct face — nothing per-lookup
-    expect(stagedFieldsForIndex(idx, 250)).toEqual({ desc: "d250" }); // later op wins
-    expect(stagedFieldsForIndex(idx, 0)).toEqual({ desc: "d0" });
+    expect(stagedFieldsForCard(big, 250)).toEqual({ desc: "d250" }); // later op wins
+    expect(stagedFieldsForCard(big, 0)).toEqual({ desc: "d0" });
   });
 });
 

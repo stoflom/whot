@@ -1094,6 +1094,11 @@ pub fn delta_after(
 /// #212 — raw image bytes leave over the IPC as `tauri::ipc::Response`
 /// (→ ArrayBuffer on the JS side) and render from Blob URLs: no base64
 /// (~33% smaller transfers, no giant JS strings).
+// #332 — deliberate test seams (the next dead-code sweep should not
+// re-flag these): production serves blobs exclusively through
+// `image_batch_bytes`; these single-row reads are the reference path
+// the batch-framing tests (tests/workflow.rs #212) cross-check the
+// frames against.
 pub fn face_preview_bytes(paths: &Paths, face_id: i64) -> Result<Option<Vec<u8>>> {
     let con = connect(paths)?;
     Ok(con

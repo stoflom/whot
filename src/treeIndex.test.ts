@@ -10,7 +10,6 @@ import type { Person } from "./api";
 import {
   buildTree,
   indexTree,
-  orderedVisiblePersonIds,
   orderedVisiblePersonIdsFromTree,
   type TreeNode,
 } from "./treeIndex";
@@ -192,11 +191,3 @@ describe("orderedVisiblePersonIdsFromTree (#223)", () => {
   });
 });
 
-describe("orderedVisiblePersonIds (#223 — the standalone wrapper)", () => {
-  it("equals the shared-tree form (build here = build once there)", () => {
-    const persons = fixture;
-    expect(orderedVisiblePersonIds(persons, "friends")).toEqual(
-      orderedVisiblePersonIdsFromTree(buildTree(persons), persons, "friends")
-    );
-  });
-});

@@ -17,6 +17,11 @@ export interface BatchEntry {
   bytes: Uint8Array;
 }
 
+// #332 — deliberate test oracle (the next dead-code sweep should not
+// re-flag this): production only DECODES (the Rust side encodes); this
+// TS encoder exists so the tests can fabricate wire frames for
+// `decodeImageBatch` and the mocked `invoke` (api.test.ts,
+// imageBatch.test.ts).
 export function encodeImageBatch(entries: BatchEntry[]): Uint8Array {
   const headerLen = MAGIC.length + 4 + entries.length * 16;
   let blobLen = 0;

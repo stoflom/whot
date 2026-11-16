@@ -1,7 +1,7 @@
 // #156 (gui-design §4.16 multi-group placement). Run: npm test (vitest run)
 import { describe, expect, it } from "vitest";
 import type { Person } from "./api";
-import { orderedVisiblePersonIds } from "./treeIndex";
+import { buildTree, orderedVisiblePersonIdsFromTree } from "./treeIndex";
 
 function person(
   id: number,
@@ -22,7 +22,7 @@ function person(
   } as Person;
 }
 
-describe("orderedVisiblePersonIds — multi-group placement (#156, v3.56)", () => {
+describe("orderedVisiblePersonIdsFromTree — multi-group placement (#156, v3.56)", () => {
   const persons = [
     person(1, "John Smith", ["Friends", "Friends|PHS"], 19),
     person(2, "Jane Smith", ["Friends", "Friends|PHS"], 30),
@@ -30,23 +30,26 @@ describe("orderedVisiblePersonIds — multi-group placement (#156, v3.56)", () =
     person(4, "Solo", [], 1),
   ];
 
+  const ids = (filter: string) =>
+    orderedVisiblePersonIdsFromTree(buildTree(persons), persons, filter);
+
   it("a multi-group person is stepped once, not once per placement", () => {
-    const ids = orderedVisiblePersonIds(persons, "");
-    expect(ids.filter((id) => id === 1).length).toBe(1);
-    expect(ids.filter((id) => id === 2).length).toBe(1);
-    expect(ids.filter((id) => id === 3).length).toBe(1);
+    const step = ids("");
+    expect(step.filter((id) => id === 1).length).toBe(1);
+    expect(step.filter((id) => id === 2).length).toBe(1);
+    expect(step.filter((id) => id === 3).length).toBe(1);
   });
 
   it("every person is still reachable in the step list", () => {
-    expect(orderedVisiblePersonIds(persons, "").sort()).toEqual([1, 2, 3, 4]);
+    expect(ids("").sort()).toEqual([1, 2, 3, 4]);
   });
 
   it("the filter keeps working across all placements of a person", () => {
     // name filter
-    expect(orderedVisiblePersonIds(persons, "john")).toEqual([1]);
+    expect(ids("john")).toEqual([1]);
     // group-path filter matches persons whose ANY row matches ('PHS')
-    expect(orderedVisiblePersonIds(persons, "PHS").sort()).toEqual([1, 2]);
+    expect(ids("PHS").sort()).toEqual([1, 2]);
     // single-group person unaffected
-    expect(orderedVisiblePersonIds(persons, "Smith-PaMa")).toEqual([3]);
+    expect(ids("Smith-PaMa")).toEqual([3]);
   });
 });
