@@ -238,18 +238,22 @@ function PersonView({ person, refcrops, snapshot, onName, onNote, onOpenPrimary,
       {/* #145: this avatar IS the primary face — clicking it opens the
           face's full image in focus mode (the old handler called
           setPrimary(primary_face_id): a self-no-op). Opening is the
-          view-context-change path, honouring the confirm dialog (#123). */}
-      <div
+          view-context-change path, honouring the confirm dialog (#123).
+          #327: a real <button> (role/tabIndex/Enter like every other
+          comparable control — it was the one missed div). */}
+      <button
+        type="button"
         className="dp-avatar"
         title={person.primary_face_id ? "Open the primary face's full image (focus mode)" : undefined}
         onClick={() => person.primary_face_id && onOpenPrimary(person.primary_face_id)}
+        disabled={!person.primary_face_id}
       >
         {primaryImg ? (
           <img src={primaryImg} alt="" style={rotStyle(rotOf(person.primary_face_id ?? -1))} />
         ) : (
           <span>▢</span>
         )}
-      </div>
+      </button>
       {/* #165/§4.35/#266 — the reject-bin persons (RejectedN): not
           renameable, their group list not editable; the strings stay
           reference-free (§4.43) */}
