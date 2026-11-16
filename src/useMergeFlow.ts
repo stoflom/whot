@@ -95,7 +95,7 @@ export function useMergeFlow(deps: MergeFlowDeps) {
         setError(String(e));
       }
     },
-    [snap, refresh],
+    [snap, refresh, setError],
   );
 
   /** menu / DnD path: open the shared confirmation (§4.28). Refuses an
@@ -119,7 +119,7 @@ export function useMergeFlow(deps: MergeFlowDeps) {
       }
       setMergeInto({ sourceIds, targetId });
     },
-    [snap],
+    [snap, setError, setInfo],
   );
 
   const confirmMerge = useCallback(
@@ -150,7 +150,7 @@ export function useMergeFlow(deps: MergeFlowDeps) {
         setMode("person");
       }
     },
-    [snap, mergeInto, mutate],
+    [snap, mergeInto, mutate, setInfo, setPersonId, setImageId, setMode],
   );
 
   // #135 (rule 34): a face drag dropped on a person row — the same
@@ -182,7 +182,7 @@ export function useMergeFlow(deps: MergeFlowDeps) {
       }
       setFaceMerge({ faceIds: plan.movers, targetId });
     },
-    [snap, personsById, clearFaceDrag],
+    [snap, personsById, clearFaceDrag, setError, setInfo],
   );
 
   const confirmFaceMerge = useCallback(async () => {
@@ -203,7 +203,7 @@ export function useMergeFlow(deps: MergeFlowDeps) {
       setImageId(null);
       setMode("person");
     }
-  }, [snap, faceMerge, personsById, mutate]);
+  }, [snap, faceMerge, personsById, mutate, setPersonId, setImageId, setMode]);
 
   /** bulk rename/merge over a person selection: open the Edit dialog
       over all their faces (§4.1 rename-merge, #101) */
@@ -219,7 +219,7 @@ export function useMergeFlow(deps: MergeFlowDeps) {
       // faces of those persons (a synthetic Group scope)
       openEdit("group", { group: faceIds });
     },
-    [snap, openEdit],
+    [snap, openEdit, setInfo],
   );
 
   /** bulk group apply from the review dialog (§4.16, reversible) */
