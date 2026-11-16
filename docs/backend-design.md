@@ -1,6 +1,6 @@
 # WhoT Backend Design — Rust / Tauri
 
-**Version: 2.7** (#324) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 2.8** (#343) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -37,7 +37,10 @@ src-tauri/tests/
   runs it on the async runtime's thread pool instead of the UI main
   thread (argument shapes and TS-side `invoke` calls are unchanged; the
   runner-mutex/config-file exceptions are guarded by the
-  `commands_run_off_the_main_thread_218` workflow test). #323:
+  `commands_run_off_the_main_thread_218` workflow test). #343: the
+  blocking bodies then run on the runtime's dedicated BLOCKING pool
+  (`run_blocking`) instead of the worker threads — see §3's
+  blocking-pool bullet. #323:
   `get_data_version` LEFT the sync exceptions — its first probe open
   per path is a real connection open with a 5 s `busy_timeout` (DB I/O
   that can stall the UI main thread while the importer holds the write
@@ -189,6 +192,25 @@ is the 4-state `face_filter`, gui-design §4.10).
   diagnostic — the app degrades to retrying the buggy call, not to a
   dead database. Regression tests poison each static in a holder
   thread and assert the recovered lock serves a full `connect()`.
+- **The commands' blocking bodies run on the runtime's blocking pool**
+  (v2.8, #343): #218 declared every DB-backed / heavy command
+  `async fn` so the UI main thread stays free — but an `async fn`
+  body executes on the async runtime's WORKER threads, where blocking
+  rusqlite/blob-copy/fs work starves the other tasks (a 32 MiB
+  `get_image_batch` copy tied up a worker and stalled every other
+  command behind it for its duration). Every such command now moves
+  its body onto the runtime's dedicated BLOCKING pool via
+  `lib.rs`'s `run_blocking` (a body's `Err` travels through; a
+  panicking body becomes an Err, the same degradation the poison
+  recovery gives the locks). The `db::POOL` serialisation is KEPT:
+  the one-operator UI is serial, so head-of-line blocking behind the
+  pool lock is not a real bottleneck — the bounded-connection-pool /
+  per-command-connection alternative would change documented pool
+  semantics (the gate-once open, the replaced-file-served-by-old-pool
+  policy) and add write-lock contention windows against the importer
+  for no measured need. `Paths` is `Clone` so a spawned body owns
+  its resolved paths. Unit tests pin `run_blocking`'s result and
+  panic-to-Err paths.
 - All connections set `PRAGMA foreign_keys = ON` explicitly — the DDL's
   `PRAGMA` only affects the session that created the file.
 

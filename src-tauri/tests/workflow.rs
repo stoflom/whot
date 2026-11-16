@@ -1729,6 +1729,50 @@ fn commands_run_off_the_main_thread_218() {
     }
 }
 
+/// #343 — every `async fn` command's body runs on the async runtime's
+/// blocking pool (`run_blocking`): an `async fn` body executes on the
+/// runtime's WORKER threads, where blocking DB/blob/fs work starves the
+/// other tasks. Same source-scan guard as #218: each `#[tauri::command]`
+/// async fn's body must call `run_blocking` (the sync allowlist is
+/// exempt — runner-mutex / config-file only).
+#[test]
+fn async_command_bodies_run_on_the_blocking_pool_343() {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"));
+    // split at each #[tauri::command]; an async command's body spans to
+    // the next attribute (or the end)
+    let mut pos = 0;
+    while let Some(at) = src[pos..].find("#[tauri::command]") {
+        let start = pos + at;
+        let next = src[start + 1..]
+            .find("#[tauri::command]")
+            .map(|i| start + 1 + i)
+            .unwrap_or(src.len());
+        let block = &src[start..next];
+        // the fn head + body
+        let head_at = src[start..].find("fn ").unwrap() + start;
+        let head_line_end = src[head_at..]
+            .find('\n')
+            .map(|i| head_at + i)
+            .unwrap_or(src.len());
+        let head = src[head_at..head_line_end].trim_start();
+        let is_async = head.starts_with("async ");
+        let name = head
+            .trim_start_matches("async ")
+            .trim_start_matches("fn ")
+            .split('(')
+            .next()
+            .unwrap()
+            .to_owned();
+        if is_async {
+            assert!(
+                block.contains("run_blocking"),
+                "{name} is `async fn` but its body does not run via run_blocking (#343)"
+            );
+        }
+        pos = start + "#[tauri::command]".len();
+    }
+}
+
 // ---------------------------------------------------------------- #219 delta protocol
 
 /// #219 — a mutation's `Delta` carries ONLY the touched rows (the owner
