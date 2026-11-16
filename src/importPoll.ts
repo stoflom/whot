@@ -9,9 +9,19 @@
 
 export const POLL_ACTIVE_MS = 300;
 export const POLL_IDLE_MS = 2500;
+// #330: the cap of the failure backoff — getImportStatus failing keeps
+// the pane alive, but at most one probe per 30 s
+export const POLL_BACKOFF_CAP_MS = 30_000;
 
 /** delay until the next get_import_status tick, given the last known
     running state (runningRef in ImportPane — read AFTER each tick, so
-    the schedule follows the state it just observed) */
-export const pollDelayMs = (running: boolean): number =>
-  running ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+    the schedule follows the state it just observed). #330: after
+    `consecutiveFailures` failed ticks the delay doubles per failure up
+    to the cap (a backend command that keeps rejecting no longer
+    re-polls every 2.5 s forever); it resets to the base cadence on the
+    first success */
+export const pollDelayMs = (running: boolean, consecutiveFailures = 0): number => {
+  const base = running ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+  if (consecutiveFailures <= 0) return base;
+  return Math.min(base * 2 ** consecutiveFailures, POLL_BACKOFF_CAP_MS);
+};

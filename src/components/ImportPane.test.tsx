@@ -9,7 +9,7 @@
 // timers needs a DOM).
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 import ImportPane from "./ImportPane";
 import type { ImportStatus } from "../api";
 
@@ -30,6 +30,7 @@ beforeEach(() => {
   vi.useFakeTimers();
 });
 afterEach(() => {
+  cleanup(); // DOM queries must not see a previous test's pane
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -50,6 +51,56 @@ function program(statuses: ImportStatus[]) {
 const pane = (onImported: () => void) => (
   <ImportPane dir="/arc/roll" onClose={() => {}} onImported={onImported} />
 );
+
+describe("ImportPane — the failing-poll backoff (#330)", () => {
+  const failThen = (after: number, status: ImportStatus) => {
+    let i = 0;
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd !== "get_import_status")
+        return Promise.resolve({ dbPath: "/arc/faces.db", dbExists: true });
+      // Tauri rejects a failing command with the String the backend
+      // returned — mirror that shape
+      return i++ < after
+        ? Promise.reject("backend rejected")
+        : Promise.resolve(status);
+    });
+  };
+
+  it("keeps failing, the beats back off instead of looping every 2.5 s", async () => {
+    failThen(Infinity, DONE);
+    render(pane(vi.fn()));
+    const statusCalls = () =>
+      invoke.mock.calls.filter((c) => c[0] === "get_import_status").length;
+    await act(async () => {}); // tick 1 @ t=0 — fails, next beat in 5 s
+    expect(statusCalls()).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(statusCalls()).toBe(1); // the old 2.5 s beat must NOT have fired
+    await act(async () => vi.advanceTimersByTimeAsync(2500)); // t=5 s
+    expect(statusCalls()).toBe(2); // failure 2 → next in 10 s
+    await act(async () => vi.advanceTimersByTimeAsync(10_000)); // t=15 s
+    expect(statusCalls()).toBe(3); // failure 3 → next in 20 s
+    await act(async () => vi.advanceTimersByTimeAsync(20_000)); // t=35 s
+    expect(statusCalls()).toBe(4); // failure 4 → next in 40 s, capped at 30 s
+    await act(async () => vi.advanceTimersByTimeAsync(30_000)); // t=65 s
+    expect(statusCalls()).toBe(5); // …and the pane is still alive
+  });
+
+  it("recovery resets the streak: the heartbeat returns, the error clears", async () => {
+    failThen(2, DONE);
+    const { getByText, queryByText } = render(pane(vi.fn()));
+    await act(async () => {}); // tick 1 — fails (streak 1)
+    expect(getByText(/backend rejected/)).toBeDefined(); // surfaced
+    await act(async () => vi.advanceTimersByTimeAsync(5000)); // tick 2 — fails (streak 2)
+    await act(async () => vi.advanceTimersByTimeAsync(10_000)); // tick 3 — succeeds
+    expect(queryByText(/backend rejected/)).toBeNull(); // the error clears
+    // the base 2.5 s heartbeat is back: the next beat at t=17.5 s, not
+    // the 20 s the capped backoff would schedule
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(
+      invoke.mock.calls.filter((c) => c[0] === "get_import_status").length
+    ).toBe(4);
+  });
+});
 
 describe("ImportPane — the onImported poll chain (#247)", () => {
   it("a stable onImported keeps the chain across re-renders: the clean-exit flush still fires", async () => {
