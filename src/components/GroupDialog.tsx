@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import PathTypeahead, { type SuggestOption } from "./PathTypeahead";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 
 // §4.16 (#50/#165) — edit a group path: rename/move a branch or move
 // persons into a group. The path is `|`-separated; empty seats the
@@ -27,7 +27,6 @@ export default function GroupDialog({
   onCancel,
   options,
 }: Props) {
-  useOwnsKeyboard(); // #138
   // #248: the topmost overlay owns Esc — a field-level onEscape covers
   // only the typeahead, so Esc must work from the dialog body too
   // (ConfirmDialog/FaceMergeDialog idiom)
@@ -46,7 +45,7 @@ export default function GroupDialog({
   // open is wholesale-replacement.
   const submit = () => onSubmit(path);
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+    <Dialog label={title} onBackdrop={onCancel}>
       <div className="dialog">
         <h3>{title}</h3>
         <p className="dim">{body}</p>
@@ -73,6 +72,6 @@ export default function GroupDialog({
           />
         </label>
       </div>
-    </div>
+    </Dialog>
   );
 }

@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 19.4** (#325; v19.3 #322, v19.2 #316/#317, v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 20.0** (#326; v19.4 #325, v19.3 #322, v19.2 #316/#317, v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2804,6 +2804,34 @@ dialog.
   dialog shows the saved value). C47 gains the first-run
   `environment…` button (present; under `?no_db=1` it opens the same
   dialog).
+
+**53. (v20.0, #326) Every modal dialog is a real dialog — the shared
+Dialog wrapper.** All modal overlays render through the ONE shared
+wrapper (`src/components/Dialog.tsx`) instead of an unnamed
+`div.overlay`, so assistive tech sees a dialog and Tab never cycles
+into the app behind it.
+
+- **The contract**: `role="dialog"` + `aria-modal="true"` +
+  `aria-label` from the dialog's title — the name assistive tech
+  announces. The visual chrome (`.overlay`/`.dialog`) and the
+  per-dialog Esc handler and click-away dismissal are unchanged.
+- **Focus lifecycle**: on open the initial focus moves INSIDE the
+  dialog — a child that already grabbed it (React's `autoFocus` — the
+  input-first dialogs: Edit, Group, Merge-into) keeps it, otherwise
+  the first focusable element, otherwise the dialog box itself
+  (`tabIndex=-1`). While open, Tab / Shift+Tab cycle inside the
+  dialog (a focus trap). On close, focus returns to the element
+  focused before the dialog opened (when it is still in the
+  document). Stacked dialogs: only the topmost one — the one that
+  grabbed focus on open — traps; a lower dialog's trap sees focus
+  outside itself and stands down.
+- **The modeless exception** (the #176/§4.41 click-through pointer,
+  `guards.tsx`): a modeless dialog is NOT a modal dialog — no
+  `aria-modal`, no initial focus move, no trap — the background stays
+  interactive. It still owns the keyboard while mounted (#138).
+- **Registration rides the wrapper**: the #138 overlay registration
+  (Q8: an open modal owns the keyboard) lives in the wrapper, so a
+  dialog can no longer forget to register.
 
 ## 5. Related documents
 

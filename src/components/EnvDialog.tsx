@@ -17,7 +17,7 @@ import {
   type ConfigInfo,
   type Settings,
 } from "../api";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 
 /** the KNOWN env keys (backend-design §2) — one row each, with the
     placeholder default and a tooltip description. Fixed order. The
@@ -50,7 +50,6 @@ interface Props {
 }
 
 export default function EnvDialog({ onSave, onClose, onError }: Props) {
-  useOwnsKeyboard(); // #138: an open dialog owns the keyboard
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -108,7 +107,7 @@ export default function EnvDialog({ onSave, onClose, onError }: Props) {
   };
 
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <Dialog label="Environment" onBackdrop={onClose}>
       <div className="dialog env">
         <h3>Environment</h3>
         {info ? (
@@ -153,6 +152,6 @@ export default function EnvDialog({ onSave, onClose, onError }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

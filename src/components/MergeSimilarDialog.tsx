@@ -4,7 +4,7 @@ import { aliasesToText, clusterPersons, textToAliases, type MergeCluster } from 
 import { realGroups } from "../groupList";
 import PathTypeahead, { useGroupPathOptions } from "./PathTypeahead";
 import ContextMenu, { type MenuState } from "./ContextMenu";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 
 // #88 (gui-design §4.28) — the Merge Similar Persons triage view:
 // clusters of near-identical names with per-pair link evidence, bulk
@@ -52,7 +52,6 @@ export default function MergeSimilarDialog({
   onClose,
   escActive,
 }: Props) {
-  useOwnsKeyboard(); // #138
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [dist, setDist] = useState(settings.merge_name_distance);
   const [aliasText, setAliasText] = useState(aliasesToText(settings.merge_suffix_aliases));
@@ -145,7 +144,10 @@ export default function MergeSimilarDialog({
       });
 
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <Dialog
+      label={anchor ? `Similar to “${anchor.name}”` : "Merge Similar Persons"}
+      onBackdrop={onClose}
+    >
       <div className="dialog merge-dialog">
         <h3>{anchor ? `Similar to “${anchor.name}”` : "Merge Similar Persons"}</h3>
         {anchor ? (
@@ -400,6 +402,6 @@ export default function MergeSimilarDialog({
         </div>
       </div>
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
-    </div>
+    </Dialog>
   );
 }

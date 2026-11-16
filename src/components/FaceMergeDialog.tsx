@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import type { Person } from "../api";
 import type { FaceMergePlan } from "../faceDrop";
 import { firstRealGroup } from "../groupList";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 
 // #135 (rule 34) — face-level merge confirmation. A face drag dropped on a
 // person row cannot use the §4.28 person-level dialog (that one moves whole
@@ -29,7 +29,6 @@ export default function FaceMergeDialog({
   // Esc cancels (the dialog is never stacked — #138: the overlay blocks
   // the rest of the keyboard too via the registry; that claim now holds
   // for keys, not just the mouse)
-  useOwnsKeyboard(); // #138
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
@@ -47,9 +46,9 @@ export default function FaceMergeDialog({
   const canMerge = plan.movers.length > 0;
 
   return (
-    <div
-      className="overlay"
-      onMouseDown={(e) => e.target === e.currentTarget && onCancel()}
+    <Dialog
+      label={`Merge ${plan.movers.length} face(s) into ${target.name}`}
+      onBackdrop={onCancel}
     >
       <div className="dialog">
         <h3>
@@ -105,6 +104,6 @@ export default function FaceMergeDialog({
           </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
