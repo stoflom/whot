@@ -477,6 +477,8 @@ whot/
       NameTypeahead.tsx  PathTypeahead.tsx            # the §4.41 guards); the
       SuggestInput.tsx  SettingsPopover.tsx           # toasts + full-image bar
       ErrorNotice.tsx  FullImageBar.tsx               # close the set
+      TopBar.tsx  CenterToolbar.tsx  DialogHost.tsx  # #331: the App render
+      TreeDialogs.tsx                               # subtrees (extracted)
     viewFilters.ts  reviewFlow.ts  stage.ts  faceDrop.ts  stepFlow.ts   # pure logic
     sections.ts  detailView.ts  commit.ts  deltas.ts  menus.ts          # §4.44 pure extractions
     paneState.ts  clickPair.ts  appKeys.ts  descTags.ts  verdictFlip.ts # §4.44 pure + verdict rules

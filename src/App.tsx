@@ -16,21 +16,14 @@ import type {
   Face,
   ImageRow,
   ImportOptions,
-  Person,
   Refcrop,
 } from "./api";
-import EditDialog from "./components/EditDialog";
+// #331: the dialog host subtree
+import DialogHost from "./components/DialogHost";
 // §4.44 round 2 stage 4 (#295): the guard/confirm dialog surfaces —
 // the copy + button contracts as components, actions stay App-side
-import ContextConfirmDialog from "./components/ContextConfirmDialog";
-import { PickPersonDialog, NoFacesDialog } from "./components/guards";
-import ConfirmRemoveDialog from "./components/ConfirmRemoveDialog";
-import AddGroupDialog from "./components/AddGroupDialog";
-import AnnotatedExportDialog from "./components/AnnotatedExportDialog";
-import { ErrorToast, FatalError, InfoToast } from "./components/ErrorNotice";
+import { FatalError } from "./components/ErrorNotice";
 import { FullImageBar } from "./components/FullImageBar";
-import MergeSimilarDialog from "./components/MergeSimilarDialog";
-import MergeIntoDialog from "./components/MergeIntoDialog";
 import { isRejectedBin } from "./personNames";
 import { personDataSig } from "./personSig";
 import { PrefetchCache } from "./prefetch";
@@ -60,9 +53,7 @@ import {
   exhaustAdvanceTarget,
   verdictAdvanceTarget,
 } from "./reviewFlow";
-import { faceMergePlan } from "./faceDrop";
 import { useAppKeys } from "./appKeys";
-import FaceMergeDialog from "./components/FaceMergeDialog";
 import {
   emptyStateHint,
   listedImages,
@@ -76,21 +67,16 @@ import { groupPathOptions } from "./components/PathTypeahead";
 import { descTagOptions } from "./descTags";
 import { useScrollPlace } from "./scrollPlace";
 import {
-  addTokens,
-  buildStage,
   dropStagesForFaces,
-  expandAddStage,
   indexStagedSet,
   objectInsideSelection,
   stageSummarySet,
-  stagedFieldsForCard,
-  upsertStage,
   prefillForFaces,
   type Prefill,
   type Stage,
   type StageScope,
 } from "./stage";
-import ContextMenu, { type MenuGroup, type MenuState } from "./components/ContextMenu";
+import { type MenuGroup, type MenuState } from "./components/ContextMenu";
 import DetailPane from "./components/DetailPane";
 import { useOverlayCount } from "./overlays";
 import FaceGrid, { type Section } from "./components/FaceGrid";
@@ -102,12 +88,14 @@ import { buildTree, orderedVisiblePersonIdsFromTree } from "./treeIndex";
 import { dirBranch } from "./rollsTree";
 import RollsPane from "./components/RollsPane";
 import RollsThumbs from "./components/RollsThumbs";
+// #331: the render subtrees — top bar, centre toolbar, bottom bar, the
+// dialog cluster (props are the existing values/callbacks, relocated)
+import TopBar from "./components/TopBar";
+import CenterToolbar from "./components/CenterToolbar";
 import ImportPane from "./components/ImportPane";
 import FirstRun from "./components/FirstRun";
 import RuleBar from "./components/RuleBar";
-import SettingsPopover from "./components/SettingsPopover";
 import EnvDialog from "./components/EnvDialog";
-import HelpDialog from "./components/HelpDialog";
 import {
   byFilename,
   clickImage,
@@ -2534,139 +2522,26 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        {/* #198 (§4.9): the whot mark beside the title */}
-        <img className="topbar-logo" src="/whot.svg" alt="" />
-        <h1>WhoT <span className="dim">Face Manager</span></h1>
-        <nav>
-          <button
-            className={mode === "review" ? "active" : ""}
-            onClick={() =>
-              // #123: a tab switch is a view-context change
-              confirmContext(() => {
-                setMode("review");
-                setImageId(null);
-                setSplitImageId(null); // #55 (§4.19): explicit navigation ends focus mode
-              })
-            }
-          >
-            Review <span className="pill">{pendingCount}</span>
-          </button>
-          <button
-            className={mode === "rolls" ? "active" : ""}
-            onClick={() =>
-              confirmContext(() => {
-                setMode("rolls");
-                setSplitImageId(null); // #55 (§4.19)
-              })
-            }
-          >
-            Rolls
-          </button>
-          <button
-            className={mode === "person" ? "active" : ""}
-            onClick={() =>
-              confirmContext(() => {
-                setMode("person");
-                setImageId(null);
-                setSplitImageId(null); // #55 (§4.19)
-                // #176 (§4.41): no anchor yet — land in Person mode with
-                // Show → All (the status branches are listed) and point
-                // at the tree
-                if (personId == null) {
-                  changeFaceFilter("all");
-                  setPickPersonDialog(true);
-                }
-              })
-            }
-            title={
-              personId == null
-                ? "no person anchored yet — pick one in the tree"
-                : undefined
-            }
-          >
-            Person
-          </button>
-        </nav>
-        <span className="topbar-right">
-          {busy && (
-            <>
-              {/* #100: an animated roller — a static word is too easy to miss */}
-              <span className="busy-roller" title="working…" />
-              <span className="dim">working…</span>
-            </>
-          )}
-          {/* #158 (§3, v3.57): the Show filter lives in the top bar — it is
-              a global control applied across all panes (#99, §4.10) and not
-              something the Person view (or any single pane) owns. #305:
-              All includes rejected faces (#165/§4.10);
-              #175/§4.40: locked to New while Review runs —
-              the titles stay reference-free (§4.43) */}
-          <label
-            title={
-              mode === "review"
-                ? "Locked to New while Review is active — leave Review via the Rolls or Person tab"
-                : "All = every face, including rejected; switching it drops hidden faces from the selection"
-            }
-          >
-            show
-            <select
-              value={faceFilter}
-              disabled={mode === "review"}
-              // #176 (§4.41): the closed value speaks the status colour
-              className={`st-${faceFilter}`}
-              onChange={(e) => changeFaceFilter(e.target.value as FaceFilter)}
-            >
-              <option value="all">All</option>
-              <option value="provisional">New</option>
-              <option value="confirmed">Accepted</option>
-              <option value="rejected">Rejected</option>
-            </select>
-          </label>
-          {/* #188 (§4.40): the padlock is a pure INDICATOR — 🔒 exactly
-              while Review mode is active (Show pinned New + disabled);
-              never clickable, no engage/release. #175: its tooltips stay
-              reference-free (§4.43) */}
-          <span
-            className={`lock-btn${mode === "review" ? " locked" : ""}`}
-            title={
-              mode === "review"
-                ? "Show is locked to New while Review is active — leave via the Rolls or Person tab"
-                : "Show is unlocked outside Review"
-            }
-          >
-            {mode === "review" ? "🔒" : "🔓"}
-          </span>
-          {/* #179 (§4.41): the DB-wide status totals — always visible,
-              an overview of the database; never scoped to the anchor,
-              the mode or the filter */}
-          <span className="status-counts" title="totals in the database">
-            <span className="c-prov" title="new faces">★ {statusTotals.provisional}</span>
-            <span className="c-conf" title="accepted faces">✓ {statusTotals.confirmed}</span>
-            <span className="c-rej" title="rejected faces">✗ {statusTotals.rejected}</span>
-          </span>
-          <button
-            className="ghost"
-            onClick={() => refresh().catch((e) => setError(String(e)))}
-            title="Refresh"
-          >
-            ↻
-          </button>
-          {/* v12.2 (#279): ? opens the shortcuts help screen — ? is now
-              taken in the top bar, which is why the New totals chip
-              became ★ */}
-          <button
-            className="ghost"
-            onClick={() => setHelpOpen(true)}
-            title="Keyboard shortcuts"
-          >
-            ?
-          </button>
-          <button className="ghost" onClick={() => setSettingsOpen(true)} title="Settings">
-            ⚙
-          </button>
-        </span>
-      </header>
+      {/* #331: the top bar subtree (TopBar.tsx) — props are the existing
+          values/callbacks, relocated; no behaviour change */}
+      <TopBar
+        mode={mode}
+        pendingCount={pendingCount}
+        busy={busy}
+        faceFilter={faceFilter}
+        statusTotals={statusTotals}
+        personId={personId}
+        confirmContext={confirmContext}
+        setMode={setMode}
+        setImageId={setImageId}
+        setSplitImageId={setSplitImageId}
+        setPickPersonDialog={setPickPersonDialog}
+        changeFaceFilter={changeFaceFilter}
+        refresh={refresh}
+        setError={setError}
+        setHelpOpen={setHelpOpen}
+        setSettingsOpen={setSettingsOpen}
+      />
 
       <div className="main">
         <aside className="left" style={{ width: paneSizes.left }}>
@@ -2731,96 +2606,18 @@ export default function App() {
               path, the mode's ‹ n/m › cluster, rotation, close/back —
               so no centre toolbar renders while one is open */}
           {!fullImageOpen && (mode !== "rolls" || imageId != null) ? (
-          <div className="center-toolbar">
-            <span className="toolbar-left">
-              {mode === "rolls" ? (
-                <>
-                  <button
-                    className="ghost"
-                    onClick={() => stepImage(-1)}
-                    disabled={
-                      branchThumbs.images.length === 0 ||
-                      imgStepIdx === -1 ||
-                      imgStepIdx <= 0
-                    }
-                    title="previous image (←)"
-                  >
-                    ‹
-                  </button>
-                  <span className="nav-pos">
-                    {branchThumbs.images.length > 0
-                      ? `${imgStepIdx === -1 ? "–" : imgStepIdx + 1}/${branchThumbs.images.length}`
-                      : "–"}
-                  </span>
-                  <button
-                    className="ghost"
-                    onClick={() => stepImage(1)}
-                    disabled={
-                      branchThumbs.images.length === 0 ||
-                      imgStepIdx === -1 ||
-                      imgStepIdx >= branchThumbs.images.length - 1
-                    }
-                    title="next image (→)"
-                  >
-                    ›
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    className="ghost"
-                    onClick={() => stepPerson(-1)}
-                    disabled={stepIds.length === 0 || (stepIdx !== -1 && stepIdx <= 0)}
-                    title="previous person (←)"
-                  >
-                    ‹
-                  </button>
-                  <span className="nav-pos">
-                    {stepIds.length > 0
-                      ? `${stepIdx === -1 ? "–" : stepIdx + 1}/${stepIds.length}`
-                      : "–"}
-                  </span>
-                  <button
-                    className="ghost"
-                    onClick={() => stepPerson(1)}
-                    disabled={
-                      stepIds.length === 0 || (stepIdx !== -1 && stepIdx >= stepIds.length - 1)
-                    }
-                    title="next person (→)"
-                  >
-                    ›
-                  </button>
-                </>
-              )}
-            </span>
-            {/* #99/#100: the cluster-group seg hugs the right side of the
-                person view — the Show filter is a global control and lives
-                in the top bar (#158, v3.57); #163: person view ONLY —
-                cluster_group shapes that view's sections alone (§4.9), so
-                Review and Rolls must not show it; its title stays
-                reference-free (§4.43) */}
-            {mode === "person" && (
-            <span className="toolbar-right">
-            <span
-              className="seg"
-              title="Person view: how faces form sections — Accuracy = similarity clusters within each description; Description = one section per description (threshold ignored)"
-            >
-              <button
-                className={clusterGroup === "description" ? "active" : ""}
-                onClick={() => setClusterGroup("description")}
-              >
-                Description
-              </button>
-              <button
-                className={clusterGroup === "accuracy" ? "active" : ""}
-                onClick={() => setClusterGroup("accuracy")}
-              >
-                Accuracy
-              </button>
-            </span>
-            </span>
-            )}
-          </div>
+            // #331: the centre toolbar subtree (CenterToolbar.tsx)
+            <CenterToolbar
+              mode={mode}
+              branchImageCount={branchThumbs.images.length}
+              imgStepIdx={imgStepIdx}
+              stepIds={stepIds}
+              stepIdx={stepIdx}
+              clusterGroup={clusterGroup}
+              stepImage={stepImage}
+              stepPerson={stepPerson}
+              setClusterGroup={setClusterGroup}
+            />
           ) : null}
           {/* #100: the bar is the pane's real header — only the area below
               it scrolls, so no section content can ever pass above it */}
@@ -3108,268 +2905,75 @@ export default function App() {
         onClear={() => changeSel(new Set())}
       />
 
-      {mergeOpen && snap && (
-        <MergeSimilarDialog
-          persons={snap.persons}
-          settings={snap.settings}
-          // v13.0 (#287): the anchored route — only the pane person's
-          // cluster; null (the tree route) lists everything
-          anchorId={mergeAnchor ?? undefined}
-          onSaveSettings={saveMergeSettings}
-          onMergeInto={(ids) => openMergeInto(ids)}
-          onApplyGroup={applyGroupToSelection}
-          onRename={renamePersons}
-          onClose={closeMergeDialog}
-          escActive={mergeInto == null && edit == null}
-        />
-      )}
-      {mergeInto && snap && (
-        <MergeIntoDialog
-          sources={mergeInto.sourceIds
-            .map((id) => personsById.get(id))
-            .filter((p): p is Person => !!p)}
-          defaultTarget={
-            mergeInto.targetId != null
-              ? personsById.get(mergeInto.targetId) ?? null
-              : null
-          }
-          persons={snap.persons}
-          onConfirm={confirmMerge}
-          onCancel={() => setMergeInto(null)}
-        />
-      )}
-      {faceMerge && snap && personsById.get(faceMerge.targetId) && (
-        <FaceMergeDialog
-          plan={faceMergePlan(
-            faceMerge.faceIds,
-            faceMerge.targetId,
-            snap.faces,
-            snap.persons,
-          )}
-          sourceNames={new Map(snap.persons.map((p) => [p.id, p.name]))}
-          target={personsById.get(faceMerge.targetId)!}
-          onConfirm={() => void confirmFaceMerge()}
-          onCancel={() => setFaceMerge(null)}
-        />
-      )}
-      {/* #165/§4.35 (status seats) + §4.16 (add vs replace) — the
-          body stays reference-free (§4.43); #256 — the shared
-          AddGroupDialog (title/body/normalization live in ONE place) */}
-      {faceAddGroup && (
-        <AddGroupDialog
-          ids={faceAddGroup.ids}
-          persons={snap?.persons ?? []}
-          options={pathOptions}
-          onSubmit={(ids, norm) => {
-            setFaceAddGroup(null);
-            if (norm && ids.length > 0) addPersonsToGroup(ids, norm);
-          }}
-          onCancel={() => setFaceAddGroup(null)}
-        />
-      )}
-      {/* #298 (rule 51): the annotated-image export — the bar's ⤓ and
-          the image-area menu's entry both land here; the faces are the
-          §4.10 visible pass of the invoked image */}
-      {exportImage && (
-        <AnnotatedExportDialog
-          image={exportImage}
-          faces={
-            snap
-              ? snap.faces.filter(
-                  (f) => f.image_id === exportImage.id && faceVisible(f)
-                )
-              : []
-          }
-          personName={(pid) =>
-            pid != null ? personsById.get(pid)?.name ?? null : null}
-          onClose={() => setExportImage(null)}
-          onSaved={setInfo}
-          onError={setError}
-        />
-      )}
-      {edit && snap && (
-        <EditDialog
-          defaultScope={edit.defaultScope}
-          counts={{
-            card: edit.card.length,
-            group: edit.group.length,
-            selection: sel.size,
-          }}
-          prefills={edit.prefills}
-          persons={personOptions}
-          pathOptions={pathOptions}
-          descOptions={descOptions}
-          onDone={(r) => {
-            const ids =
-              r.scope === "card"
-                ? edit.card
-                : r.scope === "group"
-                  ? edit.group
-                  : [...selRef.current];
-            setEdit(null);
-            // #231/#263 (§4.24): a `|` add-mode description expands per face
-            // against its displayed value (staged overlay over
-            // committed); faces the add leaves unchanged drop out
-            const st = buildStage(ids, r.values, r.touched);
-            const stages =
-              st?.desc != null && addTokens(st.desc).length > 0
-                ? expandAddStage(st, (id) =>
-                    stagedFieldsForCard(pendingRef.current, id).desc ??
-                    facesById.get(id)?.description ??
-                    "")
-                : st
-                  ? [st]
-                  : null;
-            if (!stages) {
-              if (r.kind === "accept") {
-                // nothing field-staged — Accept still accepts the scope
-                // (§4.30); #181: a list-only Accept commits the group
-                // ops through the same chain (no stage, just the ops)
-                if (ids.length > 0) void commitPending([], ids, r.groupOps);
-                return;
-              }
-              if (r.groupOps.length > 0) {
-                // Apply leaves the list edits LOCAL — they preview in
-                // the list itself and commit with Accept (#181)
-                setInfo("group changes commit with Accept");
-                return;
-              }
-              // #103: a no-op Apply says so — reference-free (§4.43)
-              setInfo("nothing to apply — change a field first");
-              return;
-            }
-            if (r.kind === "apply") {
-              // #123: extend the set (#231: an add-mode submit can be
-              // several concrete stages)
-              setPending((p) => stages.reduce((acc, s) => upsertStage(acc, s), p));
-              return;
-            }
-            // #166: the staged ops commit first, then this dialog's
-            // chosen scope is accepted (the set edits, never the scope);
-            // #181: the list edits ride along (name first, memberships
-            // against the surviving person)
-            void commitPending(
-              stages.reduce((acc, s) => upsertStage(acc, s), pendingRef.current),
-              ids,
-              r.groupOps,
-            );
-          }}
-          onReject={(scope) => {
-            // #124: a verdict, not a field edit — commits immediately.
-            // #165/§4.35: the *Un-reject (accept)* relabel retired — an
-            // assignment claims (the dialog's Accept with a NAME), and
-            // the button is disabled on a fully-rejected scope.
-            const ids =
-              scope === "card"
-                ? edit.card
-                : scope === "group"
-                  ? edit.group
-                  : [...selRef.current];
-            setEdit(null);
-            // F2: doReject drops the newly-moot stages itself (#141)
-            void doReject(ids);
-          }}
-          rejected={{
-            card:
-              edit.card.length > 0 &&
-              edit.card.every((id) => facesById.get(id)?.link_status === "rejected"),
-            group:
-              edit.group.length > 0 &&
-              edit.group.every((id) => facesById.get(id)?.link_status === "rejected"),
-            selection:
-              sel.size > 0 &&
-              [...sel].every((id) => facesById.get(id)?.link_status === "rejected"),
-          }}
-          onCancel={() => setEdit(null)}
-        />
-      )}
-      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
-      {settingsOpen && snap && (
-        <SettingsPopover
-          settings={snap.settings}
-          onClose={() => setSettingsOpen(false)}
-          onEnv={() => {
-            setSettingsOpen(false);
-            setEnvOpen(true);
-          }}
-          onSave={async (s) => {
-            await api.setSettings(s).catch((e) => setError(String(e)));
-            setSettingsOpen(false);
-            await refresh().catch((e) => setError(String(e)));
-          }}
-        />
-      )}
-      {envOpen && !noDb && (
-        // #303 (rule 52): the main app's entry (the first-run surface
-        // renders its own above) — the save refreshes the snapshot
-        <EnvDialog
-          onClose={() => setEnvOpen(false)}
-          onError={setError}
-          onSave={async (s) => {
-            await api.setSettings(s);
-            await refresh();
-            setInfo("environment saved — path changes take effect after a restart");
-          }}
-        />
-      )}
-      {contextConfirm && pending.length > 0 && (
-        // §4.44 round 2 stage 4 (#295): the guard surface is the
-        // component; the accept/discard actions stay App-side
-        <ContextConfirmDialog
-          pending={pending}
-          onDiscard={() => {
-            const act = contextConfirm.fn;
-            setContextConfirm(null);
-            setPending([]);
-            act();
-          }}
-          onAccept={() => {
-            const all = pending;
-            const act = contextConfirm.fn;
-            setContextConfirm(null);
-            void commitPending(all).then(act);
-          }}
-        />
-      )}
-      {/* #176 (§4.41): the Person-mode guard dialogs — the no-anchor
-          pointer (single Close) and the sticky-person guard
-          (components/guards.tsx, §4.44 stage 4) */}
-      {pickPersonDialog && (
-        <PickPersonDialog onClose={() => setPickPersonDialog(false)} />
-      )}
-      {noFacesDialog && (
-        <NoFacesDialog
-          faceFilter={faceFilter}
-          onShowAll={() => {
-            setNoFacesDialog(false);
-            changeFaceFilter("all");
-          }}
-          onClose={() => setNoFacesDialog(false)}
-        />
-      )}
-      {confirmRemove && (
-        <ConfirmRemoveDialog
-          ids={confirmRemove}
-          onConfirm={(ids) => {
-            markExhaust(); // #125: removing may empty the current person
-            setConfirmRemove(null);
-            setSelPersons((prev) => {
-              const n = new Set(prev);
-              for (const id of ids) n.delete(id);
-              return n;
-            });
-            if (personId != null && ids.includes(personId)) {
-              setPersonId(null);
-              setMode("review");
-            }
-            mutate(() => api.removePersons(ids), true);
-          }}
-          onCancel={() => setConfirmRemove(null)}
-        />
-      )}
-      {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
-      {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
-      {info && <InfoToast message={info} />}
-    </div>
+      {/* #331: the dialog host subtree (DialogHost.tsx) — the merge
+          cluster, the Edit dialog, the chrome/guard dialogs, the context
+          menu and the toasts; props are the existing values/callbacks,
+          relocated; no behaviour change */}
+      <DialogHost
+        snap={snap}
+        mergeOpen={mergeOpen}
+        mergeAnchor={mergeAnchor}
+        mergeInto={mergeInto}
+        faceMerge={faceMerge}
+        faceAddGroup={faceAddGroup}
+        exportImage={exportImage}
+        edit={edit}
+        helpOpen={helpOpen}
+        settingsOpen={settingsOpen}
+        envOpen={envOpen}
+        noDb={noDb}
+        contextConfirm={contextConfirm}
+        pickPersonDialog={pickPersonDialog}
+        noFacesDialog={noFacesDialog}
+        confirmRemove={confirmRemove}
+        menu={menu}
+        pending={pending}
+        sel={sel}
+        selRef={selRef}
+        pendingRef={pendingRef}
+        personId={personId}
+        faceFilter={faceFilter}
+        personsById={personsById}
+        facesById={facesById}
+        personOptions={personOptions}
+        pathOptions={pathOptions}
+        descOptions={descOptions}
+        error={error}
+        info={info}
+        saveMergeSettings={saveMergeSettings}
+        openMergeInto={openMergeInto}
+        applyGroupToSelection={applyGroupToSelection}
+        renamePersons={renamePersons}
+        closeMergeDialog={closeMergeDialog}
+        confirmMerge={confirmMerge}
+        confirmFaceMerge={confirmFaceMerge}
+        addPersonsToGroup={addPersonsToGroup}
+        faceVisible={faceVisible}
+        commitPending={commitPending}
+        doReject={doReject}
+        markExhaust={markExhaust}
+        mutate={mutate}
+        refresh={refresh}
+        changeFaceFilter={changeFaceFilter}
+        closeMenu={closeMenu}
+        setMergeInto={setMergeInto}
+        setFaceMerge={setFaceMerge}
+        setFaceAddGroup={setFaceAddGroup}
+        setExportImage={setExportImage}
+        setEdit={setEdit}
+        setHelpOpen={setHelpOpen}
+        setSettingsOpen={setSettingsOpen}
+        setEnvOpen={setEnvOpen}
+        setContextConfirm={setContextConfirm}
+        setPickPersonDialog={setPickPersonDialog}
+        setNoFacesDialog={setNoFacesDialog}
+        setConfirmRemove={setConfirmRemove}
+        setSelPersons={setSelPersons}
+        setPersonId={setPersonId}
+        setMode={setMode}
+        setPending={setPending}
+        setInfo={setInfo}
+        setError={setError}
+      />    </div>
   );
 }

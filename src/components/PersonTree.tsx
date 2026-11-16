@@ -13,12 +13,11 @@ import type { Person } from "../api";
 import { useFaceImage } from "../hooks";
 import NameTypeahead from "./NameTypeahead";
 import { groupPathOptions } from "./PathTypeahead";
-import { firstRealGroup, normalizeGroupPath } from "../groupList";
 import { rotStyle } from "../rotation";
-import ConfirmDialog from "./ConfirmDialog";
 import ContextMenu, { type MenuState } from "./ContextMenu";
-import GroupDialog from "./GroupDialog";
-import AddGroupDialog from "./AddGroupDialog";
+// #331: the dialog cluster (group dialogs + delete confirm) moved to
+// TreeDialogs.tsx
+import TreeDialogs, { type TreeGroupDialog, type ConfirmDeleteGroup } from "./TreeDialogs";
 // #260: the shared "is a face drag live" predicate (faceDrop.ts) — the
 // ONE definition App's grid handlers and this pane's person-row drop
 // targets both read (the #252 dup merge)
@@ -273,19 +272,11 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
   // #50 (§4.16) — group dialogs: rename/move a branch, move persons,
   // add a group (#164 supersedes #54: person rows only — the typed path
   // becomes an ADDITIONAL membership, §4.18)
-  const [groupDialog, setGroupDialog] = useState<
-    | { kind: "rename-branch"; path: string }
-    | { kind: "move-persons"; ids: number[] }
-    | { kind: "add-group"; ids: number[] }
-    | null
-  >(null);
+  const [groupDialog, setGroupDialog] = useState<TreeGroupDialog>(null);
   // #97 (§4.21) — one path-suggestion list per persons snapshot, shared
   // by every group-path field opened from the tree
   const pathOptions = useMemo(() => groupPathOptions(persons), [persons]);
-  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<{
-    path: string;
-    count: number;
-  } | null>(null);
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ConfirmDeleteGroup | null>(null);
   // #50 — drag-and-drop state: what is dragged, and the hovered branch
   const dragRef = useRef<
     | { kind: "persons"; ids: number[]; /** #157: the dragged placement's branch path */
@@ -897,85 +888,22 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
       )}
       {/* #165/§4.35 (status seats) + §4.16 (add vs replace) — the
           dialog bodies stay reference-free (§4.43) */}
-      {/* #256 — the "add-group" kind is the shared AddGroupDialog
-          (title/body/normalization in ONE place); the other two stay.
-          #165/§4.35 (status seats) + §4.16 (add vs replace) — the
-          dialog bodies stay reference-free (§4.43) */}
-      {groupDialog && groupDialog.kind !== "add-group" && (
-        <GroupDialog
-          options={pathOptions}
-          title={
-            groupDialog.kind === "rename-branch"
-              ? "Rename / move group"
-              : groupDialog.ids.length > 1
-                ? `Move ${groupDialog.ids.length} persons to a group`
-                : "Move person to a group"
-          }
-          body={
-            groupDialog.kind === "rename-branch"
-              ? "The whole branch — including sub-branches — follows to the new path. " +
-                "Empty = everybody falls to their status seat."
-              : // #233 (§4.35 display rule) lives in the defaultPath below
-                "Replaces each person's group path (empty = their status seat). " +
-                "Faces and names are untouched."
-          }
-          defaultPath={
-            groupDialog.kind === "rename-branch"
-              ? groupDialog.path
-              // #233 (§4.35 display rule): the prefill is the person's
-              // first REAL group — a status seat never shows as the
-              // current group
-              : firstRealGroup(byId.get(groupDialog.ids[0])?.groups ?? [])
-          }
-          submitLabel={
-            groupDialog.kind === "rename-branch" ? "move group" : "move"
-          }
-          onSubmit={(path) => {
-            const d = groupDialog;
-            setGroupDialog(null);
-            if (d.kind === "rename-branch") {
-              // compare normalised (#42 via #256's normalizeGroupPath):
-              // whitespace-only edits are a no-op
-              const norm = normalizeGroupPath(path);
-              if (norm !== d.path) onRenameGroup(d.path, norm);
-            } else {
-              onMovePersons(d.ids, path);
-            }
-          }}
-          onCancel={() => setGroupDialog(null)}
-        />
-      )}
-      {groupDialog?.kind === "add-group" && (
-        <AddGroupDialog
-          ids={groupDialog.ids}
-          persons={persons}
-          options={pathOptions}
-          onSubmit={(ids, norm) => {
-            setGroupDialog(null);
-            if (norm && ids.length > 0) onAddGroup(ids, norm);
-          }}
-          onCancel={() => setGroupDialog(null)}
-        />
-      )}
-      {confirmDeleteGroup && (
-        <ConfirmDialog
-          title={`Delete group '${confirmDeleteGroup.path}'`}
-          body={
-            // #165/§4.35: absorbed persons fall to their status seat —
-            // the body stays reference-free (§4.43)
-            `${confirmDeleteGroup.count} person(s) — including any sub-branches — ` +
-            "fall to their status seat. Faces, names and statuses are untouched."
-          }
-          confirmLabel="delete group"
-          danger
-          onConfirm={() => {
-            const d = confirmDeleteGroup;
-            setConfirmDeleteGroup(null);
-            onDeleteGroup(d.path);
-          }}
-          onCancel={() => setConfirmDeleteGroup(null)}
-        />
-      )}
+      {/* #331: the dialog cluster (TreeDialogs.tsx) — the §4.16 group
+          dialogs, the shared AddGroupDialog (#256) and the delete-group
+          confirmation; props are the existing values/callbacks */}
+      <TreeDialogs
+        groupDialog={groupDialog}
+        confirmDeleteGroup={confirmDeleteGroup}
+        persons={persons}
+        byId={byId}
+        pathOptions={pathOptions}
+        onRenameGroup={onRenameGroup}
+        onMovePersons={onMovePersons}
+        onAddGroup={onAddGroup}
+        onDeleteGroup={onDeleteGroup}
+        setGroupDialog={setGroupDialog}
+        setConfirmDeleteGroup={setConfirmDeleteGroup}
+      />
     </div>
   );
 }
