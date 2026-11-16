@@ -4,14 +4,13 @@
 // overlay registry (useOwnsKeyboard #138), carries the window-level
 // Esc handler (#248 — v5.5) and click-away dismissal.
 import { useEffect } from "react";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 
 interface Props {
   onClose: () => void;
 }
 
 export default function HelpDialog({ onClose }: Props) {
-  useOwnsKeyboard();
   // #248: the topmost overlay owns Esc — a field-level escape cannot
   // cover a list-only dialog, so this listener IS its Esc
   useEffect(() => {
@@ -23,7 +22,7 @@ export default function HelpDialog({ onClose }: Props) {
   }, [onClose]);
 
   return (
-    <div className="overlay settings-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <Dialog label="Shortcuts" className="settings-overlay" onBackdrop={onClose}>
       <div className="dialog settings">
         <h3>Shortcuts</h3>
         <div className="shortcuts">
@@ -47,6 +46,6 @@ export default function HelpDialog({ onClose }: Props) {
           <button className="secondary" onClick={onClose}>close</button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

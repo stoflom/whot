@@ -3,7 +3,7 @@ import type { Person } from "../api";
 import NameTypeahead from "./NameTypeahead";
 import { realGroups } from "../groupList";
 import { isRejectedBin } from "../personNames";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 
 // Shared merge confirmation (#88, gui-design §4.28). All three entry
 // points feed it — context menu, drag-and-drop (target pre-filled) and
@@ -26,7 +26,7 @@ interface Props {
 }
 
 export default function MergeIntoDialog({ sources, defaultTarget, persons, onConfirm, onCancel }: Props) {
-  useOwnsKeyboard(); // #138
+
   // #266/§4.28: the reject-bin persons are refused as merge targets in
   // the backend too (validate_person_name reserves the family) — the
   // dialog mirrors that so the typeahead never offers them
@@ -75,7 +75,10 @@ export default function MergeIntoDialog({ sources, defaultTarget, persons, onCon
   };
 
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+    <Dialog
+      label={moving.length > 1 ? `Merge ${moving.length} persons` : "Merge person"}
+      onBackdrop={onCancel}
+    >
       <div className="dialog">
         <h3>{moving.length > 1 ? `Merge ${moving.length} persons` : "Merge person"}</h3>
         <p className="dim">
@@ -133,6 +136,6 @@ export default function MergeIntoDialog({ sources, defaultTarget, persons, onCon
           </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

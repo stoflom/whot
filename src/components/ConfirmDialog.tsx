@@ -1,9 +1,10 @@
 import { useEffect } from "react";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 
 // Generic confirmation dialog (#35): used for destructive actions such as
-// removing persons. // #138: registered with the overlay registry while
-// mounted (Q8: an open dialog owns the keyboard).
+// removing persons. // #326: renders through the shared Dialog wrapper
+// (role/aria-modal/aria-label + focus management; the #138 keyboard
+// registration rides the wrapper).
 
 interface Props {
   title: string;
@@ -23,7 +24,6 @@ interface Props {
 }
 
 export default function ConfirmDialog({ title, body, confirmLabel, cancelLabel, onlyConfirm, modeless, danger, onConfirm, onCancel }: Props) {
-  useOwnsKeyboard(); // #138
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
@@ -32,7 +32,7 @@ export default function ConfirmDialog({ title, body, confirmLabel, cancelLabel, 
     return () => window.removeEventListener("keydown", key);
   }, [onCancel]);
   return (
-    <div className={`overlay${modeless ? " modeless" : ""}`} onMouseDown={(e) => !modeless && e.target === e.currentTarget && onCancel()}>
+    <Dialog label={title} className={modeless ? "modeless" : undefined} modeless={modeless} onBackdrop={onCancel}>
       <div className="dialog">
         <h3>{title}</h3>
         <p className="dim">{body}</p>
@@ -45,6 +45,6 @@ export default function ConfirmDialog({ title, body, confirmLabel, cancelLabel, 
           </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

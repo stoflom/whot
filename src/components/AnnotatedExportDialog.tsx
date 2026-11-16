@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 import { openImageFile, saveImageFile, type Face, type ImageRow } from "../api";
 import {
   defaultExportName,
@@ -46,7 +46,6 @@ export default function AnnotatedExportDialog({
   onSaved,
   onError,
 }: Props) {
-  useOwnsKeyboard(); // #138: an open dialog owns the keyboard
   // #248: Esc works from the dialog body too (the GroupDialog idiom)
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -120,10 +119,7 @@ export default function AnnotatedExportDialog({
   };
 
   return (
-    <div
-      className="overlay"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-    >
+    <Dialog label="Export annotated image" onBackdrop={onClose}>
       <div className="dialog">
         <h3>Export annotated image</h3>
         <p className="dim">
@@ -190,6 +186,6 @@ export default function AnnotatedExportDialog({
           open in the image viewer after export
         </label>
       </div>
-    </div>
+    </Dialog>
   );
 }

@@ -7,7 +7,7 @@ import GroupListEditor from "./GroupListEditor";
 import { applyGroupOps, type GroupOp } from "../groupList";
 import { descApplyPick, descCurrentToken } from "../descTags";
 import type { SuggestOption } from "./SuggestInput";
-import { useOwnsKeyboard } from "../overlays";
+import Dialog from "./Dialog";
 import type { Prefill, StageScope } from "../stage";
 
 // #101 (§4.24) — THE edit dialog: the four value fields (name, group,
@@ -78,7 +78,6 @@ export default function EditDialog({
   onCancel,
 }: Props) {
   // header-open has no card scope (count 0) — never open on an empty scope
-  useOwnsKeyboard(); // #138
   // #248: the topmost overlay owns Esc — the field-level onEscape covers
   // only the typeaheads/desc input, so Esc must work from the dialog
   // body too (ConfirmDialog/FaceMergeDialog idiom)
@@ -186,7 +185,7 @@ export default function EditDialog({
   };
 
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+    <Dialog label="Edit" onBackdrop={onCancel}>
       <div className="dialog edit-dialog">
         <h3>Edit</h3>
         <p className="dim">
@@ -360,6 +359,6 @@ export default function EditDialog({
           />
         </label>
       </div>
-    </div>
+    </Dialog>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
+import Dialog from "./Dialog";
 import ImportPane from "./ImportPane";
 
 // §4.44 (gui-design v3.94, #206 stage 3) — the first-run screen as a
@@ -37,7 +38,7 @@ export default function FirstRun({
   return (
     <div className="first-run">
       {firstRunDir == null ? (
-        <div className="overlay">
+        <Dialog label="No database yet">
           <div className="dialog">
             <h3>No database yet</h3>
             <p className="dim">
@@ -82,7 +83,7 @@ export default function FirstRun({
               </button>
             </div>
           </div>
-        </div>
+        </Dialog>
       ) : (
         <ImportPane
           dir={firstRunDir}
