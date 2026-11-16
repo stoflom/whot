@@ -366,6 +366,10 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   margin: 0 auto;
+  /* #327: it is a <button> now (a11y) — drop the global button
+     padding/border so the look is unchanged */
+  padding: 0;
+  border: none;
 }
 .dp-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
