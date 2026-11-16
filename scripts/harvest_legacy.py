@@ -136,13 +136,8 @@ def now() -> str:
 
 
 def blake3_hex(path: Path) -> str:
-    """BLAKE3 of a file, streamed — same identity import_roll.py stores."""
-    from blake3 import blake3
-    h = blake3()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    """BLAKE3 of a file, streamed — the shared copy (dbutil, #335)."""
+    return dbutil.blake3_hex(path)
 
 
 # EXIF Orientation tag values -> display rotation, clockwise degrees (#118).

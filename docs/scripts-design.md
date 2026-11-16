@@ -1,6 +1,6 @@
 # WhoT Scripts Design — Python tooling
 
-**Version: 7.0** (#302) (major.minor per `AGENTS.md`; major = new feature,
+**Version: 7.1** (#302) (major.minor per `AGENTS.md`; major = new feature,
 minor = change/correction)
 
 This document describes the **current state only** — no change
@@ -612,10 +612,19 @@ in its own (drifted) copy, now ONE copy each:
   read-only archive).
 - `UNUSABLE_THRESHOLD` / `coverage_pct(unusable, total)` — the §8.6
   >20% unusable warning.
+- `blake3_hex(path)` — the streamed-BLAKE3 content-hash identity the
+  importer stores (was one drifted copy each in `harvest_legacy.py` /
+  `import_roll.py`; blake3 is imported lazily so the stdlib-only
+  scripts stay importable without it).
 - `seat_for(con, person_id)` / `reseat_person(con, person_id,
   must_exist=…)` — the §4.35 seat derivation and insert-first
   re-seating (a reject-bin person's `Rejected` seat is never touched —
   the `RejectedN` family, #266).
+- `reseat_persons(con, person_ids)` — the set form, routed through
+  `reseat_person` (the ONE implementation; was a divergent bulk
+  `UPDATE … WHERE path IN ('New','Accepted')` copy in
+  `import_roll.py` without the insert-first ordering or the
+  reject-bin guard). A missing id is a silent no-op.
 
 Scripts do `import dbutil` and call `dbutil.X` (not `from dbutil import
 X`) so the tests patch a single home. Same shared-module precedent as

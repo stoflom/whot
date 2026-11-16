@@ -16,6 +16,8 @@ pub const MODEL_TAG: &str = "insightface:buffalo_l";
 /// Must match `schema_version.version` in database/schema.sql — exact
 /// match, no migrations by policy: mismatched DBs are refused up-front
 /// with recreate instructions instead of failing on the first query.
+/// #337: the Python scripts take their copy from scripts/dbutil.py (the
+/// Python reference); SQL/Rust cannot import Python — the comments link.
 pub const SCHEMA_VERSION: &str = "1.9";
 const DEFAULT_THRESHOLD: f64 = 0.40;
 const DEFAULT_REFCROP_N: i64 = 5;

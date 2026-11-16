@@ -1,6 +1,10 @@
 __pycache__/
 .env
-*.txt
+# the two local scratch text files (recovery transcript, the dot-name
+# path map) — #339: named entries, not a bare *.txt catch-all that would
+# silently ignore any future tracked text file
+recover.txt
+.pathmap.txt
 *.log
 *.db
 *.db-wal
@@ -32,8 +36,7 @@ scratch/
 # runtime GUI settings (defaults apply when absent)
 config/whotrc.json
 
-# machine-specific path map (legacy roots -> local archive; #85) — the
-# *.txt catch-all above covers it, named explicitly so it survives that
+# machine-specific path map (legacy roots -> local archive; #85)
 config/pathmap*.txt
 /test/archive-fixture/
 

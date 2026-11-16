@@ -40,8 +40,9 @@ import cli_console  # shared header/status/quiet console (scripts-design §10)
 import dbutil       # shared .env / read-only / coverage / seat helpers
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-# must match database/schema.sql and scripts/import_roll.py / db.rs
-SCHEMA_VERSION = "1.9"
+# #337: the ONE Python copy lives in dbutil (must match database/schema.sql
+# and src-tauri/src/db.rs — both kept in step by their comments)
+SCHEMA_VERSION = dbutil.SCHEMA_VERSION
 FORMAT = 1
 
 
