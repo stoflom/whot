@@ -18,6 +18,13 @@ import urllib.parse
 import json
 from pathlib import Path
 
+# The schema marker version (the ONE Python copy, #337) — must match
+# database/schema.sql's schema_version row and src-tauri/src/db.rs's
+# SCHEMA_VERSION (those two cannot import Python; their comments point
+# here). A missed bump would silently break the snapshot/restore and
+# import gates.
+SCHEMA_VERSION = "1.9"
+
 # ---------------------------------------------------------------------- .env
 
 def _expand_refs(raw: dict[str, str]) -> dict[str, str]:

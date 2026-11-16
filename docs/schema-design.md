@@ -1,6 +1,6 @@
 # WhoT Database Schema Design
 
-**Version: 2.4** (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 2.5** (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction)
 
 Split out of `docs/gui-design.md` (v3.16). Revision history lives in the
@@ -119,12 +119,14 @@ mid-flight — both writers seat instead, and the fix script asserts.
   anything else at recreate instructions
   (`sqlite3 data/faces.db < database/schema.sql`), never on the first
   query.
-- The expected value `'1.9'` is a constant in **five** places that must be
-  kept equal: `schema.sql` (the `INSERT`), `src-tauri/src/db.rs`
-  (`SCHEMA_VERSION`), `scripts/import_roll.py` (`SCHEMA_VERSION`),
-  `scripts/import_harvested.py` (`FACES_SCHEMA_VERSION`);
-  `scripts/annotation_snapshot.py` checks it too (`SCHEMA_VERSION`) for
-  restore targets.
+- The expected value `'1.9'` is kept equal across **five** places, one
+  of them the Python reference: `scripts/dbutil.py` (`SCHEMA_VERSION`,
+  #337 — the ONE Python copy; `import_roll.py` and
+  `annotation_snapshot.py` take theirs from it); the non-Python copies
+  are `schema.sql` (the `INSERT`) and `src-tauri/src/db.rs`
+  (`SCHEMA_VERSION`), each pointing at dbutil by comment;
+  `scripts/import_harvested.py` has its own staging-gate constant
+  (`FACES_SCHEMA_VERSION`).
 - **v1.6 → v1.7** changed no column — the upgrade is semantic
   (status seats, system person `Rejected`, writer-owned group
   invariant), so it ships as `scripts/fix_status_groups.py`: a one-off,

@@ -195,6 +195,9 @@ CREATE TABLE person_refcrops (
 );
 
 -- Single-row schema marker (exact-match check; no migrations by policy).
+-- The version is one row kept in step with scripts/dbutil.py's
+-- SCHEMA_VERSION (the Python reference, #337) and src-tauri/src/db.rs's
+-- SCHEMA_VERSION; SQL/Rust cannot import Python — the comments are the link.
 CREATE TABLE schema_version (
   version    TEXT NOT NULL,
   updated_at TEXT NOT NULL
