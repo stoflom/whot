@@ -105,6 +105,16 @@ Each chapter file opens with a one-line status note
   applications: darktable and digiKam (WhoT writes its person names into the
   pictures' sidecar files), Lap (WhoT updates a copy of its own database
   that Lap can read). What is written, what is not touched, how to verify.
+  **Implementation status (2026-11):** Lap export exists as preliminary
+  scripts in the separate `lap` workspace (`scripts/import_person_faces.py`;
+  `scripts/import_darktable_tags.py` is the *reverse* direction — darktable
+  tags/ratings into Lap — and belongs to Ch. 3's topic, not Ch. 4). Ch. 4's
+  Lap section is written against those scripts' user-visible behaviour only
+  (dated working copy, preview-before-commit, picture identity checked by
+  content, only named persons shared); it must be re-checked when the
+  scripts are finalised or integrated into this repository. The
+  darktable/Lightroom/digiKam sidecar *writer* is still outstanding — until
+  it ships, §4.2 stays a clearly marked *planned* section.
 - **Ch. 5 — Reference.** A field guide to every visible control: top bar
   (tabs, `Show` filter, refresh, settings), left pane person tree (status
   branches, drag and drop, right-click menus), centre pane's three modes
