@@ -547,13 +547,9 @@ def _next_unknown_number_for(names: Iterable[str]) -> int:
 
 # ---------------------------------------------------------------- storage
 
-def blake3_hex(path: Path) -> str:
-    from blake3 import blake3
-    h = blake3()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+# #335: the streamed BLAKE3 identity lives in dbutil (ONE copy); the
+# alias keeps the module-level patch target for the tests.
+blake3_hex = dbutil.blake3_hex
 
 
 def ensure_person(con: sqlite3.Connection, stub: PersonStub, unknowns: list[PersonStub]) -> int:
@@ -624,7 +620,9 @@ def store_faces(con: sqlite3.Connection, image_id: int, pairs, unknowns, import_
     # a seated person (no user-given group) re-seats to `New`; a filed
     # person's rows are never touched (a reject-bin seat can't be
     # in play: the `RejectedN` family is never an import target, #266).
-    reseat_persons(con, {ensure_person(con, stub, unknowns) for _, stub in pairs})
+    # #335: the ONE re-seat implementation (dbutil — was a divergent
+    # bulk UPDATE copy here)
+    dbutil.reseat_persons(con, {ensure_person(con, stub, unknowns) for _, stub in pairs})
 
 
 # ---------------------------------------------------------------- re-import (#277, gui-design §4.47)
@@ -713,23 +711,6 @@ def repair_stale_primaries(con: sqlite3.Connection, person_ids: set[int]) -> Non
                             WHERE f.id = persons.primary_face_id
                               AND f.person_id = persons.id)
     """, tuple(pids))
-
-
-def reseat_persons(con: sqlite3.Connection, person_ids: set[int]) -> None:
-    """Re-seat persons receiving a provisional face to `New` (group
-    invariant, §4.35) — the same statement the fresh-import path runs.
-    #283 (N5): one statement for the whole person set (the old loop ran
-    the UPDATE per pid)."""
-    if not person_ids:
-        return
-    pids = [p for p in person_ids if p is not None]
-    marks = ",".join("?" * len(pids))
-    con.execute(
-        f"UPDATE person_groups SET path = 'New'"
-        f"  WHERE person_id IN ({marks}) AND path IN ('New', 'Accepted')"
-        f"    AND EXISTS (SELECT 1 FROM faces WHERE person_id IN ({marks})"
-        f"                AND link_status = 'provisional')",
-        (*pids, *pids))
 
 
 def reimport_image(con: sqlite3.Connection, image_id: int, detections: list[Detection],
@@ -821,7 +802,7 @@ def reimport_image(con: sqlite3.Connection, image_id: int, detections: list[Dete
             relinked_pids.add(new_pid)
             source_pids.add(f.person_id)
         if relinked_pids:
-            reseat_persons(con, relinked_pids)
+            dbutil.reseat_persons(con, relinked_pids)
             repair_stale_primaries(con, source_pids)
 
     # 2. unmatched detections → fresh-detection path (new face rows)

@@ -1,7 +1,8 @@
 """Shared stdlib-only helpers for the WhoT scripts.
 
-The .env reader, the read-only connection, the coverage warning and the
-§4.35 seat derivation each used to live in one copy per script and had
+The .env reader, the read-only connection, the coverage warning, the
+streamed BLAKE3 content hash and the §4.35 seat derivation each used
+to live in one copy per script and had
 drifted (a missing `.env` raised in one script but not another; one
 read-only URI was un-quoted; the seat loop was re-typed three times).
 They live here now, ONE copy each — the same shared-module precedent as
@@ -128,6 +129,20 @@ def coverage_pct(unusable: int, total: int,
         return None
     return 100.0 * unusable / total
 
+# ------------------------------------------------------------------ content hash
+
+def blake3_hex(path: Path) -> str:
+    """BLAKE3 of a file, streamed — the content-hash identity the importer
+    stores (one copy here; harvest's docstring used to say "same identity
+    import_roll.py stores" of its drifted twin). blake3 is an optional
+    dependency — imported lazily so stdlib-only scripts stay importable."""
+    from blake3 import blake3
+    h = blake3()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 # ---------------------------------------------------------------- seat (§4.35)
 
 SEATS = ("New", "Accepted", "Rejected")
@@ -167,3 +182,16 @@ def reseat_person(con: sqlite3.Connection, person_id: int,
                     (person_id, seat))
         con.execute("DELETE FROM person_groups WHERE person_id=? AND path != ?",
                     (person_id, seat))
+
+def reseat_persons(con: sqlite3.Connection, person_ids,
+                   seats: tuple = SEATS) -> None:
+    """Re-seat a SET of persons through the ONE §4.35 implementation
+    (`reseat_person`, insert-first, reject-bin-guarded). This used to be a
+    bulk `UPDATE … WHERE path IN ('New','Accepted')` in import_roll.py —
+    the same rule cited, but a divergent copy: it lacked the insert-first
+    ordering (a groupless person got nothing) and the reject-bin guard.
+    A missing id is skipped (`must_exist=True`), exactly the bulk
+    statement's silent no-op."""
+    for pid in set(person_ids):
+        if pid is not None:
+            reseat_person(con, pid, seats, must_exist=True)
