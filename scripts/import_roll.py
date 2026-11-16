@@ -898,6 +898,15 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
         ap.error("--min-overlap must be in (0, 1]")
 
 
+def roll_dir_problem(roll_dir: Path) -> str | None:
+    """The up-front roll-dir gate (#340): a nonexistent directory gets its
+    own message instead of folding into the misleading post-scan 'no image
+    files found' summary. None = fine to scan."""
+    if not roll_dir.is_dir():
+        return f"roll directory not found: {roll_dir}"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = build_parser()
     args = ap.parse_args(argv)
@@ -937,9 +946,13 @@ def main(argv: list[str] | None = None) -> int:
     inject_insightface_venv(env)            # must precede Detector creation
 
     # non-recursive by default; --recursive walks subdirectories (design §3.1, #48)
+    problem = roll_dir_problem(args.roll_dir)
+    if problem:
+        ui.error(problem)
+        return 1
     ui.status(f"scanning {args.roll_dir} ...")
     walk = args.roll_dir.rglob("*") if args.recursive else args.roll_dir.glob("*")
-    files = sorted(p for p in (walk if args.roll_dir.is_dir() else [])
+    files = sorted(p for p in walk
                    if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
     if not files:
         ui.summary(f"no image files in {args.roll_dir}")

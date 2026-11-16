@@ -536,6 +536,25 @@ class MissingDbMessageTest(unittest.TestCase):
             self.assertIsNone(ir.missing_db_message(Path(fh.name)))
 
 
+class RollDirProblemTest(unittest.TestCase):
+    """#340: the up-front roll-dir gate — a nonexistent directory says so,
+    instead of the misleading post-scan 'no image files' summary."""
+    def test_nonexistent_dir_is_the_problem(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            msg = ir.roll_dir_problem(Path(tmp) / "nope")
+        self.assertIsNotNone(msg)
+        self.assertIn("roll directory not found", msg)
+
+    def test_a_file_is_also_refused(self):
+        with tempfile.NamedTemporaryFile() as fh:
+            self.assertIsNotNone(ir.roll_dir_problem(Path(fh.name)),
+                                 "only a directory is scannable")
+
+    def test_a_real_directory_is_fine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(ir.roll_dir_problem(Path(tmp)))
+
+
 class CreateDatabaseTest(unittest.TestCase):
     """--create-db: built from schema.sql, refuses a real database, replaces
     the stray 0-byte file sqlite3.connect() leaves behind (#90)."""
