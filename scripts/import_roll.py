@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """import_roll.py — import a film-roll directory into data/faces.db.
 
 Pipeline (see docs/gui-design.md §4 and README.md):
