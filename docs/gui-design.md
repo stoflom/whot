@@ -1,6 +1,6 @@
 # WhoT Face Manager — GUI Design
 
-**Version: 20.0** (#326; v19.4 #325, v19.3 #322, v19.2 #316/#317, v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
+**Version: 20.1** (#331; v20.0 #326, v19.4 #325, v19.3 #322, v19.2 #316/#317, v19.1 #309, v19.0 #307, v18.4 #306, v18.3 #305, v18.2 #303) (major.minor per `AGENTS.md`; major = new feature, minor =
 change/correction; this document is the primary design document — the app
 version in `package.json` tracks it). The Tauri bundle version
 (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`) must match
@@ -2424,6 +2424,23 @@ setup dialog that edits it is #303):
     decisions and action handlers stay App-side; the dialogs are
     mount-gated, so no persistent-tree callback crosses the
     boundary.
+  - **Render subtrees (#331, v20.1)**: the four independently
+    renderable subtrees are components whose props ARE the existing
+    values/callbacks, relocated — App stays the sole state owner and
+    no behaviour changes: the top bar (`TopBar.tsx` — the mode tabs,
+    the busy roller, the global Show filter + padlock, the DB-wide
+    status totals, ↻/?/⚙), the centre toolbar (`CenterToolbar.tsx` —
+    the mode's ‹ n/m › stepper cluster + the person view's
+    cluster-group seg), the dialog host (`DialogHost.tsx` — every
+    overlay: the merge cluster, the export dialog, the shared Edit
+    dialog, the chrome/guard dialogs, the context menu and the
+    toasts) and PersonTree's dialog cluster (`TreeDialogs.tsx` — the
+    §4.16 group dialogs, the shared #256 AddGroupDialog and the
+    delete-group confirmation). The bottom bar was already a
+    component (`RuleBar.tsx`); its App-side wiring is 16 lines. The
+    #98 identity rule is untouched: these are plain function
+    components, not memoised — they re-render with App exactly as
+    the inline JSX did.
 
   Each module's co-located test suite is its regression record; the
   extraction history lives in the GitHub issues (#206/#291 and their
