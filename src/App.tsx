@@ -739,7 +739,8 @@ export default function App() {
         setBusy(false);
       }
     },
-    [refresh, applyDeltas]
+    // #334: setSel is a stable useState setter
+    [refresh, applyDeltas, setSel]
   );
 
   // #122: rotations are server state — command, then refresh
@@ -857,7 +858,8 @@ export default function App() {
         prefetchRef.current.setRefcrops(target, sig, refcrops);
       })
       .catch(() => {});
-  }, []);
+    // #334: snapRef is useSnapshotSync's stable mirror ref
+  }, [snapRef]);
   const verdictMutate = useCallback(
     (
       fn: () => Promise<unknown>,
@@ -913,7 +915,8 @@ export default function App() {
         return ok;
       });
     },
-    [mutate, prefetchTarget, setInFlight, setSnap]
+    // #334: setSnap/setInFlight are stable setters; snapRef a stable mirror ref
+    [mutate, prefetchTarget, setInFlight, setSnap, snapRef]
   );
   // §4.44 + #222 (F-H3): the verdict callbacks live in reviewVerdicts.ts
   // (hook module, co-tested) — the #98 identity rule is preserved there:
@@ -1011,7 +1014,8 @@ export default function App() {
         setImageId(null);
       }
     });
-  }, [confirmContext, splitImageId, stepIds, personId, mode]);
+    // #334: setSelPersons is a stable useState setter
+  }, [confirmContext, splitImageId, stepIds, personId, mode, setSelPersons]);
   const doRemovePersons = useCallback((ids: number[]) => {
     if (ids.length > 0) setConfirmRemove(ids);
   }, []);
@@ -1180,7 +1184,8 @@ export default function App() {
     // counting faces that no longer display anywhere — drop them
     setPending((p) => dropStagesForFaces(p, [...selRef.current].filter((id) => !visible.has(id))));
     mutate(() => api.setSettings({ ...snap.settings, face_filter: next }));
-  }, [snap, mutate]);
+    // #334: changeSel/selRef are useSelectionState's stable members
+  }, [snap, mutate, changeSel, selRef]);
   // v14.0 (#288) — *Select in grid* (also the refcrop row's
   // double-click): single-select (a card click), the Show filter first
   // switches to one that shows the face (a refcrop is a confirmed face
@@ -1200,7 +1205,8 @@ export default function App() {
       changeSel(new Set([faceId]));
       setFocusFace(faceId);
     },
-    [changeFaceFilter, changeSel]
+    // #334: snapRef is useSnapshotSync's stable mirror ref
+    [changeFaceFilter, changeSel, snapRef]
   );
   // #188 (§4.40) — the lock IS the mode: entering Review (any route,
   // incl. the initial load) pins Show → New through the ordinary filter
@@ -1298,7 +1304,8 @@ export default function App() {
       .querySelector(`[data-face-id="${focusFace}"]`)
       ?.scrollIntoView({ block: "nearest" });
     setFocusFace(null);
-  }, [focusFace, mountLimit, personId, snap]);
+  // #334: snapRef is useSnapshotSync's stable mirror ref
+  }, [focusFace, mountLimit, personId, snap, snapRef]);
   // #188/§4.40 — the position guard, on ENTRY only (a mode transition;
   // the mount has no anchor): an anchored person without a new face
   // advances to the next person in the step list that has one (forward,
@@ -1398,7 +1405,8 @@ export default function App() {
         },
       });
     },
-    [changeSel, prefillFor]
+    // #334: selRef/snapRef are stable refs (useSelectionState / useSnapshotSync)
+    [changeSel, prefillFor, selRef, snapRef]
   );
 
   // #282 (N1): the map read goes through the ref so the identity never
@@ -1443,7 +1451,9 @@ export default function App() {
     }));
   }, [actionScope, toggle, toggleMany, doAccept, doReject,
       doPrimary, doRefcrop, splitImageId, openMenu, openEdit, changeSel,
-      confirmContext, rotateFace]);
+      confirmContext, rotateFace,
+      // #334: the refs are stable (useSelectionState members)
+      anchorRef, lastSelRef, selRef]);
 
   // #174 (§4.39): the selected branch's images for the right pane —
   // DIRECT children only (the directory of primary_path equals the
@@ -1486,7 +1496,8 @@ export default function App() {
   const anchorFirstCrop = useCallback((id: number) => {
     const pid = firstCropPerson(snapRef.current, id, faceFilterRef.current);
     if (pid != null) setPersonId(pid);
-  }, []);
+    // #334: snapRef is useSnapshotSync's stable mirror ref
+  }, [snapRef]);
   // the thumbnail double-click / path-filter file entry: the #142 view-
   // context change behind the #123 drop-or-accept dialog
   const openThumb = useCallback(
@@ -1558,7 +1569,8 @@ export default function App() {
         setImageId(null);
         if (splitImageId != null) setSplitImageId(null);
       }),
-    [confirmContext, changeRollRoot, splitImageId]
+    // #334: snapRef is useSnapshotSync's stable mirror ref
+    [confirmContext, changeRollRoot, splitImageId, snapRef]
   );
   // v14.0 (#288) — the pane's refcrop *Open roll* / *Open roll path*
   // (the image's own routes, addressed by face); defined right below
@@ -1723,8 +1735,9 @@ export default function App() {
       }));
     },
     // #228 (F-L4): sel/imgSel read via refs (see imageAreaMenu)
+    // #334: selRef is useSelectionState's stable member
     [snap, branchThumbs, faceVisible, openMenu, confirmContext,
-     rotateImages, doAccept, changeSel, anchorFirstCrop]
+     rotateImages, doAccept, changeSel, anchorFirstCrop, selRef]
   );
 
   // ------------------------------------------------------------ sections
@@ -1808,7 +1821,7 @@ export default function App() {
     onFaceDropOnCard,
   }), [facesById, personsById, faceMenu, toggle, selectOnly, rangeSelect,
       toggleMany, doPrimary, doRefcrop, doReject, actionScope, openEdit,
-      confirmContext, mutate, onFaceDragStart, onFaceDragEnd, onFaceDragOver,
+      confirmContext, onFaceDragStart, onFaceDragEnd, onFaceDragOver,
       onFaceDragLeave, onFaceDropOnCard]);
 
   // one section per person over an image's faces — the Rolls image
@@ -1943,6 +1956,10 @@ export default function App() {
       personId,
       focusActed,
       focusActedUnlessNoop,
+      // #334: lastSelRef (useSelectionState's stable member) + setSel
+      // (a stable useState setter)
+      lastSelRef,
+      setSel,
     ]
   );
 
@@ -2152,7 +2169,9 @@ export default function App() {
       await acceptAndNext(ids, claimed);
       setPending([]);
     },
-    [acceptAndNext, stageOps, applyDeltas, facesById, personsById, refresh]
+    // #334: refresh removed — the body only lands deltas locally (flush)
+    // and through acceptAndNext's mutate
+    [acceptAndNext, stageOps, applyDeltas, facesById, personsById]
   );
 
   // #177 (§4.42) — accept a scope EXACTLY like the bar accepts the

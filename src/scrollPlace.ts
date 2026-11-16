@@ -51,7 +51,10 @@ export function useScrollPlace(
     if (pos.current < 0) pos.current = persistedPlace(persist) ?? 0;
     const el = ref.current;
     if (el) el.scrollTop = pos.current;
-  }, [key, active]);
+    // #334: persist is included — the key already carries the mode
+    // (key = mode + loading suffix), so a persist change re-keys this
+    // effect anyway; the dep is behaviorally free
+  }, [key, active, persist]);
   const scheduleSave = () => {
     if (persist == null) return;
     if (saveTimer.current != null) window.clearTimeout(saveTimer.current);

@@ -1,7 +1,7 @@
 {
   "name": "whotapp",
   "private": true,
-  "version": "20.0.2",
+  "version": "20.0.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
