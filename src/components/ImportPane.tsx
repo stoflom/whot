@@ -77,11 +77,20 @@ export default function ImportPane({ dir, onClose, onImported, initial }: Props)
     let stop = false;
     let timer: number | undefined;
     let prevRunning = false;
+    // #330: consecutive getImportStatus failures — the next beat backs
+    // off exponentially (capped) instead of re-polling every 2.5 s
+    // forever; a success resets the streak (and the poll-originated
+    // error, which is no longer true)
+    let failures = 0;
     const tick = async () => {
       if (stop) return;
       try {
         const s = await getImportStatus(sinceRef.current);
         if (stop) return;
+        if (failures > 0) {
+          failures = 0;
+          setError(null);
+        }
         sinceRef.current = s.nextSince;
         runningRef.current = s.running;
         if (s.lines.length > 0) {
@@ -95,12 +104,20 @@ export default function ImportPane({ dir, onClose, onImported, initial }: Props)
         }
         prevRunning = s.running;
       } catch (e) {
-        if (!stop) setError(String(e));
+        if (!stop) {
+          failures += 1;
+          setError(String(e));
+        }
       }
       // the next beat follows the state just observed — one chained
       // timeout, never overlapping ticks (the old setInterval could pile
-      // up a slow IPC response behind the next 300 ms fire)
-      if (!stop) timer = window.setTimeout(() => void tick(), pollDelayMs(runningRef.current));
+      // up a slow IPC response behind the next 300 ms fire); after
+      // failures it backs off (#330)
+      if (!stop)
+        timer = window.setTimeout(
+          () => void tick(),
+          pollDelayMs(runningRef.current, failures)
+        );
     };
     void tick();
     return () => {
