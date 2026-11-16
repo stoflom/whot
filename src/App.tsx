@@ -99,6 +99,7 @@ import PersonTree from "./components/PersonTree";
 // #223 (F-M1): the tree is built ONCE per treePersons change and shared
 // with the pane; the step list walks the shared tree
 import { buildTree, orderedVisiblePersonIdsFromTree } from "./treeIndex";
+import { dirBranch } from "./rollsTree";
 import RollsPane from "./components/RollsPane";
 import RollsThumbs from "./components/RollsThumbs";
 import ImportPane from "./components/ImportPane";
@@ -1449,23 +1450,20 @@ export default function App() {
   // branch — never the recursion), Show-listed (§4.10, shared helper),
   // filename order; `deeper` drives the drill hint
   const branchThumbs = useMemo(() => {
-    const dirOf = (p: string) => {
-      const i = p.lastIndexOf("/");
-      return i <= 0 ? "/" : p.slice(0, i);
-    };
     if (!snap) return { images: [] as ImageRow[], deeper: false };
     const listed = listedImages(snap.images, snap.faces, faceFilter);
     const under = rollBranch === "/" ? "/" : `${rollBranch}/`;
     // v12.4 (#280)/§4.39: the branch's recursive toggle — ticked lists
     // every descendant image, not just the ones filed *at* the branch
     const recursive = rollRecursive.has(rollBranch);
+    // #333: the shared parent-directory parse (rollsTree.ts)
     const inBranch = recursive
       ? snap.images.filter((x) => x.primary_path.startsWith(under))
-      : snap.images.filter((x) => dirOf(x.primary_path) === rollBranch);
+      : snap.images.filter((x) => dirBranch(x.primary_path) === rollBranch);
     const deeper = snap.images.some(
       (x) =>
         listed.has(x.id) &&
-        dirOf(x.primary_path) !== rollBranch &&
+        dirBranch(x.primary_path) !== rollBranch &&
         x.primary_path.startsWith(under)
     );
     return {
@@ -1536,8 +1534,8 @@ export default function App() {
       confirmContext(() => {
         const img = snapRef.current?.images.find((i) => i.id === id);
         if (!img) return;
-        const k = img.primary_path.lastIndexOf("/");
-        const branch = k <= 0 ? "/" : img.primary_path.slice(0, k);
+        // #333: the shared parent-directory parse (rollsTree.ts)
+        const branch = dirBranch(img.primary_path);
         const root = rollRootRef.current;
         const effRoot =
           root === "/" || branch.startsWith(`${root}/`) ? root : "/";

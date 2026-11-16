@@ -87,16 +87,26 @@ export interface TreeIndexEntry {
 /** node -> view facts, one post-order pass over the tree */
 export type TreeIndex = Map<TreeNode, TreeIndexEntry>;
 
+/** #333 — the ONE person-tree filter rule: `f` is the already
+    trimmed/lowercased filter; an empty filter matches everything,
+    otherwise the person's name or any of its group paths must contain
+    it. indexTree, orderedVisiblePersonIdsFromTree and PersonTree's
+    row-level match all share it (the pre-#333 copies could drift). */
+export function personMatchesFilter(p: Person, f: string): boolean {
+  return (
+    f === "" ||
+    p.name.toLowerCase().includes(f) ||
+    p.groups.some((g) => g.toLowerCase().includes(f))
+  );
+}
+
 export function indexTree(
   tree: TreeNode,
   byId: Map<number, Person>,
   filter: string,
 ): TreeIndex {
   const f = filter.trim().toLowerCase();
-  const matches = (p: Person) =>
-    f === "" ||
-    p.name.toLowerCase().includes(f) ||
-    p.groups.some((g) => g.toLowerCase().includes(f));
+  const matches = (p: Person) => personMatchesFilter(p, f);
   const idx: TreeIndex = new Map();
   const walk = (node: TreeNode): TreeIndexEntry => {
     let count = 0;
@@ -132,10 +142,7 @@ export function orderedVisiblePersonIdsFromTree(
   const byId = new Map(persons.map((p) => [p.id, p]));
   const idx = indexTree(tree, byId, filter);
   const f = filter.trim().toLowerCase();
-  const matches = (p: Person) =>
-    f === "" ||
-    p.name.toLowerCase().includes(f) ||
-    p.groups.some((g) => g.toLowerCase().includes(f));
+  const matches = (p: Person) => personMatchesFilter(p, f);
   const out: number[] = [];
   const seen = new Set<number>();
   const walk = (node: TreeNode, isRoot: boolean) => {

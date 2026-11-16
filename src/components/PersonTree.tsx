@@ -27,7 +27,10 @@ import { isRejectedBin } from "../personNames";
 // #223 (F-M1/F-M2): the tree structure and its queries are pure
 // (treeIndex.ts, co-tested) — the pane receives the App-built tree and
 // indexes it once per (tree, persons, filter) change
-import { indexTree, type TreeNode } from "../treeIndex";
+import { indexTree, personMatchesFilter, type TreeNode } from "../treeIndex";
+// #333: the ONE APG roving-tabindex handler (treeKeys.ts) — was a
+// PersonTree-local copy of the same pattern
+import { rovingTreeKey } from "../treeKeys";
 
 // #255: the APG tree key pattern shared by branch nodes and person rows —
 // Enter/Space activate (branch toggle / person select), Up/Down move focus
@@ -35,44 +38,6 @@ import { indexTree, type TreeNode } from "../treeIndex";
 // branch, Left collapses it or climbs to the parent branch. Items are
 // found by their `data-tree-key`; the focused one owns its keys
 // (`data-owns-keys`) so App's global arrow-step guard bails out.
-function treeItemKey(
-  e: React.KeyboardEvent,
-  key: string,
-  isBranch: boolean,
-  expanded: boolean,
-  onActivate: () => void,
-  onToggle: () => void,
-  parentKey: string | null
-) {
-  const items = () =>
-    Array.from(document.querySelectorAll<HTMLElement>("[data-tree-key]"));
-  const focusKey = (k: string | null) => {
-    if (k == null) return;
-    const el = items().find((h) => h.getAttribute("data-tree-key") === k);
-    if (el) {
-      el.focus();
-      el.scrollIntoView({ block: "nearest" });
-    }
-  };
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    onActivate();
-  } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    const list = items();
-    const idx = list.findIndex((h) => h.getAttribute("data-tree-key") === key);
-    focusKey(
-      list[idx + (e.key === "ArrowDown" ? 1 : -1)]?.getAttribute("data-tree-key") ?? null
-    );
-  } else if (e.key === "ArrowRight") {
-    e.preventDefault();
-    if (isBranch && !expanded) onToggle();
-  } else if (e.key === "ArrowLeft") {
-    e.preventDefault();
-    if (isBranch && expanded) onToggle();
-    else focusKey(parentKey);
-  }
-}
 
 interface Props {
   /** #223: the App-built tree (built once per treePersons change) — the
@@ -370,10 +335,8 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
     if (!alive) setFocusedKey(items[0].getAttribute("data-tree-key"));
   }, [focusedKey, tree, persons, deferredFilter]);
 
-  const matches = (p: Person) =>
-    f === "" ||
-    p.name.toLowerCase().includes(f) ||
-    p.groups.some((g) => g.toLowerCase().includes(f));
+  // #333: the shared person-tree filter rule (treeIndex.ts)
+  const matches = (p: Person) => personMatchesFilter(p, f);
 
   const toggle = (path: string) =>
     onSetCollapsed((prev) => {
@@ -512,15 +475,16 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
         const el = e.currentTarget as HTMLElement;
         const parentKey =
           el.closest(".tree-node")?.getAttribute("data-tree-key") ?? null;
-        treeItemKey(
-          e,
-          `p:${id}`,
-          false,
-          false,
-          () => onSelectRef.current(id),
-          () => {},
-          parentKey
-        );
+        rovingTreeKey(e, {
+          id: `p:${id}`,
+          selector: "[data-tree-key]",
+          attr: "data-tree-key",
+          onActivate: () => onSelectRef.current(id),
+          onToggle: () => {},
+          isBranch: false,
+          expanded: false,
+          parentKey,
+        });
       },
       onStartRename: (id: number) => setRenamingId(id),
       onRename: (id: number, name: string) => onRenameRef.current(id, name),
@@ -653,7 +617,16 @@ function PersonTree({ tree, persons, selectedId, filter, onFilter, onSelect, sel
             const parentKey =
               el.parentElement?.closest(".tree-node")?.getAttribute("data-tree-key") ??
               null;
-            treeItemKey(e, `b:${path}`, true, !isCollapsed, () => toggle(path), () => toggle(path), parentKey);
+            rovingTreeKey(e, {
+              id: `b:${path}`,
+              selector: "[data-tree-key]",
+              attr: "data-tree-key",
+              onActivate: () => toggle(path),
+              onToggle: () => toggle(path),
+              isBranch: true,
+              expanded: !isCollapsed,
+              parentKey,
+            });
           }}
           onContextMenu={(e) => {
             e.preventDefault();

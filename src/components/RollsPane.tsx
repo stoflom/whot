@@ -2,7 +2,8 @@ import { memo, useEffect, useMemo, useState } from "react";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { scanImportDir, type Face, type ImageRow } from "../api";
 import type { FaceFilter } from "../viewFilters";
-import { buildTree, faceTotalsOf, rollupIndex, type DirNode, type Totals } from "../rollsTree";
+import { buildTree, dirBranch, faceTotalsOf, rollupIndex, type DirNode, type Totals } from "../rollsTree";
+import { rovingTreeKey } from "../treeKeys";
 
 // #161 (gui-design §3): the Rolls pane is a hierarchy mirroring the
 // images' actual filesystem paths — each image's primary_path split into
@@ -91,6 +92,9 @@ interface BranchProps {
 // #255: the APG tree key pattern for a branch header — Enter/Space act
 // (the same as the click), Up/Down move focus among the visible headers
 // (DOM order == display order), Right expands, Left collapses or climbs.
+// #333: the ONE shared handler (treeKeys.ts) — was a RollsPane-local
+// copy of the same pattern; the Left-climb resolves to the parent
+// branch (the shared parent-directory parse, rollsTree.ts).
 function branchKey(
   e: React.KeyboardEvent,
   path: string,
@@ -99,36 +103,19 @@ function branchKey(
   onToggle: (path: string) => void,
   onSelect: (path: string) => void
 ) {
-  const headers = () =>
-    Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"].roll-header'));
-  const focusPath = (target: string | null) => {
-    if (target == null) return;
-    const el = headers().find((h) => h.getAttribute("data-path") === target);
-    if (el) {
-      el.focus();
-      el.scrollIntoView({ block: "nearest" });
-    }
-  };
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    onToggle(path);
-    onSelect(absPath);
-  } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    const list = headers();
-    const idx = list.findIndex((h) => h.getAttribute("data-path") === absPath);
-    focusPath(list[idx + (e.key === "ArrowDown" ? 1 : -1)]?.getAttribute("data-path") ?? null);
-  } else if (e.key === "ArrowRight") {
-    e.preventDefault();
-    if (!open) onToggle(path);
-  } else if (e.key === "ArrowLeft") {
-    e.preventDefault();
-    if (open) onToggle(path);
-    else {
-      const parent = absPath.slice(0, absPath.lastIndexOf("/"));
-      focusPath(parent === "" ? "/" : parent);
-    }
-  }
+  rovingTreeKey(e, {
+    id: absPath,
+    selector: '[role="treeitem"].roll-header',
+    attr: "data-path",
+    onActivate: () => {
+      onToggle(path);
+      onSelect(absPath);
+    },
+    onToggle: () => onToggle(path),
+    isBranch: true,
+    expanded: open,
+    parentKey: dirBranch(absPath),
+  });
 }
 
 function BranchView({
