@@ -504,6 +504,33 @@ python3 test/gui-mock/gui_check.py                      # WebKitGTK (default)
 WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox
 ```
 
+### All suites in one go: `./run_tests.sh`
+
+Runs the suites above (mirroring `.github/workflows/ci.yml`: typecheck +
+lint + vitest, cargo test, pytest — including the decode/detector class,
+which self-skips without cv2/PIL/tifffile — and the gui-mock checks),
+prints a per-suite PASS/FAIL summary with timings, and cleans up after
+itself (stops the mock server, kills browser processes spawned during
+the run, removes `test/__pycache__`). Exit code is 0 only if every
+selected suite passed.
+
+```sh
+./run_tests.sh                # all suites
+./run_tests.sh -p             # python only
+./run_tests.sh -b -g          # backend + GUI
+./run_tests.sh -g -k -B       # GUI, freeing port 8123 and sweeping
+                              # dangling MiniBrowser/WebKitWebDriver
+                              # processes first
+./run_tests.sh -h             # help
+```
+
+Suite flags: `-f` frontend · `-b` backend · `-p` python ·
+`-P` python-heavy · `-g` gui · `-a` all. Other options: `--port N`
+(mock-server port, default 8123), `-n` dry-run. `-k/--kill-port` kills
+whatever occupies the mock-server port before the GUI suite starts;
+`-B/--kill-browsers` sweeps leftover WebKitWebDriver/MiniBrowser
+processes before (and, for ones this run spawned, after) the GUI suite.
+
 ## Docs
 
 - `AGENTS.md` — agent conventions (branching, versioning, testing)
