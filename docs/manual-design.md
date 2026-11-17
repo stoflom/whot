@@ -1,6 +1,7 @@
 # WhoT Face Manager — User Manual Design
 
-**Version: 1.0** (major.minor per `AGENTS.md`; major = new chapter or restructuring,
+**Version: 2.0** (v1.0: the initial design; v2.0: added the installation
+chapter. Major.minor per `AGENTS.md`; major = new chapter or restructuring,
 minor = change or correction of the manual design; a chapter revision that
 only fills in planned content does not bump this document — the chapter's own
 status line records its progress).
@@ -37,6 +38,7 @@ All manual files live in `docs/manual/`:
 | `docs/manual/03-legacy-recovery.md` | Ch. 3 — Recovering legacy data | Chapter 3 |
 | `docs/manual/04-sharing.md` | Ch. 4 — Sharing your data: darktable, digiKam, Lap | Chapter 4 |
 | `docs/manual/05-reference.md` | Ch. 5 — Reference: modes, panes and dialogs | Chapter 5 |
+| `docs/manual/06-installation.md` | Ch. 6 — Installation (Linux: package or sources) | Chapter 6 |
 
 Each chapter file opens with a one-line status note
 (`Status: outline — writing not started`) so progress is visible at a glance.
@@ -121,11 +123,32 @@ Each chapter file opens with a one-line status note
   (Review, Rolls, Person), detail pane, rule bar, full-size view with the
   face rectangles, and one short entry per dialog and message. Alphabetical
   or by screen area — by screen area, matching Ch. 0's tour.
+- **Ch. 6 — Installation (Linux only, two routes).** **§6.1 from a
+  package** — the three Linux variants the build produces (`.deb`,
+  `.rpm`, AppImage), each with its prerequisites, what first use sets up
+  (the user config and data home), and the honest limitation that the
+  roll-import scripts are not packaged yet. **§6.2 from sources** —
+  first the *minimal* route to a running app (Node, the Rust toolchain,
+  the WebKitGTK/GTK system libraries, `npm install`, `npm run tauri
+  dev`), then the *full development platform* (the same `npm run tauri
+  build` that produces the packages, plus the test suites: vitest /
+  `tsc` / ESLint, `cargo test` with a built `dist/`, the Python pytest
+  suite, and the mocked-backend GUI harness). Both routes end with the
+  **insightface venv** in brief: creating it, the packages it needs, and
+  pointing Whot at it (`INSIGHTFACE_PATH` — `.env` in repo mode, the
+  environment dialog in installed mode). This is the one chapter allowed
+  to be command-heavy: every command it prints is one the reader must
+  type, and package names are named exactly. It stays on Linux; macOS
+  and Windows are out of scope.
 
 ## 6. Non-goals
 
-- No setup or installation instructions (those stay in `README.md`; the
-  manual links to it once for the "who sets up my copy" case).
 - No descriptions of future or unimplemented behaviour beyond clearly marked
   "planned" notes inside Ch. 4 where an export target is not yet shipping.
-- No developer-facing content: that stays in the design documents.
+- No developer-facing content: that stays in the design documents. (The
+  one exception is Ch. 6, which by necessity walks through the developer
+  platform's own installation for the from-sources route — but as steps
+  to run, not as architecture.)
+- Installation is **Linux-only** for now: the package route covers the
+  three variants the build produces, the sources route assumes a Linux
+  desktop. macOS and Windows are out of scope.
