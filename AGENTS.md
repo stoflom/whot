@@ -1,3 +1,5 @@
+ALL COMMUNICATION, COMMENTS AND DOCUMENTATION MUST BE ENGLISH
+
 ## Branching Strategy
 
 - **All changes must be done in a `dev` branch**, branched fresh from `main` per change.
