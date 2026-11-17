@@ -30,7 +30,9 @@
 #   -n, --dry-run      print what would run, run nothing
 #   -h, --help         this help
 #
-# Exit code: 0 if every selected suite passed, 1 otherwise.
+# Exit code: 0 every selected suite passed · 1 test failure ·
+#             2 a suite could not run (config/environment — e.g. the
+#             mock-server port busy; never counted as a test failure)
 
 set -u
 cd "$(dirname "$0")"
@@ -139,8 +141,10 @@ cleanup() {
   find test -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null
   if [ "$rc" -eq 0 ]; then
     info "all done — everything passed"
+  elif [ "$rc" -eq 2 ]; then
+    info "finished — a suite could not run (config), no test failures"
   else
-    info "finished with failures (exit $rc)"
+    info "finished with test failures (exit $rc)"
   fi
   exit "$rc"
 }
@@ -241,7 +245,9 @@ if [ "$DO_GUI" -eq 1 ]; then
     [ "$KILL_PORT" -eq 1 ] && kill_port_occupant
     if port_busy; then
       info "port $MOCK_PORT busy — the GUI suite did NOT run; pass --kill-port to free it"
-      RESULTS+=("gui|FAIL (port $MOCK_PORT busy — suite not run)|-")
+      # a busy port is a config problem, not a test failure — record as
+      # skipped (exit code 2), never as FAIL
+      RESULTS+=("gui|SKIP (port $MOCK_PORT busy — suite not run)|-")
     else
       info "starting mock server on :$MOCK_PORT"
       python3 test/gui-mock/server.py "$MOCK_PORT" &
@@ -253,7 +259,7 @@ if [ "$DO_GUI" -eq 1 ]; then
       done
       if ! port_busy; then
         info "mock server failed to start — the GUI suite did NOT run"
-        RESULTS+=("gui|FAIL (mock server did not start)|-")
+        RESULTS+=("gui|SKIP (mock server did not start)|-")
       else
         run_suite "gui (gui_check)" python3 test/gui-mock/gui_check.py "$MOCK_PORT" \
           || RESULTS+=("gui|FAIL|-")
@@ -276,16 +282,23 @@ TOTAL_ELAPSED=$(( $(date +%s) - START_TS ))
 echo
 echo "================= SUMMARY ================="
 printf '%-28s %-6s %s\n' "SUITE" "STATUS" "TIME"
-fail=0
+fail=0; skipped=0
 for r in "${RESULTS[@]}"; do
   IFS='|' read -r name status secs <<<"$r"
   printf '%-28s %-6s %ss\n' "$name" "$status" "$secs"
-  [ "$status" = "FAIL" ] && fail=1
+  case "$status" in
+    FAIL) fail=1 ;;
+    SKIP*) skipped=$((skipped + 1)) ;;
+  esac
 done
 echo "-------------------------------------------"
 printf 'total: %ss\n' "$TOTAL_ELAPSED"
 if [ "$fail" -eq 1 ]; then
   echo "RESULT: FAIL"
   exit 1
+fi
+if [ "$skipped" -gt 0 ]; then
+  echo "RESULT: INCOMPLETE — $skipped suite(s) could not run (config/environment), no test failures"
+  exit 2
 fi
 echo "RESULT: PASS"
