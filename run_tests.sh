@@ -240,8 +240,8 @@ if [ "$DO_GUI" -eq 1 ]; then
 
     [ "$KILL_PORT" -eq 1 ] && kill_port_occupant
     if port_busy; then
-      info "port $MOCK_PORT busy — pass --kill-port to free it"
-      RESULTS+=("gui|FAIL|-")
+      info "port $MOCK_PORT busy — the GUI suite did NOT run; pass --kill-port to free it"
+      RESULTS+=("gui|FAIL (port $MOCK_PORT busy — suite not run)|-")
     else
       info "starting mock server on :$MOCK_PORT"
       python3 test/gui-mock/server.py "$MOCK_PORT" &
@@ -252,8 +252,8 @@ if [ "$DO_GUI" -eq 1 ]; then
         sleep 0.3
       done
       if ! port_busy; then
-        info "mock server failed to start"
-        RESULTS+=("gui|FAIL|-")
+        info "mock server failed to start — the GUI suite did NOT run"
+        RESULTS+=("gui|FAIL (mock server did not start)|-")
       else
         run_suite "gui (gui_check)" python3 test/gui-mock/gui_check.py "$MOCK_PORT" \
           || RESULTS+=("gui|FAIL|-")
