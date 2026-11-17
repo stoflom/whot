@@ -18,11 +18,23 @@ the data from the faces database can be exported to any other tool via a script 
 
 NOTE:
 This project is still in very early stage. Future functionality will include:
-  i) Script to export data to Lap asset management (available for testing)
+  i) Script to export data to Lap asset management (available for testing —
+     preliminary scripts live in the separate `lap` workspace; manual
+     Ch. 4.3 documents them, §4.2 marks the darktable/digiKam sidecar
+     writer as planned)
   ii) Script to export person tag group hierarchy to darktable sidecars.
 
 Recovering person/face knowledge from digiKam, Lightroom and darktable
 sidecars is available today for testing — see [Legacy recovery](#legacy-recovery-harvest--import).
+
+**User manual**: `docs/manual/` — a non-technical manual covering how a
+film roll is imported, reviewed, edited and exported (Ch. 1), re-imported
+(Ch. 2), how legacy data is recovered (Ch. 3), how the data is shared with
+darktable, digiKam and Lap (Ch. 4), a reference for every mode, pane and
+dialog (Ch. 5), and installation on Linux (Ch. 6). This README is the
+developer-facing reference; where the two overlap, the manual is the
+user-facing telling and this file keeps the technical detail — each
+section below points to its manual chapter instead of repeating it.
 
 ## Components
 
@@ -39,6 +51,9 @@ sidecars is available today for testing — see [Legacy recovery](#legacy-recove
 | Config | `.env` (paths, repo checkout) — `config/whotrc.json` (GUI settings; created at runtime); installed: `~/.config/whot/whotrc.json` (GUI settings + the same env keys in its `env` object, copied from the packaged default on first use) | |
 
 ## Setup
+
+> Non-technical installation walkthrough (Linux: package or sources):
+> manual Ch. 6. The bullets below stay the developer reference.
 
 - For face detection: Python venv with `insightface` at `<INSIGHTFACE_PATH>/insight_env`,
   Refer [InsightFace](https://github.com/deepinsight/insightface/blob/master/python-package/README.md).
@@ -80,6 +95,9 @@ suppressed).
 
 ### Import a roll
 
+> Non-technical walkthrough: manual Ch. 1.1 (import), Ch. 1.2 (review) and
+> Ch. 2 (re-import). This section is the script's flag reference.
+
 ```sh
 ./scripts/import_roll.py "${ROLL_DIR}"
 ```
@@ -116,7 +134,8 @@ until you file them into a group yourself.
 Recaptures work already done in legacy applications (digiKam, Lightroom,
 darktable sidecars) by **attaching persons to the faces insightface has
 already detected** — it never imports new images, faces or detections
-(design `docs/scripts-design.md` §8/§9).
+(design `docs/scripts-design.md` §8/§9; the non-technical walkthrough of
+the whole loop is manual Ch. 3).
 
 Two steps, both safe by construction:
 
@@ -193,48 +212,30 @@ deliberately scoped run doesn't read as a catastrophe.
 
 #### Recovery workflow: harvest → import → promote
 
-The loop is safe to repeat end to end: re-importing the same
-staging DB converges (`faces_moved=0`, `persons_created=0`) instead of
-duplicating persons, so extend the path map and iterate until the
-coverage warning settles.
+The loop — harvest with a full path map, dry-run the import and read its
+summary/logs, import for real onto a copy, review the copy, promote or
+discard — is described step by step, non-technically, in manual Ch. 3.
+Developer-level specifics that stay here:
 
-1. **Harvest** with the full `--images` trees and `--lr-root`/path map
-   covering where the archive actually lives. If the run ends with
-   `WARNING: …% of archive rows unusable`, the log names the top
-   unmapped roots with an example path each — add them to the path map
-   (or extend `--images`) and re-harvest. The harvest writes a fresh
-   staging DB per run under `~/.cache/whot/harvest/` (or `--out`).
-2. **Dry-run the import** (`--dry-run`) and read the summary:
-   - `usable faces  N/M (P%)` — how much of the harvest can actually
-     match; drive it up with the path map before the real run;
-   - `faces-*.import.log` / `.json` list every non-import with the
-     **full stated path** (or digiKam name + size + image id) — one
-     line per *image* — so unverifiable files can be hunted down
-     directly;
-   - a `WARNING: …% of staging faces unusable` line means re-harvest
-     with fuller coverage / a fuller map first.
-   The import's **rescue pass** (active whenever a path map is
-   configured) re-hashes staging images whose files are reachable under
-   a mapped root before matching — on a large archive the initial index
-   walk takes a few minutes (the §10 heartbeat keeps it visibly alive).
-3. **Import for real** (same command without `--dry-run`). It writes a
-   new **copy** `data/faces-<YYYYmmdd-HHMMSS>.db` plus its
-   `.import.log`/`.import.json`; `data/faces.db` is never written.
-   **Import from the source `data/faces.db`, not from a copy** — a copy
-   that already received a harvest import is the wrong base for the
-   next one.
-4. **Review the copy** in the app: point `FACES_DB` in `.env` at the
-   copy (or symlink `data/faces.db` over it), start the GUI, spot-check
-   the imported persons (they arrive `provisional` — confirm in the GUI
-   as usual).
-5. **Promote or discard**: happy → keep the `FACES_DB` pointer at the
-   copy (or `mv` the copy over `data/faces.db` after backing the
-   original up); not happy → re-point `FACES_DB` at the original and
-   delete the copy. Nothing else references the copy's filename.
+- The loop is safe to repeat end to end: re-importing the same staging DB
+  converges (`faces_moved=0`, `persons_created=0`) instead of duplicating
+  persons, so extend the path map and iterate until the coverage warning
+  settles.
+- The harvest writes a fresh staging DB per run under
+  `~/.cache/whot/harvest/` (or `--out`); the import writes a new **copy**
+  `data/faces-<YYYYmmdd-HHMMSS>.db` plus its `.import.log`/`.import.json`
+  — `data/faces.db` is never written. **Import from the source
+  `data/faces.db`, not from a copy** — a copy that already received a
+  harvest import is the wrong base for the next one.
+- The import's **rescue pass** (active whenever a path map is configured)
+  re-hashes staging images whose files are reachable under a mapped root
+  before matching — on a large archive the initial index walk takes a few
+  minutes (the §10 heartbeat keeps it visibly alive).
 
 `test/archive-fixture/` (gitignored) holds a small hand-picked photo set
 with real Lightroom/digiKam/darktable person data for trying the pipeline
-end to end before pointing it at the full archive.
+end to end before pointing it at the full archive (manual Ch. 3.4 points
+the reader at it too).
 
 ### Annotation snapshot
 
@@ -258,78 +259,35 @@ npm run tauri build    # release bundles
 
 ### The window at a glance
 
-- **Top bar** — tabs `Review` / `Rolls` / `Person` (centre-pane mode; the
-  person tab opens the tree's current selection); on the right the `Show`
-  face-status filter `All | New | Accepted | Rejected`, the manual
-  refresh `↻` and the settings ⚙ (the
-  persons-mode cluster-group toggle sits in the Person view's centre
-  toolbar — it is view-local). The `Show` filter
-  decides which faces exist anywhere: switching to `New`/`Accepted`/
-  `Rejected` **also prunes the left-pane person tree** — persons
-  without a face of that status are not listed; `All` lists everyone
-  **except rejected faces** (rejected is visible only under `Show →
-  Rejected`) — so the system person `Rejected` never shows under
-  `All`).
-- **Left pane — person tree**, hierarchical by `person_groups.path`.
-  Three **status branches** carry the review states: `New`
-  (unreviewed `UnknownN` clusters), `Accepted` (reviewed but unfiled) and
-  `Rejected` (the system person holding every rejected face — listed
-  only under `Show → Rejected`). Every person always has at least one
-  group; an empty group input re-seats the person by state (§4.35) instead
-  of leaving them groupless. A person with a group renders under
-  that group even when
-  named `UnknownN` — filing an Unknown you remember by face but not by
-  name into a group is normal. A person with **several** group
-  rows (the §9 harvest import can leave multiple) renders under every
-  listed path, and is stepped once. Dragging a person row onto a
-  branch re-homes **that one membership** — the dragged-from row leaves
-  the person, the target group is filed, other memberships stay.
-  Right-click: rows, branches and cards all carry menus.
-- **Centre pane** — changes by mode (Review / Rolls / Person),
-  `Show`-filtered. Review groups the pending faces by the importer's
-  `UnknownN` clusters; Person holds the tree's selected person; Rolls
-  is the **path hierarchy mirroring the pictures' filesystem paths** —
-  every directory segment is an expandable branch, a branch holding no
-  listing image is pruned (its raw header counts keep it discoverable),
-  and clicking a header selects the branch's images into the right
-  pane. Double-clicking a card (Review/Person) or a thumbnail (Rolls)
-  opens the annotated full-size image — in Rolls the toolbar then
-  carries the `‹ n/m ›` cluster stepping the previous/next image of
-  the selected branch (`←`/`→` too), and going back to browse hides it
-  again (§4.39, rule 46).
-- **Detail pane** — person name, group path, note, primary face,
-  refcrops.
-- **Rule bar** — selection-wide actions (Apply/Accept/Assign/Reject…).
+The manual is the window's field guide — Ch. 0 tours the five areas and
+Ch. 5 is the per-control reference (every mode, pane, button, dialog,
+glyph and keyboard shortcut). In short:
 
-**Rejected faces**: every rejected face lives on one system
-person `Rejected` (group `Rejected`), listed only under `Show →
-Rejected`; rejecting always moves the face there (including via *Remove
-person*), and the only way back is an **assignment** — which un-rejects
-and moves it. There is no `Remove Unknowns` button anymore: rejecting
-empties an `UnknownN` shell directly, and the stale-shell sweep deletes
-it with the next change (reads never write).
+- **Top bar** — modes `Review / Rolls / Person`, the database-wide face
+  totals, the `Show` status filter `All | New | Accepted | Rejected`,
+  refresh ↻, `?` shortcuts and ⚙ settings (with `environment…`).
+- **Left pane** — the person tree over `person_groups.path` with the
+  system status branches `New` / `Accepted` / `Rejected` (§4.35);
+  right-click menus on rows, branches and cards; dragging a row onto a
+  branch re-homes that one membership.
+- **Centre pane** — by mode: Review groups the pending faces by the
+  importer's `UnknownN` clusters; Person partitions one person's faces by
+  appearance and similarity; Rolls mirrors the pictures' filesystem
+  paths. Double-clicking a card or thumbnail opens the annotated
+  full-size image with the `‹ n/m ›` stepper (§4.39, rule 46).
+- **Rule bar** (bottom) — the selection's `Apply / Accept / Undo / Edit…
+  / Reject` actions.
 
-**Main flows**: review the pending faces — rename an `UnknownN` person
-(accepts & names it, moving it into a group path, e.g. `family|Smith`,
-`friends|college`), assign selected faces to an existing or new person,
-reject faces (they move to the `Rejected` bin — see above; the way back
-is an assignment, since plain accept never un-rejects), per-face
-description (`beard`, `sun_glasses`,
-… — the full derived label is `person-name-description-seq`), primary
-face and per-appearance reference faces.
-
-**Merge Similar Persons** (`⧉ merge similar` in the person-tree header,
-§4.28): triages clusters of near-identical names (case, seq
-suffixes, Damerau-Levenshtein ≤ 2 — configurable with optional
-generational-suffix aliases) with per-pair evidence, then merge / bulk
-rename / bulk group the selection — merging always goes through a
-confirmation dialog (from the dialog, the context menu **or** by
-dragging a selection onto a person row) because it cannot be undone.
-
-Behaviour is specified in `docs/gui-design.md` (§3 layout, §4 the deep
-register of decided behaviour rules, 1–46) — that document is the
-contract; this section
-only orients.
+The review flows themselves — naming an `UnknownN` cluster (accepts and
+names it), assigning faces to an existing or new person, rejecting into
+the Rejected bin (its only exit is an assignment, since plain accept
+never un-rejects), per-face descriptions (`beard|sunglasses`, the `|`
+reserved as tag separator; the derived label is
+`person-name-description-seq`), primary face and per-appearance
+reference faces, and `⧉ merge similar` — are manual Ch. 1.2–1.3. The
+behaviour contract for all of it is `docs/gui-design.md` (§3 layout, §4
+the decided-behaviour rules) — that document remains normative; this
+section only orients.
 
 ## Tauri commands (Rust)
 
@@ -550,6 +508,12 @@ WHOT_GUI_DRIVER=firefox python3 test/gui-mock/gui_check.py   # Firefox
 
 - `AGENTS.md` — agent conventions (branching, versioning, testing)
 - `README.md` (this file) — setup, usage, Tauri command reference, repository layout
+- `docs/manual/` — **the user manual** (non-technical): `README.md` front
+  page, Ch. 0 concepts, Ch. 1 a film roll (import/review/edit/export),
+  Ch. 2 re-import, Ch. 3 legacy recovery, Ch. 4 sharing with darktable,
+  digiKam and Lap, Ch. 5 reference, Ch. 6 installation (Linux)
+- `docs/manual-design.md` — the manual's governing design document
+  (v2.0): audience, style rules, terminology, chapter briefs
 - `docs/gui-design.md` — GUI design document (versioned; the primary design doc — app version tracks it)
 - `docs/scripts-design.md` — Python tooling: §8 harvest, §9 harvest import
 - `docs/schema-design.md` — `faces.db` DDL design: identities, version gate, drop & recreate
