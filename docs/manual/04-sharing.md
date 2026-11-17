@@ -1,66 +1,86 @@
 # Chapter 4 — Sharing your data: darktable, digiKam and Lap
 
-Status: outline — writing not started
-(Lap: preliminary scripts exist in the separate `lap` workspace, see
-`docs/manual-design.md` §5; darktable/digiKam sidecar writing: outstanding
-— §4.2 stays marked *planned* until it ships.)
+Status: Lap section written against the preliminary scripts in the separate
+`lap` workspace (to re-check when they are finalised); darktable/digiKam
+sidecar writing is outstanding — §4.2 stays marked *planned* until it ships.
 
 *What you will learn: how the face knowledge you built in Whot travels to
 the applications you use for managing your picture collection.*
 
 ## 4.1 What is shared, and what is not
 
-- What travels: person names, group paths, and the faces they belong to
-  (including face descriptions, see Ch. 1.3).
-- What never travels: nothing is removed or changed in WhoT; your picture
-  files are never rewritten — sharing only *adds* information for the other
-  application to read.
-- General rule: each sharing step works on its own output; running it
-  again is safe and updates what was written before.
-  ![TODO: screenshot — one picture's shared result in another application]
+- What travels: the persons you have named, the groups they live in, and
+  the faces they own (descriptions included — see Ch. 1.3).
+- What never travels: nothing is removed or changed in Whot, and your
+  picture files are never rewritten. Sharing only *adds* information
+  somewhere else for another application to read.
+- General rule: each sharing step produces its own output, and running it
+  again is safe — it updates what was written before instead of duplicating
+  it.
+- Placeholder names (`Unknown1`, …) and the Rejected bin never travel:
+  they carry no real identity yet.
 
-## 4.2 Sharing with darktable and digiKam *(planned — the sidecar writer is not yet available)*
+## 4.2 Sharing with darktable and digiKam
+*(planned — this step is not yet available)*
 
-- How it works in plain words: many picture programs keep extra facts about
-  a photograph in a small companion file that sits beside the picture and
-  travels with it. WhoT writes its face knowledge into that companion file,
-  so darktable and digiKam pick the names up as if you had tagged them
-  there yourself.
-- What you will see in the other program: the person names, organised the
-  same way as in WhoT.
-- What is not touched: the photographs themselves, and WhoT's own records.
-- Steps: choose the pictures (a roll, or your whole collection), run the
-  sharing step, open darktable/digiKam and check the names arrived.
-- Good to know: a picture program that has the picture open at that moment
-  may not notice new companion-file facts immediately — reopen it.
-  ![TODO: screenshot — the names as they appear in darktable/digiKam]
+The plan, in plain words: many picture programs keep extra facts about a
+photograph in a small companion file that sits beside the picture and
+travels with it (its "sidecar file"). Whot will write its face knowledge
+into those companion files, so darktable, digiKam and Lightroom pick the
+names up as if you had tagged the faces there yourself — the names
+organised the same way as in Whot, the photographs themselves untouched.
 
-## 4.3 Sharing with Lap *(preliminary scripts exist; to re-check when final)*
+**Until this step ships, nothing you can click or run writes sidecar
+files.** This section is a promise of behaviour, documented so you know
+what to expect; the rest of this chapter covers what works today.
 
-- How it works in plain words: Lap keeps a library file of its own. WhoT
-  never writes into Lap's original file — instead it makes a **dated copy**
-  of Lap's library and brings the face knowledge into that copy.
-- What is shared, and what is held back:
-  - Only persons you have actually named are shared. Placeholder names
-    (`Unknown1`, …) and the Rejected bin are left out — they carry no real
-    identity.
-  - Every group the person belongs to arrives as a `People|…` tag in Lap,
-    e.g. `People|family|Smith`. Persons filed nowhere get a plain
-    `People|<name>` tag.
-  - Face positions arrive with the pictures, so Lap shows the same face
-    rectangles WhoT showed you.
-- Safety rails:
-  - **Try before you commit**: a preview mode shows exactly what would
-    change and writes nothing at all.
-  - **The right pictures only**: each picture's identity is confirmed by
-    its content, not just its file name — a file that merely has the right
-    name is skipped and reported, never filled with the wrong face.
-  - Where a picture cannot be matched in Lap at all, neither it nor any
-    person seen only on it is imported.
-  - Persons already present in Lap (matched by name, ignoring
-    capitalisation) are updated, not duplicated.
-- Steps: run the Lap sharing step, look at the preview, run it for real,
-  then point Lap at the new dated copy.
-- Good to know: each run produces a fresh dated copy, so repeating the step
-  is safe; your Lap original and WhoT's own records are never touched.
-  ![TODO: screenshot — pointing Lap at the shared dated copy]
+## 4.3 Sharing with Lap
+*(preliminary — the scripts live in the separate `lap` workspace, and the
+steps below should be re-checked once they are finalised)*
+
+Lap keeps a library file of its own. Whot never writes into Lap's original
+file — instead it makes a **dated copy** of Lap's library (e.g.
+`lap-20261116-103000.db`) and brings your face knowledge into that copy.
+
+1. Open a terminal window and go to the folder where the Lap tools live
+   (`lap/scripts`).
+2. **Rehearse first** — this shows exactly what would change and writes
+   nothing at all:
+
+   ```sh
+   python3 import_person_faces.py --dry-run
+   ```
+
+3. Run it for real (same command without `--dry-run`). It reads Whot's
+   records strictly read-only, makes the dated copy, and fills it in.
+
+**What arrives in Lap:**
+
+- Every person you have named who actually appears on a picture Lap knows
+  about, matched to Lap's pictures **by the pictures' content, not by
+  their file names** — a file that merely has the right name is skipped
+  and reported, never filled with the wrong face.
+- The person's groups arrive as tags under Lap's People group, e.g.
+  `People|family|Smith`. A person filed nowhere gets a plain
+  `People|<name>` tag.
+- The face positions arrive with the pictures, so Lap shows the same face
+  rectangles Whot showed you.
+
+**What is protected:**
+
+- Whot's own records are only ever read.
+- Lap's original library file is never written; the copy is a new file
+  beside it (or wherever the tools are configured to put it).
+- Persons already present in Lap (matched by name, ignoring
+  capitalisation) are updated, not duplicated.
+
+**Good to know:**
+
+- Where a picture cannot be matched in Lap at all, neither it nor any
+  person seen only on it is imported — nothing half-fills.
+- Each run produces a fresh dated copy, so experimenting is free: point
+  Lap at the newest copy, and delete the ones you no longer want.
+- For Lap to match pictures by content, Lap's own duplicate scan should
+  have run once (that is what populates its content list).
+
+![TODO: screenshot — pointing Lap at the shared dated copy]
