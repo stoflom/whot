@@ -1,6 +1,6 @@
 # WhoT — User Manual
 
-Status: outline — writing not started (design: `docs/manual-design.md`)
+Status: written — awaiting review (design: `docs/manual-design.md`)
 
 WhoT looks at your photographs, finds the faces in them, and helps you put
 names to those faces. Once a face has a name, WhoT can share that knowledge
@@ -32,5 +32,5 @@ do, follow the numbered steps, done.
   faces and names; your picture files stay where they are.
 - Work is saved as you go — there is no save button and nothing to lose by
   closing the window.
-- A few actions cannot be undone; wherever that is the case, the manual says
-  so in the step itself.
+- A few actions cannot be undone; wherever that is the case, the manual
+  says so in the step itself.
